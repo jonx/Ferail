@@ -27,6 +27,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   navigation cancels stale reads, and the UI applies each result directly to
   its handful of rows rather than walking the whole listing again.
 
+- **Include Subfolders' keyboard shortcut now installs on every platform.**
+  The command and action both existed, but the keymap bridge omitted their
+  final connection, so startup warned about `view.toggle_flat` and skipped
+  Ctrl/Cmd+Shift+L. The shortcut now reaches the existing action normally.
+
 ## 0.6.5 — 2026-08-23
 
 - **Include Subfolders — every file under this folder, in one list.** A third

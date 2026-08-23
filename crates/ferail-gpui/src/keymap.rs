@@ -26,8 +26,8 @@ use crate::shell::{
     MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, NextTab,
     OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend,
     PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage, PrevTab, QuickLook, Refresh, RenameSelected,
-    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn,
-    ZoomOut, ZoomReset,
+    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleFlatView, ToggleHidden,
+    TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDelete, ViewerDismiss, ViewerLeft, ViewerNext,
@@ -179,6 +179,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "view.toggle_hidden" => cx.bind_keys([KeyBinding::new(kb_str, ToggleHidden, ctx)]),
         "view.edit_breadcrumb" => cx.bind_keys([KeyBinding::new(kb_str, EditBreadcrumb, ctx)]),
         "view.toggle_preview" => cx.bind_keys([KeyBinding::new(kb_str, TogglePreview, ctx)]),
+        "view.toggle_flat" => cx.bind_keys([KeyBinding::new(kb_str, ToggleFlatView, ctx)]),
         "view.open_viewer" => cx.bind_keys([KeyBinding::new(kb_str, OpenViewer, ctx)]),
         // Sort commands have no shortcut today; the arms exist so the
         // catalogue→palette path (and any future binding) recognizes

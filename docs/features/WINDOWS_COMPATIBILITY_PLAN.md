@@ -577,14 +577,15 @@ opens a file, and exits cleanly without installing Visual Studio tooling.
 ### WIN-016 — stale command/keymap and artifact consistency (P0)
 
 **Observation.** The 0.6.5 log says `view.toggle_flat` is an unknown command and
-skips `secondary-shift-l`, although the current source catalogue contains the
-command. This suggests a release/configuration mismatch or initialization
-ordering problem.
+skips `secondary-shift-l`. The catalogue and action registration were present,
+but the catalogue-to-GPUI dispatch match omitted that one action; this was a
+source consistency bug, not an upgraded-profile or initialization issue.
 
 **Work.**
 
-- [ ] Reproduce with a clean and an upgraded profile; identify whether the
-  command catalogue, keymap, or packaged resource versions disagree.
+- [x] Identify whether the command catalogue, keymap, or packaged resource
+  versions disagree: the missing GPUI dispatch arm was the root cause.
+- [ ] Re-run with both a clean and an upgraded Windows profile.
 - [ ] Add a startup test that every bundled binding resolves on every target.
 - [ ] Version user keymap migrations and distinguish an obsolete user binding
   from a broken built-in binding in diagnostics.
