@@ -200,7 +200,7 @@ pub struct ProcessState {
     /// (docs/features/FILE_OPS.md)
     pub cut_marker: Rc<RefCell<Vec<std::path::PathBuf>>>,
 
-    /// Latest app-footprint sample (uptime / CPU / RSS / rps) for the
+    /// Latest app-footprint sample (uptime / CPU / RSS / redraws/s) for the
     /// status bar's stats segment. `None` until the sampler publishes
     /// its first real reading (~2 ticks after boot — the first refresh
     /// only primes the CPU-delta baseline). Written by

@@ -249,7 +249,7 @@ pub fn run_gui(args: screenshot::Args) {
             crate::process_state::start_power_watch(cx);
 
             // App-footprint sampler behind the status bar's
-            // "up · CPU · MEM · rps" segment. Not started on the
+            // "up · CPU · MEM · redraws/s" segment. Not started on the
             // screenshot path (screenshot::run) — captures use the
             // deterministic `--simulate-stats` label instead
             // (docs/features/SYSTEM_STATS.md).

@@ -1,12 +1,14 @@
 //! App-footprint sampler behind the status bar's stats segment
-//! (`up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 rps`).
+//! (`up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 redraws/s`).
 //!
 //! Everything shown is **app-centric** — what Ferail itself costs, not
 //! the machine: time since this process launched, the process's CPU
-//! share (Activity Monitor convention — % of one core, so it can
-//! exceed 100 on multi-core), its resident memory, and how often the
-//! window redraws. The last figure is deliberately **rps — redraws
-//! per second — not "fps"**: gpui only draws invalidated frames, so
+//! share, its resident memory, and how often the window redraws. macOS
+//! keeps Activity Monitor's one-core convention; Windows normalizes
+//! across the process's available logical processors so its figure
+//! agrees with Task Manager and cannot alarmingly read 700%. The last
+//! figure is deliberately **redraws per second — not "fps"**: gpui
+//! only draws invalidated frames, so
 //! the honest measurement is a plain count of `Window::draw`s over
 //! the sample window (from gpui's frame-timing profiler). Calling
 //! that "fps" would misread a brief scroll inside a mostly-idle
@@ -36,8 +38,14 @@ const SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 pub struct StatsSnapshot {
     /// Seconds since this process started.
     pub run_secs: u64,
-    /// CPU % of one core (may exceed 100 on multi-core).
+    /// User-facing CPU percentage. On Windows this is normalized over
+    /// available logical processors to match Task Manager; other targets
+    /// retain their platform convention.
     pub cpu_pct: f32,
+    /// Raw sysinfo percentage in units of one logical core. Kept for
+    /// diagnostics so a Windows report can explain both figures without
+    /// changing the user-facing status-bar convention.
+    pub cpu_core_pct: f32,
     /// Resident set size, bytes.
     pub mem_bytes: u64,
     /// Redraws per second over the last sample window (count of
@@ -71,7 +79,7 @@ pub struct SegmentParts {
     pub cpu: SharedString,
     /// `MEM 184.0 MB`
     pub mem: SharedString,
-    /// `58 rps`
+    /// `58 redraws/s`
     pub rps: SharedString,
 }
 
@@ -88,7 +96,7 @@ impl SegmentParts {
             // Floor, don't round: an idle window whose only redraws
             // are this sampler's own 0.5 Hz notify ticks averages
             // ~0.5 and must read an honest 0, not flicker to 1.
-            rps: tr!("{n} rps", n = rps.max(0.0) as u64),
+            rps: tr!("{n} redraws/s", n = rps.max(0.0) as u64),
         }
     }
 
@@ -140,6 +148,7 @@ pub fn start_sampler(cx: &mut App) {
             return;
         }
     };
+    let cpu_divisor = status_cpu_divisor();
 
     cx.spawn(async move |cx| {
         // The `System` lives across ticks because process CPU% is a
@@ -161,7 +170,7 @@ pub fn start_sampler(cx: &mut App) {
                 .spawn(async move {
                     let mut sys = sys;
                     let mut collector = collector;
-                    let snapshot = sample(&mut sys, &mut collector, pid, elapsed);
+                    let snapshot = sample(&mut sys, &mut collector, pid, elapsed, cpu_divisor);
                     (sys, collector, snapshot)
                 })
                 .await;
@@ -198,6 +207,7 @@ fn sample(
     collector: &mut gpui::profiler::FrameTimingCollector,
     pid: sysinfo::Pid,
     elapsed: Duration,
+    cpu_divisor: f32,
 ) -> Option<StatsSnapshot> {
     // Drain the frames drawn since the last tick, then flip tracing
     // off/on: disabling clears (and shrinks) gpui's global ring, so
@@ -228,12 +238,32 @@ fn sample(
         sysinfo::ProcessRefreshKind::new().with_cpu().with_memory(),
     );
     let proc = sys.process(pid)?;
+    let cpu_core_pct = proc.cpu_usage();
     Some(StatsSnapshot {
         run_secs: proc.run_time(),
-        cpu_pct: proc.cpu_usage(),
+        cpu_pct: cpu_core_pct / cpu_divisor,
+        cpu_core_pct,
         mem_bytes: proc.memory(),
         rps,
     })
+}
+
+/// Windows Task Manager reports one process as a share of the machine's total
+/// logical-CPU capacity, while sysinfo reports in units of one logical core.
+/// Other targets keep their established platform convention (notably Activity
+/// Monitor on macOS), so their divisor is one.
+fn status_cpu_divisor() -> f32 {
+    #[cfg(windows)]
+    {
+        std::thread::available_parallelism()
+            .map(|n| n.get() as f32)
+            .unwrap_or(1.0)
+            .max(1.0)
+    }
+    #[cfg(not(windows))]
+    {
+        1.0
+    }
 }
 
 #[cfg(test)]
@@ -259,18 +289,25 @@ mod tests {
     }
 
     #[test]
+    fn task_manager_normalization_is_total_machine_share() {
+        let raw_core_pct = 700.0;
+        let logical_processors = 16.0;
+        assert_eq!(raw_core_pct / logical_processors, 43.75);
+    }
+
+    #[test]
     fn segment_parts_compose() {
         let p = SegmentParts::from_values(3 * 86_400 + 4 * 3_600, 6.8, 184 * 1024 * 1024, 58.9);
         assert_eq!(&*p.up, "up 3d 4h");
         assert_eq!(&*p.cpu, "CPU 6.8%");
         assert_eq!(&*p.mem, "MEM 184.0 MB");
-        assert_eq!(&*p.rps, "58 rps");
+        assert_eq!(&*p.rps, "58 redraws/s");
         // Idle: the only redraws are the sampler's own notify ticks
         // (~0.5/s) — must floor to an honest 0.
         let p = SegmentParts::from_values(30, 0.2, 3_774_874, 0.5);
         assert_eq!(&*p.up, "up 30s");
         assert_eq!(&*p.mem, "MEM 3.6 MB");
-        assert_eq!(&*p.rps, "0 rps");
+        assert_eq!(&*p.rps, "0 redraws/s");
     }
 
     #[test]
@@ -278,11 +315,12 @@ mod tests {
         let snap = StatsSnapshot {
             run_secs: 61,
             cpu_pct: 1.0,
+            cpu_core_pct: 1.0,
             mem_bytes: 1024,
             rps: HashMap::new(),
         };
         let parts = snap.segment_parts(WindowId::default());
-        assert_eq!(&*parts.rps, "0 rps");
+        assert_eq!(&*parts.rps, "0 redraws/s");
         assert_eq!(&*parts.up, "up 1m");
     }
 }

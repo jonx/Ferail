@@ -88,7 +88,7 @@ pub struct StatusMetrics {
     /// full contents.
     pub filtered_count: usize,
     pub filtered_bytes: u64,
-    /// App-footprint figures (up · CPU · MEM · rps), pre-formatted by
+    /// App-footprint figures (up · CPU · MEM · redraws/s), pre-formatted by
     /// the off-thread sampler's snapshot (or `--simulate-stats`).
     /// `None` until the sampler's first real reading.
     pub stats: Option<crate::system_stats::SegmentParts>,
@@ -106,7 +106,7 @@ pub struct StatusMetrics {
 ///   already supplies: "126.3 GB free".
 /// - [`Density::Minimal`] — the figure plus, at most, a universal token:
 ///   "126.3 GB", "UP 3m". Deliberately untranslated where that token is
-///   an acronym — the bar already ships `CPU` / `MEM` / `rps`
+///   an acronym — the bar already ships `CPU` / `MEM`
 ///   unlocalized, and a two-letter code beats a truncated word.
 ///
 /// Narrower still and [`plan`] starts dropping segments outright, in
@@ -386,8 +386,8 @@ fn hidden_label(metrics: &StatusMetrics, density: Density) -> Option<String> {
     })
 }
 
-/// App-footprint figures for a density. `CPU` / `MEM` / `rps` are already
-/// the shortest honest form in every language we ship, so only the
+/// App-footprint figures for a density. `CPU` / `MEM` are already the
+/// shortest honest form in every language we ship, so only the
 /// uptime changes: the translated "up" wording gives way to the
 /// universal `UP` token.
 fn stats_texts(parts: &crate::system_stats::SegmentParts, density: Density) -> StatsTexts {
@@ -697,7 +697,7 @@ pub fn render(
                     .child(label),
             )
         })
-        // App-footprint stats (up · CPU · MEM · rps), precomputed by
+        // App-footprint stats (up · CPU · MEM · redraws/s), precomputed by
         // the off-thread sampler (system_stats.rs) — render only
         // formats a cached snapshot. Absent until the sampler's first
         // real reading, and always absent in screenshot mode unless
@@ -706,6 +706,7 @@ pub fn render(
         // that says nothing about the folder in front of the user.
         .when_some(seg.stats.filter(|_| plan.show_stats), |this, parts| {
             let mins = plan.stats_min_rems();
+            let tip = tr!("Ferail uptime, CPU, memory, and window redraws per second.");
             let cell = |text: SharedString, min_w_rems: f32| {
                 h_flex()
                     .flex_shrink_0()
@@ -715,9 +716,13 @@ pub fn render(
             };
             this.child(
                 h_flex()
+                    .id("status-bar-stats")
                     .flex_shrink_0()
                     .gap_1()
                     .text_color(theme_muted_fg.opacity(0.85))
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+                    })
                     .child(cell(parts.up, mins[0]))
                     .child("\u{00B7}")
                     .child(cell(parts.cpu, mins[1]))

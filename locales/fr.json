@@ -414,6 +414,7 @@
     "Favorites": "Favoris",
     "Ferail needs permission to read this folder. The link below opens Full Disk Access and copies Ferail's path so you can add it with the \"+\" button.": "Ferail a besoin d'une autorisation pour lire ce dossier. Le lien ci-dessous ouvre l'accès complet au disque et copie le chemin de Ferail afin que vous puissiez l'ajouter avec le bouton \"+\".",
     "Ferail on GitHub": "Ferail sur GitHub",
+    "Ferail uptime, CPU, memory, and window redraws per second.": "Durée d’exécution, processeur, mémoire et redessins de fenêtre par seconde de Ferail.",
     "Ferail v{version} · {os}/{arch} · {ok} OK, {warn} WARN, {fail} FAIL": "Ferail v{version} · {os}/{arch} · {ok} OK, {warn} AVERTIR, {fail} ÉCHEC",
     "Ferail {version} is available (you have {current}).": "Ferail {version} est disponible (vous avez {current}).",
     "Ferail {version} is available.": "Ferail {version} est disponible.",
@@ -1259,7 +1260,7 @@
       "one": "{n} chemin copié dans le presse-papiers",
       "other": "{n} chemins copiés dans le presse-papiers"
     },
-    "{n} rps": "{n} rps",
+    "{n} redraws/s": "{n} redessins/s",
     "{n} selected  {size}": "{n} sélectionné {size}",
     "{n} similar-image group · {size} reclaimable": {
       "one": "{n} groupe d’images similaires · {size} récupérable",

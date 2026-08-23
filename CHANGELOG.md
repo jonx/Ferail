@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Windows CPU usage now matches Task Manager, and redraw activity says what
+  it measures.** The status bar previously counted CPU as a percentage of one
+  core, so a busy process could show 700% while Task Manager showed a much
+  smaller whole-machine share. Windows now uses Task Manager's normalization,
+  and the ambiguous `rps` label is now an explicit, localized `redraws/s`.
+
 ## 0.6.5 — 2026-08-23
 
 - **Include Subfolders — every file under this folder, in one list.** A third
