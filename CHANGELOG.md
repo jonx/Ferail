@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.6.7 — 2026-08-25 (Windows-only release)
+
+This release publishes Windows x64 portable and symbols archives only. macOS
+and Linux remain on 0.6.5; Ferail's updater selects the newest release that
+actually has an asset for the current platform.
+
 - **The real Windows file context menu is available on explicit demand.**
   Ferail's fast right-click menu remains the default and now ends with “More
   options from Windows…”. Shift+right-click and Shift+F10 open the native
