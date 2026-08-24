@@ -287,8 +287,9 @@ Cases failed + evidence paths: none failed. Not run: interactive acceptance
   enabling it needs elevation + reboot); the real pdfprevhndlr.dll repro.
 New dumps/PDB identity: test dump ferail-preview-broker-1448.dmp under
   %APPDATA%\Ferail\reports (debug build, no packaged PDB pairing).
-  Repackaged with the broker commit: target/package/Ferail-0.6.5-win-x64*.zip
-  (predates 00aefe9 and the minidump commit — rebuild before distributing).
+  Final repackage at a4c8353 (all of the above): target/package/
+  Ferail-0.6.5-win-x64.zip + -symbols.zip; gate passed with 35 system DLLs
+  (dbghelp.dll now imported by the minidump filter). Unsigned.
 Measurements before/after: none.
 Known regressions: none observed. Note: Edge's PDF preview handler captures
   as an all-white frame through the broker (its async paint outlasts the
