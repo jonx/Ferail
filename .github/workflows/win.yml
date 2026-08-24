@@ -49,17 +49,21 @@ jobs:
         shell: pwsh
         run: ./scripts/package-win.ps1 -NoInstaller
 
-      # The second glob picks up Ferail-<version>-win-x64-symbols.zip — the
+      # The second glob picks up Ferail-<version>-x64-symbols.zip — the
       # PDB bundle whose manifest ties CodeView identity to this commit, so
       # tester crash dumps stay symbolizable. Ship it with every release.
+      # Its name deliberately lacks "win": updaters up to 0.6.6 grab the
+      # first *win*.zip asset, and the symbols bundle sorts first.
       - name: SHA-256
         shell: pwsh
-        run: Get-FileHash target/package/Ferail-*-win-x64*.zip -Algorithm SHA256 | Format-List
+        run: Get-FileHash target/package/Ferail-*-win-x64.zip, target/package/Ferail-*-x64-symbols.zip -Algorithm SHA256 | Format-List
 
       - uses: actions/upload-artifact@v4
         with:
           name: ferail-win-x64
-          path: target/package/Ferail-*-win-x64*.zip
+          path: |
+            target/package/Ferail-*-win-x64.zip
+            target/package/Ferail-*-x64-symbols.zip
           if-no-files-found: error
 
       - name: Attach to GitHub release
@@ -67,4 +71,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: RELEASE_NOTES.md
-          files: target/package/Ferail-*-win-x64*.zip
+          files: |
+            target/package/Ferail-*-win-x64.zip
+            target/package/Ferail-*-x64-symbols.zip

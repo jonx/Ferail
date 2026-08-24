@@ -377,7 +377,11 @@ $symbolManifest = [ordered]@{
 $ManifestPath = Join-Path $SymbolsDir 'manifest.json'
 $symbolManifest | ConvertTo-Json -Depth 8 | Set-Content $ManifestPath -Encoding UTF8
 
-$SymbolsZipPath = Join-Path $StageRoot "Ferail-$Version-win-x64-symbols.zip"
+# Deliberately no "win" in the symbols name: updaters up to 0.6.6 pick the
+# first release asset matching *win*.zip, and GitHub lists "-symbols" before
+# ".zip" — with the old "win-x64-symbols" name they downloaded PDBs instead
+# of the app. Keep it that way so shipped builds keep updating correctly.
+$SymbolsZipPath = Join-Path $StageRoot "Ferail-$Version-x64-symbols.zip"
 Write-Step "Writing $SymbolsZipPath"
 if (Test-Path $SymbolsZipPath) { Remove-Item $SymbolsZipPath -Force }
 Compress-Archive -Path $SymbolsDir -DestinationPath $SymbolsZipPath -CompressionLevel Optimal

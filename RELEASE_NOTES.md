@@ -26,13 +26,17 @@ and its matching symbols archive; macOS and Linux remain on 0.6.5.
   dependency gate that rejects accidental non-system DLL requirements.
 - Added image metadata to Get Info: dimensions, camera, lens, date, exposure,
   orientation, and privacy-preserving GPS presence (never coordinates).
+- Added the real Windows Shell context menu behind “More options from
+  Windows…”, Shift+right-click, and Shift+F10. Third-party handlers remain in
+  a disposable broker; Properties uses Windows' dedicated property-sheet API
+  because its context-menu handler returns asynchronously.
 
 ## Packaging and diagnostics
 
 The release contains:
 
 - `Ferail-0.6.6-win-x64.zip` — unsigned portable application and CLI;
-- `Ferail-0.6.6-win-x64-symbols.zip` — matching PDBs and identity manifest.
+- `Ferail-0.6.6-x64-symbols.zip` — matching PDBs and identity manifest.
 
 Windows SmartScreen may warn because the build is not Authenticode-signed. The
 symbols archive is for diagnosing crash dumps and is not needed to run Ferail.

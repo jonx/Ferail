@@ -62,6 +62,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   GPUI and Windows instead of drawing two icon stacks. Drop, cancellation, and
   failure all clear the platform drag state.
 
+- **Software Update on Windows downloaded the debug-symbols archive instead of
+  the app.** Since releases started shipping a `…-win-x64-symbols.zip` PDB
+  bundle alongside the app zip (0.6.6), the updater grabbed whichever Windows
+  zip GitHub listed first — the symbols one. The updater now skips symbols
+  bundles, and the bundle was renamed to `…-x64-symbols.zip` (on the published
+  0.6.6 release too) so already-shipped builds also pick the right download.
+
 ## 0.6.6 — 2026-08-24 (Windows-only release)
 
 This release publishes Windows x64 portable and symbols archives only. macOS

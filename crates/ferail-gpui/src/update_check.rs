@@ -270,13 +270,24 @@ fn deb_arch(arch: &str) -> &str {
     }
 }
 
+/// Is this asset a debug-symbol bundle (`…-symbols.zip`, the Windows PDB
+/// pack) rather than something a user installs? It sorts *before* the app
+/// zip in GitHub's asset list, so every matcher must skip it explicitly.
+fn is_symbols_asset(name: &str) -> bool {
+    name.contains("-symbols")
+}
+
 /// Index of the asset a user on this platform should download, from the
 /// release's asset names. Mirrors what CI publishes per release:
-/// `Ferail-<v>.dmg`, `Ferail-<v>-win-x64.zip`, `ferail_<v>-1_<arch>.deb`.
+/// `Ferail-<v>.dmg`, `Ferail-<v>-win-x64.zip` (plus a PDB bundle —
+/// `…-x64-symbols.zip`, `…-win-x64-symbols.zip` through 0.6.6 — that must
+/// never be offered), `ferail_<v>-1_<arch>.deb`.
 fn pick_asset_index_for(names: &[&str], os: &str, arch: &str) -> Option<usize> {
     let wanted: Box<dyn Fn(&str) -> bool> = match os {
         "macos" => Box::new(|n: &str| n.ends_with(".dmg")),
-        "windows" => Box::new(|n: &str| n.ends_with(".zip") && n.contains("win")),
+        "windows" => {
+            Box::new(|n: &str| n.ends_with(".zip") && n.contains("win") && !is_symbols_asset(n))
+        }
         "linux" => {
             let suffix = format!("_{}.deb", deb_arch(arch));
             Box::new(move |n: &str| n.ends_with(&suffix))
@@ -299,7 +310,10 @@ fn platforms_for(release: &GhRelease) -> Vec<ReleasePlatform> {
     for asset in &release.assets {
         let platform = if asset.name.ends_with(".dmg") {
             Some(ReleasePlatform::MacOs)
-        } else if asset.name.ends_with(".zip") && asset.name.contains("win") {
+        } else if asset.name.ends_with(".zip")
+            && asset.name.contains("win")
+            && !is_symbols_asset(&asset.name)
+        {
             Some(ReleasePlatform::Windows)
         } else if asset.name.ends_with("_amd64.deb") {
             Some(ReleasePlatform::LinuxAmd64)
@@ -1625,17 +1639,26 @@ mod tests {
 
     #[test]
     fn asset_pick_matches_ci_names() {
+        // GitHub sorts `-symbols.zip` before `.zip` — the picker must skip
+        // the PDB bundle and land on the app zip anyway.
         let names = [
+            "Ferail-0.5.0-win-x64-symbols.zip",
             "Ferail-0.5.0-win-x64.zip",
             "Ferail-0.5.0.dmg",
             "ferail_0.5.0-1_amd64.deb",
             "ferail_0.5.0-1_arm64.deb",
         ];
-        assert_eq!(pick_asset_index_for(&names, "macos", "aarch64"), Some(1));
-        assert_eq!(pick_asset_index_for(&names, "windows", "x86_64"), Some(0));
-        assert_eq!(pick_asset_index_for(&names, "linux", "x86_64"), Some(2));
-        assert_eq!(pick_asset_index_for(&names, "linux", "aarch64"), Some(3));
+        assert_eq!(pick_asset_index_for(&names, "macos", "aarch64"), Some(2));
+        assert_eq!(pick_asset_index_for(&names, "windows", "x86_64"), Some(1));
+        assert_eq!(pick_asset_index_for(&names, "linux", "x86_64"), Some(3));
+        assert_eq!(pick_asset_index_for(&names, "linux", "aarch64"), Some(4));
         assert_eq!(pick_asset_index_for(&names, "freebsd", "x86_64"), None);
+        // A release whose only Windows zip is the symbols bundle has no
+        // installable Windows asset.
+        assert_eq!(
+            pick_asset_index_for(&["Ferail-0.5.0-win-x64-symbols.zip"], "windows", "x86_64"),
+            None
+        );
     }
 
     #[test]
@@ -1645,6 +1668,7 @@ mod tests {
             gh(
                 "v0.5.1",
                 &[
+                    "Ferail-0.5.1-win-x64-symbols.zip",
                     "Ferail-0.5.1-win-x64.zip",
                     "Ferail-0.5.1.dmg",
                     "ferail_0.5.1-1_amd64.deb",
@@ -1724,6 +1748,7 @@ mod tests {
             &[
                 "Ferail-1.0.0.dmg",
                 "Ferail-1.0.0.dmg",
+                "Ferail-1.0.0-win-x64-symbols.zip",
                 "Ferail-1.0.0-win-x64.zip",
                 "ferail_1.0.0-1_amd64.deb",
                 "ferail_1.0.0-1_arm64.deb",
