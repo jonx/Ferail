@@ -193,7 +193,46 @@ Working-tree files intentionally left unstaged:
 
 ## Session log
 
-No real-Windows acceptance session has been recorded yet for the post-0.6.5
-commits listed above. macOS preparation through `5f1a8fd` passes all 281
-`ferail-gpui` library tests and strict all-target Clippy; this is not Windows
-acceptance.
+### 2026-08-24 — first real-Windows session (diagnostic gate + WIN-015)
+
+```text
+Date / machine: 2026-08-24, Windows 11 Enterprise dev machine, C:\Source\Ferail
+  (VS 2022 Community 14.44 tools, stable Rust 1.95 MSVC; no iscc/signtool,
+  WinDbg not yet audited)
+Start commit: 580d193, with uncommitted work in the tree (i18n CRLF test fix,
+  shell-mac cfg gates, package-win.ps1 WIN-015 changes)
+End commit(s): 093ae10 (i18n CRLF test), 94b1926 (shell-mac gating),
+  9e7702d (WIN-015 static CRT + dependency gate + symbols)
+Cases passed:
+  - Diagnostic gate: cargo fmt --check; cargo test --workspace (653 tests,
+    32 suites, 0 failures); cargo clippy --workspace --all-targets
+    -D warnings; cargo build --release.
+  - WTEST-001, WTEST-003: full package-win.ps1 run; static-CRT build; both
+    binaries import only 34 Windows system DLLs (no vcruntime/msvcp/ucrt);
+    portable + symbols ZIPs produced; packaged Ferail.exe renders a headless
+    --screenshot and exits 0; packaged CLI launches.
+Cases failed + evidence paths: none run beyond the above. The interactive
+  acceptance slice (startup profiles, Ctrl+Shift+L, CPU/redraw comparison,
+  open/reveal matrix, WCORPUS runs) has NOT been run — needs a human at the
+  GUI. Logs: target/test-reports/windows/580d193/2026-08-24-session1/.
+New dumps/PDB identity: no dumps. Packaged identities in
+  target/package/Ferail-symbols/manifest.json — GUI ferail_gpui.pdb
+  {41A17A9E-F1AB-48B1-8C64-D6F6F397A23A} age 1, CLI ferail.pdb
+  {7702FEF6-A1DB-4224-96E0-CAAC216E6E28} age 1, commit 580d193. Note these
+  ZIPs predate the three commits above; rebuild before distributing.
+Measurements before/after: none (no acceptance timings this session).
+Known regressions: none observed.
+Next exact command or code location:
+  1. Run § "2. Run the fast acceptance slice" interactively on this machine.
+  2. WENV-C: pristine Windows Sandbox, network off, launch the portable ZIP
+     (WTEST-004).
+  3. Then WIN-001..004 crash containment (docs/features/
+     WINDOWS_COMPATIBILITY_PLAN.md § A) with the diagnostic build.
+  4. Consider CARGO_PROFILE_RELEASE_DEBUG=limited in package-win.ps1 before
+     the dump work — current PDBs carry publics only, no line tables.
+Working-tree files intentionally left unstaged: none.
+```
+
+Historical note: before this session, macOS preparation through `5f1a8fd`
+passed all 281 `ferail-gpui` library tests and strict all-target Clippy; that
+was preparation, not Windows acceptance.
