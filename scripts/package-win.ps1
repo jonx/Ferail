@@ -312,11 +312,21 @@ Copy-Item $CliPdbSrc (Join-Path $SymbolsDir 'ferail.pdb')
 
 $commit = (& git -C $RepoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'could not determine Git revision for symbol manifest' }
+# A build from a dirty tree is not reproducible from `commit` alone; say so
+# in the manifest (and loudly) so tester dumps are never matched against
+# sources that were never committed.
+$dirtyFiles = @(& git -C $RepoRoot status --porcelain --untracked-files=normal |
+    Where-Object { $_ -and ($_ -notmatch '^\?\? target/') })
+$dirty = $dirtyFiles.Count -gt 0
+if ($dirty) {
+    Write-Warn "working tree is DIRTY ($($dirtyFiles.Count) path(s)) — artifacts do not correspond to $commit"
+}
 $symbolManifest = [ordered]@{
     product = 'Ferail'
     version = $Version
     target = 'x86_64-pc-windows-msvc'
     commit = $commit
+    dirty = $dirty
     crt = 'static'
     created_utc = (Get-Date).ToUniversalTime().ToString('o')
     binaries = @(
