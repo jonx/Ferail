@@ -8,9 +8,10 @@
 //! - "<N> item(s)" entry count for the active tab's listing.
 //! - "Doing X…" when exactly one task is in flight (uses the task's
 //!   label). When >1 task is in flight: "N tasks running".
-//! - A thin progress strip on the right: indeterminate stripe when at
-//!   least one task is `Indeterminate`, otherwise determinate fill at
-//!   the latest task's fraction.
+//! - A thin progress strip directly after the task label, so the bar
+//!   sits with the sentence it quantifies on the left: indeterminate
+//!   stripe when at least one task is `Indeterminate`, otherwise
+//!   determinate fill at the latest task's fraction.
 //!
 //! Clicking the count region toggles the (future) task panel popover;
 //! today it's a no-op placeholder — the popover lands in Stage 5.c
@@ -624,6 +625,9 @@ pub fn render(
         visible,
     );
 
+    let shown_task_label = task_label.filter(|_| plan.show_task);
+    let has_left_cluster = shown_task_label.is_some() || visible;
+
     let on_toggle = on_toggle_task_panel;
     // Returns AnyElement so the two branches (id'd Stateful<Div> vs.
     // plain Div) unify.
@@ -667,24 +671,34 @@ pub fn render(
                 )
             },
         )
-        .when_some(task_label.filter(|_| plan.show_task), |this, label| {
-            this.child(make_clickable(
-                div().flex_1().min_w_0().truncate().child(label),
-                "status-bar-task-label",
-            ))
+        // Task label and progress strip hug the left, right after the
+        // counts — the strip belongs to the sentence it quantifies, not
+        // to the app-stats cluster on the far edge. The elastic filler
+        // inside the cluster then pushes everything after it to the
+        // right edge; without a cluster a bare filler does the same.
+        .when(has_left_cluster, |this| {
+            this.child(
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .gap(rems(gap / crate::text::BASE_REM_PX))
+                    .when_some(shown_task_label, |row, label| {
+                        row.child(make_clickable(
+                            div().min_w_0().truncate().child(label),
+                            "status-bar-task-label",
+                        ))
+                    })
+                    .when(visible, |row| {
+                        row.child(make_clickable(
+                            progress_strip(plan.progress_w(), indeterminate, fraction, cx),
+                            "status-bar-progress",
+                        ))
+                    })
+                    .child(div().flex_1()),
+            )
         })
-        // The elastic gap that pushes the right-hand cluster to the edge.
-        // Without a task label there is no other flex_1 in the row.
-        .when(
-            task_label_none(&registry, simulated_progress) || !plan.show_task,
-            |this| this.child(div().flex_1()),
-        )
-        .when(visible, |this| {
-            this.child(make_clickable(
-                progress_strip(plan.progress_w(), indeterminate, fraction, cx),
-                "status-bar-progress",
-            ))
-        })
+        .when(!has_left_cluster, |this| this.child(div().flex_1()))
         // Phase 8: free-disk-space label sits between the task
         // summary and the Show-Hidden toggle. Only rendered when we
         // could query the volume info — non-macOS / sandboxed
@@ -778,10 +792,6 @@ pub fn render(
                         }),
                 ),
         )
-}
-
-fn task_label_none(registry: &TaskRegistry, simulated_progress: Option<f32>) -> bool {
-    !registry.iter().any(|t| t.is_surfaced()) && simulated_progress.is_none()
 }
 
 /// Compact label for the spotlight task: its own label, plus a live

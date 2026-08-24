@@ -45,6 +45,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   returned to the allocator while ordinary directory reloads still reuse
   their much smaller buffers.
 
+- **The status bar's progress bar now sits beside the task it measures.**
+  It used to float at the far right of the status bar, over by the app
+  statistics, visually orphaned from the "Scanning…"/"Copying…" text at the
+  left. The strip now follows the task label directly.
+
 - **The Windows download now starts on a fresh PC — no Visual C++ install
   required.** The 0.6.5 build could fail before showing a window with a
   `VCRUNTIME140.dll was not found` error, because it expected Microsoft's
