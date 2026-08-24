@@ -263,6 +263,37 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         }
     }
 
+    // ---- Image (header dimensions + curated EXIF) ----
+    // Same contract as Media above: the reader returns `None` for anything
+    // that isn't a readable image, so the section silently doesn't appear.
+    // GPS is presence-only by design (WIN-014 privacy treatment) — the
+    // coordinates are never parsed, shown, logged, or persisted.
+    let mut image = InfoSection::new(tr!("Image").to_string());
+    if target == InfoTarget::File {
+        if let Some(m) = fsn::image_meta::read_image_meta(path) {
+            image = image
+                .text_if(tr!("Dimensions").to_string(), m.dimensions_label())
+                .text_if(tr!("Camera").to_string(), m.camera_label())
+                .text_if(tr!("Lens").to_string(), m.lens_model.clone())
+                .text_if(tr!("Date taken").to_string(), m.taken.clone())
+                .text_if(tr!("Exposure").to_string(), m.exposure_label());
+            // "Normal" is the unremarkable default — only a stored rotation
+            // is worth a row (the volume section's read-only precedent).
+            if let Some(code) = m.orientation.filter(|&c| c != 1) {
+                image = image.text_if(
+                    tr!("Orientation").to_string(),
+                    orientation_label(code).to_string(),
+                );
+            }
+            if m.gps_present {
+                image = image.text_if(
+                    tr!("Location").to_string(),
+                    tr!("Embedded in photo").to_string(),
+                );
+            }
+        }
+    }
+
     // ---- Attributes ----
     let mut attributes = InfoSection::new(tr!("Attributes").to_string());
     if let Some(s) = &stat {
@@ -352,7 +383,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         }
     }
 
-    let sections = [general, media, attributes, permissions, volume]
+    let sections = [general, media, image, attributes, permissions, volume]
         .into_iter()
         .filter(|s| !s.rows.is_empty())
         .collect();
@@ -362,6 +393,22 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         kind,
         target,
         sections,
+    }
+}
+
+/// Human wording for a stored EXIF orientation (codes 2–8; 1 = normal is
+/// filtered out by the caller). The label describes the correction a viewer
+/// applies to display the photo upright — the convention cameras write.
+fn orientation_label(code: u16) -> SharedString {
+    match code {
+        2 => tr!("Flipped horizontally"),
+        3 => tr!("Rotated 180\u{00B0}"),
+        4 => tr!("Flipped vertically"),
+        5 => tr!("Rotated 90\u{00B0} counter-clockwise, flipped"),
+        6 => tr!("Rotated 90\u{00B0} clockwise"),
+        7 => tr!("Rotated 90\u{00B0} clockwise, flipped"),
+        8 => tr!("Rotated 90\u{00B0} counter-clockwise"),
+        _ => SharedString::default(),
     }
 }
 

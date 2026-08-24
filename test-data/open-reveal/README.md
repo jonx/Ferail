@@ -22,7 +22,7 @@ the run's evidence per the acceptance plan.
 
 | Path | What it tests |
 | --- | --- |
-| `files/` | Plain names, one of each association: JPEG, PNG, PDF, TXT, MP4 (`ftyp` stub — the open verb, not the codec), WAV (genuinely playable), ZIP, `.cmd`, a no-association `.zzferail`, and a folder. Every file is small but *valid*, so the default app actually opens it. |
+| `files/` | Plain names, one of each association: JPEG, PNG, PDF, TXT, MP4 (`ftyp` stub — the open verb, not the codec), WAV (genuinely playable), ZIP, `.cmd`, a no-association `.zzferail`, and a folder. Every file is small but *valid*, so the default app actually opens it. `photo-exif.jpg` additionally carries EXIF (camera, date taken, orientation, exposure, and a GPS latitude) for Get Info's Image section — the app must report GPS *presence only*, never the coordinates. |
 | `names/` | The same bytes under difficult names: spaces, `#`, `%`, literal `%20`, `!`, `&`, `+`, `;`, `'`, `,`, `=`, `[]`, `{}`, `~`, `^`, `@`, accents, Greek, Cyrillic, CJK, emoji, combining accents, a 255-char component — plus `\\?\`-forced names Windows normally refuses (trailing space, trailing dot, `CON.txt`, `NUL.png`). |
 | `dirs/` | Difficult *directory* names (open = navigate, and Reveal targets), each holding two openable files. |
 | `long/` | An 8-level accented chain whose leaf paths exceed 260 chars (MAX_PATH), with three openable files at the bottom. |

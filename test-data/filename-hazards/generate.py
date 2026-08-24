@@ -209,9 +209,71 @@ def zip_fixture() -> bytes:
     return buf.getvalue()
 
 
+def exif_jpeg() -> bytes:
+    """JPEG_1PX with a hand-assembled EXIF APP1: camera make/model,
+    DateTimeOriginal, orientation 6, exposure triplet, and a GPS latitude —
+    the Get Info Image-section fixture (WIN-014). GPS is present precisely
+    so tests can verify the app shows *presence only*, never coordinates."""
+
+    def ifd(entries, at):
+        # entries: (tag, type, count, inline_int_or_bytes)
+        out = struct.pack("<H", len(entries))
+        data_start = at + 2 + 12 * len(entries) + 4
+        data = b""
+        for tag, ty, count, payload in entries:
+            out += struct.pack("<HHI", tag, ty, count)
+            if isinstance(payload, int):
+                out += struct.pack("<I", payload)
+            else:
+                out += struct.pack("<I", data_start + len(data))
+                data += payload
+        return out + struct.pack("<I", 0) + data
+
+    def ascii_entry(tag, s):
+        b = s.encode() + b"\0"
+        if len(b) <= 4:
+            return (tag, 2, len(b), int.from_bytes(b.ljust(4, b"\0"), "little"))
+        return (tag, 2, len(b), b)
+
+    def rats(pairs):
+        return b"".join(struct.pack("<II", n, d) for n, d in pairs)
+
+    def ifd0(exif_at, gps_at):
+        return [
+            ascii_entry(0x010F, "Ferail"),
+            ascii_entry(0x0110, "Fixture Cam 1000"),
+            (0x0112, 3, 1, 6),  # orientation: rotate 90 CW to display
+            (0x8769, 4, 1, exif_at),
+            (0x8825, 4, 1, gps_at),
+        ]
+
+    exif_entries = [
+        ascii_entry(0x9003, "2024:07:14 18:03:21"),  # DateTimeOriginal
+        (0x8827, 3, 1, 200),  # ISO
+        (0x829A, 5, 1, rats([(1, 500)])),  # 1/500 s
+        (0x829D, 5, 1, rats([(18, 10)])),  # f/1.8
+        (0x920A, 5, 1, rats([(50, 1)])),  # 50 mm
+    ]
+    gps_entries = [(0x0002, 5, 3, rats([(48, 1), (51, 1), (24, 1)]))]
+
+    exif_at = 8 + len(ifd(ifd0(0, 0), 8))
+    gps_at = exif_at + len(ifd(exif_entries, exif_at))
+    tiff = (
+        b"II"
+        + struct.pack("<HI", 42, 8)
+        + ifd(ifd0(exif_at, gps_at), 8)
+        + ifd(exif_entries, exif_at)
+        + ifd(gps_entries, gps_at)
+    )
+    app1_body = b"Exif\x00\x00" + tiff
+    app1 = b"\xff\xe1" + struct.pack(">H", len(app1_body) + 2) + app1_body
+    return JPEG_1PX[:2] + app1 + JPEG_1PX[2:]
+
+
 def base_files() -> "dict[str, bytes]":
     return {
         "photo.jpg": JPEG_1PX,
+        "photo-exif.jpg": exif_jpeg(),
         "image.png": png_1px(),
         "document.pdf": pdf_minimal(),
         "notes.txt": NOTE_TXT.encode("utf-8"),

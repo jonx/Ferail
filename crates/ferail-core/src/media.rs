@@ -173,6 +173,99 @@ fn number_of(n: Option<u32>, total: Option<u32>) -> String {
     }
 }
 
+/// Portable still-image metadata for Get Info (WIN-014) — dimensions from
+/// the image header plus a curated EXIF subset. Filled by
+/// `ferail_fs_native::image_meta::read_image_meta` off the UI thread and
+/// rendered read-only, like [`MediaTags`].
+///
+/// String fields are display-ready but deliberately unlocalized here (the
+/// `"192 kbps"` precedent above): units and numbers only. Words that need
+/// translating — the row labels, the orientation wording, the GPS-presence
+/// phrase — belong to the UI layer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ImageMeta {
+    /// Pixel dimensions from the image *header* (never a full decode).
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// EXIF `Make` / `Model`, trimmed. Either may be empty.
+    pub camera_make: String,
+    pub camera_model: String,
+    /// EXIF `LensModel`, when present.
+    pub lens_model: String,
+    /// `DateTimeOriginal` (falling back to `DateTime`), normalized from
+    /// EXIF's `"2023:04:01 12:30:00"` to `"2023-04-01 12:30:00"`. EXIF
+    /// datetimes are naive local time — shown as-is, never converted.
+    pub taken: String,
+    /// Raw EXIF orientation code `1..=8`; `None` when absent or invalid.
+    pub orientation: Option<u16>,
+    /// Display-ready exposure fragments, e.g. `"1/250 s"`, `"f/2.8"`,
+    /// `"35 mm"`. Empty when the tag is absent.
+    pub exposure_time: String,
+    pub f_number: String,
+    pub focal_length: String,
+    pub iso: Option<u32>,
+    /// The file carries GPS coordinates. Presence only, by design: the
+    /// coordinates are never parsed into this DTO, logged, or persisted
+    /// (WIN-014's privacy treatment). A deliberate reveal can come later.
+    pub gps_present: bool,
+}
+
+impl ImageMeta {
+    /// True when nothing at all was read — the caller then skips the whole
+    /// Image section instead of rendering an empty box.
+    pub fn is_empty(&self) -> bool {
+        self.width.is_none()
+            && self.height.is_none()
+            && self.camera_make.is_empty()
+            && self.camera_model.is_empty()
+            && self.lens_model.is_empty()
+            && self.taken.is_empty()
+            && self.orientation.is_none()
+            && self.exposure_time.is_empty()
+            && self.f_number.is_empty()
+            && self.focal_length.is_empty()
+            && self.iso.is_none()
+            && !self.gps_present
+    }
+
+    /// `"4032 × 3024"`, or empty when the header yielded no dimensions.
+    pub fn dimensions_label(&self) -> String {
+        match (self.width, self.height) {
+            (Some(w), Some(h)) => format!("{w} \u{00D7} {h}"),
+            _ => String::new(),
+        }
+    }
+
+    /// `"Canon EOS R5"` — make + model, deduplicated when the model already
+    /// repeats the make (most vendors do). Empty when neither is known.
+    pub fn camera_label(&self) -> String {
+        let make = self.camera_make.trim();
+        let model = self.camera_model.trim();
+        if model.is_empty() {
+            return make.to_string();
+        }
+        if make.is_empty() || model.to_lowercase().contains(&make.to_lowercase()) {
+            return model.to_string();
+        }
+        format!("{make} {model}")
+    }
+
+    /// The ` · `-joined exposure line, e.g.
+    /// `"1/250 s · f/2.8 · ISO 100 · 35 mm"`. Segments drop out when absent.
+    pub fn exposure_label(&self) -> String {
+        [
+            self.exposure_time.clone(),
+            self.f_number.clone(),
+            self.iso.map(|n| format!("ISO {n}")).unwrap_or_default(),
+            self.focal_length.clone(),
+        ]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" \u{00B7} ")
+    }
+}
+
 /// Hz → `"44.1 kHz"` / `"48 kHz"`. One decimal, trailing `.0` stripped.
 fn format_khz(hz: u32) -> String {
     // Round to the nearest 100 Hz first so 44100 → 44.1 rather than a noisy
@@ -188,6 +281,46 @@ fn format_khz(hz: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_meta_labels() {
+        let m = ImageMeta {
+            width: Some(4032),
+            height: Some(3024),
+            camera_make: "Canon".into(),
+            camera_model: "Canon EOS R5".into(),
+            exposure_time: "1/250 s".into(),
+            f_number: "f/2.8".into(),
+            iso: Some(100),
+            focal_length: "35 mm".into(),
+            ..Default::default()
+        };
+        assert_eq!(m.dimensions_label(), "4032 \u{00D7} 3024");
+        // Model already repeats the make — no "Canon Canon EOS R5".
+        assert_eq!(m.camera_label(), "Canon EOS R5");
+        assert_eq!(
+            m.exposure_label(),
+            "1/250 s \u{00B7} f/2.8 \u{00B7} ISO 100 \u{00B7} 35 mm"
+        );
+        assert!(!m.is_empty());
+
+        let distinct = ImageMeta {
+            camera_make: "Nikon".into(),
+            camera_model: "Z 8".into(),
+            ..Default::default()
+        };
+        assert_eq!(distinct.camera_label(), "Nikon Z 8");
+
+        assert!(ImageMeta::default().is_empty());
+        assert_eq!(ImageMeta::default().dimensions_label(), "");
+        assert_eq!(ImageMeta::default().exposure_label(), "");
+        // GPS presence alone keeps the section alive.
+        assert!(!ImageMeta {
+            gps_present: true,
+            ..Default::default()
+        }
+        .is_empty());
+    }
 
     #[test]
     fn duration_formats() {

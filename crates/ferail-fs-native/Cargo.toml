@@ -23,6 +23,9 @@ blake3.workspace = true
 # memory only. Keep the codec set explicit: no network/native service and no
 # persisted thumbnails or perceptual hashes.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+# Get Info's Image section (image_meta.rs): EXIF reading. Pure Rust, parses
+# only the metadata segments; lib name is `exif`.
+kamadak-exif = "0.6"
 
 # Archive codec layer (crates/ferail-fs-native/src/archive). Pure-Rust
 # codecs, all platforms — Ferail no longer shells out to `ditto` for

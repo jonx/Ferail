@@ -24,6 +24,7 @@ mod disk_usage_scanner;
 mod dupes;
 pub mod file_ops;
 mod icons;
+pub mod image_meta;
 mod magic;
 pub mod media;
 pub mod paths;
