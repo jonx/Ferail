@@ -131,11 +131,19 @@ def png_1px() -> bytes:
 
 
 def pdf_minimal() -> bytes:
-    """A single empty A6 page with a correct xref table."""
+    """One A6 page with visible text and a correct xref table — preview
+    handlers render something recognizably non-blank."""
+    content = (
+        b"BT /F1 24 Tf 30 370 Td (WCORPUS-OPEN) Tj "
+        b"0 -36 Td (fixture PDF) Tj ET\n"
+    )
     objects = [
         b"<</Type/Catalog/Pages 2 0 R>>",
         b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
-        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 298 420]>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 298 420]"
+        b"/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>",
+        b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+        b"<</Length %d>>\nstream\n%s\nendstream" % (len(content), content),
     ]
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
