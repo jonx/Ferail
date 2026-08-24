@@ -22,6 +22,9 @@ use ferail_core::commands::{CommandId, find};
 use gpui::*;
 use gpui_component::Theme;
 
+#[cfg(feature = "screenshot-harness")]
+static DEV_QUIT_CLEANUP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 // App-scoped actions. These fire regardless of whether a Shell window
 // owns focus, so they're bound via `cx.on_action` at the App level
 // rather than under the `SHELL_CONTEXT` keymap.
@@ -180,7 +183,7 @@ pub fn run_gui(args: screenshot::Args) {
         // (which still works, but having it as an Action means
         // the menu item below can advertise the shortcut hint).
         cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
-        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &Quit, cx| quit_after_dev_cleanup(cx));
         // Phase C: process stays resident at zero windows (Finder /
         // Safari model). Quit only via Cmd+Q or the app menu. A future
         // preference may toggle this back to "quit on last window."
@@ -305,7 +308,7 @@ pub fn run_gui(args: screenshot::Args) {
         // (lives the whole app run).
         #[cfg(not(target_os = "macos"))]
         cx.on_window_closed(|cx, _| {
-            if cx.windows().is_empty() {
+            if cx.windows().is_empty() && !dev_quit_cleanup_in_progress() {
                 cx.quit();
             }
         })
@@ -324,6 +327,7 @@ pub fn run_gui(args: screenshot::Args) {
             let opts = settings_window_opts(width, height);
             cx.spawn(async move |cx| {
                 if let Err(e) = cx.open_window(opts, |window, cx| {
+                    install_dev_window_callback_cleanup(window, cx);
                     let cat = category_from_arg(if page.is_empty() {
                         None
                     } else {
@@ -372,6 +376,96 @@ pub fn open_shell_window(cx: &mut App) {
     open_shell_window_sized(cx, None, None);
 }
 
+/// Dev/test-only mitigation for gpui-component Input's strong handles in
+/// next-frame callbacks (GPUI-UPSTREAM §12). Packaged builds do not compile
+/// the leak detector; development builds drain the callbacks while the Root
+/// and its InputState entities are still alive, immediately before teardown.
+pub(crate) fn install_dev_window_callback_cleanup(window: &mut Window, cx: &mut App) {
+    #[cfg(feature = "screenshot-harness")]
+    window.on_window_should_close(cx, |window, cx| {
+        drain_dev_window_callbacks(window, cx);
+        true
+    });
+
+    #[cfg(not(feature = "screenshot-harness"))]
+    let _ = (window, cx);
+}
+
+#[cfg(feature = "screenshot-harness")]
+fn drain_dev_window_callbacks(window: &mut Window, cx: &mut App) {
+    let mut drained = 0usize;
+    // A callback may schedule one follow-up. Bound the teardown work while
+    // still draining the normal one-frame Input reset queue completely.
+    for _ in 0..4 {
+        let count = window.simulate_next_frame(cx);
+        drained += count;
+        if count == 0 {
+            break;
+        }
+    }
+    if drained > 0 {
+        crate::obs::breadcrumb(format_args!(
+            "shutdown drained-next-frame-callbacks={drained}"
+        ));
+    }
+}
+
+/// Screenshot mode calls `App::quit` with windows still open, so native close
+/// callbacks never fire. Drain each window explicitly before that path quits.
+pub(crate) fn drain_dev_callbacks_before_quit(cx: &mut App) {
+    #[cfg(feature = "screenshot-harness")]
+    for handle in cx.windows() {
+        let _ = handle.update(cx, |_root, window, cx| {
+            drain_dev_window_callbacks(window, cx);
+            // Screenshot mode bypasses the native close path. Remove the
+            // window so its current input handler and Root-held focused input
+            // are dropped before the entity-map leak assertion runs.
+            window.remove_window();
+        });
+    }
+
+    #[cfg(not(feature = "screenshot-harness"))]
+    let _ = cx;
+}
+
+/// The app-level Quit action bypasses native `should_close` callbacks. In a
+/// dev/test build, retire every Root and give GPUI one event-loop turn before
+/// its entity-map assertion. Packaged builds have no leak detector and keep
+/// the normal immediate quit path.
+fn quit_after_dev_cleanup(cx: &mut App) {
+    #[cfg(feature = "screenshot-harness")]
+    {
+        use std::sync::atomic::Ordering;
+
+        if DEV_QUIT_CLEANUP.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        drain_dev_callbacks_before_quit(cx);
+        cx.spawn(async move |cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(20))
+                .await;
+            cx.update(|cx| cx.quit());
+        })
+        .detach();
+    }
+
+    #[cfg(not(feature = "screenshot-harness"))]
+    cx.quit();
+}
+
+fn dev_quit_cleanup_in_progress() -> bool {
+    #[cfg(feature = "screenshot-harness")]
+    {
+        DEV_QUIT_CLEANUP.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(not(feature = "screenshot-harness"))]
+    {
+        false
+    }
+}
+
 fn open_shell_window_sized(
     cx: &mut App,
     size_hint: Option<(f32, f32)>,
@@ -391,6 +485,7 @@ fn open_shell_window_sized(
         // logged error beats an abort — the panic hook would have nothing more
         // to add than this line.
         if let Err(e) = cx.open_window(opts, |window, cx| {
+            install_dev_window_callback_cleanup(window, cx);
             let process = crate::process_state::process_state(cx);
             let view = cx.new(|cx| Shell::new(process, window, cx));
             if let Some(archive) = initial_archive.clone() {
@@ -402,6 +497,8 @@ fn open_shell_window_sized(
         }) {
             crate::log_error!(90, "could not open main window: {e}");
         } else {
+            #[cfg(windows)]
+            let _ = crate::platform_shell::rearm_crash_dump_handler();
             install_native_drag_operations();
         }
     })
@@ -439,11 +536,14 @@ fn open_shell_window_then(
     };
     cx.spawn(async move |cx| {
         match cx.open_window(opts, |window, cx| {
+            install_dev_window_callback_cleanup(window, cx);
             let process = crate::process_state::process_state(cx);
             let view = cx.new(|cx| Shell::new(process, window, cx));
             cx.new(|cx| gpui_component::Root::new(view, window, cx))
         }) {
             Ok(handle) => {
+                #[cfg(windows)]
+                let _ = crate::platform_shell::rearm_crash_dump_handler();
                 install_native_drag_operations();
                 let _ = handle.update(cx, |root, window, cx| {
                     let Ok(shell) = root.view().clone().downcast::<Shell>() else {

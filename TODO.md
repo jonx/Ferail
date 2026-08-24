@@ -265,6 +265,24 @@ fallback). Remaining is the UX the system explorers have and we don't:
     `symphonia`, cache them like previews, and paint bars through the existing
     preview-cache/staleness machinery. Design note in
     [MEDIA-TAGS.md](docs/features/MEDIA-TAGS.md#deferred-waveform-preview).
+- **Windows preview pane: host `IPreviewHandler` live, not as a capture.**
+  Today the pane's last resort for Office/RTF/text files is a `PrintWindow`
+  screenshot of the handler taken in the broker (`preview_handler.rs`) —
+  chrome included, and with no reliable "finished painting" signal; ShellBat
+  wrote the same code and disabled it for those reasons. Explorer's shape is
+  the right one: a native child window (`WS_POPUP | WS_EX_NOACTIVATE`,
+  parented to the app window) positioned over the pane's rect, `SetWindow`
+  once, `SetRect` on every scroll/resize, `IObjectWithSite` +
+  `IPreviewHandlerFrame` provided, activated `CLSCTX_LOCAL_SERVER` so it
+  runs in `prevhost.exe`, kill-and-retry on `RPC_E_SERVERCALL_RETRYLATER`.
+  Needs the GPUI window's HWND, a rect feed from the pane's layout, and
+  z-order/occlusion handling for popups and dialogs. PDFs are already off
+  this path (`pdf_render.rs`).
+- **Windows: decode HEIC/AVIF/RAW through WIC** where the bundled `image`
+  crate has no codec (same gap noted in VIEWER.md): `IWICImagingFactory` →
+  `CreateDecoderFromFilename` → frame → `32bppPBGRA` converter →
+  `IWICBitmapScaler`, on the pool. Requires the `Win32_Graphics_Imaging`
+  feature; ShellBat's `Entry.GetImage` is the reference shape.
 - Viewer follow-ups ([docs/features/VIEWER.md](docs/features/VIEWER.md)): swap
   the `qlmanage` shell-out for `QLThumbnailGenerator`; pinch-to-zoom; live
   playlist sync via the watcher (skip deleted entries); **audio-file playback**

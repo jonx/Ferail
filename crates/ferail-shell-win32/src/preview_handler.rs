@@ -7,6 +7,18 @@
 //! that render the document's content into a host window. This
 //! module wraps the dance so callers get an RGBA buffer back.
 //!
+//! **Preview pane only.** A preview handler is a live, interactive
+//! viewer: what it paints includes its own chrome — Word's scrollbar,
+//! Excel's grid, a toolbar — and a static capture of that reads as a
+//! screenshot of an application, not a thumbnail of a document.
+//! Explorer never uses `IPreviewHandler` for thumbnails, and neither
+//! does Ferail: only the preview pane's fetch (`fetch_preview_image`)
+//! reaches this module, and only after the shell thumbnail and the
+//! native PDF renderer (`pdf_render`) both came up empty. The proper
+//! long-term shape for the pane is Explorer's — the handler hosted
+//! *live* in a child window over the pane — which is tracked in
+//! `TODO.md`; this capture is the interim.
+//!
 //! **Containment (WIN-002).** Third-party preview handlers are
 //! arbitrary native code; the 0.6.5 tester crash was a `c0000005`
 //! inside `pdfprevhndlr.dll` hosted *in* Ferail. A thread cannot
@@ -21,17 +33,25 @@
 //! times out is session-quarantined so the caller degrades to
 //! `IShellItemImageFactory` / icon fallback instead of a crash loop.
 //!
-//! v1 limitations (broker side):
-//! - Only `IInitializeWithFile` is attempted today; future revisions
-//!   should also try `IInitializeWithStream` and `IInitializeWithItem`
-//!   for handlers that refuse the file-path init.
+//! Inside the broker the handler is activated in-process first. That is
+//! deliberate: the helper is already the disposable crash boundary, and
+//! owning the provider in that process means its six-second deadline can
+//! actually terminate the faulty code. Local-server activation is retained
+//! only as a compatibility fallback for providers that expose no in-proc
+//! class. Initialization tries
+//! `IInitializeWithFile`, then `IInitializeWithStream`, then
+//! `IInitializeWithItem` (the only one `.msg` and some others accept).
+//!
+//! Known limitations (broker side):
 //! - Background captured at a fixed white fill — preview handlers
 //!   that paint partially-transparent content end up with white
 //!   showing through.
 //! - Message-pump budget of 3.5 s for `DoPreview` to render, probed
 //!   every ~250 ms: the pump exits early once the capture shows
 //!   non-background pixels, so fast handlers don't pay the whole
-//!   budget; handlers still blank at the deadline get cut.
+//!   budget; handlers still blank at the deadline get cut. There is no
+//!   reliable "finished rendering" signal from a preview handler, so
+//!   a slow one can be captured mid-paint.
 //!
 //! Caller must run this off the UI thread (process spawn + up to six
 //! seconds of waiting).
@@ -51,10 +71,15 @@ use windows::Win32::Graphics::Gdi::{
     ReleaseDC, SelectObject, DIBSECTION, HBRUSH,
 };
 use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
-use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, CLSCTX_LOCAL_SERVER};
-use windows::Win32::UI::Shell::PropertiesSystem::IInitializeWithFile;
+use windows::Win32::System::Com::{
+    CoCreateInstance, IStream, CLSCTX_INPROC_SERVER, CLSCTX_LOCAL_SERVER, STGM_READ,
+    STGM_SHARE_DENY_WRITE,
+};
+use windows::Win32::UI::Shell::PropertiesSystem::{IInitializeWithFile, IInitializeWithStream};
 use windows::Win32::UI::Shell::{
-    AssocQueryStringW, IPreviewHandler, ASSOCF_INIT_DEFAULTTOSTAR, ASSOCSTR_SHELLEXTENSION,
+    AssocQueryStringW, IInitializeWithItem, IPreviewHandler, IShellItem,
+    SHCreateItemFromParsingName, SHCreateStreamOnFileEx, ASSOCF_INIT_DEFAULTTOSTAR,
+    ASSOCSTR_SHELLEXTENSION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, PeekMessageW,
@@ -99,7 +124,11 @@ fn strike(clsid: &str, why: &str) {
 /// plus headroom for process and handler startup — is enforced by
 /// terminating the child, so a hung provider never leaves detached
 /// work behind in this process.
-pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+pub(crate) fn try_capture(
+    path: &Path,
+    size_px: u32,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Option<(Vec<u8>, u32, u32)> {
     use std::io::Read as _;
     use std::process::{Command, Stdio};
 
@@ -143,12 +172,21 @@ pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u3
     // kill() closes the pipe. `take` caps a misbehaving child at just
     // over the largest legal frame instead of ballooning parent memory.
     let mut stdout = child.stdout.take()?;
+    let requested_frame_cap = 16u64
+        .checked_add(
+            u64::from(size_px)
+                .checked_mul(u64::from(size_px))?
+                .checked_mul(4)?,
+        )?
+        .checked_add(1)?;
     let reader = std::thread::Builder::new()
         .name("ferail-preview-broker-read".into())
         .spawn(move || {
-            let cap = 16 + (broker_proto::MAX_DIM as u64) * (broker_proto::MAX_DIM as u64) * 4 + 1;
             let mut buf = Vec::new();
-            let _ = stdout.by_ref().take(cap).read_to_end(&mut buf);
+            let _ = stdout
+                .by_ref()
+                .take(requested_frame_cap)
+                .read_to_end(&mut buf);
             buf
         });
     let reader = match reader {
@@ -162,7 +200,12 @@ pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u3
 
     const DEADLINE: Duration = Duration::from_secs(6);
     let started = Instant::now();
+    let mut canceled = false;
     let status = loop {
+        if cancel.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+            canceled = true;
+            break None;
+        }
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) if started.elapsed() < DEADLINE => {
@@ -171,8 +214,8 @@ pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u3
             _ => break None,
         }
     };
-    let timed_out = status.is_none();
-    if timed_out {
+    let timed_out = status.is_none() && !canceled;
+    if status.is_none() {
         let _ = child.kill();
         let _ = child.wait();
     }
@@ -200,6 +243,7 @@ pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u3
         Some(broker_proto::EXIT_USAGE) => None,
         // Timeout, crash, or a Windows exception code (0xC0000005 &
         // friends): the containment case.
+        _ if canceled => None,
         _ => {
             strike(&clsid, if timed_out { "timeout" } else { "crash" });
             None
@@ -218,6 +262,12 @@ pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u3
 /// filter), `hang` never returns.
 pub fn preview_broker_main(args: &[String]) -> i32 {
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+
+    // The broker's stdout is an inherited pipe back to the parent. Clear its
+    // inherit bit before loading arbitrary in-proc provider code: otherwise a
+    // provider-spawned descendant could keep the write end alive after this
+    // broker is killed and strand the parent's reader join forever.
+    make_stdout_non_inheritable();
 
     match std::env::var("FERAIL_PREVIEW_BROKER_TEST").as_deref() {
         Ok("crash") => std::process::abort(),
@@ -282,29 +332,60 @@ pub fn preview_broker_main(args: &[String]) -> i32 {
     }
 }
 
+fn make_stdout_non_inheritable() {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows::Win32::Foundation::{
+        SetHandleInformation, HANDLE, HANDLE_FLAGS, HANDLE_FLAG_INHERIT,
+    };
+
+    let stdout = std::io::stdout();
+    let handle = HANDLE(stdout.as_raw_handle());
+    // Best effort: failure only loses the extra inheritance hardening. The
+    // parent still owns the six-second process deadline.
+    let _ = unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) };
+}
+
 unsafe fn try_capture_inner(
     clsid: &GUID,
     path: &Path,
     size_px: u32,
 ) -> Option<(Vec<u8>, u32, u32)> {
-    // Word/Excel/PowerPoint preview handlers run out-of-proc in
-    // prevhost.exe; PDF previewers vary. Try in-proc first (fast),
-    // then local server.
+    // In-proc first: this process is the disposable containment boundary.
+    // Loading the provider here gives the parent deterministic ownership —
+    // killing the broker also kills the hung/crashed DLL. Asking COM for a
+    // local server first can move the fault into SCM-owned prevhost.exe, whose
+    // lifetime the parent cannot bound. Retain LOCAL_SERVER only for unusual
+    // providers that expose no in-proc class.
     let handler: IPreviewHandler = match CoCreateInstance::<_, IPreviewHandler>(
         clsid,
         None,
-        CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER,
+        CLSCTX_INPROC_SERVER,
     ) {
-        Ok(h) => h,
-        Err(e) => {
+        Ok(h) => {
             if debug() {
-                eprintln!("CoCreateInstance failed: {e:?}");
+                eprintln!("preview_handler: activated in disposable broker");
             }
-            return None;
+            h
+        }
+        Err(inproc_err) => {
+            if debug() {
+                eprintln!(
+                    "preview_handler: in-proc activation failed: {inproc_err:?} — trying local server"
+                );
+            }
+            match CoCreateInstance::<_, IPreviewHandler>(clsid, None, CLSCTX_LOCAL_SERVER) {
+                Ok(h) => h,
+                Err(e) => {
+                    if debug() {
+                        eprintln!("CoCreateInstance failed: {e:?}");
+                    }
+                    return None;
+                }
+            }
         }
     };
 
-    if let Err(e) = init_with_file(&handler, path) {
+    if let Err(e) = init_handler(&handler, path) {
         if debug() {
             eprintln!("preview_handler: init failed: {e:?}");
         }
@@ -477,14 +558,60 @@ fn parse_clsid(s: &str) -> Option<GUID> {
     std::panic::catch_unwind(|| GUID::from(s)).ok()
 }
 
-unsafe fn init_with_file(handler: &IPreviewHandler, path: &Path) -> windows::core::Result<()> {
-    let init: IInitializeWithFile = handler.cast()?;
+/// Hand the file to the handler through whichever initialization
+/// interface it implements: `IInitializeWithFile` (the common one, and
+/// the one this pipeline has always shipped with), then
+/// `IInitializeWithStream` (Microsoft's recommended one; a few handlers
+/// accept nothing else), then `IInitializeWithItem` (`.msg` and other
+/// item-bound previewers). Each stage is only attempted when the
+/// handler exposes the interface; the last error wins.
+unsafe fn init_handler(handler: &IPreviewHandler, path: &Path) -> windows::core::Result<()> {
     let wide: Vec<u16> = path
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
-    init.Initialize(PCWSTR::from_raw(wide.as_ptr()), 0)
+    let pcw = PCWSTR::from_raw(wide.as_ptr());
+
+    let mut last_err = windows::core::Error::from(windows::Win32::Foundation::E_NOINTERFACE);
+    if let Ok(init) = handler.cast::<IInitializeWithFile>() {
+        match init.Initialize(pcw, STGM_READ.0) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if debug() {
+                    eprintln!("preview_handler: IInitializeWithFile failed: {e:?}");
+                }
+                last_err = e;
+            }
+        }
+    }
+    if let Ok(init) = handler.cast::<IInitializeWithStream>() {
+        match SHCreateStreamOnFileEx(pcw, (STGM_READ | STGM_SHARE_DENY_WRITE).0, 0, false, None)
+            .and_then(|stream: IStream| init.Initialize(&stream, STGM_READ.0))
+        {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if debug() {
+                    eprintln!("preview_handler: IInitializeWithStream failed: {e:?}");
+                }
+                last_err = e;
+            }
+        }
+    }
+    if let Ok(init) = handler.cast::<IInitializeWithItem>() {
+        match SHCreateItemFromParsingName::<_, _, IShellItem>(pcw, None)
+            .and_then(|item| init.Initialize(&item, STGM_READ.0))
+        {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if debug() {
+                    eprintln!("preview_handler: IInitializeWithItem failed: {e:?}");
+                }
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
 }
 
 unsafe fn create_host_window(size_px: u32) -> Option<HWND> {

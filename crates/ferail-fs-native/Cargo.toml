@@ -70,9 +70,18 @@ delharc = { version = "0.6", default-features = false, features = ["lh1", "lz"] 
 lofty.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# The `#[implement]` macro (IFileSystemBindData for the simple-parse retry
+# in icons.rs) expands to `::windows_core::` paths, so windows-core must be
+# a direct dep. Same major as `windows` below.
+windows-core = "0.58"
 # Win32 bindings for drive enumeration + volume info. Same version as
 # ferail-shell-win32 to keep the dep graph tight.
 windows = { version = "0.58", features = [
+    # implementing the IFileSystemBindData COM object (icons.rs simple-parse
+    # retry for namespace junctions like C:\Windows\Fonts)
+    "implement",
+    # IImageList for the .lnk shortcut-arrow overlay (icons.rs)
+    "Win32_UI_Controls",
     "Win32_Foundation",
     # GetLogicalDrives, GetDriveTypeW, GetVolumeInformationW, GetDiskFreeSpaceExW
     "Win32_Storage_FileSystem",

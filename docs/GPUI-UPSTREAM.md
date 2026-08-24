@@ -494,6 +494,17 @@ Dev and `cargo test` keep the leak detector; users never see the assert, and
 fallback. The real strong-capture leak remains upstream; our own subscription
 cycles of the same class were fixed separately (`00aefe9`).
 
+Ferail also drains the bounded next-frame callback queue while each dev/test
+window is still alive. Screenshot mode, which calls `App::quit` without a
+native close, additionally removes its windows before quitting so the Root and
+current input handler are released before gpui checks the entity map. The exact
+`--screenshot --properties` repro first drained 76 callbacks but still leaked
+the Root-held `InputState`; with the explicit window removal it exits 0. This
+makes the harness deterministic, but does not remove gpui-component's strong
+captures during normal rendering. Ferail's app-level Quit action uses this
+same dev/test cleanup and waits one event-loop turn; it previously called
+`cx.quit()` directly and bypassed every window's `should_close` hook.
+
 **What upstream could do:** capture `WeakEntity<InputState>` in the
 `on_next_frame` reset closure and in `Root.focused_input`, or drain
 `next_frame_callbacks` on window teardown; and consider splitting

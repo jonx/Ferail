@@ -44,6 +44,11 @@
 .PARAMETER SkipBuild
     Package whatever is already in target/release (for iterating on packaging).
 
+.PARAMETER AllowDirty
+    Permit packaging from a modified working tree. Off by default because a
+    commit id cannot reproduce or symbolize an artifact containing uncommitted
+    source. Intended only for local smoke packages.
+
 .PARAMETER Features
     Cargo features for the build. Defaults to "mpv": the mpv video provider
     is a runtime dlopen (no build-time link, no bundled DLL), so the package
@@ -62,6 +67,7 @@ param(
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
     [switch]$NoInstaller,
     [switch]$SkipBuild,
+    [switch]$AllowDirty,
     [string]$Features = 'mpv'
 )
 
@@ -74,6 +80,21 @@ function Write-Warn($msg) { Write-Host "warning: $msg" -ForegroundColor Yellow }
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $StageRoot = Join-Path $RepoRoot 'target\package'
 $StageDir = Join-Path $StageRoot 'Ferail'
+
+# Refuse unreproducible artifacts before spending time building. `target/` is
+# intentionally ignored: it contains this script's own outputs.
+$statusOutput = @(& git -C $RepoRoot status --porcelain --untracked-files=normal)
+if ($LASTEXITCODE -ne 0) {
+    throw "could not inspect Git working tree ($LASTEXITCODE)"
+}
+$dirtyFiles = @($statusOutput | Where-Object { $_ -and ($_ -notmatch '^\?\? target/') })
+$dirty = $dirtyFiles.Count -gt 0
+if ($dirty -and -not $AllowDirty) {
+    throw "working tree is DIRTY ($($dirtyFiles.Count) path(s)); commit/stash it or pass -AllowDirty for a local-only package"
+}
+if ($dirty) {
+    Write-Warn "working tree is DIRTY ($($dirtyFiles.Count) path(s)) — artifact is local-only and not reproducible from its commit"
+}
 
 # ---------------------------------------------------------------------------
 # Version — single source of truth is [workspace.package] in Cargo.toml.
@@ -105,14 +126,22 @@ if (-not $SkipBuild) {
     # and /MD objects, which is not a valid portability fix.
     $hadRustFlags = Test-Path Env:RUSTFLAGS
     $previousRustFlags = $env:RUSTFLAGS
+    $hadReleaseDebug = Test-Path Env:CARGO_PROFILE_RELEASE_DEBUG
+    $previousReleaseDebug = $env:CARGO_PROFILE_RELEASE_DEBUG
     $env:RUSTFLAGS = (@($previousRustFlags, '-C target-feature=+crt-static') |
         Where-Object { $_ }) -join ' '
+    # Public symbols alone identify functions but not source lines. Keep line
+    # tables in the shipped PDBs so WIN-001 minidumps are actionable without
+    # enabling full debug info or changing release optimization.
+    $env:CARGO_PROFILE_RELEASE_DEBUG = 'line-tables-only'
     try {
         & cargo @cargoArgs
         if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
     } finally {
         if ($hadRustFlags) { $env:RUSTFLAGS = $previousRustFlags }
         else { Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue }
+        if ($hadReleaseDebug) { $env:CARGO_PROFILE_RELEASE_DEBUG = $previousReleaseDebug }
+        else { Remove-Item Env:CARGO_PROFILE_RELEASE_DEBUG -ErrorAction SilentlyContinue }
     }
 } else {
     Write-Step 'Skipping build (-SkipBuild)'
@@ -319,15 +348,6 @@ Copy-Item $CliPdbSrc (Join-Path $SymbolsDir 'ferail.pdb')
 
 $commit = (& git -C $RepoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'could not determine Git revision for symbol manifest' }
-# A build from a dirty tree is not reproducible from `commit` alone; say so
-# in the manifest (and loudly) so tester dumps are never matched against
-# sources that were never committed.
-$dirtyFiles = @(& git -C $RepoRoot status --porcelain --untracked-files=normal |
-    Where-Object { $_ -and ($_ -notmatch '^\?\? target/') })
-$dirty = $dirtyFiles.Count -gt 0
-if ($dirty) {
-    Write-Warn "working tree is DIRTY ($($dirtyFiles.Count) path(s)) — artifacts do not correspond to $commit"
-}
 $symbolManifest = [ordered]@{
     product = 'Ferail'
     version = $Version
@@ -335,6 +355,7 @@ $symbolManifest = [ordered]@{
     commit = $commit
     dirty = $dirty
     crt = 'static'
+    release_debug = $(if ($SkipBuild) { 'prebuilt-unknown' } else { 'line-tables-only' })
     created_utc = (Get-Date).ToUniversalTime().ToString('o')
     binaries = @(
         [ordered]@{

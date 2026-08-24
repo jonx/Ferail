@@ -91,6 +91,20 @@ pub fn install_crash_dump_handler(
     Some(dump_path)
 }
 
+/// Re-arm Ferail's top-level filter after window/GPU initialization. Native
+/// DLLs are allowed to replace `SetUnhandledExceptionFilter`; reinstalling at
+/// a known post-load boundary keeps the GUI crash path covered. No-op before
+/// [`install_crash_dump_handler`].
+pub fn rearm_crash_dump_handler() -> bool {
+    if TARGETS.get().is_none() {
+        return false;
+    }
+    unsafe {
+        SetUnhandledExceptionFilter(Some(filter));
+    }
+    true
+}
+
 unsafe extern "system" fn filter(info: *const EXCEPTION_POINTERS) -> i32 {
     let Some(t) = TARGETS.get() else {
         return EXCEPTION_CONTINUE_SEARCH;
@@ -154,6 +168,20 @@ unsafe extern "system" fn filter(info: *const EXCEPTION_POINTERS) -> i32 {
 
 fn append_sidecar(t: &Targets, written: bool, code: u32, address: usize) {
     use std::io::Write as _;
+    let line = format!(
+        "native exception 0x{code:08X} at 0x{address:016X} in {} (pid {}); minidump {}: {}",
+        t.role,
+        std::process::id(),
+        if written { "written" } else { "FAILED" },
+        t.dump_path.display(),
+    );
+    // A native fault killed the process with nothing on the console; when
+    // launched from a terminal, this one line says what happened and where
+    // the dump is. Quiet mode (the preview broker, one process per file)
+    // stays silent. Best-effort, like the sidecar itself.
+    if !t.quiet {
+        let _ = writeln!(std::io::stderr(), "{line}");
+    }
     let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -161,12 +189,5 @@ fn append_sidecar(t: &Targets, written: bool, code: u32, address: usize) {
     else {
         return;
     };
-    let _ = writeln!(
-        file,
-        "native exception 0x{code:08X} at 0x{address:016X} in {} (pid {}); minidump {}: {}",
-        t.role,
-        std::process::id(),
-        if written { "written" } else { "FAILED" },
-        t.dump_path.display(),
-    );
+    let _ = writeln!(file, "{line}");
 }

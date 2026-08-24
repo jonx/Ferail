@@ -174,6 +174,19 @@ impl ThumbnailCache {
         self.in_flight.insert((path, size_px));
     }
 
+    /// Release reservations for work a superseded viewport never started.
+    /// Cancellation is not a negative thumbnail result: revisiting the path
+    /// must be allowed to request it again.
+    pub fn cancel_in_flight<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'a PathBuf>,
+        size_px: u32,
+    ) {
+        for path in paths {
+            self.in_flight.remove(&(path.clone(), size_px));
+        }
+    }
+
     /// Record the outcome of a background fetch: `Some((rgba, w, h))`
     /// becomes a ready `RenderImage`, `None` caches the miss. Clears
     /// the in-flight marker and evicts the oldest entry past capacity.
@@ -232,5 +245,15 @@ mod tests {
         c.insert(p.to_path_buf(), 256, None);
         assert!(c.get(p, 256).is_none());
         assert!(c.get_best(p, 256).is_some());
+    }
+
+    #[test]
+    fn cancelled_reservation_is_retryable_and_not_negative_cached() {
+        let mut c = ThumbnailCache::new();
+        let p = PathBuf::from("/x/cancelled.png");
+        c.mark_in_flight(p.clone(), 128);
+        assert!(!c.needs_fetch(&p, 128));
+        c.cancel_in_flight([&p], 128);
+        assert!(c.needs_fetch(&p, 128));
     }
 }

@@ -7,9 +7,9 @@
 //! Linux-only (uses the `image` crate that backs the Linux icon rasterizer);
 //! a no-op on other hosts so the workspace `--examples` build stays green.
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn main() {
-    println!("icon_dump is Linux-only (needs the freedesktop icon theme).");
+    println!("icon_dump needs a platform icon backend (Linux or Windows host).");
 }
 
 #[cfg(target_os = "linux")]
@@ -53,5 +53,44 @@ fn dump(label: &str, path: &std::path::Path, out: &std::path::Path) {
             );
         }
         None => println!("{label:6} -> None (no icon resolved)"),
+    }
+}
+
+/// Windows arm: dump the shell icon for each explicitly-given path, so
+/// WIN-011 cases (C:\Windows\Fonts, .lnk overlays) can be eyeballed
+/// without launching the GUI.
+///
+/// ```sh
+/// cargo run -p ferail-fs-native --example icon_dump -- <out-dir> <path>...
+/// ```
+#[cfg(windows)]
+fn main() {
+    let mut args = std::env::args().skip(1);
+    let Some(out) = args.next() else {
+        eprintln!("usage: icon_dump <out-dir> <path>...");
+        std::process::exit(2);
+    };
+    let out = std::path::PathBuf::from(out);
+    std::fs::create_dir_all(&out).unwrap();
+    let mut any = false;
+    for (i, p) in args.enumerate() {
+        any = true;
+        let path = std::path::PathBuf::from(&p);
+        let stem = path
+            .file_name()
+            .map(|n| n.to_string_lossy().replace('.', "-"))
+            .unwrap_or_else(|| "unnamed".into());
+        match ferail_fs_native::fetch_icon_rgba(&path, 128) {
+            Some((rgba, w, h)) => {
+                let png = out.join(format!("icon-{i:02}-{stem}.png"));
+                image::save_buffer(&png, &rgba, w, h, image::ColorType::Rgba8).unwrap();
+                println!("{p} -> {} ({w}x{h})", png.display());
+            }
+            None => println!("{p} -> None (no icon resolved)"),
+        }
+    }
+    if !any {
+        eprintln!("usage: icon_dump <out-dir> <path>...");
+        std::process::exit(2);
     }
 }

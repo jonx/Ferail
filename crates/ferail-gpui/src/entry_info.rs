@@ -110,6 +110,7 @@ pub fn open(
         ..crate::base_window_options()
     };
     let _ = cx.open_window(opts, move |window, cx| {
+        crate::boot::install_dev_window_callback_cleanup(window, cx);
         let view = cx
             .new(|cx| EntryInfoView::new(path, name, target, known_size, shell, Some(cascade), cx));
         cx.new(|cx| Root::new(view, window, cx))

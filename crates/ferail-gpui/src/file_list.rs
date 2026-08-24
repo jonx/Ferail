@@ -471,6 +471,13 @@ pub struct FileListDelegate {
     /// Done; Flat enables it immediately because its scan streams indefinitely.
     detail_ready: bool,
     detail_force: bool,
+    /// Thumbnail admission mirrors detail admission: one active viewport per
+    /// surface and one latest pending viewport. This prevents wheel/key scroll
+    /// bursts from spawning a train of stale batches on the executor.
+    thumbnail_in_flight: bool,
+    thumbnail_active: Option<(Range<usize>, u32)>,
+    thumbnail_pending: Option<(Range<usize>, u32)>,
+    thumbnail_cancel: Option<Arc<AtomicBool>>,
     /// Shared icon cache. Lookup-or-fetch via NSWorkspace; subsequent
     /// renders for the same kind are a HashMap hit. Wrapped in
     /// Rc<RefCell> so render_td's `&mut self` can borrow without
@@ -1119,6 +1126,10 @@ impl FileListDelegate {
             detail_revision: 0,
             detail_ready: false,
             detail_force: false,
+            thumbnail_in_flight: false,
+            thumbnail_active: None,
+            thumbnail_pending: None,
+            thumbnail_cancel: None,
             icons,
             thumbnails,
             tasks,
@@ -1323,6 +1334,7 @@ impl FileListDelegate {
             return;
         }
         self.detail_revision = self.detail_revision.wrapping_add(1);
+        self.cancel_thumbnail_warm();
         let (col, asc) = resolve_ant_sort(col, asc, !self.heats.is_empty());
         // Row order changes: the drag snapshot's visible-order paths
         // are stale (totals unchanged by a re-order, but cheap to
@@ -1432,6 +1444,7 @@ impl FileListDelegate {
             cancel.store(true, Ordering::Relaxed);
         }
         self.detail_revision = self.detail_revision.wrapping_add(1);
+        self.cancel_thumbnail_warm();
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
@@ -1469,6 +1482,7 @@ impl FileListDelegate {
             cancel.store(true, Ordering::Relaxed);
         }
         self.detail_revision = self.detail_revision.wrapping_add(1);
+        self.cancel_thumbnail_warm();
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
@@ -1630,6 +1644,20 @@ impl FileListDelegate {
         self.detail_force = false;
     }
 
+    fn cancel_thumbnail_warm(&mut self) {
+        if let Some(cancel) = &self.thumbnail_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        // Do not advertise the slot as free until the worker acknowledges the
+        // token and retires itself. A shell provider call already in progress
+        // cannot be interrupted here; clearing `thumbnail_in_flight` early
+        // would let the replacement viewport overlap it. Forget the active
+        // range so even an identical row range after a sort/reload is queued
+        // against the new entry order.
+        self.thumbnail_active = None;
+        self.thumbnail_pending = None;
+    }
+
     /// Hydrate only the visible part of an ordinary or Flat surface. This
     /// keeps Format, Description, and quarantine badges fully functional while
     /// bounding file opens, memory, and UI apply work to the viewport.
@@ -1753,6 +1781,7 @@ impl FileListDelegate {
         }
         self.invalidate_drag_snapshot();
         self.detail_revision = self.detail_revision.wrapping_add(1);
+        self.cancel_thumbnail_warm();
         self.flat_filter_text.clear();
         self.flat_filter_text.push_str(text);
         let mut all = std::mem::take(&mut self.entries);
@@ -1789,6 +1818,7 @@ impl FileListDelegate {
             cancel.store(true, Ordering::Relaxed);
         }
         self.detail_revision = self.detail_revision.wrapping_add(1);
+        self.cancel_thumbnail_warm();
         self.detail_in_flight = false;
         self.detail_pending = None;
         self.detail_ready = false;
@@ -1979,6 +2009,25 @@ impl FileListDelegate {
         if !show_thumbnails(cx) {
             return;
         }
+        let request = (visible_range.clone(), size_px);
+        if self.thumbnail_in_flight {
+            if self.thumbnail_active.as_ref() == Some(&request)
+                || self.thumbnail_pending.as_ref() == Some(&request)
+            {
+                return;
+            }
+            // Constant-space/latest-wins: keep only the newest viewport and
+            // ask the active loop to stop between provider calls.
+            self.thumbnail_pending = Some(request);
+            if let Some(cancel) = &self.thumbnail_cancel {
+                cancel.store(true, Ordering::Relaxed);
+            }
+            crate::obs::breadcrumb(format_args!(
+                "thumbnail viewport superseded size={size_px} rows={}",
+                visible_range.end.saturating_sub(visible_range.start)
+            ));
+            return;
+        }
         // A little overscan so a nudge of the wheel doesn't expose a
         // blank slot before its fetch is even scheduled.
         const OVERSCAN: usize = 8;
@@ -2015,6 +2064,15 @@ impl FileListDelegate {
                 cache.mark_in_flight(path.clone(), size_px);
             }
         }
+        let reserved = todo.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.thumbnail_in_flight = true;
+        self.thumbnail_active = Some(request);
+        self.thumbnail_cancel = Some(cancel.clone());
+        crate::obs::breadcrumb(format_args!(
+            "thumbnail batch start size={size_px} requests={}",
+            todo.len()
+        ));
 
         // Ambient task so a slow batch shows in the status bar / panel.
         // Sub-perceptual batches finish inside SURFACE_DELAY and never
@@ -2033,6 +2091,9 @@ impl FileListDelegate {
         let tasks = self.tasks.clone();
         cx.spawn(async move |table, cx| {
             for path in todo {
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
                 // Quick Look runs on a worker thread; only Send data
                 // crosses the boundary (path in, RGBA bytes out). The
                 // `RenderImage` is built back on the UI thread below.
@@ -2060,17 +2121,43 @@ impl FileListDelegate {
                     break;
                 }
             }
-            // Always retire the task. Borrow the shared registry directly
-            // so a gone table entity still drops the row; notify through
-            // the entity when it is still alive.
-            if table
-                .update(cx, |_table, cx| {
-                    tasks.borrow_mut().end(task_id);
+            // Release every reservation not retired by `insert`. Cancellation
+            // is retryable, never a negative-cache result.
+            thumbnails
+                .borrow_mut()
+                .cancel_in_flight(reserved.iter(), size_px);
+
+            let next = table
+                .update(cx, |state, cx| {
+                    let delegate = state.delegate_mut();
+                    let owns_worker = delegate
+                        .thumbnail_cancel
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &cancel));
+                    if !owns_worker {
+                        return None;
+                    }
+                    delegate.thumbnail_cancel = None;
+                    delegate.thumbnail_in_flight = false;
+                    delegate.thumbnail_active = None;
+                    let next = delegate.thumbnail_pending.take();
                     cx.notify();
+                    next
                 })
-                .is_err()
-            {
-                tasks.borrow_mut().end(task_id);
+                .ok()
+                .flatten();
+            tasks.borrow_mut().end(task_id);
+            crate::obs::breadcrumb(format_args!(
+                "thumbnail batch complete canceled={} next={}",
+                cancel.load(Ordering::Relaxed),
+                next.is_some()
+            ));
+            if let Some((range, next_size)) = next {
+                let _ = table.update(cx, |state, cx| {
+                    state
+                        .delegate_mut()
+                        .warm_thumbnails_sized(range, next_size, cx);
+                });
             }
         })
         .detach();

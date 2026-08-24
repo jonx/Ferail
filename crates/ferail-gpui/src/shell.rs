@@ -1374,6 +1374,7 @@ pub fn open_window_at(cx: &mut App, path: PathBuf) {
         ..crate::shell_window_options()
     };
     let _ = cx.open_window(opts, |window, cx| {
+        crate::boot::install_dev_window_callback_cleanup(window, cx);
         let process = crate::process_state::process_state(cx);
         let view = cx.new(|cx| Shell::new(process, window, cx));
         view.update(cx, |shell, cx| {
@@ -1400,6 +1401,19 @@ pub fn reveal_path_in_app(cx: &mut App, path: PathBuf) {
         // A filesystem root (or a bare relative leaf): open it directly.
         _ => (path.clone(), Vec::new()),
     };
+    open_in_app(cx, dir, names);
+}
+
+/// Open the folder `dir` itself in a Ferail tab — the Settings window's
+/// Bug-reports folder buttons. Same window policy as
+/// [`reveal_path_in_app`] (new tab in a live Shell window, else a fresh
+/// window), but lands *inside* the folder instead of selecting it in
+/// its parent.
+pub fn open_dir_in_app(cx: &mut App, dir: PathBuf) {
+    open_in_app(cx, dir, Vec::new());
+}
+
+fn open_in_app(cx: &mut App, dir: PathBuf, names: Vec<String>) {
     // Prefer an existing Shell window: new tab there, then raise it. The
     // windows list also holds Settings/viewer Roots — the downcast skips
     // them.
@@ -1430,6 +1444,7 @@ pub fn reveal_path_in_app(cx: &mut App, path: PathBuf) {
         ..crate::shell_window_options()
     };
     let _ = cx.open_window(opts, |window, cx| {
+        crate::boot::install_dev_window_callback_cleanup(window, cx);
         let process = crate::process_state::process_state(cx);
         let view = cx.new(|cx| Shell::new(process, window, cx));
         view.update(cx, |shell, cx| {
@@ -4055,6 +4070,10 @@ impl Shell {
         let generation = tab.load_generation;
         let filter = tab.filter_text.clone();
         let show_hidden = self.show_hidden;
+        crate::obs::breadcrumb(format_args!(
+            "navigation load generation={generation} reload={reload_in_place} filter={} hidden={show_hidden}",
+            !filter.is_empty()
+        ));
 
         if let Some(cancel) = self.tabs[tab_index].load_cancel.take() {
             cancel.store(true, Ordering::Relaxed);

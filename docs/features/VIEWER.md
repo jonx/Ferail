@@ -448,7 +448,7 @@ Rules:
 
 ## Windows parity worklist (deferred, tagged above)
 
-- Thumbnail/poster fallback: `IShellItemImageFactory` replaces Quick Look.
+- Thumbnail/poster fallback: `IShellItemImageFactory` replaces Quick Look; PDFs render page 1 through `Windows.Data.Pdf` (`pdf_render.rs`) at the viewer edge, so a PDF opens as a real page, not an icon.
 - Key conventions: Ctrl+Y / Ctrl+= / Ctrl+0 / F11; Esc identical.
 - Fullscreen: gpui `toggle_fullscreen` should work via gpui_windows —
   verify on the Windows box (same machine that owns the `[patch]` decision

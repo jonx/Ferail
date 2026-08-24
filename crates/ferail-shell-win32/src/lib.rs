@@ -23,6 +23,11 @@
 #[cfg(windows)]
 mod preview_handler;
 
+// First-page PDF rendering via `Windows.Data.Pdf` — no window, no
+// third-party code, so it needs neither a pump nor the broker.
+#[cfg(windows)]
+mod pdf_render;
+
 // Preview-broker wire format + provider quarantine. Pure logic,
 // compiled (and unit-tested) on every host; the Windows-only process
 // plumbing lives in `preview_handler`.
@@ -42,7 +47,7 @@ pub use preview_handler::preview_broker_main;
 #[cfg(windows)]
 mod crash_dump;
 #[cfg(windows)]
-pub use crash_dump::install_crash_dump_handler;
+pub use crash_dump::{install_crash_dump_handler, rearm_crash_dump_handler};
 
 // Headless-screenshot capture via PrintWindow. macOS goes through
 // gpui_macos's MetalRenderer; gpui_windows has no equivalent so
@@ -75,29 +80,57 @@ mod video_mf;
 /// outward shell boundary in this crate routes through this helper.
 ///
 /// Pure string logic (no I/O), compiled on every host so the unit tests
-/// below run on non-Windows dev machines too. Paths that are not valid
-/// UTF-8 (unpaired surrogates) are returned unchanged rather than
-/// lossily rewritten.
+/// below run on non-Windows dev machines too. On Windows the prefix is
+/// rewritten directly in UTF-16, preserving unpaired surrogates exactly.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn strip_verbatim(path: &std::path::Path) -> std::path::PathBuf {
-    let Some(s) = path.to_str() else {
-        return path.to_path_buf();
-    };
-    let Some(rest) = s.strip_prefix(r"\\?\") else {
-        return path.to_path_buf();
-    };
-    // `\\?\UNC\server\share\…` → `\\server\share\…` (prefix is
-    // case-insensitive, matching the kernel's own parsing).
-    let b = rest.as_bytes();
-    if b.len() > 4
-        && b[0].eq_ignore_ascii_case(&b'U')
-        && b[1].eq_ignore_ascii_case(&b'N')
-        && b[2].eq_ignore_ascii_case(&b'C')
-        && b[3] == b'\\'
+    #[cfg(windows)]
     {
-        return std::path::PathBuf::from(format!(r"\\{}", &rest[4..]));
+        use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+
+        let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+        const PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+        if !wide.starts_with(&PREFIX) {
+            return path.to_path_buf();
+        }
+        let rest = &wide[PREFIX.len()..];
+        let is_unc = rest.len() > 4
+            && matches!(rest[0], x if x == b'U' as u16 || x == b'u' as u16)
+            && matches!(rest[1], x if x == b'N' as u16 || x == b'n' as u16)
+            && matches!(rest[2], x if x == b'C' as u16 || x == b'c' as u16)
+            && rest[3] == b'\\' as u16;
+        let rewritten = if is_unc {
+            let mut out = Vec::with_capacity(rest.len().saturating_sub(2));
+            out.extend_from_slice(&[b'\\' as u16, b'\\' as u16]);
+            out.extend_from_slice(&rest[4..]);
+            out
+        } else {
+            rest.to_vec()
+        };
+        std::path::PathBuf::from(std::ffi::OsString::from_wide(&rewritten))
     }
-    std::path::PathBuf::from(rest)
+
+    #[cfg(not(windows))]
+    {
+        let Some(s) = path.to_str() else {
+            return path.to_path_buf();
+        };
+        let Some(rest) = s.strip_prefix(r"\\?\") else {
+            return path.to_path_buf();
+        };
+        // `\\?\UNC\server\share\…` → `\\server\share\…` (prefix is
+        // case-insensitive, matching the kernel's own parsing).
+        let b = rest.as_bytes();
+        if b.len() > 4
+            && b[0].eq_ignore_ascii_case(&b'U')
+            && b[1].eq_ignore_ascii_case(&b'N')
+            && b[2].eq_ignore_ascii_case(&b'C')
+            && b[3] == b'\\'
+        {
+            return std::path::PathBuf::from(format!(r"\\{}", &rest[4..]));
+        }
+        std::path::PathBuf::from(rest)
+    }
 }
 
 #[cfg(test)]
@@ -136,6 +169,49 @@ mod strip_verbatim_tests {
     fn non_verbatim_unc_unchanged() {
         let p = Path::new(r"\\server\share\dir");
         assert_eq!(strip_verbatim(p), p);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_prefix_is_stripped_without_losing_unpaired_utf16() {
+        use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+
+        let raw = [
+            b'\\' as u16,
+            b'\\' as u16,
+            b'?' as u16,
+            b'\\' as u16,
+            b'C' as u16,
+            b':' as u16,
+            b'\\' as u16,
+            0xD800,
+        ];
+        let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&raw));
+        let stripped: Vec<u16> = strip_verbatim(&path).as_os_str().encode_wide().collect();
+        assert_eq!(stripped, &raw[4..]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn only_ascii_unc_marker_is_rewritten() {
+        use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+
+        // U+0155 has the same low byte as ASCII 'U'. Truncating UTF-16 before
+        // comparing would misclassify this as the special UNC marker.
+        let raw = [
+            b'\\' as u16,
+            b'\\' as u16,
+            b'?' as u16,
+            b'\\' as u16,
+            0x0155,
+            b'N' as u16,
+            b'C' as u16,
+            b'\\' as u16,
+            b'x' as u16,
+        ];
+        let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&raw));
+        let stripped: Vec<u16> = strip_verbatim(&path).as_os_str().encode_wide().collect();
+        assert_eq!(stripped, &raw[4..]);
     }
 }
 
@@ -521,7 +597,29 @@ pub fn app_bundle_path() -> Option<String> {
 /// opened Documents for some valid names containing spaces / `#` / `!`.
 #[cfg(windows)]
 pub fn reveal_in_finder(path: &std::path::Path) {
-    let _ = reveal_in_explorer(path);
+    if let Err(reveal_error) = reveal_in_explorer(path) {
+        // A target can disappear between enumeration and the click. Explorer's
+        // selection API then fails; open the nearest existing parent so the
+        // action still takes the user somewhere truthful and leave a precise
+        // diagnostic instead of silently doing nothing.
+        let mut fallback = path.parent();
+        while let Some(candidate) = fallback {
+            if candidate.exists() {
+                if let Err(open_error) = open_with_default(candidate) {
+                    eprintln!(
+                        "reveal in Explorer failed ({reveal_error}); closest-parent fallback failed ({open_error})"
+                    );
+                } else {
+                    eprintln!(
+                        "reveal in Explorer failed ({reveal_error}); opened closest existing parent"
+                    );
+                }
+                return;
+            }
+            fallback = candidate.parent();
+        }
+        eprintln!("reveal in Explorer failed with no existing parent: {reveal_error}");
+    }
 }
 
 #[cfg(not(windows))]
@@ -1170,16 +1268,36 @@ pub fn show_quick_look(_paths: &[&std::path::Path]) -> Result<(), String> {
     Err("show_quick_look: not available on Windows".into())
 }
 
+/// Which surface is asking for pixels — decides how far down the
+/// fallback chain [`fetch_shell_image`] may go.
+#[cfg(windows)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageTier {
+    /// Grid cells, list rows, the viewer: what Explorer would show as a
+    /// thumbnail. Never a screenshot of a preview handler.
+    Thumbnail,
+    /// The preview pane: a document rendering is worth more than a type
+    /// icon there, so the `IPreviewHandler` capture is allowed as a last
+    /// resort (brokered, see `preview_handler`).
+    Preview,
+    /// The large file-type image (`SIIGBF_RESIZETOFIT` with no
+    /// `THUMBNAILONLY`): the caller's very last tier, requested only
+    /// after its own decoders (bundled raster, cover art, poster) came
+    /// up empty too — an icon returned any earlier would mask them.
+    IconOnly,
+}
+
 /// Generate a thumbnail at up to `size_px` on the longest side.
 /// Returns `(RGBA bytes, width, height)` on success; `None` on any
 /// failure (path not found, no thumbnail provider, GDI error, etc.).
 ///
-/// Pipeline: `SHCreateItemFromParsingName` → `IShellItemImageFactory`
-/// → `GetImage(SIZE, SIIGBF_RESIZETOFIT)` → `HBITMAP` → `GetDIBits`
-/// → BGRA bytes → swap to RGBA. The shell's built-in thumbnail
-/// pipeline taps registered thumbnail providers (image files,
-/// PDFs via the Microsoft PDF preview handler, etc.) and falls
-/// back to large file-type icons for the rest.
+/// This is the Explorer-parity tier: `IShellItemImageFactory`
+/// thumbnails (`SIIGBF_THUMBNAILONLY`), then a native first-page render
+/// for PDFs (`pdf_render`), then the large file-type icon. It never
+/// screen-grabs an `IPreviewHandler` — that route paints the handler's
+/// viewer chrome (toolbars, scrollbars) into the bitmap, which is fine
+/// live in a preview pane and wrong in a grid cell. The pane uses
+/// [`fetch_preview_image`] instead.
 ///
 /// MUST be called from a worker thread — COM is initialized per-
 /// call with `COINIT_APARTMENTTHREADED`. Calling from the UI thread
@@ -1191,20 +1309,70 @@ pub fn fetch_quick_look_thumbnail(
     path: &std::path::Path,
     size_px: u32,
 ) -> Option<(Vec<u8>, u32, u32)> {
+    fetch_shell_image(path, size_px, ImageTier::Thumbnail, None)
+}
+
+/// The preview pane's fetch: everything [`fetch_quick_look_thumbnail`]
+/// tries, and — when the shell and the PDF renderer both come up empty
+/// — a brokered `IPreviewHandler` capture (Word/Excel/PowerPoint, RTF,
+/// text, …) before settling for the type icon. Same threading contract.
+#[cfg(windows)]
+pub fn fetch_preview_image(path: &std::path::Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    fetch_shell_image(path, size_px, ImageTier::Preview, None)
+}
+
+/// Cancellable form used by the selection-driven preview pane. Superseding a
+/// selection kills an active preview broker instead of making the newest item
+/// wait for the old provider's full deadline.
+#[cfg(windows)]
+pub fn fetch_preview_image_cancellable(
+    path: &std::path::Path,
+    size_px: u32,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Option<(Vec<u8>, u32, u32)> {
+    fetch_shell_image(path, size_px, ImageTier::Preview, Some(cancel))
+}
+
+/// The large file-type image (`SIIGBF_RESIZETOFIT`, no thumbnail
+/// requirement) — the caller's very last tier, asked for only after
+/// both fetches above *and* the caller's own decoders came up empty.
+/// Separate from the content fetches so an icon can never mask a
+/// decodable image. Same threading contract.
+#[cfg(windows)]
+pub fn fetch_type_icon(path: &std::path::Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    fetch_shell_image(path, size_px, ImageTier::IconOnly, None)
+}
+
+/// Shared body of the public fetches.
+///
+/// Pipeline: `SHCreateItemFromParsingName` → `IShellItemImageFactory`
+/// → `GetImage(SIZE, SIIGBF_THUMBNAILONLY | SIIGBF_RESIZETOFIT)` →
+/// `HBITMAP` → `DIBSECTION` bits → BGRA bytes → swap to RGBA. The
+/// shell's built-in thumbnail pipeline taps registered thumbnail
+/// providers (image files, Office documents saved with a preview,
+/// videos, …); the tiers below fill in what it declines.
+#[cfg(windows)]
+fn fetch_shell_image(
+    path: &std::path::Path,
+    size_px: u32,
+    tier: ImageTier,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Option<(Vec<u8>, u32, u32)> {
     use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::SIZE;
     use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, DIBSECTION, HBITMAP};
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::{
-        IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_RESIZETOFIT,
-        SIIGBF_THUMBNAILONLY,
+        IShellItemImageFactory, SIIGBF_RESIZETOFIT, SIIGBF_THUMBNAILONLY,
     };
 
-    // `SHCreateItemFromParsingName` rejects the `\\?\` verbatim prefix, so
-    // parse the plain form (the preview-handler fallback below gets the same
-    // cleaned path — its `IInitializeWithFile` has the same restriction).
-    let cleaned = strip_verbatim(path);
+    // `SHCreateItemFromParsingName` rejects the `\\?\` verbatim prefix and
+    // relative paths (E_INVALIDARG), so parse the plain absolute form (the
+    // PDF and preview-handler tiers below get the same cleaned path — their
+    // WinRT / `IInitializeWithFile` inputs share the restriction).
+    // `std::path::absolute` is lexical: no disk access.
+    let absolute = std::path::absolute(path).ok()?;
+    let cleaned = strip_verbatim(&absolute);
     // Convert the path to a null-terminated UTF-16 string. Holding
     // it for the duration of the COM call so the PCWSTR remains
     // valid.
@@ -1225,35 +1393,36 @@ pub fn fetch_quick_look_thumbnail(
         // logs to stderr so we can isolate failures.
         let debug = std::env::var("FERAIL_THUMB_DEBUG").is_ok();
         let result = (|| -> Option<(Vec<u8>, u32, u32)> {
-            // Create IShellItem from the path string.
-            let factory: IShellItemImageFactory =
-                match SHCreateItemFromParsingName(PCWSTR::from_raw(wide.as_ptr()), None) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        if debug {
-                            eprintln!("SHCreateItemFromParsingName failed: {e:?}");
-                        }
-                        return None;
-                    }
-                };
-            if debug {
-                eprintln!("SHCreateItemFromParsingName ok");
+            if cancel.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+                return None;
             }
+            // Create IShellItem from the path string (with the
+            // simple-parse retry for namespace junctions like
+            // C:\Windows\Fonts — see `shell_item_image_factory`).
+            let factory: IShellItemImageFactory = shell_item_image_factory(&wide, debug)?;
 
             // Ask for the thumbnail.
             let size = SIZE {
                 cx: size_px as i32,
                 cy: size_px as i32,
             };
-            // Fallback chain:
+            // Content chain (Thumbnail / Preview tiers):
             //   1. SIIGBF_THUMBNAILONLY — only real provider-rendered
             //      thumbnails (PNG, PPTX, images with EXIF previews,
             //      etc.). Fails when only an icon would be returned.
-            //   2. IPreviewHandler — for files with no thumbnail
-            //      provider but with a registered preview handler
-            //      (Word/Excel docs, RTF, …). Renders the doc's
-            //      content into an off-screen window and screen-grabs.
-            //   3. SIIGBF_RESIZETOFIT — generic large file-type icon.
+            //   2. PDF → `pdf_render` (Windows.Data.Pdf): page 1 drawn
+            //      off-screen by the OS renderer. No window, no
+            //      third-party code.
+            //   3. Preview tier only: IPreviewHandler — for files with
+            //      no thumbnail provider but with a registered preview
+            //      handler (Word/Excel docs, RTF, …). Renders the
+            //      handler's live view into an off-screen window in the
+            //      broker and screen-grabs it — chrome included, which
+            //      is why the thumbnail tier skips it.
+            // No icon here: `None` lets the caller run its own decoders
+            // (bundled raster, cover art, mpv poster) before it asks for
+            // the IconOnly tier as the true last resort.
+            //
             // `is_icon_fallback` tracks which sub-API produced the
             // bitmap so we can orient correctly. Empirically:
             //   - THUMBNAILONLY thumbnails arrive top-down regardless
@@ -1263,8 +1432,34 @@ pub fn fetch_quick_look_thumbnail(
             //     when no thumbnail provider exists arrive bottom-up
             //     (Win32 ICON resource convention) — those need a
             //     vertical flip.
-            let mut is_icon_fallback = false;
-            let hbitmap: HBITMAP =
+            let is_icon_fallback = tier == ImageTier::IconOnly;
+            // Font files: the font thumbnail provider ("Abg" preview
+            // cards for .ttf/.otf) hands its DIB back bottom-up where
+            // image thumbnail providers hand theirs top-down — and both
+            // report a positive biHeight, so only the provider identity
+            // (approximated by the extension) can tell them apart.
+            // Without this the font cards render rotated 180°.
+            let is_font = cleaned
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| {
+                    matches!(
+                        e.to_ascii_lowercase().as_str(),
+                        "ttf" | "otf" | "ttc" | "fon" | "pfb" | "pfm"
+                    )
+                });
+            let bottom_up = is_icon_fallback || is_font;
+            let hbitmap: HBITMAP = if is_icon_fallback {
+                match factory.GetImage(size, SIIGBF_RESIZETOFIT) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        if debug {
+                            eprintln!("RESIZETOFIT icon failed: {e:?}");
+                        }
+                        return None;
+                    }
+                }
+            } else {
                 match factory.GetImage(size, SIIGBF_THUMBNAILONLY | SIIGBF_RESIZETOFIT) {
                     Ok(h) => {
                         if debug {
@@ -1274,29 +1469,42 @@ pub fn fetch_quick_look_thumbnail(
                     }
                     Err(e) => {
                         if debug {
-                            eprintln!("THUMBNAILONLY failed: {e:?} — trying preview handler");
+                            eprintln!("THUMBNAILONLY failed: {e:?}");
                         }
-                        if let Some(rgba) = preview_handler::try_capture(&cleaned, size_px) {
-                            if debug {
-                                eprintln!("preview handler ok");
+                        if pdf_render::is_pdf(&cleaned)
+                            && !cancel
+                                .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+                        {
+                            if let Some(rgba) = pdf_render::render_first_page(&cleaned, size_px) {
+                                if debug {
+                                    eprintln!("pdf_render ok");
+                                }
+                                return Some(rgba);
                             }
-                            return Some(rgba);
+                            if debug {
+                                eprintln!("pdf_render failed");
+                            }
+                        }
+                        if tier == ImageTier::Preview {
+                            if let Some(rgba) =
+                                preview_handler::try_capture(&cleaned, size_px, cancel)
+                            {
+                                if debug {
+                                    eprintln!("preview handler ok");
+                                }
+                                return Some(rgba);
+                            }
+                            if debug {
+                                eprintln!("preview handler failed");
+                            }
                         }
                         if debug {
-                            eprintln!("preview handler failed — falling back to icon");
+                            eprintln!("no shell content — leaving the icon to the caller");
                         }
-                        is_icon_fallback = true;
-                        match factory.GetImage(size, SIIGBF_RESIZETOFIT) {
-                            Ok(h) => h,
-                            Err(e) => {
-                                if debug {
-                                    eprintln!("icon fallback failed: {e:?}");
-                                }
-                                return None;
-                            }
-                        }
+                        return None;
                     }
-                };
+                }
+            };
 
             // Pull a DIBSECTION view of the bitmap so we get direct
             // access to its in-memory pixel buffer. `IShellItemImage-
@@ -1350,11 +1558,7 @@ pub fn fetch_quick_look_thumbnail(
             let mut pixels: Vec<u8> = vec![0u8; (w as usize) * (h as usize) * 4];
             let row_bytes = (w as usize) * 4;
             for y in 0..(h as usize) {
-                let src_row = if is_icon_fallback {
-                    (h as usize) - 1 - y
-                } else {
-                    y
-                };
+                let src_row = if bottom_up { (h as usize) - 1 - y } else { y };
                 let src_ptr = src.add(src_row * stride);
                 let dst_off = y * row_bytes;
                 std::ptr::copy_nonoverlapping(src_ptr, pixels.as_mut_ptr().add(dst_off), row_bytes);
@@ -1391,6 +1595,16 @@ pub fn fetch_quick_look_thumbnail(
         }
         result
     }
+}
+
+#[cfg(not(windows))]
+pub fn fetch_preview_image(_path: &std::path::Path, _size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    None
+}
+
+#[cfg(not(windows))]
+pub fn fetch_type_icon(_path: &std::path::Path, _size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    None
 }
 
 #[cfg(not(windows))]
@@ -2587,3 +2801,97 @@ pub use elevation::{
     elevation_available, force_close_processes, lock_diagnostics_available, processes_using,
     run_elevated_self, LockingProcess,
 };
+
+// =============================================================
+// Simple-parse shell item creation (namespace junctions)
+// =============================================================
+
+/// Create the `IShellItemImageFactory` for an absolute file-system
+/// path, retrying with a **simple-parse bind context** when the shell
+/// namespace refuses the plain string.
+///
+/// `C:\Windows\Fonts` is the canonical refusal: it is a namespace
+/// junction, so `SHCreateItemFromParsingName` returns `E_INVALIDARG`
+/// for ordinary file paths under it (the same `.ttf` copied elsewhere
+/// parses fine) — which is what left the Fonts folder with blank
+/// icons and no thumbnails (WIN-011). Registering an
+/// `IFileSystemBindData` under `STR_FILE_SYS_BIND_DATA` tells the
+/// parser to treat the string as a plain file-system path without
+/// consulting the folder's namespace extension — the same escape
+/// hatch Explorer itself uses.
+///
+/// Mirrored for icons in `ferail-fs-native/src/icons.rs` (the crates
+/// deliberately don't depend on each other; keep the twins in sync).
+#[cfg(windows)]
+unsafe fn shell_item_image_factory(
+    wide: &[u16],
+    debug: bool,
+) -> Option<windows::Win32::UI::Shell::IShellItemImageFactory> {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Com::CreateBindCtx;
+    use windows::Win32::UI::Shell::{
+        IFileSystemBindData, IShellItemImageFactory, SHCreateItemFromParsingName,
+        STR_FILE_SYS_BIND_DATA,
+    };
+
+    let pcw = PCWSTR::from_raw(wide.as_ptr());
+    match SHCreateItemFromParsingName::<_, _, IShellItemImageFactory>(pcw, None) {
+        Ok(f) => {
+            if debug {
+                eprintln!("SHCreateItemFromParsingName ok");
+            }
+            Some(f)
+        }
+        Err(e) => {
+            if debug {
+                eprintln!("SHCreateItemFromParsingName failed: {e:?} — retrying simple parse");
+            }
+            let bind_data: IFileSystemBindData = SimpleFsBindData.into();
+            let bctx = CreateBindCtx(0).ok()?;
+            bctx.RegisterObjectParam(STR_FILE_SYS_BIND_DATA, &bind_data)
+                .ok()?;
+            match SHCreateItemFromParsingName::<_, _, IShellItemImageFactory>(pcw, &bctx) {
+                Ok(f) => {
+                    if debug {
+                        eprintln!("simple parse ok");
+                    }
+                    Some(f)
+                }
+                Err(e2) => {
+                    if debug {
+                        eprintln!("simple parse failed too: {e2:?}");
+                    }
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Minimal `IFileSystemBindData` for the simple-parse retry above: the
+/// parser only needs the *presence* of the object (plus find data it
+/// can read back); zeroed `WIN32_FIND_DATAW` is the documented "I know
+/// nothing, just parse it" answer.
+#[cfg(windows)]
+#[windows::core::implement(windows::Win32::UI::Shell::IFileSystemBindData)]
+struct SimpleFsBindData;
+
+#[cfg(windows)]
+impl windows::Win32::UI::Shell::IFileSystemBindData_Impl for SimpleFsBindData_Impl {
+    fn SetFindData(
+        &self,
+        _pfd: *const windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn GetFindData(
+        &self,
+        pfd: *mut windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW,
+    ) -> windows::core::Result<()> {
+        if pfd.is_null() {
+            return Err(windows::Win32::Foundation::E_POINTER.into());
+        }
+        unsafe { pfd.write(Default::default()) };
+        Ok(())
+    }
+}

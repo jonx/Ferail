@@ -210,8 +210,13 @@ trigger.
   continues) and the preview broker (quiet). Verified with a real
   `0xC0000005` via `FERAIL_PREVIEW_BROKER_TEST=av`. Fallback documented in
   the handover (§ Collecting dumps).*
-- [ ] Add activity breadcrumbs around navigation, selection transitions,
+- [x] Add activity breadcrumbs around navigation, selection transitions,
   thumbnail/preview request generations, Shell calls, and table refreshes.
+  *2026-08-24: the crash/watchdog ring now records path-free navigation
+  generations, selection counts/modes, preview enqueue/cancel/complete state,
+  and thumbnail batch start/supersede/complete state. The real leaked-handle
+  report that previously said `breadcrumbs: <none>` now names the last
+  navigation and shutdown cleanup.*
 - [~] Make task snapshots include viewport preview and enrichment schedulers.
   Selection-driven native previews now register as ambient thumbnail tasks;
   confirm the resulting watchdog snapshot on Windows.
@@ -223,14 +228,26 @@ trigger.
   cause was one bug class: subscription closures capturing a strong handle
   to the entity they subscribe to (context-menu `Rc<SharedState>`, the
   filter/breadcrumb/shortcuts-help inputs) — an App→listener→entity cycle.
-  Fixed by weak/parameter access; the scripted repro now exits 0. Still
-  open: the multi-window matrix and a `TableState` leak that has not been
-  reproduced yet.*
+  Fixed by weak/parameter access; the scripted repro now exits 0. Second
+  find, deterministic (`--screenshot --properties`): gpui-component's
+  `Input` paint captures strong `InputState` handles per frame, which
+  accumulate whenever a second window (Get Info) is open — upstream, see
+  GPUI-UPSTREAM.md §12. The assert itself no longer ships: packaged builds
+  strip gpui's `test-support`/`leak-detection` (dev + tests keep it), so
+  users cannot hit the exit-101 report at all. A dev-only teardown guard now
+  drains gpui-component's retained next-frame callbacks while each Root is
+  alive and removes screenshot windows before `App::quit`: the deterministic
+  `--screenshot --properties` repro went from 76 retained callbacks + one
+  final `InputState` (exit 101) to exit 0. The app-level Quit action now uses
+  the same bounded cleanup and event-loop turn instead of bypassing native
+  window-close callbacks. Still open: the full interactive multi-window
+  matrix and a `TableState` leak that has not been reproduced.*
 - [~] Keep redacted reports useful: row counts, extensions, provider CLSIDs,
   durations, generations, and HRESULTs are allowed; full paths are opt-in.
   *Provider CLSID + failure kind (crash/timeout/malformed frame) are logged
   on quarantine; the minidump sidecar carries exception code and address,
-  never a path. Durations/generations in reports remain open.*
+  never a path. Navigation/selection/preview/thumbnail generations are now
+  breadcrumbed; aggregate timing counters remain open.*
 
 **Exit gate.** A forced UI stall produces a symbolized UI stack and recent
 activity; a forced broker crash identifies the provider and leaves Ferail
@@ -258,21 +275,35 @@ termination isolation. A handler may keep callbacks or worker state past
   never one unbounded thread per row/request. *One disposable process per
   request, bounded by the preview scheduler's one-active + latest-wins
   waiting slots.*
-- [~] Cancel superseded generations. Deadline expiry kills and replaces the
-  broker; it does not leave a detached thread behind. *Deadline kill verified
-  on Windows (hung broker terminated at 6 s, zero orphan processes). A
-  superseded in-flight request still runs to its deadline — bounded to one
-  straggler by the scheduler; kill-on-supersede remains open.*
+- [x] Stop reaching for preview handlers at all where Explorer doesn't.
+  *2026-08-24: grid/list/viewer thumbnails no longer fall back to the
+  `IPreviewHandler` capture (it screenshots the handler's live viewer,
+  scrollbars and all); only the preview pane's `fetch_preview_image` does.
+  PDFs — the crashing case — now render page 1 through `Windows.Data.Pdf`
+  (`pdf_render.rs`): no window, no third-party DLL, no broker. Inside the
+  broker the handler is activated in-proc first, deliberately: the broker is
+  already disposable, so the parent owns and can terminate the provider.
+  `CLSCTX_LOCAL_SERVER` remains a compatibility fallback only; making an
+  SCM-owned `prevhost.exe` the primary boundary would make its lifetime
+  impossible for Ferail to enforce.*
+- [x] Cancel superseded generations. Deadline expiry kills and replaces the
+  broker; it does not leave a detached thread behind. *2026-08-24: the active
+  selection owns an atomic cancellation token; queuing a newer path flips it,
+  the broker wait kills/waits the child, and cancellation does not poison the
+  old path's negative cache. Unit-tested queue transition; deadline kill was
+  already verified on Windows.*
 - [x] Maintain a session quarantine for a CLSID that crashes or times out
   repeatedly, falling back to `IShellItemImageFactory`, the built-in decoder,
-  or a generic icon. *Two strikes quarantine the CLSID for the session, a
-  success clears the count, and the transition is logged once with the CLSID
+  or a generic icon. *One fatal crash/timeout/malformed frame quarantines the
+  CLSID for the session, a success clears the count, and the transition is logged once with the CLSID
   (redaction-safe). Verified with the injected-crash hook: icon fallback,
   main process unaffected.*
 - [x] Validate RGBA dimensions and byte length before accepting broker IPC.
   *`broker_proto::parse_frame`: magic, dimension ceiling, exact byte count,
   and exact requested size; unit-tested on every host, and the parent's pipe
-  reader is capped just above the largest legal frame.*
+  reader is capped just above the exact requested frame (not the global 4096
+  ceiling), and broker stdout is made non-inheritable before provider code can
+  spawn descendants.*
 
 **Exit gate.** Injected crash, access violation, malformed bitmap, and hung
 handler fixtures cannot terminate or freeze Ferail; the selected row receives
@@ -297,14 +328,20 @@ captured on Windows before changing code.
 
 **Work.**
 
-- [ ] Record request, decode, upload, apply, and cancellation counters by
-  generation while reproducing the supplied video scenario.
-- [ ] Limit requests to the viewport plus a small directional overscan.
-- [~] Use fixed worker concurrency and a bounded queue; newest visible work
-  wins and old off-screen work is discarded. The shared preview pane now runs
-  one image and one text request with a single latest-wins waiting slot; the
-  list/grid viewport scheduler and Windows broker still need the Windows
-  stress matrix.
+- [~] Record request, decode, upload, apply, and cancellation counters by
+  generation while reproducing the supplied video scenario. *Breadcrumbs now
+  expose batch request counts, size, supersession and completion; persistent
+  aggregate counters remain open.*
+- [x] Limit requests to the viewport plus a small directional overscan.
+  *List/grid warm only the reported viewport plus eight rows.*
+- [x] Use fixed worker concurrency and a bounded queue; newest visible work
+  wins and old off-screen work is discarded. *Each surface now owns exactly
+  one sequential thumbnail batch plus one latest pending viewport. A newer
+  viewport cancels between provider calls; unstarted `in_flight` reservations
+  are released as retryable rather than negative-cached. The preview pane has
+  the same one-active + latest-wins shape and kills its Windows broker on
+  supersession. The 10k Windows stress matrix remains an exit-gate test, not
+  an implementation gap.*
 - [ ] Bound GPU uploads and table updates per frame.
 - [ ] Refresh only affected visible rows; never rebuild/sort the row source for
   a thumbnail completion.
@@ -489,8 +526,17 @@ inconsistent.
   provider behavior are preserved.
 - [ ] Copy, move, rename, and trash continue to act on the `.lnk` itself, not
   its target.
-- [ ] Request the Shell-provided icon/thumbnail and preserve the shortcut
+- [~] Request the Shell-provided icon/thumbnail and preserve the shortcut
   overlay; fall back to the target type then a generic shortcut glyph.
+  *2026-08-24: grid/list/sidebar icons for `.lnk` now composite the
+  shell-reported overlay (the shortcut arrow) over the target icon —
+  `ferail-fs-native::icons::win_shell::overlay_rgba`
+  (`SHGetFileInfoW(SHGFI_OVERLAYINDEX)` → `SHGetImageList(SHIL_JUMBO)` →
+  `IImageList::GetOverlayImage`/`GetIcon` → `DrawIconEx`). Overlay
+  composition is `.lnk`-only on purpose: the gpui `IconCache` keys by
+  extension, so per-file overlays (cloud state) would bleed across files.
+  The content-thumbnail identity and broken-shortcut fallback remain
+  open.*
 - [ ] Show shortcut target/broken status in Get Info without resolving it from
   render or context-menu code.
 
@@ -505,10 +551,32 @@ folders and providers may not behave like ordinary extension-based files.
 
 **Work.**
 
-- [ ] Separate icon requests (type/identity) from content-thumbnail requests;
-  do not treat “no thumbnail” as a broken icon.
-- [ ] Audit `IShellItemImageFactory` flags and the `SHGetFileInfo` fallback for
+- [x] Separate icon requests (type/identity) from content-thumbnail requests;
+  do not treat “no thumbnail” as a broken icon. *2026-08-24: the shell
+  fetches (`fetch_quick_look_thumbnail` / `fetch_preview_image`) return
+  content only; the type icon is a separate `fetch_type_icon` that
+  `video_poster::fetch_content` asks for last, after the bundled raster /
+  cover-art / poster tiers.*
+- [~] Audit `IShellItemImageFactory` flags and the `SHGetFileInfo` fallback for
   `.fon`, `.ttf`, special folders, offline files, and shortcuts.
+  *Diagnosed and largely fixed 2026-08-24 on real Windows:*
+  - *[x] `C:\Windows\Fonts` is a shell **namespace junction**:
+    `SHCreateItemFromParsingName` returns `E_INVALIDARG` for any
+    file-system path under it (the same `arial.ttf` copied elsewhere
+    parses fine), so both the thumbnail and the icon fetch failed there and
+    the grid showed the blank placeholder. Fixed by retrying with a bind
+    context carrying `STR_FILE_SYS_BIND_DATA` (`IFileSystemBindData`) to
+    force simple file-system parsing — in
+    `ferail-shell-win32::shell_item_image_factory` (thumbnails/previews)
+    and its twin `ferail-fs-native::icons::win_shell` (icons).*
+  - *[x] The font thumbnail provider (“Abg” cards for `.ttf`/`.otf`)
+    returns its DIB **bottom-up** while image thumbnails arrive top-down —
+    both with positive `biHeight`, so the sign is useless and the
+    “THUMBNAILONLY = top-down” rule rendered font cards rotated 180°.
+    Fixed with an extension-gated orientation exception
+    (`ttf/otf/ttc/fon/pfb/pfm`) in `fetch_shell_image`.*
+  - *Still open: offline-file (cloud placeholder) flags and special
+    shell folders beyond Fonts.*
 - [ ] Cache type icons by stable type/provider key and content thumbnails by
   file identity/mtime/size; never cache a transient provider failure forever.
 - [ ] Run all provider calls through the bounded Windows asset scheduler and
@@ -580,10 +648,14 @@ Windows user also expects access to the native Properties surface.
 
 **Work.**
 
-- [ ] Add portable metadata parsers in `ferail-fs-native` for fields with
+- [~] Add portable metadata parsers in `ferail-fs-native` for fields with
   cross-platform meaning (dimensions, camera/lens, exposure, capture time,
   orientation, GPS-presence with an explicit privacy treatment). Parse on
-  demand off-thread and cache by file identity/revision.
+  demand off-thread and cache by file identity/revision. *2026-08-24:
+  `image_meta::read_image_meta` (header dimensions + kamadak-exif subset)
+  feeds Get Info's Image section on every platform; GPS is presence-only —
+  coordinates are never parsed, shown, logged, or persisted. Remaining:
+  the identity/revision cache (Get Info parses one file per open today).*
 - [ ] Add a Windows property provider for useful `IPropertyStore` fields that
   are not available from portable parsing, returning neutral key/value DTOs.
 - [ ] Add **Windows Properties…** through the native Shell action capability;
@@ -623,9 +695,10 @@ offer to install its own prerequisite.
 - [~] Keep architecture-specific artifacts explicit (`x86_64`, later ARM64)
   and include matching helper binaries and symbols. *x86_64 ZIPs plus a
   `-symbols.zip` (PDBs + CodeView/commit manifest) ship now; helper binaries
-  join it when they exist, and current PDBs carry publics only — consider
-  `CARGO_PROFILE_RELEASE_DEBUG=limited` in packaging before the WIN-001 dump
-  work so stacks get line numbers.*
+  join it when they exist. Packaging now forces
+  `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`, records that policy in the
+  symbol manifest, and refuses a dirty tree unless `-AllowDirty` is explicitly
+  supplied for a local-only smoke package. WENV-C remains open.*
 
 **Exit gate.** A pristine supported Windows VM launches, previews a safe image,
 opens a file, and exits cleanly without installing Visual Studio tooling.

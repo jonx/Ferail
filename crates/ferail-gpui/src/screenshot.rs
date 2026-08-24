@@ -738,6 +738,13 @@ pub fn run(args: Args) -> Result<()> {
             img.save(&path).expect("write PNG");
             eprintln!("wrote {}", path.display());
 
+            cx.update(crate::boot::drain_dev_callbacks_before_quit);
+            // `remove_window` is applied by the event-loop turn after the
+            // update above. Give teardown that turn before dropping App and
+            // running gpui's leak assertion.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(20))
+                .await;
             cx.update(|cx| cx.quit());
         })
         .detach();

@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{App, AsyncApp, RenderImage};
 use image::{Frame, RgbaImage};
@@ -49,6 +50,10 @@ pub struct PreviewCache {
     /// plenty for the bounded cap).
     order: Vec<PathBuf>,
     requests: LatestRequestQueue<PathBuf>,
+    /// Cancellation token owned by the currently active selection request.
+    /// A queued newer selection flips it; on Windows the broker wait observes
+    /// the flag and kills the disposable helper immediately.
+    active_cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Default for PreviewCache {
@@ -63,6 +68,7 @@ impl PreviewCache {
             by_path: HashMap::new(),
             order: Vec::new(),
             requests: LatestRequestQueue::default(),
+            active_cancel: None,
         }
     }
 
@@ -82,11 +88,33 @@ impl PreviewCache {
     }
 
     fn enqueue_request(&mut self, path: PathBuf) -> Enqueue {
-        self.requests.enqueue(path)
+        let outcome = self.requests.enqueue(path);
+        if matches!(outcome, Enqueue::Queued)
+            && let Some(cancel) = &self.active_cancel
+        {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        outcome
+    }
+
+    fn begin_active_request(&mut self) -> Arc<AtomicBool> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.active_cancel = Some(cancel.clone());
+        cancel
     }
 
     fn complete_request(&mut self, path: &PathBuf) -> Option<PathBuf> {
-        self.requests.complete(path)
+        let was_active = self.requests.is_active(path);
+        let next = self.requests.complete(path);
+        if was_active {
+            self.active_cancel = None;
+        }
+        next
+    }
+
+    fn remove(&mut self, path: &Path) {
+        self.by_path.remove(path);
+        self.order.retain(|entry| entry != path);
     }
 }
 
@@ -113,6 +141,12 @@ pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) 
         .preview_cache
         .borrow_mut()
         .enqueue_request(path.clone());
+    crate::obs::breadcrumb(format_args!(
+        "preview enqueue outcome={enqueue:?} ext={}",
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("<none>")
+    ));
     if !matches!(enqueue, Enqueue::Start) {
         return;
     }
@@ -120,11 +154,11 @@ pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) 
 }
 
 fn start_request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) {
-    shell
-        .process
-        .preview_cache
-        .borrow_mut()
-        .insert(path.clone(), PreviewState::Pending);
+    let cancel = {
+        let mut cache = shell.process.preview_cache.borrow_mut();
+        cache.insert(path.clone(), PreviewState::Pending);
+        cache.begin_active_request()
+    };
 
     let weak = cx.weak_entity();
     let process = shell.process.clone();
@@ -138,9 +172,12 @@ fn start_request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>
         let p_for_bg = path.clone();
         let result = cx
             .background_executor()
-            .spawn(async move { fetch_preview_thumbnail(p_for_bg).await })
+            .spawn({
+                let cancel = cancel.clone();
+                async move { fetch_preview_thumbnail(p_for_bg, cancel).await }
+            })
             .await;
-        apply_result(weak, process, path, result, task_id, cx).await;
+        apply_result(weak, process, path, result, cancel, task_id, cx).await;
     })
     .detach();
 }
@@ -148,11 +185,22 @@ fn start_request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>
 /// The preview pane's 512 px content fetch: the synchronous tier (Quick
 /// Look / cover art) right here on the pool, or an awaited poster-worker
 /// decode for videos Quick Look refuses — never a blocked pool thread.
-async fn fetch_preview_thumbnail(path: PathBuf) -> Option<(Vec<u8>, u32, u32)> {
-    match crate::video_poster::fetch_content_thumbnail(&path, PREVIEW_PX) {
+/// Asks for the shell's *preview* tier: on Windows that may be a brokered
+/// `IPreviewHandler` capture, which the grid deliberately never gets.
+async fn fetch_preview_thumbnail(
+    path: PathBuf,
+    cancel: Arc<AtomicBool>,
+) -> Option<(Vec<u8>, u32, u32)> {
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
+    match crate::video_poster::fetch_content_preview_cancellable(&path, PREVIEW_PX, &cancel) {
         crate::video_poster::Fetched::Done(r) => r,
         crate::video_poster::Fetched::NeedsPoster => {
-            crate::video_poster::fetch_poster(path, PREVIEW_PX).await
+            let result = crate::video_poster::fetch_poster(path, PREVIEW_PX).await;
+            (!cancel.load(Ordering::Relaxed))
+                .then_some(result)
+                .flatten()
         }
     }
 }
@@ -186,9 +234,10 @@ pub fn warm<T: 'static>(
     let process = process.clone();
     cx.spawn(async move |_this, cx| {
         let p_for_bg = path.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
         let result = cx
             .background_executor()
-            .spawn(async move { fetch_preview_thumbnail(p_for_bg).await })
+            .spawn(async move { fetch_preview_thumbnail(p_for_bg, cancel).await })
             .await;
         let state = match result {
             Some((rgba, w, h)) => PreviewState::Loaded(Arc::new(build_render_image(rgba, w, h))),
@@ -207,18 +256,34 @@ async fn apply_result(
     process: std::rc::Rc<crate::process_state::ProcessState>,
     path: PathBuf,
     rgba: Option<(Vec<u8>, u32, u32)>,
+    cancel: Arc<AtomicBool>,
     task_id: crate::tasks::TaskId,
     cx: &mut AsyncApp,
 ) {
-    let state = match rgba {
-        Some((rgba, w, h)) => PreviewState::Loaded(Arc::new(build_render_image(rgba, w, h))),
-        None => PreviewState::Failed,
-    };
+    let succeeded = rgba.is_some();
     let next = {
         let mut cache = process.preview_cache.borrow_mut();
-        cache.insert(path.clone(), state);
+        if cancel.load(Ordering::Relaxed) {
+            // Supersession is not a provider failure. Leave the old path
+            // retryable instead of poisoning it with a negative cache entry.
+            cache.remove(&path);
+        } else {
+            let state = match rgba {
+                Some((rgba, w, h)) => {
+                    PreviewState::Loaded(Arc::new(build_render_image(rgba, w, h)))
+                }
+                None => PreviewState::Failed,
+            };
+            cache.insert(path.clone(), state);
+        }
         cache.complete_request(&path)
     };
+    crate::obs::breadcrumb(format_args!(
+        "preview complete canceled={} success={} next={}",
+        cancel.load(Ordering::Relaxed),
+        succeeded,
+        next.is_some()
+    ));
     process.tasks.borrow_mut().end(task_id);
     let Some(shell) = weak.upgrade() else { return };
     shell.update(cx, |shell, cx| {
@@ -257,3 +322,26 @@ pub fn loaded_image(state: Option<PreviewState>) -> Option<Arc<RenderImage>> {
 
 #[allow(dead_code)]
 fn _app_unused(_cx: &mut App) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newer_selection_cancels_active_without_negative_caching_it() {
+        let first = PathBuf::from("first.pdf");
+        let latest = PathBuf::from("latest.pdf");
+        let mut cache = PreviewCache::new();
+
+        assert_eq!(cache.enqueue_request(first.clone()), Enqueue::Start);
+        cache.insert(first.clone(), PreviewState::Pending);
+        let cancel = cache.begin_active_request();
+        assert!(!cancel.load(Ordering::Relaxed));
+
+        assert_eq!(cache.enqueue_request(latest.clone()), Enqueue::Queued);
+        assert!(cancel.load(Ordering::Relaxed));
+        cache.remove(&first);
+        assert!(cache.get(&first).is_none());
+        assert_eq!(cache.complete_request(&first), Some(latest));
+    }
+}

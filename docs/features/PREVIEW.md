@@ -18,7 +18,9 @@ Live providers:
 
 Remaining providers are tracked in [TODO.md](../../TODO.md): audio waveforms,
 video strips beyond the Quick Look poster, archive/package summaries, and true
-per-provider cancellation tokens.
+live Windows preview hosting. Selection-driven image work now carries a
+cancellation token through the native provider chain; metadata/text providers
+remain bounded by their latest-wins queues.
 
 ## User Surface
 
@@ -59,9 +61,10 @@ Paint reads only:
 
 Provider results are path-keyed and never mutate table rows or geometry. A
 result that finishes after the selection moved may remain useful in the small
-cache, but only the currently selected path is rendered. The one active native
-provider still runs to completion after it becomes stale; hard cancellation
-and Windows process isolation remain architecture gaps.
+cache, but only the currently selected path is rendered. Superseding a native
+image request now cancels the active chain. On Windows that also terminates and
+waits for the disposable preview broker, so a hung in-process shell extension
+cannot keep consuming the single preview slot.
 
 ## Content Thumbnail Provider
 
@@ -90,6 +93,36 @@ one bounded deadline and are negative-cached. Audio cover art is read with
 album art work on Windows/Linux where there is no Quick Look. Every
 thumbnail surface (list rows, icon grid, this pane, `ferail thumb`) rides
 the same fetch.
+
+The fetch carries a **tier** (`video_poster::Tier`): the grid, list rows,
+viewer fallback and `ferail thumb` ask for `Thumbnail`; this pane (and
+`ferail thumb --preview`) asks for `Preview`. macOS and Linux answer both
+identically. On Windows the two differ, because the shell does:
+
+- `Thumbnail` = what Explorer would show: `IShellItemImageFactory`
+  (`SIIGBF_THUMBNAILONLY`), then for PDFs page 1 rendered natively by
+  `Windows.Data.Pdf` (`ferail-shell-win32/src/pdf_render.rs` — no window,
+  no third-party code). Open, parse, render and stream read share one
+  five-second deadline and are cancelled on expiry.
+- `Preview` = the same chain, plus — when both come up empty — a brokered
+  `IPreviewHandler` capture (Word/Excel/PowerPoint, RTF, text). A preview
+  handler is a live viewer, so its capture includes the handler's own
+  chrome (scrollbars, toolbars); that is acceptable in the pane and
+  exactly why the grid never gets it. Explorer's real answer — the handler
+  hosted live in a child window over the pane — is tracked in `TODO.md`.
+  The capture loads in the disposable broker first so killing that process
+  owns the provider lifetime; `prevhost.exe` is compatibility fallback only.
+  A newer selection cancels and kills the active broker immediately.
+
+Neither shell tier ever returns a type icon: the icon is the *caller's*
+last tier (`platform_shell::fetch_type_icon`, `SIIGBF_RESIZETOFIT`),
+requested by `fetch_content` only after the bundled raster decoder, cover
+art, and the poster gate all had their turn. An icon returned any earlier
+would mask a decodable image — the shell declines a 512 px extraction for
+some files (OneDrive placeholders, for one) whose grid-size thumbnail
+works, and the pane must then decode the image itself rather than show
+the Photos icon. macOS/Linux return `None` from `fetch_type_icon` and
+keep drawing their own type glyphs.
 
 The thumbnail is intentionally a preview-pane poster, not the full viewer. The
 viewer has its own loader and playback path.

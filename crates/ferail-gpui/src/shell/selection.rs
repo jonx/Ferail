@@ -19,6 +19,17 @@ impl Shell {
     // (`target_row`, status bar, preview, screenshot driver) derive
     // a row index from the lead via `Tab::lead_row`.
 
+    fn breadcrumb_selection(&self, action: &str, cx: &App) {
+        let tab = self.active_tab();
+        let visible = tab.table.read(cx).delegate().entries.len();
+        crate::obs::breadcrumb(format_args!(
+            "selection action={action} count={} visible={visible} all={} lead={}",
+            tab.selection_count(visible),
+            tab.selection_all,
+            tab.lead.is_some()
+        ));
+    }
+
     /// Apply a mouse-click gesture on a row, dispatching by
     /// modifiers per spec §2.4. The Table primitive has already
     /// stamped its own `selected_row = row_ix` before this fires
@@ -246,6 +257,7 @@ impl Shell {
         tab.anchor = anchor;
         tab.lead = lead;
         self.refresh_file_list_selection(cx);
+        self.breadcrumb_selection("programmatic-many", cx);
         cx.notify();
     }
 
@@ -259,6 +271,7 @@ impl Shell {
         tab.lead = Some(id);
         tab.range_live = false;
         self.refresh_file_list_selection(cx);
+        self.breadcrumb_selection("replace-one", cx);
     }
 
     /// Cmd+Click semantics: toggle `id` in the set. lead = id.
@@ -284,6 +297,7 @@ impl Shell {
         };
         tab.range_live = false;
         self.refresh_file_list_selection(cx);
+        self.breadcrumb_selection("toggle", cx);
     }
 
     /// Shift+Click and Cmd+Shift+Click: compute the inclusive
@@ -334,6 +348,14 @@ impl Shell {
                 tab.range_live = !(additive && tab.selection_all);
                 // Anchor unchanged.
                 self.refresh_file_list_selection(cx);
+                self.breadcrumb_selection(
+                    if additive {
+                        "range-add"
+                    } else {
+                        "range-replace"
+                    },
+                    cx,
+                );
             }
         }
     }
@@ -367,6 +389,7 @@ impl Shell {
         tab.lead = last;
         tab.range_live = false;
         self.refresh_file_list_selection(cx);
+        self.breadcrumb_selection("select-all", cx);
         cx.notify();
     }
 
@@ -381,6 +404,7 @@ impl Shell {
         tab.filtered_out.clear();
         tab.range_live = false;
         self.refresh_file_list_selection(cx);
+        self.breadcrumb_selection("clear", cx);
         cx.notify();
     }
 

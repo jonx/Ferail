@@ -69,9 +69,14 @@ windows = { version = "0.58", features = [
     # EXCEPTION_POINTERS/CONTEXT types they take live behind System_Kernel
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Kernel",
+    # pdf_render → Windows.Data.Pdf (WinRT): PdfDocument / PdfPage render,
+    # FileRandomAccessStream + DataReader for I/O, BitmapEncoder for the
+    # PNG encoder id
+    "Data_Pdf",
+    "Storage",
+    "Storage_Streams",
+    "Graphics_Imaging",
 ] }
-
-[target.'cfg(windows)'.dev-dependencies]
-# Used by examples/thumb.rs to dump the extracted thumbnail to disk
-# so we can eyeball it without launching the GUI.
+# pdf_render decodes the PNG Windows.Data.Pdf hands back into RGBA.
+# Same pin + feature subset as ferail-gpui, so no extra build cost.
 image = { version = "0.25", default-features = false, features = ["png"] }

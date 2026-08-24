@@ -24,7 +24,12 @@ name: Linux .deb
 
 on:
   push:
-    tags: ["v*"]
+    # 0.6.6 is an explicitly Windows-only reliability release. Keep the
+    # normal semver tag so the in-app updater can compare it, but do not build
+    # or attach Linux packages for this one tag. Later v* tags run normally.
+    tags:
+      - "v*"
+      - "!v0.6.6"
   workflow_dispatch:
 
 concurrency:

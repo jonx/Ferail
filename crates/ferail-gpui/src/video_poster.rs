@@ -121,14 +121,88 @@ pub(crate) fn is_lofty_audio(path: &Path) -> bool {
         .is_some_and(|e| AUDIO_COVER_EXTS.contains(&e.as_str()))
 }
 
-/// The synchronous content-thumbnail tier: Quick Look, then embedded audio
-/// cover art. Bounded blocking — background pool only. Videos Quick Look
-/// refuses are NOT decoded here: they come back as [`Fetched::NeedsPoster`]
-/// so the caller can `await` [`fetch_poster`] without parking a pool thread
-/// behind the (slow, serialized) mpv worker.
+/// Which surface the pixels are for. The platform shell may answer the
+/// two differently: on Windows a grid thumbnail is what Explorer would
+/// show (shell thumbnail, native PDF page, else the type icon), while
+/// the preview pane may additionally fall back to a brokered
+/// `IPreviewHandler` capture — a document rendering with the handler's
+/// own chrome, acceptable in the pane, wrong in a grid cell. macOS and
+/// Linux answer both the same way.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tier {
+    /// Icon grid, list rows, the viewer's fallback, `ferail thumb`.
+    Thumbnail,
+    /// The preview pane (and `ferail thumb --preview`).
+    Preview,
+}
+
+/// The synchronous content-thumbnail tier for the grid/list: Quick Look,
+/// then embedded audio cover art. See [`fetch_content`].
 pub fn fetch_content_thumbnail(path: &Path, size_px: u32) -> Fetched {
-    if let Some(hit) = crate::platform_shell::fetch_quick_look_thumbnail(path, size_px) {
+    fetch_content(path, size_px, Tier::Thumbnail)
+}
+
+/// The preview pane's fetch — same tiers as [`fetch_content_thumbnail`],
+/// but the platform shell is asked for its richer [`Tier::Preview`] image.
+pub fn fetch_content_preview(path: &Path, size_px: u32) -> Fetched {
+    fetch_content(path, size_px, Tier::Preview)
+}
+
+/// Selection-driven Windows preview fetch with cooperative cancellation. The
+/// Windows shell implementation checks the flag while waiting for its broker
+/// and terminates that helper when a newer selection supersedes it. Other
+/// decoding tiers are checked between stages.
+pub fn fetch_content_preview_cancellable(
+    path: &Path,
+    size_px: u32,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Fetched {
+    fetch_content_inner(path, size_px, Tier::Preview, Some(cancel))
+}
+
+/// The synchronous content fetch: the platform shell (Quick Look on
+/// macOS; the shell thumbnail / native PDF page / preview capture on
+/// Windows, per `tier`), then the bundled raster decoders, then embedded
+/// audio cover art. Bounded blocking — background pool only. Videos the
+/// shell refuses are NOT decoded here: they come back as
+/// [`Fetched::NeedsPoster`] so the caller can `await` [`fetch_poster`]
+/// without parking a pool thread behind the (slow, serialized) mpv worker.
+pub fn fetch_content(path: &Path, size_px: u32, tier: Tier) -> Fetched {
+    fetch_content_inner(path, size_px, tier, None)
+}
+
+fn fetch_content_inner(
+    path: &Path,
+    size_px: u32,
+    tier: Tier,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Fetched {
+    if cancel.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+        return Fetched::Done(None);
+    }
+    let shell_hit = match tier {
+        Tier::Thumbnail => crate::platform_shell::fetch_quick_look_thumbnail(path, size_px),
+        Tier::Preview => {
+            #[cfg(windows)]
+            {
+                match cancel {
+                    Some(flag) => {
+                        crate::platform_shell::fetch_preview_image_cancellable(path, size_px, flag)
+                    }
+                    None => crate::platform_shell::fetch_preview_image(path, size_px),
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                crate::platform_shell::fetch_preview_image(path, size_px)
+            }
+        }
+    };
+    if let Some(hit) = shell_hit {
         return Fetched::Done(Some(hit));
+    }
+    if cancel.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+        return Fetched::Done(None);
     }
     // Pure-Rust raster tier: platforms without Quick Look (AROS, Windows,
     // Linux stubs return None above) still get real image thumbnails via
@@ -140,15 +214,24 @@ pub fn fetch_content_thumbnail(path: &Path, size_px: u32) -> Fetched {
         }
     }
     if is_lofty_audio(path) {
-        // Quick Look came up empty (or this platform has none) — pull the
-        // cover straight out of the tag. `None` when the file carries no
-        // picture, in which case an audio file simply shows its type glyph.
-        return Fetched::Done(fetch_audio_cover(path, size_px));
+        // The shell came up empty (or this platform has none) — pull the
+        // cover straight out of the tag; a file with no picture falls
+        // through to the icon tier below.
+        if let Some(cover) = fetch_audio_cover(path, size_px) {
+            return Fetched::Done(Some(cover));
+        }
     }
     if is_poster_candidate(path) && poster_provider_available() {
         return Fetched::NeedsPoster;
     }
-    Fetched::Done(None)
+    // True last resort, and deliberately *after* every decoder above: the
+    // platform's large file-type image. On Windows this is
+    // `IShellItemImageFactory` without `THUMBNAILONLY` — asked for any
+    // earlier it would mask a decodable image (the shell declines a 512 px
+    // extraction for some files whose 256 px grid thumbnail works, e.g. on
+    // OneDrive, and the bundled decoder must get its turn first). macOS
+    // and Linux return `None` here and keep showing their type glyphs.
+    Fetched::Done(crate::platform_shell::fetch_type_icon(path, size_px))
 }
 
 /// Is there a poster decoder on this platform? Desktop: the mpv provider
@@ -179,8 +262,8 @@ pub async fn fetch_poster(path: PathBuf, size_px: u32) -> Option<ThumbPayload> {
 /// Fully synchronous variant for one-shot CLI use (`ferail thumb`): same
 /// tiers, but the poster decodes right on the calling thread instead of
 /// through the worker queue. Never call this from the app's executors.
-pub fn fetch_content_thumbnail_blocking(path: &Path, size_px: u32) -> Option<ThumbPayload> {
-    match fetch_content_thumbnail(path, size_px) {
+pub fn fetch_content_blocking(path: &Path, size_px: u32, tier: Tier) -> Option<ThumbPayload> {
+    match fetch_content(path, size_px, tier) {
         Fetched::Done(r) => r,
         Fetched::NeedsPoster => poster_decode(path, size_px),
     }

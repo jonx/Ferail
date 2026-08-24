@@ -30,6 +30,10 @@ impl<T> Default for LatestRequestQueue<T> {
 }
 
 impl<T: Eq + Clone> LatestRequestQueue<T> {
+    pub(crate) fn is_active(&self, request: &T) -> bool {
+        self.active.as_ref() == Some(request)
+    }
+
     pub(crate) fn enqueue(&mut self, request: T) -> Enqueue {
         if self.active.as_ref() == Some(&request) || self.queued.as_ref() == Some(&request) {
             return Enqueue::AlreadyScheduled;

@@ -309,3 +309,66 @@ Next exact command or code location:
   5. Enable Windows Sandbox and run WTEST-004 on a freshly packaged ZIP.
 Working-tree files intentionally left unstaged: none.
 ```
+
+### 2026-08-24 (continued) — bounded assets, deterministic teardown, packaging guard
+
+```text
+Date / machine: 2026-08-24, same Windows 11 dev machine
+Start commit: b74359e, with shared uncommitted Windows thumbnail/icon/PDF and
+  diagnostics work already present in the tree.
+End commit(s): none in this pass; the shared working tree remains intentionally
+  uncommitted so unrelated concurrent work is not captured accidentally.
+Cases passed:
+  - Exact WIN-001 InputState repro:
+      cargo run -p ferail-gpui --bin ferail-gpui -- --screenshot
+        target/windows-audit/get-info-leak-final.png
+        --navigate C:\Source\Ferail --properties
+    exits 0. An intermediate build drained 76 next-frame callbacks but retained
+    one Root-held InputState and exited 101; removing screenshot windows before
+    App::quit closes that final ownership edge.
+  - ferail-shell-win32: 19 tests passed, including corrupt/zero-length PDF
+    deadline coverage and verbatim UTF-16 path handling.
+  - Full workspace: 671 unit/integration tests passed, 0 failed (plus expected
+    ignored network/doc examples); workspace all-target Clippy with -D warnings,
+    cargo fmt and git diff --check passed.
+    Final targeted rerun after the UTF-16 edge-case test: shell-win32 20/20,
+    ferail-gpui 281 passed + 1 expected network ignore, strict Clippy green.
+  - The packaged feature set compiles with
+    `cargo check -p ferail-gpui --no-default-features`.
+  - Preview requests are latest-wins with active cancellation; Windows kills
+    and waits for a superseded broker. Thumbnail warming is bounded to one
+    active batch plus the latest pending viewport per visible surface.
+  - PDF WinRT open/load/render/read stages share one five-second deadline and
+    cancel the outstanding WinRT operation on expiry.
+  - Crash breadcrumbs now cover navigation generation, selection, preview and
+    thumbnail lifecycle without recording full paths.
+  - Packaging now rejects a dirty tree unless -AllowDirty is explicit and asks
+    Cargo for release line-table debug information for the symbols archive.
+    The dirty-tree rejection was exercised on this 37-path shared tree.
+Cases failed + evidence paths:
+  - First teardown attempt: %APPDATA%\Ferail\reports\ferail-crash-11480.txt
+    (one InputState after callback drain); fixed by the final window-removal
+    step above.
+Not run / still manual:
+  - Real hostile pdfprevhndlr.dll matrix, interactive 10k-media scroll and
+    rapid-selection stress, full open/reveal acceptance, WENV-C clean sandbox,
+    multi-DPI visual corpus, and an actual clean-tree release package.
+Known limitations:
+  - The gpui-component strong InputState captures remain upstream; production
+    packages exclude the developer leak assertion, while dev screenshot
+    teardown now proves clean. The real app-level Quit action is wired through
+    the same cleanup; the full human-driven quit matrix is still pending.
+  - Thumbnail concurrency is bounded per visible FileList surface, not yet by
+    one process-wide cross-window asset semaphore.
+  - Reveal failure falls back to the nearest existing parent and logs a precise
+    error, but there is not yet an in-app actionable toast.
+Next exact work:
+  1. Commit or otherwise isolate the shared tree, then run package-win.ps1 from
+     a clean checkout and record portable/symbol PDB identities.
+  2. Run the interactive acceptance slice and WCORPUS-MEDIA-10K at multiple DPI.
+  3. Exercise a genuinely hanging third-party preview handler during rapid
+     selection and verify immediate broker death/no descendants.
+  4. Run WTEST-004 in a pristine offline Windows Sandbox.
+Working-tree files intentionally left unstaged: all changes listed by git
+  status; the tree is shared with another active session.
+```

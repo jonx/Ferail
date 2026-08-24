@@ -1057,6 +1057,19 @@ pub fn fetch_quick_look_thumbnail(_path: &Path, _size_px: u32) -> Option<(Vec<u8
     None
 }
 
+/// The preview pane's fetch — same as [`fetch_quick_look_thumbnail`] here;
+/// Windows separates the two tiers because its shell thumbnails and its
+/// preview handlers are different things.
+pub fn fetch_preview_image(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    fetch_quick_look_thumbnail(path, size_px)
+}
+
+/// Last-resort large type image — Linux callers draw their own type
+/// glyphs when every content tier fails, so there is nothing to add here.
+pub fn fetch_type_icon(_path: &Path, _size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    None
+}
+
 /// The freedesktop thumbnail cache root (`$XDG_CACHE_HOME/thumbnails`, else
 /// `~/.cache/thumbnails`).
 #[cfg(target_os = "linux")]

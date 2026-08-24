@@ -67,7 +67,7 @@ pub fn parse_frame(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 
 /// Session quarantine for preview-handler CLSIDs.
 ///
-/// A provider that crashes or times out `THRESHOLD` times is skipped
+/// A provider that crashes or times out is skipped immediately
 /// for the rest of the session; the caller then falls through to
 /// `IShellItemImageFactory` / built-in decoding / the generic icon. A
 /// success clears the count, so a provider that merely hiccuped under
@@ -78,7 +78,10 @@ pub struct Quarantine {
 }
 
 impl Quarantine {
-    pub const THRESHOLD: u32 = 2;
+    /// Native access violations and deadline overruns are not recoverable
+    /// transient misses. Retrying the same provider merely repeats a crash or
+    /// a six-second stall, so fail closed after the first incident.
+    pub const THRESHOLD: u32 = 1;
 
     pub fn is_quarantined(&self, clsid: &str) -> bool {
         self.strikes.get(clsid).copied().unwrap_or(0) >= Self::THRESHOLD
@@ -155,16 +158,14 @@ mod tests {
         let mut q = Quarantine::default();
         let clsid = "{aaaa}";
         assert!(!q.is_quarantined(clsid));
-        assert!(!q.note_failure(clsid)); // strike 1
-        assert!(!q.is_quarantined(clsid));
-        assert!(q.note_failure(clsid)); // strike 2 → transition
+        assert!(q.note_failure(clsid)); // first fatal failure → transition
         assert!(q.is_quarantined(clsid));
         assert!(!q.note_failure(clsid)); // already quarantined: no re-log
         q.note_success(clsid);
         assert!(!q.is_quarantined(clsid));
         // Other providers are independent.
         q.note_failure("{bbbb}");
-        assert!(!q.is_quarantined("{bbbb}"));
+        assert!(q.is_quarantined("{bbbb}"));
         assert!(!q.is_quarantined(clsid));
     }
 }

@@ -79,6 +79,29 @@ with the redaction toggle. A not-yet-created target ("written on first
 change" rows) still reveals the parent; the unresolved name is dropped
 when the load completes.
 
+**Bug reports group (implemented).** Right after Privacy, a titled
+"Bug reports" group lists the folders an issue report draws on — the
+reports folder (`<config>/reports`: crash + freeze reports, native
+minidumps, saved bundles) and the config folder itself (settings file,
+metadata DB, language packs) — each with its scrubbed path and an
+"Open folder" button. The click creates the folder on the background
+executor (it may never have been written to), then opens it *inside* a
+Ferail tab via `shell::open_dir_in_app` (the reveal helper's sibling
+that lands in the folder instead of selecting it in its parent). The
+group also hosts the Copy report / Create report bundle… buttons.
+
+**Console crash output.** The panic hook (`obs::print_crash_report`)
+splits its output: the crash-report file gets everything — every
+breadcrumb, the compacted Ferail/GPUI frames, and the complete raw
+backtrace, appended (never truncated, so a second panic or the native
+filter's minidump sidecar line can't erase it) — while stderr gets a
+digest (last `STDERR_BREADCRUMBS` breadcrumbs, `STDERR_FRAME_LINES`
+compact frame lines) ending with the report path.
+`FERAIL_FULL_BACKTRACE=1` / `RUST_BACKTRACE=full` still print the whole
+report inline, as does a missing config dir (stderr is then the only
+copy). The Windows native-exception filter likewise echoes its one
+sidecar line to stderr (unless `quiet`, the preview broker).
+
 ## Phase 3 — Issue reporter  (TODO)
 
 `crates/ferail-gpui/src/report.rs` + a redaction modal.

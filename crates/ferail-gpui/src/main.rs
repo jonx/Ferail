@@ -129,7 +129,7 @@ fn run_doctor_cli() -> i32 {
 
 fn print_cli_help() {
     println!(
-        "Ferail\n\nUsage:\n  ferail                 Open the GPUI file manager\n  ferail magic [path]...  Print magic-byte format (defaults to current directory; directories are listed shallow)\n  ferail du [options] <path>  Print disk-usage summary\n  ferail thumb <path> [--out <png>] [--size N]  Extract a file's thumbnail/preview to a PNG\n  ferail doctor          Print a health check (config / storage / deps) and exit\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories\n\nThumb options:\n  --out <path>     Output PNG path (default: thumb.png)\n  --size <px>      Max edge in pixels (default: 512)"
+        "Ferail\n\nUsage:\n  ferail                 Open the GPUI file manager\n  ferail magic [path]...  Print magic-byte format (defaults to current directory; directories are listed shallow)\n  ferail du [options] <path>  Print disk-usage summary\n  ferail thumb <path> [--out <png>] [--size N] [--preview]  Extract a file's thumbnail/preview to a PNG\n  ferail doctor          Print a health check (config / storage / deps) and exit\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories\n\nThumb options:\n  --out <path>     Output PNG path (default: thumb.png)\n  --size <px>      Max edge in pixels (default: 512)\n  --preview        Fetch what the preview pane would show instead of the grid thumbnail\n                   (on Windows this allows the brokered preview-handler capture)"
     );
 }
 
@@ -216,16 +216,21 @@ fn run_disk_usage_cli(args: &[String]) -> Result<i32> {
     Ok(0)
 }
 
-/// `ferail thumb <path> [--out <png>] [--size N]`
+/// `ferail thumb <path> [--out <png>] [--size N] [--preview]`
 ///
-/// Calls `video_poster::fetch_content_thumbnail` — the same fetch every
-/// in-app thumbnail warm path uses (Quick Look first, then the mpv
+/// Calls `video_poster::fetch_content` — the same fetch every in-app
+/// thumbnail warm path uses (the platform shell first, then the mpv
 /// poster fallback for videos) — and writes the result as a PNG. Useful
 /// for testing the preview pipeline without launching the GUI and for
-/// scripting (batch thumbnail extraction).
+/// scripting (batch thumbnail extraction). `--preview` asks for the
+/// preview pane's tier rather than the grid's; on Windows that is the
+/// only way to exercise the brokered `IPreviewHandler` capture.
 fn run_thumb_cli(args: &[String]) -> Result<i32> {
+    use ferail_gpui::video_poster::Tier;
+
     let mut out: Option<PathBuf> = None;
     let mut size: u32 = 512;
+    let mut tier = Tier::Thumbnail;
     let mut input: Option<PathBuf> = None;
     let mut i = 0;
     while i < args.len() {
@@ -252,8 +257,11 @@ fn run_thumb_cli(args: &[String]) -> Result<i32> {
             s if s.starts_with("--size=") => {
                 size = s["--size=".len()..].parse().unwrap_or(size).clamp(16, 4096);
             }
+            "--preview" => {
+                tier = Tier::Preview;
+            }
             "-h" | "--help" => {
-                println!("usage: ferail thumb <path> [--out <png>] [--size N]");
+                println!("usage: ferail thumb <path> [--out <png>] [--size N] [--preview]");
                 return Ok(0);
             }
             other => {
@@ -267,12 +275,12 @@ fn run_thumb_cli(args: &[String]) -> Result<i32> {
         i += 1;
     }
     let Some(path) = input else {
-        eprintln!("usage: ferail thumb <path> [--out <png>] [--size N]");
+        eprintln!("usage: ferail thumb <path> [--out <png>] [--size N] [--preview]");
         return Ok(2);
     };
     let out = out.unwrap_or_else(|| PathBuf::from("thumb.png"));
 
-    match ferail_gpui::video_poster::fetch_content_thumbnail_blocking(&path, size) {
+    match ferail_gpui::video_poster::fetch_content_blocking(&path, size, tier) {
         Some((rgba, w, h)) => {
             let buf = image::RgbaImage::from_raw(w, h, rgba)
                 .ok_or_else(|| anyhow::anyhow!("thumbnail RGBA dimensions don't match"))?;

@@ -106,13 +106,10 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
 #[cfg(windows)]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::SIZE;
     use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, DIBSECTION, HBITMAP};
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
-    use windows::Win32::UI::Shell::{
-        IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_ICONONLY, SIIGBF_RESIZETOFIT,
-    };
+    use windows::Win32::UI::Shell::{IShellItemImageFactory, SIIGBF_ICONONLY, SIIGBF_RESIZETOFIT};
 
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     wide.push(0);
@@ -122,8 +119,9 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
         let we_initialized = co_hr.is_ok();
 
         let result = (|| -> Option<(Vec<u8>, u32, u32)> {
-            let factory: IShellItemImageFactory =
-                SHCreateItemFromParsingName(PCWSTR::from_raw(wide.as_ptr()), None).ok()?;
+            // Simple-parse retry inside: namespace junctions like
+            // C:\Windows\Fonts refuse plain file paths (WIN-011).
+            let factory: IShellItemImageFactory = win_shell::item_image_factory(&wide)?;
             let size = SIZE {
                 cx: size_px as i32,
                 cy: size_px as i32,
@@ -171,6 +169,23 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
                 px.swap(0, 2);
                 if all_alpha_zero {
                     px[3] = 0xFF;
+                }
+            }
+
+            // Explorer stamps overlays (the .lnk shortcut arrow) on top
+            // of the base icon; SIIGBF_ICONONLY hands back the bare
+            // target icon. Compose the shell-reported overlay for .lnk
+            // only: the gpui IconCache keys icons by extension, so a
+            // per-file overlay (cloud sync state, say) would bleed onto
+            // every file of the type, while every .lnk carries the same
+            // arrow.
+            if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("lnk"))
+            {
+                if let Some(overlay) = win_shell::overlay_rgba(&wide, w, h) {
+                    win_shell::blend_over(&mut pixels, &overlay);
                 }
             }
             Some((pixels, w, h))
@@ -390,5 +405,208 @@ mod icon_tests {
         let icon = fetch_icon_rgba(&dir, 32).expect("system icon for a directory");
         assert_wellformed(icon, 32);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Windows helpers for [`fetch_icon_rgba`]: simple-parse shell item
+/// creation (namespace junctions) and shell overlay composition (the
+/// `.lnk` shortcut arrow).
+///
+/// The simple-parse half mirrors
+/// `ferail-shell-win32::shell_item_image_factory` — the two crates
+/// deliberately don't depend on each other, so keep the twins in sync.
+#[cfg(windows)]
+mod win_shell {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::E_POINTER;
+    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+    use windows::Win32::System::Com::CreateBindCtx;
+    use windows::Win32::UI::Shell::{
+        IFileSystemBindData, IFileSystemBindData_Impl, IShellItemImageFactory,
+        SHCreateItemFromParsingName, STR_FILE_SYS_BIND_DATA,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::HICON;
+
+    /// `SHCreateItemFromParsingName`, retried with a simple-parse bind
+    /// context when the namespace refuses the plain string.
+    /// `C:\Windows\Fonts` is the canonical refusal: it is a namespace
+    /// junction, so ordinary file paths under it come back
+    /// `E_INVALIDARG` even though the files are plain — which is what
+    /// left the Fonts grid with blank icons (WIN-011). Registering an
+    /// `IFileSystemBindData` under `STR_FILE_SYS_BIND_DATA` forces
+    /// plain file-system parsing, Explorer's own escape hatch.
+    pub(super) unsafe fn item_image_factory(wide: &[u16]) -> Option<IShellItemImageFactory> {
+        let pcw = PCWSTR::from_raw(wide.as_ptr());
+        if let Ok(f) = SHCreateItemFromParsingName::<_, _, IShellItemImageFactory>(pcw, None) {
+            return Some(f);
+        }
+        let bind_data: IFileSystemBindData = SimpleFsBindData.into();
+        let bctx = CreateBindCtx(0).ok()?;
+        bctx.RegisterObjectParam(STR_FILE_SYS_BIND_DATA, &bind_data)
+            .ok()?;
+        SHCreateItemFromParsingName::<_, _, IShellItemImageFactory>(pcw, &bctx).ok()
+    }
+
+    /// Minimal `IFileSystemBindData`: the parser only needs the object
+    /// to exist; a zeroed `WIN32_FIND_DATAW` is the documented "just
+    /// parse the string" answer.
+    #[windows::core::implement(IFileSystemBindData)]
+    struct SimpleFsBindData;
+
+    impl IFileSystemBindData_Impl for SimpleFsBindData_Impl {
+        fn SetFindData(&self, _pfd: *const WIN32_FIND_DATAW) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn GetFindData(&self, pfd: *mut WIN32_FIND_DATAW) -> windows::core::Result<()> {
+            if pfd.is_null() {
+                return Err(E_POINTER.into());
+            }
+            unsafe { pfd.write(Default::default()) };
+            Ok(())
+        }
+    }
+
+    /// Rasterize the shell overlay icon reported for the file (for
+    /// `.lnk` that is the shortcut arrow) at `w`×`h`, straight RGBA.
+    /// `None` when the shell reports no overlay. Overlay icons carry
+    /// their glyph pre-positioned inside their own canvas (the arrow
+    /// sits bottom-left), so a full-size draw plus source-over
+    /// composite reproduces Explorer's look.
+    pub(super) unsafe fn overlay_rgba(wide: &[u16], w: u32, h: u32) -> Option<Vec<u8>> {
+        use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
+        use windows::Win32::UI::Shell::{
+            SHGetFileInfoW, SHGetImageList, SHFILEINFOW, SHGFI_ICON, SHGFI_OVERLAYINDEX,
+            SHGFI_SMALLICON, SHIL_JUMBO,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
+
+        // Ask for the overlay *index* (upper 8 bits of iIcon). The flag
+        // is only honored together with SHGFI_ICON, whose HICON we
+        // immediately destroy — the small composed icon itself is not
+        // what we want at grid sizes.
+        let mut shfi = SHFILEINFOW::default();
+        let got = SHGetFileInfoW(
+            PCWSTR::from_raw(wide.as_ptr()),
+            Default::default(),
+            Some(&mut shfi),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_ICON | SHGFI_SMALLICON | SHGFI_OVERLAYINDEX,
+        );
+        if got == 0 {
+            return None;
+        }
+        if !shfi.hIcon.is_invalid() {
+            let _ = DestroyIcon(shfi.hIcon);
+        }
+        let overlay_idx = (shfi.iIcon >> 24) & 0xFF;
+        if overlay_idx == 0 {
+            return None;
+        }
+        let list: IImageList = SHGetImageList(SHIL_JUMBO as i32).ok()?;
+        let img_idx = list.GetOverlayImage(overlay_idx).ok()?;
+        let hicon = list.GetIcon(img_idx, ILD_TRANSPARENT.0).ok()?;
+        let rgba = rasterize_icon(hicon, w, h);
+        let _ = DestroyIcon(hicon);
+        rgba
+    }
+
+    /// Draw an `HICON` into a fresh zeroed 32bpp top-down DIB at
+    /// `w`×`h` and read back RGBA (BGRA swap; DrawIconEx preserves the
+    /// alpha of 32bpp icon art over a zeroed surface).
+    unsafe fn rasterize_icon(hicon: HICON, w: u32, h: u32) -> Option<Vec<u8>> {
+        use windows::Win32::Foundation::{HANDLE, HWND};
+        use windows::Win32::Graphics::Gdi::{
+            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC,
+            SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBRUSH,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{DrawIconEx, DI_NORMAL};
+
+        let screen_dc = GetDC(HWND::default());
+        if screen_dc.is_invalid() {
+            return None;
+        }
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        if mem_dc.is_invalid() {
+            ReleaseDC(HWND::default(), screen_dc);
+            return None;
+        }
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w as i32,
+                biHeight: -(h as i32), // top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let dib = match CreateDIBSection(
+            screen_dc,
+            &info,
+            DIB_RGB_COLORS,
+            &mut bits,
+            HANDLE::default(),
+            0,
+        ) {
+            Ok(d) => d,
+            Err(_) => {
+                let _ = DeleteDC(mem_dc);
+                ReleaseDC(HWND::default(), screen_dc);
+                return None;
+            }
+        };
+        let old = SelectObject(mem_dc, dib);
+        let drawn = DrawIconEx(
+            mem_dc,
+            0,
+            0,
+            hicon,
+            w as i32,
+            h as i32,
+            0,
+            HBRUSH::default(),
+            DI_NORMAL,
+        )
+        .is_ok();
+        let rgba = if drawn && !bits.is_null() {
+            let n = (w as usize) * (h as usize) * 4;
+            let mut v = vec![0u8; n];
+            std::ptr::copy_nonoverlapping(bits as *const u8, v.as_mut_ptr(), n);
+            for px in v.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+            Some(v)
+        } else {
+            None
+        };
+        SelectObject(mem_dc, old);
+        let _ = DeleteObject(dib);
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(HWND::default(), screen_dc);
+        rgba
+    }
+
+    /// Straight-alpha source-over of `over` onto `base` (same dims).
+    pub(super) fn blend_over(base: &mut [u8], over: &[u8]) {
+        for (b, o) in base.chunks_exact_mut(4).zip(over.chunks_exact(4)) {
+            let oa = o[3] as u32;
+            if oa == 0 {
+                continue;
+            }
+            let ba = b[3] as u32;
+            let out_a = oa + ba * (255 - oa) / 255;
+            if out_a == 0 {
+                b[3] = 0;
+                continue;
+            }
+            for c in 0..3 {
+                let num = (o[c] as u32) * oa + (b[c] as u32) * ba * (255 - oa) / 255;
+                b[c] = (num / out_a).min(255) as u8;
+            }
+            b[3] = out_a as u8;
+        }
     }
 }

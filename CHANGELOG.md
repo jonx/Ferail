@@ -8,6 +8,142 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.6.6 — 2026-08-24 (Windows-only release)
+
+This release publishes Windows x64 portable and symbols archives only. macOS
+and Linux remain on 0.6.5; Ferail's updater selects the newest release that
+actually has an asset for the current platform.
+
+- **A corrupt PDF can no longer occupy a thumbnail worker forever.** Every
+  Windows PDF open, parse, render and stream-read operation now shares one
+  five-second deadline and is explicitly cancelled on expiry; unreadable
+  documents fall back to their icon.
+
+- **Rapid scrolling and selection no longer leave trains of obsolete Windows
+  preview work behind.** Each file surface runs one thumbnail batch and keeps
+  only the newest pending viewport, releasing cancelled reservations for a
+  clean retry. Selecting a new document also terminates the previous preview
+  broker immediately instead of waiting for its six-second deadline.
+
+- **Windows crash reports now say what Ferail was doing.** The breadcrumb ring
+  records path-free navigation generations, selection changes, preview
+  cancellation/completion and thumbnail batch state. Native crash handling is
+  re-armed after window/GPU initialization, and release PDBs now retain source
+  line tables.
+
+- **Developer screenshot runs with a second window now exit cleanly.** The
+  deterministic `--screenshot --properties` repro retained dozens of
+  gpui-component input callbacks and ended with an `InputState` leak
+  assertion. Ferail drains those callbacks while their window is alive and
+  removes harness windows before quitting; the same repro now exits zero.
+
+- **Windows release packages must be reproducible by default.** Packaging now
+  refuses a dirty source tree, with an explicit `-AllowDirty` escape hatch for
+  local-only smoke packages, and records the release debug-information policy
+  in the symbol manifest.
+
+- **Quitting can no longer crash with a "leaked handles" report in
+  released builds.** Beyond the reference cycles fixed above, a UI-library
+  behavior still leaks an input handle whenever a second window (such as
+  Get Info) was open — and the library's leak *detector*, a developer
+  diagnostic, was compiled into the builds users download, turning that
+  leak into an exit-101 crash with a scary report. Packaged builds no
+  longer carry the detector; developer/test teardown now also drains the
+  retained callbacks and closes harness windows before the assertion, while
+  the upstream strong-capture design remains documented.
+
+- **Get Info now shows photo metadata.** For images, the properties window
+  gains an Image section: pixel dimensions, camera (make and model,
+  deduplicated), lens, date taken, a one-line exposure summary (shutter,
+  aperture, ISO, focal length), and the stored rotation when there is one.
+  If the photo embeds GPS coordinates, a Location row says so — the
+  coordinates themselves are deliberately not read, displayed, or stored.
+  Works the same on every platform; unreadable or EXIF-less files simply
+  show no section.
+
+- **Settings › Diagnostics has a new "Bug reports" section listing the
+  folders that matter when filing an issue.** The crash-reports folder
+  (crash and freeze reports, native minidumps, saved report bundles) and
+  the settings folder (settings file, metadata database, language packs)
+  are shown with their paths and an *Open folder* button that browses
+  them in a Ferail tab — creating the folder first if nothing was ever
+  written to it.
+
+- **A crash in a terminal no longer floods the console.** The crash
+  output used to dump every breadcrumb and a long backtrace on stderr;
+  now the console gets a short digest — the last few breadcrumbs, the
+  most relevant stack frames, and the path of the full report — while
+  the report file under the config folder's `reports/` gets more than
+  before: every breadcrumb plus the complete raw backtrace, with no
+  environment variable needed. Native faults on Windows, previously
+  silent on the console, now print one line naming the exception and
+  the minidump path. Also fixed: a second crash in the same run used to
+  overwrite the first report file (reports now append), and on Windows the
+  "relevant frames" digest always said no Ferail frames were found — the
+  filter only recognized Unix-style paths.
+
+- **`C:\Windows\Fonts` (and folders like it) no longer shows blank icons.**
+  The Fonts folder is a special Explorer location: Windows refuses the
+  ordinary way of looking up icons and thumbnails for files inside it, so
+  every font file showed an empty placeholder. Ferail now retries those
+  lookups the way Explorer itself does, and font files get their proper
+  icons — and their "Abg" preview cards where Windows provides them.
+
+- **Font previews are no longer upside down on Windows.** The Windows
+  component that renders "Abg" preview cards for font files hands its
+  image back stored bottom-to-top, unlike every image thumbnail — with
+  nothing in the data saying so. Those cards rendered rotated 180°;
+  font files are now flipped correctly.
+
+- **Shortcuts (`.lnk`) show the shortcut arrow on their icon, like
+  Explorer.** A shortcut's icon used to be indistinguishable from the
+  real file or app it points to; the arrow badge Explorer draws is now
+  composed onto shortcut icons in the list, grid and sidebar.
+
+- **Windows thumbnails no longer look like screenshots of another app.**
+  For files with no thumbnail of their own (Word and Excel documents, PDFs
+  on machines without a PDF thumbnailer, …), the icon grid and list used to
+  show a capture of the file's *preview* component — the same live viewer
+  Explorer's preview pane hosts — complete with its scrollbars, toolbars
+  and window chrome. Thumbnails now show what Explorer shows: the file's
+  real thumbnail when one exists, otherwise its type icon. Only the preview
+  pane still falls back to that capture, where a document rendering with
+  chrome beats a bare icon.
+
+- **PDFs get real thumbnails and previews on Windows, rendered by Windows
+  itself.** The first page is now drawn with the PDF renderer built into
+  Windows (the one the Photos and Reader apps use) — in the grid, the list,
+  the preview pane and the viewer — instead of depending on whichever
+  third-party PDF component is installed. It runs without any window or
+  helper process, so it is also immune to the PDF preview crash that
+  motivated the helper-process change below. Password-protected PDFs still
+  show their icon.
+
+- **Preview components run inside a disposable Ferail helper, never the UI
+  process.** Loading the component directly into that short-lived process is
+  intentional: the parent can terminate the exact process that owns a hung or
+  faulting DLL. Windows' `prevhost.exe` surrogate remains a compatibility
+  fallback for components that expose no in-process class. Components that
+  only accept a stream or a shell item (Outlook `.msg` files, for instance)
+  are initialized too, where before they were skipped.
+
+- **The preview pane no longer shows a big type icon for images Windows
+  declines to thumbnail at preview size.** For some files — OneDrive
+  images, notably — Windows produces the small grid thumbnail but refuses
+  the larger preview-pane extraction, and Ferail then showed the file
+  type's icon even though the grid was showing the picture itself. The
+  type icon used to be baked into the Windows fetch as its own fallback,
+  which cut off every decoder queued behind it; it is now the very last
+  resort across all platforms, after Ferail's own image decoding, cover
+  art, and video poster tiers have had their turn. This also un-blocks
+  poster frames for videos Windows can't thumbnail (MKV and friends with
+  the mpv provider configured), which the early icon used to shadow.
+
+- **`ferail thumb` accepts relative paths and a `--preview` flag.** The
+  command-line thumbnail extractor used to fail silently on Windows unless
+  given an absolute path; `--preview` asks for what the preview pane would
+  show rather than the grid thumbnail.
+
 - **Quitting no longer ends in a "leaked handles" crash after using a
   context menu or the filter box.** On Windows, closing Ferail after a
   normal session could exit with an error report about leaked `PopupMenu`
@@ -24,7 +160,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   like the PDF previewer access violation reported against 0.6.5 — could take
   the whole app down or hang it. Each preview now renders in a short-lived
   helper process: if the component crashes or stalls, only the helper dies,
-  the file shows its icon instead, and a component that fails twice is
+  the file shows its icon instead, and a component that fails once is
   skipped for the rest of the session.
 
 - **Windows crashes in native code now leave a minidump next to the crash

@@ -237,6 +237,15 @@ fn breadcrumbs() -> &'static Mutex<VecDeque<String>> {
     BREADCRUMBS.get_or_init(|| Mutex::new(VecDeque::with_capacity(BREADCRUMB_CAP)))
 }
 
+/// How much of the crash lands on stderr vs. in the report file. A
+/// terminal crash used to dump everything (up to 64 breadcrumbs + 28
+/// backtrace lines) on the console; now stderr gets a digest sized to
+/// these caps and the report file gets the whole story — every
+/// breadcrumb plus the complete raw backtrace.
+const STDERR_BREADCRUMBS: usize = 8;
+const STDERR_FRAME_LINES: usize = 12;
+const REPORT_FRAME_LINES: usize = 28;
+
 fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
     use std::fmt::Write as _;
 
@@ -278,38 +287,56 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
             .and_then(|v| v.into_string().ok())
             .map(|v| v == "full")
             .unwrap_or(false);
-    let mut r = String::with_capacity(4096);
-    let _ = writeln!(r);
+
+    // The report file gets the whole story, unconditionally: every
+    // breadcrumb, the compacted Ferail/GPUI frames for a quick read, and
+    // the complete raw backtrace. Appended — persist_crash_report already
+    // seeded the file, and a second panic (or a native-exception sidecar
+    // line) must never overwrite the first, informative report.
+    let mut detailed = String::with_capacity(4096);
+    write_report_header(&mut detailed, thread_name, location, payload);
+    dump_breadcrumbs_for_panic(&mut detailed, usize::MAX);
+    let _ = writeln!(detailed);
+    let _ = writeln!(detailed, "relevant frames:");
+    write_compact_backtrace(&mut detailed, &backtrace_text, REPORT_FRAME_LINES);
+    let _ = writeln!(detailed);
+    let _ = writeln!(detailed, "backtrace :");
+    let _ = writeln!(detailed, "{backtrace_text}");
     let _ = writeln!(
-        r,
-        "==================== Ferail (gpui) Crash ===================="
-    );
-    let _ = writeln!(r, "time      : +{:.3}s", elapsed_secs());
-    let _ = writeln!(r, "thread    : {thread_name}");
-    let _ = writeln!(r, "location  : {location}");
-    let _ = writeln!(r, "message   : {payload}");
-    let _ = writeln!(r);
-    dump_breadcrumbs_for_panic(&mut r);
-    let _ = writeln!(r);
-    if full {
-        let _ = writeln!(r, "backtrace :");
-        let _ = writeln!(r, "{backtrace_text}");
-    } else {
-        let _ = writeln!(r, "relevant frames:");
-        write_compact_backtrace(&mut r, &backtrace_text);
-        let _ = writeln!(
-            r,
-            "hint      : set FERAIL_FULL_BACKTRACE=1 for the full raw backtrace"
-        );
-    }
-    let _ = writeln!(
-        r,
+        detailed,
         "==============================================================="
     );
 
-    stderr_line(&r);
-    if let Some(path) = crash_path {
-        let _ = std::fs::write(path, &r);
+    if let Some(path) = &crash_path {
+        append_report(path, &detailed);
+    }
+
+    // stderr gets a console-sized digest — the last few breadcrumbs, the
+    // relevant frames, and a pointer to the report file for the rest.
+    // Two cases still print everything: the user asked for the full
+    // backtrace inline, or no report file could be written (stderr is
+    // then the only copy).
+    match &crash_path {
+        Some(path) if !full => {
+            let mut brief = String::with_capacity(2048);
+            write_report_header(&mut brief, thread_name, location, payload);
+            dump_breadcrumbs_for_panic(&mut brief, STDERR_BREADCRUMBS);
+            let _ = writeln!(brief);
+            let _ = writeln!(brief, "relevant frames:");
+            write_compact_backtrace(&mut brief, &backtrace_text, STDERR_FRAME_LINES);
+            let _ = writeln!(
+                brief,
+                "full report: {} (every breadcrumb + the complete backtrace; \
+                 set FERAIL_FULL_BACKTRACE=1 to print it here instead)",
+                path.display()
+            );
+            let _ = writeln!(
+                brief,
+                "==============================================================="
+            );
+            stderr_line(&brief);
+        }
+        _ => stderr_line(&detailed),
     }
 
     // On AROS, stderr is lost (console-bound) and with panic=abort the whole
@@ -325,9 +352,37 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
             .append(true)
             .open("MacRW:ferail-panic.txt")
         {
-            let _ = writeln!(f, "{r}");
+            let _ = writeln!(f, "{detailed}");
             let _ = f.flush();
         }
+    }
+}
+
+fn write_report_header(out: &mut String, thread_name: &str, location: &str, payload: &str) {
+    use std::fmt::Write as _;
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "==================== Ferail (gpui) Crash ===================="
+    );
+    let _ = writeln!(out, "time      : +{:.3}s", elapsed_secs());
+    let _ = writeln!(out, "thread    : {thread_name}");
+    let _ = writeln!(out, "location  : {location}");
+    let _ = writeln!(out, "message   : {payload}");
+    let _ = writeln!(out);
+}
+
+/// Append `text` to the crash-report file. Append, never truncate — the
+/// same double-panic rationale as [`persist_crash_report`], plus the
+/// Windows native-exception filter shares this file for its sidecar line.
+fn append_report(path: &std::path::Path, text: &str) {
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = f.write_all(text.as_bytes());
     }
 }
 
@@ -357,8 +412,27 @@ fn persist_crash_report(_essential: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-fn write_compact_backtrace(out: &mut String, backtrace: &str) {
+fn write_compact_backtrace(out: &mut String, backtrace: &str, max_lines: usize) {
     use std::fmt::Write as _;
+
+    // Backslash-normalized so Windows backtraces (`.\crates\ferail-gpui\...`)
+    // match too — they used to slip past the `/`-only patterns and every
+    // Windows report said "<no Ferail/GPUI frames found>". A frame counts if
+    // either its symbol line or its `at path:line` line matches; the panic
+    // hook's own frames are noise on every report and are skipped.
+    fn is_relevant(line: &str) -> bool {
+        let norm = line.replace('\\', "/");
+        if norm.contains("obs::print_crash_report") || norm.contains("obs::install_panic_hook") {
+            return false;
+        }
+        norm.contains("ferail_")
+            || norm.contains("crates/ferail-")
+            || norm.contains("gpui::app::entity_map")
+            || norm.contains("gpui/src/app.rs")
+            || norm.contains("gpui/src/app/context.rs")
+            || norm.contains("gpui/src/app/entity_map.rs")
+    }
+
     let mut printed = 0usize;
     let mut pending_frame: Option<&str> = None;
     for line in backtrace.lines() {
@@ -373,11 +447,17 @@ fn write_compact_backtrace(out: &mut String, backtrace: &str) {
             pending_frame = Some(line);
             continue;
         }
-        let relevant = line.contains("ferail_")
-            || line.contains("crates/ferail-")
-            || line.contains("gpui::app::entity_map")
-            || line.contains("gpui/src/app.rs")
-            || line.contains("gpui/src/app/context.rs");
+        // Drop the hook's own frame together with its location line —
+        // `is_relevant` can't do it alone, since the location (`at
+        // ...crates/ferail-gpui/src/obs.rs`) matches the ferail patterns.
+        if pending_frame
+            .map(|f| f.contains("obs::print_crash_report") || f.contains("obs::install_panic_hook"))
+            .unwrap_or(false)
+        {
+            pending_frame = None;
+            continue;
+        }
+        let relevant = is_relevant(line) || pending_frame.map(is_relevant).unwrap_or(false);
         if relevant {
             if let Some(frame) = pending_frame.take() {
                 let _ = writeln!(out, "    {frame}");
@@ -386,7 +466,7 @@ fn write_compact_backtrace(out: &mut String, backtrace: &str) {
             let _ = writeln!(out, "    {line}");
             printed += 1;
         }
-        if printed >= 28 {
+        if printed >= max_lines {
             let _ = writeln!(out, "    ... compacted ...");
             return;
         }
@@ -420,7 +500,10 @@ pub fn try_breadcrumb_lines() -> Option<Vec<String>> {
     Some(guard.iter().cloned().collect())
 }
 
-fn dump_breadcrumbs_for_panic(out: &mut String) {
+/// Write the breadcrumb ring's last `limit` entries. The report file
+/// passes `usize::MAX` (everything); stderr passes a console-sized cap
+/// and notes how many earlier entries the report file holds.
+fn dump_breadcrumbs_for_panic(out: &mut String, limit: usize) {
     use std::fmt::Write as _;
     let Some(guard) = try_breadcrumb_lines() else {
         let _ = writeln!(out, "breadcrumbs:");
@@ -433,7 +516,11 @@ fn dump_breadcrumbs_for_panic(out: &mut String) {
         return;
     }
     let _ = writeln!(out, "breadcrumbs:");
-    for (idx, entry) in guard.iter().enumerate() {
+    let skipped = guard.len().saturating_sub(limit);
+    if skipped > 0 {
+        let _ = writeln!(out, "    ... {skipped} earlier (in the report file) ...");
+    }
+    for (idx, entry) in guard.iter().enumerate().skip(skipped) {
         let _ = writeln!(out, "    {:>2}. {entry}", idx + 1);
     }
 }
@@ -503,4 +590,45 @@ macro_rules! log_error {
             $crate::obs::line("error", format_args!($($arg)*))
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    // Trimmed from a real Windows report (leaked-handle assertion, pid 6948):
+    // backslash paths, `impl$45`-style MSVC symbols, the hook's own frames.
+    const WINDOWS_BACKTRACE: &str = "\
+   3: std::backtrace::Backtrace::force_capture
+             at /rustc/59807616/library\\std\\src\\backtrace.rs:312
+   4: ferail_gpui::obs::print_crash_report
+             at .\\crates\\ferail-gpui\\src\\obs.rs:283
+  10: core::panicking::panic_fmt
+             at /rustc/59807616/library\\core\\src\\panicking.rs:80
+  11: gpui::app::entity_map::impl$45::drop
+             at C:\\Users\\x\\.cargo\\git\\checkouts\\zed-a70e\\38ca910\\crates\\gpui\\src\\app\\entity_map.rs:1116
+  12: core::ptr::drop_in_place
+             at /rustc/59807616/library\\core\\src\\ptr\\mod.rs:805
+";
+
+    #[test]
+    fn compact_backtrace_matches_windows_paths() {
+        let mut out = String::new();
+        super::write_compact_backtrace(&mut out, WINDOWS_BACKTRACE, 28);
+        assert!(
+            out.contains("gpui::app::entity_map::impl$45::drop"),
+            "entity_map frame missing from: {out}"
+        );
+        // The hook's own capture frames are plumbing, not the crash site.
+        assert!(
+            !out.contains("print_crash_report"),
+            "panic-hook frame should be filtered: {out}"
+        );
+        assert!(!out.contains("<no Ferail/GPUI frames found>"), "{out}");
+    }
+
+    #[test]
+    fn compact_backtrace_caps_lines() {
+        let mut out = String::new();
+        super::write_compact_backtrace(&mut out, WINDOWS_BACKTRACE, 1);
+        assert!(out.contains("... compacted ..."), "{out}");
+    }
 }

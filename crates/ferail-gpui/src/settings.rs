@@ -511,6 +511,7 @@ pub fn open_settings_window(cx: &mut App) {
         // A failed `open_window` (display reconfiguration, resource pressure)
         // must not take the app down — log and leave the existing windows be.
         if let Err(e) = cx.open_window(opts, |window, cx| {
+            crate::boot::install_dev_window_callback_cleanup(window, cx);
             let view = cx.new(|cx| SettingsView::new(SettingsCategory::Appearance, window, cx));
             cx.new(|cx| Root::new(view, window, cx))
         }) {
@@ -907,6 +908,74 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
             )),
     );
 
+    // Bug reports — the folders a bug report draws on, then the packaging
+    // actions. Right after Privacy so "where do I find the crash files"
+    // has a one-scroll answer. `config_dir` is pure env-var derivation
+    // (no disk I/O), so building these rows here is render-safe; the
+    // Open buttons create the folder off-thread before opening it.
+    let mut bug_reports = SettingGroup::new().title(tr!("Bug reports"));
+    if let Some(config) = app_state::config_dir() {
+        bug_reports = bug_reports
+            .item(report_folder_item(
+                "bug-folder-reports",
+                tr!("Crash reports folder"),
+                tr!(
+                    "Crash reports, freeze reports, native minidumps, and saved report \
+                     bundles are written here. A crash in a terminal prints a short summary \
+                     and puts the full detail in this folder. Attach the newest files when \
+                     reporting a bug."
+                ),
+                config.join("reports"),
+            ))
+            .item(report_folder_item(
+                "bug-folder-config",
+                tr!("Settings folder"),
+                tr!(
+                    "The app's configuration lives here: the settings file, the metadata \
+                     database (tags, visit history), and your language packs."
+                ),
+                config,
+            ));
+    }
+
+    // Copy-report / bundle actions — both honor the redaction toggle and scrub
+    // the account name out of the app-owned diagnostics paths.
+    let report_for_copy = report.clone();
+    page = page.group(bug_reports.item(SettingItem::render(move |_o, _w, _cx| {
+        use gpui_component::{Sizable as _, button::Button};
+        let report = report_for_copy.clone();
+        gpui_component::h_flex()
+            .w_full()
+            .gap_2()
+            .child(
+                Button::new("diag-copy")
+                    .label(tr!("Copy report"))
+                    .outline()
+                    .small()
+                    .on_click(move |_, _w, _cx| {
+                        let mut text = crate::report::redact_username(
+                            &crate::diagnostics::render_text(&report),
+                        );
+                        let trail = crate::trail::render_lines_sanitized();
+                        if !trail.is_empty() {
+                            text.push_str("\n[Activity trail]\n");
+                            for l in &trail {
+                                text.push_str(&crate::report::redact_username(l));
+                                text.push('\n');
+                            }
+                        }
+                        crate::platform_shell::copy_to_clipboard(&text);
+                    }),
+            )
+            .child(
+                Button::new("diag-report")
+                    .label(tr!("Create report bundle\u{2026}"))
+                    .outline()
+                    .small()
+                    .on_click(|_, window, _cx| crate::report::open_reporter(window)),
+            )
+    })));
+
     // One group per check group, one row per check.
     for (gi, group) in report.groups.iter().enumerate() {
         let mut sg = SettingGroup::new().title(crate::i18n::tr_static(group.title));
@@ -1007,46 +1076,87 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
             })),
     );
 
-    // Copy-report / bundle actions — both honor the redaction toggle and scrub
-    // the account name out of the app-owned diagnostics paths.
-    page = page.group(
-        SettingGroup::new().item(SettingItem::render(move |_o, _w, _cx| {
-            use gpui_component::{Sizable as _, button::Button};
-            let report = report.clone();
-            gpui_component::h_flex()
-                .w_full()
-                .gap_2()
-                .child(
-                    Button::new("diag-copy")
-                        .label(tr!("Copy report"))
-                        .outline()
-                        .small()
-                        .on_click(move |_, _w, _cx| {
-                            let mut text = crate::report::redact_username(
-                                &crate::diagnostics::render_text(&report),
-                            );
-                            let trail = crate::trail::render_lines_sanitized();
-                            if !trail.is_empty() {
-                                text.push_str("\n[Activity trail]\n");
-                                for l in &trail {
-                                    text.push_str(&crate::report::redact_username(l));
-                                    text.push('\n');
-                                }
-                            }
-                            crate::platform_shell::copy_to_clipboard(&text);
-                        }),
-                )
-                .child(
-                    Button::new("diag-report")
-                        .label(tr!("Create report bundle\u{2026}"))
-                        .outline()
-                        .small()
-                        .on_click(|_, window, _cx| crate::report::open_reporter(window)),
-                )
-        })),
-    );
-
     page
+}
+
+/// One row of the Diagnostics page's Bug-reports group: a folder that
+/// matters when filing an issue — title, an Open button, the folder's
+/// path (account name scrubbed, as the language group shows it), and a
+/// description of what lives inside. The folder may not exist yet (no
+/// crash ever happened), so the click creates it on the background
+/// executor first, then opens it in a Ferail tab on the main thread
+/// (Prime Directive: no disk I/O in a click handler).
+fn report_folder_item(
+    id: &'static str,
+    title: SharedString,
+    description: SharedString,
+    dir: std::path::PathBuf,
+) -> SettingItem {
+    let keyword_title = title.clone();
+    let keyword_description = description.clone();
+    SettingItem::render(move |_o, _w, cx| {
+        use gpui_component::{ActiveTheme as _, Sizable as _, button::Button};
+        let muted = cx.theme().muted_foreground;
+        let fg = cx.theme().foreground;
+        let shown = crate::report::redact_username(&dir.display().to_string());
+        let dir = dir.clone();
+        gpui_component::v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                gpui_component::h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_scale_sm()
+                            .text_color(fg)
+                            .child(title.clone()),
+                    )
+                    .child(
+                        Button::new(id)
+                            .label(tr!("Open folder"))
+                            .outline()
+                            .xsmall()
+                            .on_click(move |_, _w, cx| {
+                                let dir = dir.clone();
+                                cx.spawn(async move |cx: &mut AsyncApp| {
+                                    let created = cx
+                                        .background_executor()
+                                        .spawn({
+                                            let dir = dir.clone();
+                                            async move { std::fs::create_dir_all(&dir) }
+                                        })
+                                        .await;
+                                    cx.update(|cx| match created {
+                                        Ok(()) => crate::shell::open_dir_in_app(cx, dir),
+                                        Err(e) => {
+                                            crate::log_warn!(90, "bug-report folder: {e}")
+                                        }
+                                    });
+                                })
+                                .detach();
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .text_scale_xs()
+                    .text_color(muted)
+                    .child(SharedString::from(shown)),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .text_scale_sm()
+                    .text_color(muted)
+                    .child(description.clone()),
+            )
+    })
+    .keywords([keyword_title, keyword_description])
 }
 
 fn search_dupes_page() -> SettingPage {

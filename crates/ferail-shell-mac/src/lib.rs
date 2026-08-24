@@ -559,6 +559,20 @@ pub fn fetch_quick_look_thumbnail(
     None
 }
 
+/// The preview pane's fetch. Quick Look already renders document
+/// content (page 1 of a PDF, a Pages/Word file, …), so on macOS this is
+/// the same call as [`fetch_quick_look_thumbnail`]; Windows separates the
+/// two tiers because its shell does not.
+pub fn fetch_preview_image(path: &std::path::Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    fetch_quick_look_thumbnail(path, size_px)
+}
+
+/// Last-resort large type image — macOS callers draw their own type
+/// glyphs when every content tier fails, so there is nothing to add here.
+pub fn fetch_type_icon(_path: &std::path::Path, _size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    None
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn show_quick_look(_paths: &[&std::path::Path]) -> Result<(), String> {
     Err("quick_look is macOS-only".into())
