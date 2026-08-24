@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor/gpui_windows"]
 members = [
     "crates/ferail-archive",
     "crates/ferail-core",
@@ -118,8 +119,8 @@ reqwest_client = { git = "https://github.com/zed-industries/zed" }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "6d7847e33ef3b8e043d1fcea82eb7e1b7f919d8b", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "6d7847e33ef3b8e043d1fcea82eb7e1b7f919d8b" }
 
-# The ONLY zed-source `[patch]` allowed here: an **in-repo** path, committed
-# and therefore present in every clone and on CI.
+# Zed-source patches allowed here are **in-repo** paths, committed and therefore
+# present in every clone and on CI.
 #
 # `ztracing` (and its satellites `ztracing_macro` and `zlog`) are GPL-3.0,
 # and gpui depends on ztracing directly as of zed 00cba838a — previously the
@@ -135,6 +136,10 @@ gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", 
 #     cargo tree -p ferail-gpui -i zlog      # must print nothing
 [patch."https://github.com/zed-industries/zed"]
 ztracing = { path = "vendor/ztracing" }
+# GPUI promotes native file drags on macOS/Wayland, but its Windows backend
+# leaves the platform hooks disabled. This narrow Apache-2.0 fork adds the
+# missing Shell/OLE handoff; see vendor/gpui_windows/README.md.
+gpui_windows = { path = "vendor/gpui_windows" }
 
 # `tar` gates its path<->bytes conversion, symlink, permission and xattr
 # helpers on cfg(unix)/cfg(windows)/wasm32, and AROS is none of those — the

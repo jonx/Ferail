@@ -152,6 +152,26 @@ explicit target snapshot, binds same-parent child PIDLs, owns the
 `IContextMenu2/3` message loop and `TrackPopupMenuEx`, invokes the chosen verb,
 then exits. Ferail must remain alive if a third-party handler crashes or hangs.
 
+Implementation landed in the working tree on 2026-08-25. The normal row menu
+now ends in **More options from Windows…**; Shift+right-click and Shift+F10
+dispatch the same action directly. The executable's early
+`--windows-context-menu-broker` role owns all Shell extension code and uses a
+readiness pipe: preparation is killed after eight seconds, while a visible menu
+is deliberately not timed out. Same-parent filesystem multi-selection is
+supported; mixed-parent selections receive an explicit notification. Command
+invocation is Unicode and requests synchronous completion. The canonical
+Properties verb bypasses its prematurely-returning context-menu handler and
+uses `SHObjectProperties` / `SHMultiFileProperties` directly. The owner proxy
+is positioned at the click point, and the GPUI live-menu listener explicitly
+ignores Shift+right-click so only the native extended menu opens.
+
+Manual gate still required: exercise list and grid views with a selected and
+unselected row; compare plain right-click, More, Shift+right-click and
+Shift+F10; open dynamic/owner-drawn submenus from 7-Zip, Defender and a Git
+client; invoke one mutating verb and confirm Ferail remains responsive. Mixed
+parents and namespace-only items must fail clearly rather than flattening or
+silently changing the target set.
+
 ### D. Shell namespace and Windows metadata — WIN-010 onward
 
 Add platform capability interfaces behind the shared application, not a
@@ -187,7 +207,8 @@ path exists.
   Details → right-click `Ferail.exe` → *Create dump file* writes a full dump
   to `%TEMP%`. Use this for UI stalls, where nothing faults.
 - **Symbolizing.** Open the `.dmp` in WinDbg with the PDBs from
-  `Ferail-<version>-win-x64-symbols.zip` whose `manifest.json` commit and
+  `Ferail-<version>-x64-symbols.zip` (named `…-win-x64-symbols.zip` through
+  0.6.6) whose `manifest.json` commit and
   CodeView GUID match the binary (`.sympath+ <extracted folder>`; `!analyze
   -v`; `lm` to spot unloaded third-party modules). Never symbolize against
   PDBs from a different build.

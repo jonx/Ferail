@@ -344,7 +344,7 @@ stuck in legal).
 ## 9. External file drag-out finally exists — via `external_drag_payload` (zed #58161)
 
 **Hit during:** "drag to Finder does nothing" investigation, fixed with the
-2026-08-08 bump.
+2026-08-08 bump; then the same symptom on Windows, fixed locally 2026-08-25.
 
 Not a complaint — an API note. gpui's `on_drag` is purely in-window (the app
 paints its own ghost; nothing reaches the OS). Dragging `ExternalPaths` as
@@ -353,12 +353,26 @@ seven weeks. Real drag-out requires chaining
 `.external_drag_payload::<T>(resolver)` after `.on_drag(...)`: when the
 pointer leaves the viewport, gpui calls the resolver (UI thread — keep it
 allocation-cheap and I/O-free; we feed it cached `EntryKind` dir-ness) and
-promotes to a native `NSDraggingSession` / Wayland drag. The platform then
-draws per-type file icons and the in-window ghost hands off. Payloads are real
-on-disk paths only (`ExternalDragPayload::Files`) — nothing exists yet for
-promise-based/deferred content. Ferail now implements archive member drag-out
-directly with `NSFilePromiseProvider`; see #11 for the extra cross-window
-handoff this requires.
+asks the platform backend to promote the gesture to a native drag. The
+platform then draws per-type file icons and the in-window ghost hands off.
+Payloads are real on-disk paths only (`ExternalDragPayload::Files`) — nothing
+exists yet for promise-based/deferred content. Ferail implements archive
+member drag-out directly with `NSFilePromiseProvider` on macOS; see #11 for
+the extra cross-window handoff this requires.
+
+The GPUI core contract is cross-platform, but the pinned Windows backend —
+and upstream `main` when checked on 2026-08-24 — leaves
+`can_start_external_drag`/`start_external_drag` at their default `false`.
+Ferail therefore carries a narrow `gpui_windows` patch: absolute PIDLs feed
+`SHCreateDataObject`, then `SHDoDragDrop` runs a normal OLE file drag with
+copy/move/link effects. That synchronous modal loop **must not** start inside
+GPUI's input callback: it pumps messages while `App` is still mutably borrowed
+and a timer or paint can panic with `RefCell already borrowed`. A private
+window message defers it until the callback unwinds. When the pointer re-enters
+the source, GPUI restores its own badge and `IDropTargetHelper::Show(false)`
+hides the otherwise-duplicated Shell image; leaving restores the native image.
+The OLE return path always emits `FileDropEvent::Ended`, including cancellation
+and failure, so `platform_owned_drag` cannot remain suspended indefinitely.
 
 ## 10. Drag-out operation mask is hardcoded to Copy — no move, no modifiers
 

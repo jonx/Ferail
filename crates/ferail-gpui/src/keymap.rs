@@ -26,8 +26,8 @@ use crate::shell::{
     MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, NextTab,
     OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend,
     PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage, PrevTab, QuickLook, Refresh, RenameSelected,
-    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleFlatView, ToggleHidden,
-    TogglePreview, ZoomIn, ZoomOut, ZoomReset,
+    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ShowWindowsContextMenu,
+    ToggleFlatView, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDelete, ViewerDismiss, ViewerLeft, ViewerNext,
@@ -46,6 +46,12 @@ pub fn install(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(
         "escape",
         ClearFilter,
+        Some(shell::SHELL_CONTEXT),
+    )]);
+    #[cfg(windows)]
+    cx.bind_keys([KeyBinding::new(
+        "shift-f10",
+        ShowWindowsContextMenu,
         Some(shell::SHELL_CONTEXT),
     )]);
     // Undo (Cmd+Z) — not in the catalogue today because the action

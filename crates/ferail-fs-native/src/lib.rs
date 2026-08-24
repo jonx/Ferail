@@ -348,6 +348,44 @@ pub fn entry_is_hidden(name: &str, _metadata: &std::fs::Metadata) -> bool {
     name.starts_with('.')
 }
 
+/// Depth-first listing of every entry beneath `root`, for the recursive
+/// (Shift-invoked) flavor of "Copy File List". Appends the full path of
+/// each file *and* directory, a directory's own line immediately
+/// followed by its contents, children sorted by name so the pasted list
+/// is stable across runs. Symlinks are listed but never descended into
+/// (`symlink_metadata` reports the link itself, so a link to a
+/// directory is not `is_dir()`), which also breaks cycles. Unreadable
+/// directories are skipped in place, matching the search walker.
+/// Blocking: touches the disk on every level, so it must stay off the
+/// UI thread.
+pub fn list_subtree_paths(root: &Path, include_hidden: bool, out: &mut Vec<PathBuf>) {
+    ferail_core::path_guard::assert_off_ui_thread("list_subtree_paths");
+    let Ok(read_dir) = std::fs::read_dir(root) else {
+        return;
+    };
+    let mut children: Vec<(String, PathBuf, bool)> = Vec::new();
+    for dirent in read_dir.flatten() {
+        let path = dirent.path();
+        let Some(name) = path.file_name().map(|s| s.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !include_hidden && entry_is_hidden(&name, &metadata) {
+            continue;
+        }
+        children.push((name, path, metadata.is_dir()));
+    }
+    children.sort_by_key(|(name, _, _)| name.to_lowercase());
+    for (_, path, is_dir) in children {
+        out.push(path.clone());
+        if is_dir {
+            list_subtree_paths(&path, include_hidden, out);
+        }
+    }
+}
+
 pub(crate) fn map_io_error(e: &std::io::Error) -> EnumerationError {
     match e.kind() {
         std::io::ErrorKind::PermissionDenied => EnumerationError::PermissionDenied,
@@ -1191,6 +1229,38 @@ mod tests {
         let plain_meta = std::fs::symlink_metadata(&plain).unwrap();
         assert!(entry_is_hidden(".dotfile", &dot_meta));
         assert!(!entry_is_hidden("plain.txt", &plain_meta));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The recursive Copy File List walker: depth-first, a directory's
+    /// own line immediately followed by its name-sorted contents, and
+    /// hidden entries skipped unless asked for.
+    #[test]
+    fn list_subtree_paths_walks_depth_first_and_skips_hidden() {
+        let dir = std::env::temp_dir().join(format!("ferail-subtree-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("b_sub").join("inner")).unwrap();
+        std::fs::write(dir.join("a.txt"), b"x").unwrap();
+        std::fs::write(dir.join("b_sub").join("file.txt"), b"x").unwrap();
+        std::fs::write(dir.join("b_sub").join("inner").join("deep.txt"), b"x").unwrap();
+        std::fs::write(dir.join("b_sub").join(".hidden"), b"x").unwrap();
+
+        let mut out = Vec::new();
+        list_subtree_paths(&dir, false, &mut out);
+        assert_eq!(
+            out,
+            vec![
+                dir.join("a.txt"),
+                dir.join("b_sub"),
+                dir.join("b_sub").join("file.txt"),
+                dir.join("b_sub").join("inner"),
+                dir.join("b_sub").join("inner").join("deep.txt"),
+            ]
+        );
+
+        out.clear();
+        list_subtree_paths(&dir, true, &mut out);
+        assert!(out.contains(&dir.join("b_sub").join(".hidden")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

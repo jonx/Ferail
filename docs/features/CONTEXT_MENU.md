@@ -17,13 +17,18 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
 - File tree (sidebar): Open in New Tab, Get Info (volume rows open with
   `InfoTarget::Volume` so the header names the volume), Reveal in Finder,
   Copy Path, Open Terminal Here, Add / Remove from Favorites, New Folder
-  Here, Eject (removable volume rows only).
+  Here, Eject and What's Blocking Eject? (removable volume rows only; the
+  latter additionally gated on `lock_diagnostics_available()` — Windows-only
+  today, see `shell/lock_info.rs`).
 - List pane (per-row): full Finder-equivalent — Open, Open in New Tab
   (folders), Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
   Compress (submenu: ZIP / 7-Zip / TAR ▸ Gzip·Bzip2·XZ·Uncompressed),
   Extract (archive rows only; submenu: Extract Here / Extract To…),
-  Copy Path, Open Terminal Here (folders), Share…, Tags row
+  Copy Path, Open Terminal Here (folders), What's Locking This? (platforms
+  with `lock_diagnostics_available()` — Windows-only today; a Restart-Manager
+  dialog naming the processes holding the selection open, with force-close
+  buttons — `shell/lock_info.rs`), Share…, Tags row
   (7 colours), Move to Trash.
 - List pane (background): right-click on empty space — below the last row,
   or anywhere in an empty folder — targets the *folder being browsed*,
@@ -350,14 +355,32 @@ testable in isolation.
   configure themselves out of the app's primary verb, mirroring how the
   `name` column can never be hidden.
 
-## Windows Notes That Did Not Port
+## Windows Native Menu
 
-- `IContextMenu`, `TrackPopupMenuEx`, PIDLs, shell extensions, and wait-
-  cursor suppression are Windows implementation details. Ferail-Win32's
-  `shell_pump.rs` state machine (1 ms slices interleaved with UI) is
-  the right reference for any future async population work.
-- The lesson that did port: the first context menu must not make the
-  app look frozen, and slow third-party plug-ins must not block paint.
+Windows keeps Ferail's menu as the ordinary, instant right-click path. The
+final **More options from Windows…** entry, Shift+right-click, and Shift+F10
+explicitly request the native Shell menu. Nothing is prefetched on selection,
+hover, navigation, or while constructing Ferail's own menu.
+
+The native implementation is deliberately out of process. A disposable
+`ferail-gpui.exe --windows-context-menu-broker` role binds same-parent child
+PIDLs, obtains `IContextMenu`, forwards owner-draw and dynamic-submenu messages
+through `IContextMenu2/3`, displays `TrackPopupMenuEx`, invokes the selected
+offset, and exits. Third-party DLLs therefore never enter the GPUI process. A
+private readiness handshake bounds a stuck pre-display provider; once the
+native popup is ready it is user-modal and has no timeout. Invocation uses a
+Unicode `CMINVOKECOMMANDINFOEX` with `CMIC_MASK_NOASYNC`. The canonical
+`properties` verb is the exception: its handler can return before its property
+sheet is established, so the broker routes one item through
+`SHObjectProperties` and a multi-selection through `SHMultiFileProperties`.
+Its tool-window owner sits at the click point rather than off-screen so owned
+dialogs cannot inherit an off-screen placement. Shift+right-click is filtered
+inside Ferail's live-menu listener as well as routed to the Shell; GPUI window
+listeners do not honor element `stop_propagation()` by themselves.
+
+Ferail-Win32's old selection-change `menu_preload.rs` and interleaved
+`shell_pump.rs` were behavioral references only. They are intentionally not
+ported: the normal menu never pays the Shell-extension cost.
 
 ## Open Work
 

@@ -8,6 +8,60 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The real Windows file context menu is available on explicit demand.**
+  Ferail's fast right-click menu remains the default and now ends with “More
+  options from Windows…”. Shift+right-click and Shift+F10 open the native
+  Shell menu directly, including third-party verbs and owner-drawn submenus.
+  Shell extensions run only in a disposable broker process: a crash cannot
+  take Ferail down, and an extension that stalls while building the menu is
+  terminated after a bounded preparation period. Once visible, the menu has
+  no timeout and remains open as long as the user needs it. Ordinary commands
+  are invoked synchronously; the special Properties verb is routed through
+  Windows' dedicated property-sheet APIs so its interface survives the broker
+  dispatch. Shift+right-click also suppresses Ferail's menu completely rather
+  than stacking both menus.
+
+- **See which programs are locking a file — and close them — from the
+  right-click menu (Windows).** "What's Locking This?" on any file or folder,
+  and "What's Blocking Eject?" on a removable volume in the sidebar, open a
+  dialog naming every process that has the item open (via the Windows Restart
+  Manager), each with a Close button plus Close All — programs are asked to
+  quit politely first and only force-closed if they refuse, with a warning
+  that unsaved changes can be lost. Before, this diagnosis only appeared
+  after a copy or move had already failed. Folders and volumes are checked
+  through a capped scan, and the dialog says so when a very large tree was
+  sampled rather than fully checked.
+
+- **A failed USB eject on Windows now names the apps blocking it.** The
+  "couldn't eject" message used to show only a raw error; it now lists the
+  programs with files open on the volume, and clicking one brings that
+  program's window forward so you can close the offending files — the same
+  behavior macOS already had.
+
+- **The Delete Immediately confirmation now opens with its Delete button
+  focused.** Confirming a permanent delete (Shift+Delete) no longer needs a
+  Tab press or a mouse click first — Enter or Space activates the focused
+  button right away, and pressing Enter while the dialog itself held focus no
+  longer dismissed it without doing anything. The button's focus ring also
+  drew with its bottom edge cut off by the dialog body; it now fits.
+
+- **Shift-clicking "Copy File List" now includes subfolder contents
+  recursively.** A plain click still copies the visible rows' paths; holding
+  Shift follows every folder in the list and copies its entire subtree too,
+  each folder's line followed by its name-sorted contents. The walk respects
+  the hidden-files toggle, never follows symlinks, and runs in the background,
+  finishing with a toast that says how many paths were copied. The menu item's
+  tooltip points out the Shift option.
+
+- **Files can now be dragged from Ferail into Explorer and other Windows
+  applications.** Rows, grid items, and sidebar folders become a native Shell
+  file drag with normal copy/move/link modifier behavior. The OLE session is
+  started only after GPUI releases its input-state borrow, preventing the
+  `RefCell already borrowed` crash seen during the first implementation;
+  leaving and re-entering Ferail also hands the drag image cleanly between
+  GPUI and Windows instead of drawing two icon stacks. Drop, cancellation, and
+  failure all clear the platform drag state.
+
 ## 0.6.6 — 2026-08-24 (Windows-only release)
 
 This release publishes Windows x64 portable and symbols archives only. macOS

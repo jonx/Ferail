@@ -795,7 +795,8 @@ fn render_tree_row(
         el.context_menu(move |menu, _window, cx| {
             use crate::shell::{
                 CopyContextPath, EjectVolume, GetInfoAtContext, NewFolderHere, OpenContextInNewTab,
-                OpenTerminalAtContext, RevealContextPath, ToggleFavoriteForTarget,
+                OpenTerminalAtContext, RevealContextPath, ShowLockHoldersAtContext,
+                ToggleFavoriteForTarget,
             };
             if let Some(shell) = shell_for_menu.upgrade() {
                 shell.update(cx, |s, _| {
@@ -824,7 +825,18 @@ fn render_tree_row(
             // Eject only for removable/external volumes (the boot
             // volume and folders never get it).
             if ejectable {
-                menu.separator().menu(tr!("Eject"), Box::new(EjectVolume))
+                let menu = menu.separator().menu(tr!("Eject"), Box::new(EjectVolume));
+                // The pre-emptive "why won't it eject": name the
+                // processes with files open on the volume, with
+                // force-close buttons. Windows-only lookup today.
+                if crate::platform_shell::lock_diagnostics_available() {
+                    menu.menu(
+                        tr!("What’s Blocking Eject?"),
+                        Box::new(ShowLockHoldersAtContext),
+                    )
+                } else {
+                    menu
+                }
             } else {
                 menu
             }

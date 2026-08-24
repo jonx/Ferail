@@ -296,6 +296,8 @@ const CATALOGUE: &[CommandSpec] = &[
     // Copy the whole displayed list (folder contents, duplicate-finder
     // groups, or search results) as newline-joined paths. No default
     // shortcut — reached via the toolbar menu and command palette.
+    // Shift at dispatch time (shift-click on the menu item) widens the
+    // copy to include every listed folder's subtree recursively.
     CommandSpec {
         id: CommandId("file.copy_file_list"),
         title: msgid!("Copy File List"),

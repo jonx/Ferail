@@ -2007,6 +2007,23 @@ pub fn processes_using(_path: &std::path::Path) -> Vec<LockingProcess> {
     Vec::new()
 }
 
+/// Result of a capped lock scan over one or more roots. Identical shape in
+/// every shell crate; only Windows fills it (Restart Manager).
+#[derive(Clone, Debug, Default)]
+pub struct LockScan {
+    pub holders: Vec<LockingProcess>,
+    /// Files actually checked.
+    pub scanned: usize,
+    /// The file cap cut the walk short.
+    pub truncated: bool,
+}
+
+/// Processes holding open any file under `roots`. Unsupported on macOS —
+/// lands with an lsof-backed `processes_using`.
+pub fn processes_using_tree(_roots: &[std::path::PathBuf], _max_files: usize) -> LockScan {
+    LockScan::default()
+}
+
 /// Ask the given processes to close so a locked file can be retried.
 /// Unsupported on macOS for now.
 pub fn force_close_processes(_pids: &[u32]) -> Result<(), String> {

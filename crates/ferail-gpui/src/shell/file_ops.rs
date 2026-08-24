@@ -25,6 +25,49 @@ pub(crate) struct ArchiveSaveRequest {
     pub password: Option<String>,
 }
 
+/// Build the newline-joined clipboard text for [`Shell::on_copy_file_list`],
+/// returning it with the number of lines. With `recursive`, each directory
+/// row is followed by its full subtree — a blocking disk walk, so recursive
+/// calls belong on the background executor only.
+fn build_file_list_text(
+    items: &[(PathBuf, bool)],
+    recursive: bool,
+    include_hidden: bool,
+) -> (String, usize) {
+    let mut paths: Vec<PathBuf> = Vec::with_capacity(items.len());
+    for (path, is_dir) in items {
+        paths.push(path.clone());
+        if recursive && *is_dir {
+            ferail_fs_native::list_subtree_paths(path, include_hidden, &mut paths);
+        }
+    }
+    let count = paths.len();
+    let text = paths
+        .iter()
+        .map(|p| p.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (text, count)
+}
+
+/// Success toast for "Copy File List" — the recursive flavor says so, since
+/// nothing else on screen reveals that Shift changed what was copied.
+fn copy_file_list_toast(count: usize, recursive: bool) -> gpui::SharedString {
+    if recursive {
+        trn!(
+            "Copied list of {n} item to clipboard, subfolders included",
+            "Copied list of {n} items to clipboard, subfolders included",
+            count
+        )
+    } else {
+        trn!(
+            "Copied list of {n} item to clipboard",
+            "Copied list of {n} items to clipboard",
+            count
+        )
+    }
+}
+
 impl Shell {
     /// Cmd+C — write the selection's file URLs to the pasteboard.
     pub(super) fn on_copy_files(
@@ -200,12 +243,11 @@ impl Shell {
         self.spawn_transfer_op(sources, dest, mode, window, cx);
     }
 
-    /// Files dropped into the window (Finder drags, or our own rows
-    /// dropped on a folder/the pane). Operation per dnd-spec §3.6:
-    /// Option forces Copy, Cmd forces Move, otherwise Auto (worker
-    /// resolves same-volume → Move, cross-volume → Copy). Dropping
-    /// items where they already live is a no-op unless Option asks
-    /// for duplicates.
+    /// Files dropped into the window (Finder/Explorer drags, or our own rows
+    /// dropped on a folder/the pane). Operation per dnd-spec §3.6: the native
+    /// platform modifiers force Copy/Move/Link; otherwise Auto resolves
+    /// same-volume → Move and cross-volume → Copy in the worker. Dropping
+    /// items where they already live is a no-op unless Copy was requested.
     pub(crate) fn handle_external_drop(
         &mut self,
         paths: Vec<PathBuf>,
@@ -217,10 +259,22 @@ impl Shell {
             return;
         }
         let mods = window.modifiers();
-        // Cmd+Option (Finder's alias-drag modifier): drop makes a Finder
-        // alias for each source in `dest` instead of copying/moving.
-        // Checked before the alt→Copy branch since alt is also set here.
-        if mods.alt && mods.platform {
+        #[cfg(target_os = "windows")]
+        let (link_requested, copy_requested, move_requested) = (
+            (mods.control && mods.shift) || mods.alt,
+            mods.control && !mods.shift,
+            mods.shift && !mods.control,
+        );
+        #[cfg(not(target_os = "windows"))]
+        let (link_requested, copy_requested, move_requested) = (
+            mods.alt && mods.platform,
+            mods.alt && !mods.platform,
+            mods.platform && !mods.alt,
+        );
+
+        // Finder uses Cmd+Option; Windows uses Ctrl+Shift or Alt. The platform
+        // implementation creates the native alias form (`.lnk` on Windows).
+        if link_requested {
             let dest_for_op = dest.clone();
             let sources = paths.clone();
             self.spawn_file_op(
@@ -241,15 +295,15 @@ impl Shell {
             );
             return;
         }
-        let mode = if mods.alt {
+        let mode = if copy_requested {
             TransferMode::Copy
-        } else if mods.platform {
+        } else if move_requested {
             TransferMode::Move
         } else {
             TransferMode::Auto
         };
         let same_dir = paths.iter().all(|s| s.parent() == Some(dest.as_path()));
-        if same_dir && !mods.alt {
+        if same_dir && !copy_requested {
             return;
         }
         self.spawn_transfer_op(paths, dest, mode, window, cx);
@@ -1184,12 +1238,63 @@ impl Shell {
         window.push_notification(Notification::success(msg), cx);
     }
 
+    pub(super) fn on_show_windows_context_menu(
+        &mut self,
+        _: &ShowWindowsContextMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(windows)]
+        {
+            let paths = self
+                .action_entries_visible_order(cx)
+                .into_iter()
+                .map(|(_, _, path)| path)
+                .collect::<Vec<_>>();
+            if paths.is_empty() {
+                return;
+            }
+            let extended = window.modifiers().shift;
+            let win = window.window_handle();
+            cx.spawn(async move |_this, cx| {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        crate::platform_shell::show_windows_context_menu(&paths, extended)
+                    })
+                    .await;
+                if let Err(error) = result {
+                    let _ = win.update(cx, |_, window, cx| {
+                        window.push_notification(
+                            crate::shell::error_notification(
+                                tr!("Windows context menu unavailable: {detail}", detail = error)
+                                    .to_string(),
+                            ),
+                            cx,
+                        );
+                    });
+                }
+            })
+            .detach();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (window, cx);
+        }
+    }
+
     /// Copy the *whole* visible list — every row in the active tab,
     /// not just the selection — as newline-joined full paths. Serves
     /// folder views, duplicate-finder results, and search results
     /// uniformly: all three feed the same table delegate, so iterating
     /// its rows and resolving each path from the cache (never the
     /// filesystem) covers them all.
+    ///
+    /// Shift at dispatch time (a shift-click on the menu item) widens
+    /// the copy: every directory row is followed by its entire subtree,
+    /// walked recursively. The walk reads the disk, so it always runs
+    /// on the background executor (Prime Directive) and honors the same
+    /// hidden-files toggle as the visible list it extends.
     pub(super) fn on_copy_file_list(
         &mut self,
         _: &CopyFileList,
@@ -1197,6 +1302,8 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
+        let recursive = window.modifiers().shift;
+        let include_hidden = self.show_hidden;
         let row_count = self.active_tab().table.read(cx).delegate().entries.len();
         if row_count > 20_000 {
             const ROWS_PER_TICK: usize = 8_192;
@@ -1204,7 +1311,7 @@ impl Shell {
             let win = window.window_handle();
             window.push_notification(Notification::info(tr!("Preparing file list…")), cx);
             cx.spawn(async move |this, cx| {
-                let mut text = String::new();
+                let mut items: Vec<(PathBuf, bool)> = Vec::new();
                 let mut start = 0usize;
                 while start < row_count {
                     let end = (start + ROWS_PER_TICK).min(row_count);
@@ -1220,34 +1327,36 @@ impl Shell {
                             Some(
                                 delegate.entries[start..chunk_end]
                                     .iter()
-                                    .filter_map(|entry| delegate.path_for_entry(entry.id))
+                                    .filter_map(|entry| {
+                                        let path = delegate.path_for_entry(entry.id)?;
+                                        let is_dir = matches!(
+                                            entry.kind,
+                                            ferail_core::EntryKind::Directory
+                                        );
+                                        Some((path, is_dir))
+                                    })
                                     .collect::<Vec<_>>(),
                             )
                         })
                         .ok()
                         .flatten();
-                    let Some(paths) = chunk else {
+                    let Some(chunk) = chunk else {
                         return;
                     };
-                    for path in paths {
-                        if !text.is_empty() {
-                            text.push('\n');
-                        }
-                        text.push_str(path.to_string_lossy().as_ref());
-                    }
+                    items.extend(chunk);
                     start = end;
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(1))
                         .await;
                 }
+                let (text, count) = cx
+                    .background_executor()
+                    .spawn(async move { build_file_list_text(&items, recursive, include_hidden) })
+                    .await;
                 let _ = win.update(cx, |_, window, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
                     window.push_notification(
-                        Notification::success(trn!(
-                            "Copied list of {n} item to clipboard",
-                            "Copied list of {n} items to clipboard",
-                            row_count
-                        )),
+                        Notification::success(copy_file_list_toast(count, recursive)),
                         cx,
                     );
                 });
@@ -1255,25 +1364,40 @@ impl Shell {
             .detach();
             return;
         }
-        let paths: Vec<PathBuf> = (0..row_count)
-            .filter_map(|row| self.path_for_row(row, cx))
+        let items: Vec<(PathBuf, bool)> = (0..row_count)
+            .filter_map(|row| {
+                let is_dir = matches!(
+                    self.active_tab().table.read(cx).delegate().entries.get(row)?.kind,
+                    ferail_core::EntryKind::Directory
+                );
+                Some((self.path_for_row(row, cx)?, is_dir))
+            })
             .collect();
-        if paths.is_empty() {
+        if items.is_empty() {
             return;
         }
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            paths
-                .iter()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        ));
-        let msg = trn!(
-            "Copied list of {n} item to clipboard",
-            "Copied list of {n} items to clipboard",
-            paths.len()
-        );
-        window.push_notification(Notification::success(msg), cx);
+        if recursive {
+            let win = window.window_handle();
+            window.push_notification(Notification::info(tr!("Preparing file list…")), cx);
+            cx.spawn(async move |_this, cx| {
+                let (text, count) = cx
+                    .background_executor()
+                    .spawn(async move { build_file_list_text(&items, true, include_hidden) })
+                    .await;
+                let _ = win.update(cx, |_, window, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    window.push_notification(
+                        Notification::success(copy_file_list_toast(count, true)),
+                        cx,
+                    );
+                });
+            })
+            .detach();
+            return;
+        }
+        let (text, count) = build_file_list_text(&items, false, include_hidden);
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        window.push_notification(Notification::success(copy_file_list_toast(count, false)), cx);
     }
 
     pub(super) fn on_reveal_in_finder(
@@ -2494,6 +2618,7 @@ impl Shell {
                 let name = name.clone();
                 window.open_dialog(cx, move |dialog, _window, _cx| {
                     let tx_go = tx.clone();
+                    let tx_ok = tx.clone();
                     let tx_cancel = tx.clone();
                     let body = if count == 1 {
                         tr!(
@@ -2511,7 +2636,9 @@ impl Shell {
                         .title(tr!("Delete Immediately?"))
                         .child(div().text_scale_sm().child(body))
                         .child(
-                            h_flex().pt_2().child(
+                            // `pb_1` keeps the focus ring (drawn ~2.5px past
+                            // the button) inside the body's overflow clip.
+                            h_flex().pt_2().pb_1().child(
                                 Button::new("delete-now-go")
                                     .label(tr!("Delete"))
                                     .danger()
@@ -2522,10 +2649,26 @@ impl Shell {
                                     }),
                             ),
                         )
+                        // Enter lands on the dialog's ConfirmDialog binding, not
+                        // the button's click handler — without this, the default
+                        // `on_ok` closed the dialog with nothing sent and the
+                        // task above waited on `go_rx` forever.
+                        .on_ok(move |_, _, _| {
+                            let _ = tx_ok.try_send(true);
+                            true
+                        })
                         .on_cancel(move |_, _, _| {
                             let _ = tx_cancel.try_send(false);
                             true
                         })
+                });
+                // Land initial focus on the Delete button, matching the native
+                // Shift+Delete confirms. `focus_next` walks the *rendered*
+                // frame's tab order and the dialog mounts on the next frame,
+                // so defer two frames before descending from the dialog's
+                // container (focused by `open_dialog`) to its first tab stop.
+                window.on_next_frame(|window, _| {
+                    window.on_next_frame(|window, cx| window.focus_next(cx));
                 });
             });
             if opened.is_err() || !matches!(go_rx.recv().await, Ok(true)) {

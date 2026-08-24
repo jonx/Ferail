@@ -199,8 +199,9 @@ trigger.
 - [x] Build Debug and Release-with-diagnostics on Windows; retain matching PDBs
   as CI/release-workflow artifacts even if they are not shipped publicly.
   *2026-08-24: `win.yml` uploads and releases
-  `Ferail-<version>-win-x64-symbols.zip` (PDBs + CodeView/commit manifest)
-  alongside the app ZIP.*
+  `Ferail-<version>-x64-symbols.zip` (PDBs + CodeView/commit manifest)
+  alongside the app ZIP. Renamed from `…-win-x64-symbols.zip` because
+  updaters up to 0.6.6 matched it as the Windows download.*
 - [x] Enable minidump capture for unhandled native exceptions and document the
   Task Manager full-dump fallback. *2026-08-24:
   `ferail_shell_win32::install_crash_dump_handler` — a top-level exception
@@ -437,25 +438,39 @@ system.
 
 **Work.**
 
-- [ ] Keep the existing GPUI/Ferail menu unchanged for ordinary right-click.
-- [ ] Add **More options from Windows…** at its end when the platform
+- [~] Keep the existing GPUI/Ferail menu unchanged for ordinary right-click.
+  *Implementation is isolated from the normal menu path; real-window latency
+  and interaction validation remain.*
+- [~] Add **More options from Windows…** at its end when the platform
   capability is available.
-- [ ] Route `Shift`+right-click and `Shift+F10` directly to the native menu.
+- [~] Route `Shift`+right-click and `Shift+F10` directly to the native menu.
   Do not use `Ctrl`+right-click because Ctrl already changes multi-selection.
-- [ ] Resolve the target snapshot only after explicit invocation; do not
+- [x] Resolve the target snapshot only after explicit invocation; do not
   prewarm on selection, hover, navigation, or menu build.
-- [ ] Have the context-menu broker bind parent/child PIDLs, obtain
+- [x] Have the context-menu broker bind parent/child PIDLs, obtain
   `IContextMenu`, forward `IContextMenu2/3` owner-draw/submenu messages, call
   `TrackPopupMenuEx`, and invoke the selected verb.
-- [ ] Let the native menu render itself. Do not flatten it into GPUI entries;
+- [x] Let the native menu render itself. Do not flatten it into GPUI entries;
   that breaks owner-draw handlers and dynamic submenus.
-- [ ] Support same-parent multi-selection. For selections the Shell cannot
+- [~] Support same-parent multi-selection. For selections the Shell cannot
   represent (mixed parents or namespace providers), keep the Ferail menu and
-  explain why the Windows action is unavailable.
-- [ ] Once the native popup is visible it is user-modal, not timed out. Before
+  explain why the Windows action is unavailable. *Same-parent filesystem
+  selections work; mixed-parent selections return an explicit notification;
+  namespace-only items remain future work.*
+- [x] Once the native popup is visible it is user-modal, not timed out. Before
   display, a wedged provider can be abandoned by terminating the broker.
 - [ ] After a verb, refresh only possibly affected locations while preserving
   selection/scroll when their targets still exist.
+
+**Implementation (2026-08-25).** `ferail-gpui.exe` has an early, GUI-free
+`--windows-context-menu-broker` role. The UI resolves paths only after the
+explicit action, launches that role without a console, and waits on a
+background executor. The broker owns OLE, PIDLs, `IContextMenu2/3`, its hidden
+owner window and native popup, then exits. A private readiness pipe bounds only
+pre-popup provider enumeration (eight seconds); after readiness, the wait is
+unbounded and user-modal. No COM object or provider code enters the GPUI
+process. Unit tests and strict Windows clippy pass; the three UI entry paths and
+third-party extension matrix still require the real-window manual gate.
 
 **Exit gate.** Normal right-click latency and navigation benchmarks are
 unchanged; 7-Zip/Defender/Git-style test extensions appear only on explicit
@@ -596,6 +611,10 @@ classified rather than reimplementing the happy path.
 
 **Work.**
 
+- [~] Promote normal on-disk `external_drag_payload` files to a native OLE
+  drag through `SHCreateDataObject`/`SHDoDragDrop`, with copy, move, link,
+  modifiers, cancellation, and GPUI-to-Shell visual handoff. *Implemented
+  2026-08-25 for local/real paths; the format/provider matrix below remains.*
 - [ ] Build a matrix for clipboard copy/cut and drag/drop in both directions:
   local paths, UNC, Unicode/special characters, multiple parents, OneDrive
   placeholders, `.lnk`, and Shell-only items.
@@ -760,12 +779,14 @@ commands, and mismatched packaged resources fail CI.
 
 - [~] WIN-008 Shell API/default open implemented; Windows matrix remains.
 - [~] WIN-009 PIDL-based Reveal implemented; Windows matrix remains.
-- [ ] WIN-012 Explorer clipboard/drag matrix and missing formats.
+- [~] WIN-012 normal-path outbound OLE drag implemented; Explorer clipboard,
+  provider and virtual-item matrix remains.
 - [~] WIN-016 missing keymap dispatch fixed; artifact consistency remains.
 
 ### Phase 4 — native compatibility on demand
 
-- [ ] WIN-007 isolated native Windows context menu, with no prefetch.
+- [~] WIN-007 isolated native Windows context menu, with no prefetch; UI and
+  third-party-extension manual matrix remains.
 - [ ] WIN-010 shortcut semantics.
 - [ ] WIN-011 icon/thumbnail correctness.
 - [ ] WIN-014 portable metadata plus Windows Properties.

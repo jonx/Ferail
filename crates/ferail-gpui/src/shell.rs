@@ -48,6 +48,7 @@ pub use file_ops::ArchiveOpSettled;
 pub(crate) use file_ops::pick_destination_folder;
 pub(crate) use file_ops::{ArchiveSaveRequest, TransferMode};
 mod loading;
+mod lock_info;
 mod path;
 pub(crate) mod render;
 mod search;
@@ -2044,9 +2045,10 @@ impl Shell {
         // (which it may not be mid-drag), so observe keystrokes globally
         // — this fires regardless of focus. Two phases: while the drag is
         // in-window it is gpui state (`active_drag`); once the pointer
-        // leaves the window gpui hands it to a native NSDraggingSession
-        // (`has_active_drag` normally goes false) and cancellation goes
-        // through the platform shell instead. Archive promises retain both
+        // leaves the window gpui hands it to a native platform drag
+        // (`has_active_drag` normally goes false). AppKit cancellation goes
+        // through the platform shell; Windows OLE handles Escape itself.
+        // Archive promises retain both
         // halves for cross-window drops, so Escape cancels both below
         // (docs/GPUI-UPSTREAM.md #10 and #11).
         let drag_esc_subscription = cx.observe_keystrokes(move |this, e, window, cx| {
@@ -2333,6 +2335,9 @@ impl Shell {
                         } else {
                             this.context_row = None;
                         }
+                    }
+                    TableEvent::NativeContextMenuRequested(_) => {
+                        this.on_show_windows_context_menu(&ShowWindowsContextMenu, window, cx);
                     }
                     TableEvent::RightClickedBackground => {
                         // Empty-space right-click: the background menu's

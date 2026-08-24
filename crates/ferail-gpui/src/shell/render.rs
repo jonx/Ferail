@@ -1113,6 +1113,7 @@ impl Shell {
 
                     let weak_cell = weak.clone();
                     let weak_menu = weak.clone();
+                    let weak_native_menu = weak.clone();
                     let weak_drop = weak.clone();
                     let weak_hover = weak.clone();
                     let weak_archive_drop = weak.clone();
@@ -1243,6 +1244,31 @@ impl Shell {
                                 }
                             });
                         })
+                        .on_mouse_down(
+                            gpui::MouseButton::Right,
+                            move |event: &gpui::MouseDownEvent, window, app| {
+                                #[cfg(windows)]
+                                if event.modifiers.shift {
+                                    app.stop_propagation();
+                                    let _ = weak_native_menu.update(app, |this, cx| {
+                                        let was_selected = this
+                                            .node_id_at_row(i, cx)
+                                            .map(|id| this.active_tab().is_selected(id))
+                                            .unwrap_or(false);
+                                        this.apply_row_right_click(i, cx);
+                                        this.context_row =
+                                            if was_selected { None } else { Some(i) };
+                                        this.on_show_windows_context_menu(
+                                            &crate::shell::ShowWindowsContextMenu,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }
+                                #[cfg(not(windows))]
+                                let _ = (event, window, app, &weak_native_menu);
+                            },
+                        )
                         .when(can_drag, |d| {
                             d.on_drag(
                                 ExternalPaths(drag_paths),
@@ -2808,7 +2834,22 @@ impl Shell {
                                         Box::new(FindSimilarImages),
                                     )
                                     .separator()
-                                    .menu(tr!("Copy File List"), Box::new(CopyFileList))
+                                    // Shift-click widens the copy to subfolder
+                                    // contents (see `on_copy_file_list`); the
+                                    // tooltip is the only place that modifier
+                                    // is discoverable, hence the custom item.
+                                    .menu_element(Box::new(CopyFileList), |_, _| {
+                                        div()
+                                            .id("copy-file-list-tip")
+                                            .w_full()
+                                            .tooltip(|window, cx| {
+                                                gpui_component::tooltip::Tooltip::new(tr!(
+                                                    "Shift-click to also include the contents of every subfolder"
+                                                ))
+                                                .build(window, cx)
+                                            })
+                                            .child(tr!("Copy File List"))
+                                    })
                                     .separator()
                                     .menu(tr!("Empty Trash\u{2026}"), Box::new(EmptyTrash))
                                 }),
@@ -3694,6 +3735,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_toggle_flat_view))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_copy_path))
+            .on_action(cx.listener(Self::on_show_windows_context_menu))
             .on_action(cx.listener(Self::on_generate_sha256))
             .on_action(cx.listener(Self::on_copy_file_list))
             .on_action(cx.listener(Self::on_copy_files))
@@ -3777,6 +3819,8 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_context_in_new_tab))
             .on_action(cx.listener(Self::on_new_folder_here))
             .on_action(cx.listener(Self::on_eject_volume))
+            .on_action(cx.listener(Self::on_show_lock_holders))
+            .on_action(cx.listener(Self::on_show_lock_holders_at_context))
             .on_action(cx.listener(Self::on_get_info_at_context))
             .on_action(cx.listener(Self::on_toggle_tag_red))
             .on_action(cx.listener(Self::on_toggle_tag_orange))

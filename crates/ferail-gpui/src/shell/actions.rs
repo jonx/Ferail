@@ -20,6 +20,9 @@ actions!(
         ToggleFlatView,
         OpenSettings,
         CopyPath,
+        /// Explicit-demand native Explorer context menu. On Windows this
+        /// launches the isolated context-menu broker; elsewhere it is inert.
+        ShowWindowsContextMenu,
         /// Compute a selected file's SHA-256 off-thread and optionally
         /// compare it with a checksum read from the text clipboard.
         GenerateSha256,
@@ -232,6 +235,14 @@ actions!(
         /// volume (`context_target`). Only attached to removable/
         /// ejectable volume rows.
         EjectVolume,
+        /// File-list row menu: name the processes holding the resolved
+        /// selection open (Restart Manager) in a dialog with force-close
+        /// buttons. Only shown where `lock_diagnostics_available()`.
+        ShowLockHolders,
+        /// Sidebar volume-row twin of `ShowLockHolders`: same dialog for
+        /// everything under the right-clicked volume (`context_target`) —
+        /// the "why won't it eject" answer, before the eject fails.
+        ShowLockHoldersAtContext,
         /// Sidebar/tree "Get Info" — open the Get Info window for the
         /// right-clicked row (`context_target`). Split from the
         /// file-list `GetInfo` because that one resolves through the

@@ -23,6 +23,12 @@
 #[cfg(windows)]
 mod preview_handler;
 
+// Explicit-demand, out-of-process Explorer context menu (WIN-007).
+#[cfg(windows)]
+mod context_menu;
+#[cfg(windows)]
+pub use context_menu::{context_menu_broker_main, show_windows_context_menu};
+
 // First-page PDF rendering via `Windows.Data.Pdf` — no window, no
 // third-party code, so it needs neither a pump nor the broker.
 #[cfg(windows)]
@@ -939,18 +945,83 @@ pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
 }
 
 /// Names of processes holding files open on the volume at `path` — the
-/// "why won't it eject" answer for a failed eject. Not implemented on
-/// Windows yet (the honest source is the Restart Manager, which wants a
-/// file list, not a volume; NtQuerySystemInformation handle walks need
-/// admin). Callers must treat empty as "unknown", not "nothing".
+/// "why won't it eject" answer for a failed eject. The honest source is
+/// the Restart Manager, which wants a file list, not a volume, so this
+/// expands the volume by a capped walk first
+/// ([`elevation::processes_using_tree`]) — a huge volume is sampled, not
+/// exhausted. Callers must treat empty as "unknown", not "nothing".
+/// Blocks (walk + RM process enumeration): background only.
+#[cfg(windows)]
+pub fn volume_busy_processes(path: &std::path::Path) -> Vec<ferail_core::BusyApp> {
+    elevation::processes_using_tree(std::slice::from_ref(&path.to_path_buf()), LOCK_SCAN_MAX_FILES)
+        .holders
+        .into_iter()
+        .map(|p| ferail_core::BusyApp {
+            pid: p.pid as i32,
+            name: p.name,
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
 pub fn volume_busy_processes(_path: &std::path::Path) -> Vec<ferail_core::BusyApp> {
     Vec::new()
 }
 
-/// Bring the app owning `pid` to the foreground. Not implemented on
-/// Windows (would need an EnumWindows pid→HWND walk + SetForegroundWindow,
-/// and there is no busy-process list to click yet — see above); callers
-/// treat `false` as a no-op.
+/// How many files a volume/folder lock scan registers with the Restart
+/// Manager before giving up on completeness. Registration is cheap next
+/// to `RmGetList`'s process enumeration, so this bounds the directory
+/// walk more than the RM cost; past it the scan reports `truncated`.
+pub const LOCK_SCAN_MAX_FILES: usize = 4096;
+
+/// Bring the app owning `pid` to the foreground: EnumWindows for a
+/// visible, unowned top-level window of that process, restore it if
+/// minimized, and `SetForegroundWindow` it. `false` when the process has
+/// no such window (a daemon/console holder) — callers treat that as a
+/// no-op.
+#[cfg(windows)]
+pub fn activate_app(pid: i32) -> bool {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GW_OWNER, GetWindow, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        SW_RESTORE, SetForegroundWindow, ShowWindow,
+    };
+
+    struct Find {
+        pid: u32,
+        hwnd: HWND,
+    }
+    unsafe extern "system" fn on_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let find = unsafe { &mut *(lparam.0 as *mut Find) };
+        let mut owner_pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut owner_pid)) };
+        let is_main = owner_pid == find.pid
+            && unsafe { IsWindowVisible(hwnd) }.as_bool()
+            && unsafe { GetWindow(hwnd, GW_OWNER) }.is_err();
+        if is_main {
+            find.hwnd = hwnd;
+            return false.into(); // stop enumerating
+        }
+        true.into()
+    }
+
+    let mut find = Find {
+        pid: pid as u32,
+        hwnd: HWND::default(),
+    };
+    // EnumWindows "fails" when the callback stops it early — that is the
+    // found case, so the returned Result carries no signal here.
+    let _ = unsafe { EnumWindows(Some(on_window), LPARAM(&mut find as *mut Find as isize)) };
+    if find.hwnd.is_invalid() {
+        return false;
+    }
+    if unsafe { IsIconic(find.hwnd) }.as_bool() {
+        let _ = unsafe { ShowWindow(find.hwnd, SW_RESTORE) };
+    }
+    unsafe { SetForegroundWindow(find.hwnd) }.as_bool()
+}
+
+#[cfg(not(windows))]
 pub fn activate_app(_pid: i32) -> bool {
     false
 }
@@ -2799,7 +2870,7 @@ mod win_tests {
 mod elevation;
 pub use elevation::{
     elevation_available, force_close_processes, lock_diagnostics_available, processes_using,
-    run_elevated_self, LockingProcess,
+    processes_using_tree, run_elevated_self, LockScan, LockingProcess,
 };
 
 // =============================================================

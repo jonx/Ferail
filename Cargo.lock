@@ -3179,7 +3179,6 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#38ca9106c5306ef93e52c35643df015a27f15b72"
 dependencies = [
  "accesskit",
  "accesskit_windows",

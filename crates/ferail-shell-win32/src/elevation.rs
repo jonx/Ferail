@@ -23,6 +23,20 @@ pub struct LockingProcess {
     pub name: String,
 }
 
+/// Result of a capped lock scan over one or more roots
+/// ([`processes_using_tree`]). The Restart Manager answers for *files*,
+/// so a folder or volume root is expanded by a bounded walk first —
+/// `truncated` says the cap cut that walk short, i.e. an empty `holders`
+/// means "none found among `scanned` files", not "none".
+#[derive(Clone, Debug, Default)]
+pub struct LockScan {
+    pub holders: Vec<LockingProcess>,
+    /// Files actually registered with the Restart Manager.
+    pub scanned: usize,
+    /// The `max_files` cap stopped the walk before it saw everything.
+    pub truncated: bool,
+}
+
 /// Whether "Retry as administrator…" can work here.
 pub fn elevation_available() -> bool {
     cfg!(windows)
@@ -34,7 +48,7 @@ pub fn lock_diagnostics_available() -> bool {
 }
 
 #[cfg(windows)]
-pub use imp::{force_close_processes, processes_using, run_elevated_self};
+pub use imp::{force_close_processes, processes_using, processes_using_tree, run_elevated_self};
 // The CommandLineToArgvW-safe quoting is also what a non-elevating
 // ShellExecute parameter string needs (open_terminal_with's runas mode).
 #[cfg(windows)]
@@ -48,6 +62,11 @@ pub fn run_elevated_self(_args: &[String]) -> Result<i32, String> {
 #[cfg(not(windows))]
 pub fn processes_using(_path: &std::path::Path) -> Vec<LockingProcess> {
     Vec::new()
+}
+
+#[cfg(not(windows))]
+pub fn processes_using_tree(_roots: &[std::path::PathBuf], _max_files: usize) -> LockScan {
+    LockScan::default()
 }
 
 #[cfg(not(windows))]
@@ -197,13 +216,92 @@ mod imp {
     /// feeds a diagnostic list, not control flow, so "don't know" and "none"
     /// render the same. Blocks (RM enumerates every process): background only.
     pub fn processes_using(path: &Path) -> Vec<LockingProcess> {
+        query_rm(std::slice::from_ref(&path.to_path_buf()))
+    }
+
+    /// Name the processes holding open any file under `roots` (files are
+    /// taken as-is; directories are expanded by a bounded walk, since the
+    /// Restart Manager wants a file list, not a folder). One RM session,
+    /// one process enumeration, however many files were collected — the
+    /// walk cap bounds the registration, not extra `RmGetList` calls.
+    /// Blocks twice over (directory walk + RM): background only.
+    pub fn processes_using_tree(roots: &[std::path::PathBuf], max_files: usize) -> super::LockScan {
+        ferail_core::path_guard::assert_off_ui_thread("elevation::processes_using_tree");
+        let (files, truncated) = collect_files_capped(roots, max_files);
+        let holders = if files.is_empty() {
+            Vec::new()
+        } else {
+            query_rm(&files)
+        };
+        super::LockScan {
+            holders,
+            scanned: files.len(),
+            truncated,
+        }
+    }
+
+    /// Expand `roots` into a flat file list for RM registration, capped at
+    /// `max_files`. Iterative walk; symlinked directories are not entered
+    /// (a cycle would otherwise only be stopped by the cap). Returns the
+    /// files and whether the cap cut the walk short.
+    fn collect_files_capped(
+        roots: &[std::path::PathBuf],
+        max_files: usize,
+    ) -> (Vec<std::path::PathBuf>, bool) {
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+        for root in roots {
+            match std::fs::symlink_metadata(root) {
+                Ok(meta) if meta.is_dir() => dirs.push(root.clone()),
+                Ok(_) => {
+                    if files.len() == max_files {
+                        return (files, true);
+                    }
+                    files.push(root.clone());
+                }
+                Err(_) => {}
+            }
+        }
+        while let Some(dir) = dirs.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if kind.is_dir() {
+                    dirs.push(entry.path());
+                } else if !kind.is_symlink() {
+                    if files.len() == max_files {
+                        return (files, true);
+                    }
+                    files.push(entry.path());
+                }
+            }
+        }
+        (files, false)
+    }
+
+    /// The shared Restart Manager query: register `paths` (chunked — one
+    /// `RmRegisterResources` call per `REGISTER_CHUNK` files, same session)
+    /// and list the holders with a single two-phase `RmGetList`. Empty on
+    /// any failure. Deduped by pid, sorted by name.
+    fn query_rm(paths: &[std::path::PathBuf]) -> Vec<LockingProcess> {
+        ferail_core::path_guard::assert_off_ui_thread("elevation::query_rm");
+        const REGISTER_CHUNK: usize = 255;
         let Some(session) = RmSession::start() else {
             return Vec::new();
         };
-        let path_w = wide(path.as_os_str());
-        let names = [windows::core::PCWSTR::from_raw(path_w.as_ptr())];
-        if unsafe { RmRegisterResources(session.0, Some(&names), None, None) } != ERROR_SUCCESS {
-            return Vec::new();
+        let paths_w: Vec<Vec<u16>> = paths.iter().map(|p| wide(p.as_os_str())).collect();
+        let names: Vec<windows::core::PCWSTR> = paths_w
+            .iter()
+            .map(|w| windows::core::PCWSTR::from_raw(w.as_ptr()))
+            .collect();
+        for chunk in names.chunks(REGISTER_CHUNK) {
+            if unsafe { RmRegisterResources(session.0, Some(chunk), None, None) } != ERROR_SUCCESS {
+                return Vec::new();
+            }
         }
         let mut needed = 0u32;
         let mut count = 0u32;
@@ -230,7 +328,7 @@ mod imp {
             return Vec::new();
         }
         infos.truncate(count as usize);
-        infos
+        let mut holders: Vec<LockingProcess> = infos
             .iter()
             .map(|info| {
                 let name_len = info
@@ -247,7 +345,11 @@ mod imp {
                     name,
                 }
             })
-            .collect()
+            .collect();
+        // One app usually holds several of the registered files.
+        holders.sort_by(|a, b| a.name.cmp(&b.name).then(a.pid.cmp(&b.pid)));
+        holders.dedup_by(|a, b| a.pid == b.pid);
+        holders
     }
 
     fn open_query(pid: u32) -> Option<HANDLE> {
@@ -283,6 +385,7 @@ mod imp {
     /// Restart-Manager shutdown first (WM_CLOSE, service stop), then
     /// `TerminateProcess` for whatever survived. Blocks: background only.
     pub fn force_close_processes(pids: &[u32]) -> Result<(), String> {
+        ferail_core::path_guard::assert_off_ui_thread("elevation::force_close_processes");
         if pids.is_empty() {
             return Ok(());
         }

@@ -7,6 +7,46 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-08-25 "What's Locking This?" — lock diagnostics as a menu entry
+
+Slow AI session. Extends the existing Restart-Manager lock diagnostics
+(previously reachable only from a failed transfer's toast) into first-class
+context-menu entries: "What's Locking This?" on file-list rows and
+"What's Blocking Eject?" on sidebar ejectable-volume rows, both opening a
+dialog that names the holders and can close them (graceful `RmShutdown`
+first, `TerminateProcess` for survivors).
+
+## Key decisions
+
+- **One RM session per scan, not per chunk.** `RmGetList` (which enumerates
+  every process) is the expensive call; `RmRegisterResources` is cheap. So a
+  folder/volume scan registers all collected files into a single session
+  (chunked register calls of 255) and pays the enumeration once.
+- **Folders/volumes are answered by a capped walk** (`processes_using_tree`,
+  4096 files) because the Restart Manager wants a file list, not a directory.
+  The result carries `scanned`/`truncated` so the UI can say "sampled, not
+  exhaustive" instead of a false "nothing is locking this". Symlinked dirs
+  are not entered (cycle safety).
+- **Windows `volume_busy_processes` implemented on the same walk** — the
+  failed-eject toast now names blockers on Windows too, and `activate_app`
+  (EnumWindows → SetForegroundWindow) was filled in so the toast's "click to
+  bring it forward" isn't a dead affordance there.
+- **Dialog rescans after every close** rather than optimistically removing
+  rows — force-close can partially fail, and the RM list is the only truth.
+  Generation counter drops stale scan results (checksum dialog's pattern).
+- **Menu entries gate on `lock_diagnostics_available()`** (Windows-only
+  today); macOS/Linux hide them instead of showing an always-empty dialog.
+- **No new icons** — Ferail context menus are text-only across the board.
+
+## With more time, I would
+
+- lsof-backed `processes_using` on macOS so the same dialog lights up there.
+- Show the process exe path (`QueryFullProcessImageNameW`) to disambiguate
+  same-named processes before killing one.
+- Surface the scan in the task list (it can take seconds on big volumes).
+
+---
+
 # 2026-07-14 Windows/Linux parity session (windows-parity branch)
 
 Bringing the Windows and Linux ports to parity with the Mac after the July

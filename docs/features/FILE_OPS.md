@@ -78,21 +78,24 @@ driven headlessly — interactive verification pending.
   each file-list delegate); the next plain Paste of exactly that set is a
   Move (then clears the mark), and marked rows render dimmed (0.45).
 
-**Dragging *from* the list (2026-06-18; native drag-out fixed
-2026-08-08):** the 2026-06-18 work believed `ExternalPaths` made gpui's
-mac backend start a native drag — it never did; gpui's `on_drag` is
-purely in-window, so drags to Finder/other apps silently went nowhere
+**Dragging *from* the list (2026-06-18; native drag-out fixed on macOS
+2026-08-08 and Windows 2026-08-25):** the 2026-06-18 work believed
+`ExternalPaths` made gpui start a native drag — it never did; gpui's `on_drag`
+is purely in-window, so drags to Finder/other apps silently went nowhere
 (the ghost just clipped at the window edge). Real drag-out arrived with
 gpui's `external_drag_payload` API (zed #58161): each drag source
 (file-list rows, grid cells, sidebar tree rows) now registers a resolver
 that, the moment the pointer leaves the viewport, hands the platform a
 `FileDragPaths` payload — paths paired with cached-`EntryKind`
-directory-ness, so promotion never stats — and gpui begins a real
-`NSDraggingSession`; from there the OS draws file icons and our
-in-window ghost hands off. gpui hardcodes that session's operation
-mask to copy-only, so `install_native_drag_operations()`
-(ferail-shell-mac, called from boot) widens it to
-Copy | Link | Generic | Move for Finder-parity semantics: a
+directory-ness, so promotion never stats — and gpui begins a real native
+platform drag; from there the OS draws file icons and our in-window ghost
+hands off. On Windows, Ferail's narrow `gpui_windows` patch turns those paths
+into a Shell data object and runs `SHDoDragDrop` with copy/move/link semantics;
+the OLE loop is deferred outside GPUI's input borrow, and re-entry swaps the
+Shell drag image back to the GPUI badge instead of drawing both. On macOS,
+gpui hardcodes the session's operation mask to copy-only, so
+`install_native_drag_operations()` (ferail-shell-mac, called from boot) widens
+it to Copy | Link | Generic | Move for Finder-parity semantics: a
 same-volume Finder drop moves, cross-volume copies with the system's
 green “+” badge, ⌥ forces copy, ⌘ forces move, ⌃ makes an alias
 (GPUI-UPSTREAM.md #10). Esc cancels in both phases: in-window it clears
@@ -101,9 +104,8 @@ observer routes to `cancel_native_drag()` — mask collapsed to None +
 synthetic gesture end, since AppKit has no session-cancel API. Inside the window the ghost is the
 Finder-like `DragBadge` (the item's icon or warmed Quick Look thumbnail
 + name, or "N items" with a stacked-card hint) that tracks the pointer.
-Archive-mode rows still drag in-window only — their entries have no
-on-disk path until extracted (native promotion for those needs
-file-promise materialization, deliberately deferred).
+Archive-mode rows use file promises on macOS; Windows archive promises remain
+open because their entries have no on-disk path until materialized.
 gpui paints the drag view at `mouse − cursor_offset` and `cursor_offset`
 is the grab point within the *dragged element* — for a full-width row
 that pins the ghost to the row's left edge, so the badge re-anchors
@@ -253,10 +255,13 @@ always appears (even sub-150 ms ops) and carries actions to **cope**:
   "Tag: N of M done · why". Successes stay silent (quiet-on-success policy).
 
 `FileOpErrorKind::is_lock()` + `platform_shell::{processes_using,
-force_close_processes}` back a future "the file is open in X — close it and
-retry / force-close" affordance. The lock primitives are **Windows-native
-(Restart Manager) and deferred** to the on-device session; macOS/Linux return
-empty for now. The string-error surfaces (rename, duplicate, compress, alias)
+force_close_processes}` back the "the file is open in X — close it and
+retry / force-close" affordance on failed transfers, and the same primitives
+(plus the capped-walk `processes_using_tree`) power the proactive
+"What's Locking This?" / "What's Blocking Eject?" context-menu dialog
+(`ferail-gpui/src/shell/lock_info.rs`). The lock primitives are
+**Windows-native (Restart Manager)**; macOS/Linux return empty for now, so
+those surfaces hide themselves (`lock_diagnostics_available()`). The string-error surfaces (rename, duplicate, compress, alias)
 share the one advice table via `classify_error_text`.
 
 **Platform status:** transparency + classification are cross-platform; macOS

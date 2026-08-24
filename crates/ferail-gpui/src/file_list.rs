@@ -2484,10 +2484,10 @@ impl TableDelegate for FileListDelegate {
         }
         // OS drag-out: `on_drag` alone is a purely in-window gpui drag —
         // the `external_drag_payload` chained below is what promotes it
-        // to a native `NSDraggingSession` (file URLs on the pasteboard)
+        // to a native platform drag (AppKit on macOS, Shell/OLE on Windows)
         // the moment the pointer leaves the viewport, so dragging rows
-        // to Finder / other apps drops the actual files. The resolver
-        // runs on the UI thread at promotion time: directory-ness comes
+        // to Finder, Explorer, or other apps drops the actual files. The
+        // resolver runs on the UI thread at promotion time: directory-ness comes
         // from the cached `EntryKind`, never from a stat. Spec §3.1:
         // pressing a selected row drags the full visible-order
         // selection; pressing an unselected row drags just that row.
@@ -3185,6 +3185,8 @@ impl TableDelegate for FileListDelegate {
                     },
                 ));
         }
+        #[cfg(windows)]
+        use crate::shell::ShowWindowsContextMenu;
         use crate::shell::{
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
             CompressTarBz2, CompressTarGz, CompressTarXz, ConvertArchive, CopyPath,
@@ -3193,10 +3195,10 @@ impl TableDelegate for FileListDelegate {
             OpenWithSlot0, OpenWithSlot1, OpenWithSlot2, OpenWithSlot3, OpenWithSlot4,
             OpenWithSlot5, OpenWithSlot6, OpenWithSlot7, OpenWithSlot8, OpenWithSlot9,
             OpenWithSlot10, OpenWithSlot11, QuickLook, RenameSelected, RevealInFinder,
-            SlideshowFromHere, ToggleFavoriteForTarget, ToggleTagBlue, ToggleTagGray,
-            ToggleTagGreen, ToggleTagOrange, ToggleTagPurple, ToggleTagRed, ToggleTagYellow,
+            ShowLockHolders, SlideshowFromHere, ToggleFavoriteForTarget, ToggleTagBlue,
+            ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple, ToggleTagRed,
+            ToggleTagYellow,
         };
-
         // Anchor keyboard-shortcut resolution to the shell's stable
         // dispatch path (carries SHELL_CONTEXT, always painted) so the
         // item hints render from the first frame instead of popping in
@@ -3312,6 +3314,13 @@ impl TableDelegate for FileListDelegate {
         }
         if show_checksum {
             menu = menu.menu(tr!("Generate SHA-256…"), Box::new(GenerateSha256));
+        }
+        if crate::platform_shell::lock_diagnostics_available() {
+            // Batch diagnostic over the whole resolved set: name the
+            // processes holding these files open, with force-close
+            // buttons. Hidden where the platform lookup is stubbed
+            // (macOS/Linux) rather than showing an always-empty dialog.
+            menu = menu.menu(tr!("What’s Locking This?"), Box::new(ShowLockHolders));
         }
         if show_terminal {
             // Anchor command: open a terminal at the clicked directory,
@@ -3487,7 +3496,8 @@ impl TableDelegate for FileListDelegate {
         });
         menu = menu.item(PopupMenuItem::submenu(tr!("Tags"), tags_submenu));
 
-        menu.separator()
+        let menu = menu
+            .separator()
             .menu(
                 crate::i18n::tr_static(ferail_core::commands::TRASH_LABEL),
                 Box::new(MoveToTrash),
@@ -3495,7 +3505,18 @@ impl TableDelegate for FileListDelegate {
             .menu(
                 tr!("Delete Immediately\u{2026}"),
                 Box::new(DeleteImmediately),
+            );
+        #[cfg(windows)]
+        {
+            menu.separator().menu(
+                tr!("More options from Windows\u{2026}"),
+                Box::new(ShowWindowsContextMenu),
             )
+        }
+        #[cfg(not(windows))]
+        {
+            menu
+        }
     }
 
     fn background_context_menu(

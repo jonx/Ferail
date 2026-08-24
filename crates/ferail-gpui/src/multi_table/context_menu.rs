@@ -366,6 +366,13 @@ impl<E: ParentElement + Styled + IntoElement + 'static> Element for LiveContextM
                     if phase.bubble()
                         && event.button == MouseButton::Right
                         && hitbox.is_hovered(window)
+                        // On Windows, Shift+right-click is reserved for the
+                        // native extended Shell menu. Row/cell handlers launch
+                        // that menu, but GPUI window listeners are independent
+                        // of element propagation, so stop_propagation alone
+                        // cannot prevent this listener from opening Ferail's
+                        // menu as well.
+                        && !(cfg!(windows) && event.modifiers.shift)
                     {
                         {
                             let mut shared_state = shared_state.borrow_mut();

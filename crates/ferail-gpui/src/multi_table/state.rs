@@ -132,6 +132,10 @@ pub enum TableEvent {
     /// Contains the row index, or `None` if right-clicked on an empty area.
     /// Use this event to show context menus for rows.
     RightClickedRow(Option<usize>),
+    /// Shift+right-click requested the platform's native context menu instead
+    /// of the normal GPUI menu. The ordinary RightClickedRow event is emitted
+    /// first so selection/context targeting is already correct.
+    NativeContextMenuRequested(Option<usize>),
     /// Fork addition: the table's empty space (below the rows, or the empty
     /// folder view — not a row, not the header) has been right-clicked and
     /// the delegate's background context menu is about to open. Emitted at
@@ -770,7 +774,7 @@ where
 
     fn on_row_right_click(
         &mut self,
-        _: &MouseDownEvent,
+        event: &MouseDownEvent,
         row_ix: Option<usize>,
         _: &mut Window,
         cx: &mut Context<Self>,
@@ -779,6 +783,11 @@ where
         self.right_clicked_background = false;
         self.right_clicked_cell = None;
         cx.emit(TableEvent::RightClickedRow(row_ix));
+        #[cfg(windows)]
+        if event.modifiers.shift {
+            cx.stop_propagation();
+            cx.emit(TableEvent::NativeContextMenuRequested(row_ix));
+        }
     }
 
     fn on_cell_right_click(

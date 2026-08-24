@@ -12,6 +12,12 @@ use ferail_fs_native::{DEFAULT_DU_BATCH, NativeFs, detect_magic};
 use ferail_gpui::screenshot;
 
 fn main() -> Result<()> {
+    // Disposable Windows Shell-menu broker. Dispatch before String-based CLI
+    // parsing so every NTFS path survives as its original OsString and before
+    // GPUI/observability startup so third-party extensions stay isolated.
+    if let Some(code) = run_windows_context_menu_broker() {
+        std::process::exit(code);
+    }
     // Pre-event-loop CLI handlers — run before the window opens.
     if let Some(code) = ferail_gpui::reset_db::handle_reset_db_cli() {
         std::process::exit(code);
@@ -36,6 +42,29 @@ fn main() -> Result<()> {
     run_gui(args);
     ferail_gpui::log_info!(90, "event loop exited");
     Ok(())
+}
+
+fn run_windows_context_menu_broker() -> Option<i32> {
+    #[cfg(windows)]
+    {
+        let mut args = std::env::args_os().skip(1);
+        if args.next().as_deref() != Some(std::ffi::OsStr::new("--windows-context-menu-broker")) {
+            return None;
+        }
+        if let Some(dir) = ferail_gpui::app_state::config_dir() {
+            ferail_gpui::platform_shell::install_crash_dump_handler(
+                &dir.join("reports"),
+                "context-menu-broker",
+                true,
+            );
+        }
+        let args = args.collect::<Vec<_>>();
+        Some(ferail_gpui::platform_shell::context_menu_broker_main(&args))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 fn handle_cli_subcommand() -> Result<Option<i32>> {
