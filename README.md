@@ -260,6 +260,19 @@ merge.
 - Before finishing: `cargo check`, `cargo test`, and a fresh screenshot for UI
   changes. See [CLAUDE.md](CLAUDE.md#verification).
 
+## Acknowledgements
+
+The Windows shell-integration work leans on the excellent open-source
+explorations of **Simon Mourier** — studied as reference implementations for
+preview hosting, shell namespace identity, and native context menus:
+
+- [ShellBat](https://github.com/smourier/ShellBat) — shell thumbnail/preview
+  extraction patterns, including the STA hosting and capture shapes our
+  preview pipeline learned from.
+- [Filociraptor](https://github.com/smourier/Filociraptor) — the
+  path-vs-PIDL split for shell locations and the PIDL-based
+  Reveal-in-Explorer pattern Ferail now follows.
+
 ## License
 
 Dual-licensed under either of
