@@ -45,6 +45,16 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   returned to the allocator while ordinary directory reloads still reuse
   their much smaller buffers.
 
+- **The Windows download now starts on a fresh PC — no Visual C++ install
+  required.** The 0.6.5 build could fail before showing a window with a
+  `VCRUNTIME140.dll was not found` error, because it expected Microsoft's
+  C++ runtime to already be present. Ferail now carries that runtime inside
+  the executable, and packaging refuses to produce a build that quietly
+  depends on any DLL Windows itself does not ship. Each Windows release now
+  also comes with a matching debug-symbols bundle so crash reports from
+  testers can be decoded against the exact published build. The Windows
+  build remains unsigned, so SmartScreen still warns on first launch.
+
 ## 0.6.5 — 2026-08-23
 
 - **Include Subfolders — every file under this folder, in one list.** A third

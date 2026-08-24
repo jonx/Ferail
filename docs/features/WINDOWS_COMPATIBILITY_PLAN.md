@@ -564,18 +564,28 @@ offer to install its own prerequisite.
 
 **Work.**
 
-- [ ] Test Rust/MSVC static CRT linking for every native dependency in the
+- [x] Test Rust/MSVC static CRT linking for every native dependency in the
   release build. Prefer a self-contained portable ZIP if compatibility and
-  security updates remain acceptable.
-- [ ] If static CRT is not viable, ship an installer/bootstrapper that checks
+  security updates remain acceptable. *2026-08-24: `package-win.ps1` now
+  builds the whole graph with `-C target-feature=+crt-static`; dumpbin shows
+  no CRT/UCRT imports in either binary, and the packaged exe launches and
+  renders headlessly on a real Windows 11 machine.*
+- [x] If static CRT is not viable, ship an installer/bootstrapper that checks
   and installs the official Microsoft redistributable before launching Ferail;
-  do not download it from inside the main executable.
+  do not download it from inside the main executable. *n/a — static CRT is
+  viable, so no bootstrapper is needed.*
 - [ ] Test the exact ZIP/installer in a fresh Windows Sandbox with no developer
   tools or preinstalled redistributable.
-- [ ] Add dependency inspection to packaging CI and fail if an undeclared DLL
-  appears.
-- [ ] Keep architecture-specific artifacts explicit (`x86_64`, later ARM64)
-  and include matching helper binaries and symbols.
+- [x] Add dependency inspection to packaging CI and fail if an undeclared DLL
+  appears. *The gate lives in `package-win.ps1` (dumpbin against a Windows
+  system-DLL allowlist; any CRT import fails the run), which `win.yml` CI
+  executes for every release ZIP.*
+- [~] Keep architecture-specific artifacts explicit (`x86_64`, later ARM64)
+  and include matching helper binaries and symbols. *x86_64 ZIPs plus a
+  `-symbols.zip` (PDBs + CodeView/commit manifest) ship now; helper binaries
+  join it when they exist, and current PDBs carry publics only — consider
+  `CARGO_PROFILE_RELEASE_DEBUG=limited` in packaging before the WIN-001 dump
+  work so stacks get line numbers.*
 
 **Exit gate.** A pristine supported Windows VM launches, previews a safe image,
 opens a file, and exits cleanly without installing Visual Studio tooling.
@@ -622,7 +632,9 @@ commands, and mismatched packaged resources fail CI.
 - [ ] WIN-002 preview broker and provider quarantine.
 - [ ] WIN-003 bounded preview scheduler and stable table updates.
 - [ ] WIN-004 multi-selection reproduction and ownership fixes.
-- [ ] WIN-015 portable-runtime packaging gate.
+- [~] WIN-015 portable-runtime packaging gate: static CRT, dependency gate,
+  and symbol bundle verified on a real Windows 11 machine; the WENV-C
+  pristine-VM launch test remains.
 
 ### Phase 2 — restore the Prime Directive under Windows load
 

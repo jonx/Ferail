@@ -174,11 +174,17 @@ When helper binaries land, packaging tests must assert that every required
 helper is present, version-matched, architecture-matched, and signed with the
 main executable.
 
-- [ ] `WTEST-001` All commands above pass on WENV-A.
+- [x] `WTEST-001` All commands above pass on WENV-A. *2026-08-24 at
+  `580d193` plus the WIN-015 packaging changes: fmt, 653 workspace tests,
+  workspace-wide strict clippy, release build, and a full `package-win.ps1`
+  run all pass; logs under
+  `target/test-reports/windows/580d193/2026-08-24-session1/`.*
 - [ ] `WTEST-002` Bundled keybindings resolve; startup has no unknown built-in
   command, especially `view.toggle_flat`.
-- [ ] `WTEST-003` Package dependency inspection finds no undeclared runtime
-  DLL.
+- [x] `WTEST-003` Package dependency inspection finds no undeclared runtime
+  DLL. *2026-08-24: both packaged binaries import 34 Windows system DLLs and
+  nothing else — no `vcruntime*`/`msvcp*`/`ucrtbase`/`api-ms-win-crt-*`; the
+  gate now fails packaging if one appears.*
 - [ ] `WTEST-004` Portable ZIP launches offline on WENV-C.
 - [ ] `WTEST-005` Installer install, launch, upgrade, uninstall, and retained
   user-settings behavior pass on WENV-C.

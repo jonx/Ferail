@@ -11,10 +11,12 @@
          grammars and the ISC/MIT icon artwork all require their notices to
          accompany a redistributed copy, so a ZIP of just the .exe would
          under-attribute.
-      3. Authenticode-sign the payload, if a certificate was supplied.
-      4. Emit a portable ZIP (always) and an Inno Setup installer (when the
+      3. Verify the exact PE dependency set is limited to Windows system DLLs.
+      4. Authenticode-sign the payload, if a certificate was supplied.
+      5. Emit a portable ZIP and matching PDB/symbol ZIP (always), plus an
+         Inno Setup installer (when the
          Inno compiler `iscc` is available).
-      5. Sign the installer and print a verification summary.
+      6. Sign the installer and print a verification summary.
 
     macOS parity note: the Apple side has to satisfy Gatekeeper, so
     package-mac.sh signs with a Developer ID, notarizes, and staples. Windows
@@ -89,9 +91,22 @@ Write-Step "Ferail $Version (x86_64-pc-windows-msvc)"
 if (-not $SkipBuild) {
     $cargoArgs = @('build', '--release', '--bin', 'ferail-gpui', '--bin', 'ferail')
     if ($Features) { $cargoArgs += @('--features', $Features) }
-    Write-Step "cargo $($cargoArgs -join ' ')"
-    & cargo @cargoArgs
-    if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
+    Write-Step "cargo $($cargoArgs -join ' ') (static MSVC runtime)"
+
+    # Apply crt-static to the whole Cargo graph, including cc-rs-built native
+    # dependencies. Applying it only to the final rustc invocation can mix /MT
+    # and /MD objects, which is not a valid portability fix.
+    $hadRustFlags = Test-Path Env:RUSTFLAGS
+    $previousRustFlags = $env:RUSTFLAGS
+    $env:RUSTFLAGS = (@($previousRustFlags, '-C target-feature=+crt-static') |
+        Where-Object { $_ }) -join ' '
+    try {
+        & cargo @cargoArgs
+        if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
+    } finally {
+        if ($hadRustFlags) { $env:RUSTFLAGS = $previousRustFlags }
+        else { Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue }
+    }
 } else {
     Write-Step 'Skipping build (-SkipBuild)'
 }
@@ -101,9 +116,77 @@ $CliSrc = Join-Path $RepoRoot 'target\release\ferail.exe'
 foreach ($p in @($GuiSrc, $CliSrc)) {
     if (-not (Test-Path $p)) { throw "missing build output: $p" }
 }
+$GuiPdbSrc = Join-Path $RepoRoot 'target\release\ferail_gpui.pdb'
+$CliPdbSrc = Join-Path $RepoRoot 'target\release\ferail.pdb'
+foreach ($p in @($GuiPdbSrc, $CliPdbSrc)) {
+    if (-not (Test-Path $p)) { throw "missing matching symbols: $p" }
+}
 
 # ---------------------------------------------------------------------------
-# 2. Stage
+# 2. Dependency gate
+# ---------------------------------------------------------------------------
+function Resolve-DumpBin {
+    $cmd = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $install = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+        if ($install) {
+            $hit = Get-ChildItem (Join-Path $install 'VC\Tools\MSVC') -Recurse `
+                -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match '\\bin\\Hostx64\\x64\\dumpbin\.exe$' } |
+                Sort-Object FullName -Descending |
+                Select-Object -First 1
+            if ($hit) { return $hit.FullName }
+        }
+    }
+    throw 'dumpbin.exe not found (install Visual Studio C++ Build Tools)'
+}
+
+function Get-PeDependencies {
+    param([string]$File, [string]$DumpBin)
+    $output = & $DumpBin /nologo /dependents $File 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "dumpbin failed for $File ($LASTEXITCODE)" }
+    @($output | ForEach-Object {
+        if ($_ -match '^\s+([A-Za-z0-9._-]+\.dll)\s*$') { $Matches[1] }
+    } | Sort-Object -Unique)
+}
+
+$AllowedSystemDlls = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+)
+@(
+    'advapi32.dll', 'bcrypt.dll', 'bcryptprimitives.dll', 'combase.dll',
+    'comctl32.dll', 'crypt32.dll', 'd3d11.dll', 'dcomp.dll', 'dwrite.dll',
+    'dwmapi.dll', 'dxgi.dll', 'gdi32.dll', 'gdiplus.dll', 'icuuc.dll',
+    'imm32.dll', 'kernel32.dll', 'mfplat.dll', 'ntdll.dll', 'ole32.dll',
+    'oleaut32.dll', 'pdh.dll', 'powrprof.dll', 'psapi.dll', 'rstrtmgr.dll',
+    'shell32.dll', 'shlwapi.dll', 'uiautomationcore.dll', 'user32.dll',
+    'winmm.dll', 'ws2_32.dll'
+) | ForEach-Object { [void]$AllowedSystemDlls.Add($_) }
+
+$DumpBin = Resolve-DumpBin
+$DependencySets = [ordered]@{}
+foreach ($file in @($GuiSrc, $CliSrc)) {
+    $deps = @(Get-PeDependencies -File $file -DumpBin $DumpBin)
+    $DependencySets[(Split-Path $file -Leaf)] = $deps
+    $undeclared = @($deps | Where-Object {
+        if ($_ -like 'api-ms-win-crt-*' -or $_ -match '^(vcruntime|msvcp|concrt|ucrtbase)') {
+            return $true
+        }
+        -not ($AllowedSystemDlls.Contains($_) -or $_ -like 'api-ms-win-*' -or $_ -like 'ext-ms-win-*')
+    })
+    if ($undeclared.Count -gt 0) {
+        throw "undeclared/non-system dependencies in $(Split-Path $file -Leaf): $($undeclared -join ', ')"
+    }
+    Write-Step "Verified static/system-only dependencies for $(Split-Path $file -Leaf) ($($deps.Count) DLLs)"
+}
+
+# ---------------------------------------------------------------------------
+# 3. Stage
 # ---------------------------------------------------------------------------
 Write-Step "Staging $StageDir"
 if (Test-Path $StageDir) { Remove-Item $StageDir -Recurse -Force }
@@ -152,7 +235,7 @@ foreach ($f in @('LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md')) {
 Write-Step "Copied licenses ($licCount files)"
 
 # ---------------------------------------------------------------------------
-# 3. Sign the payload
+# 4. Sign the payload
 # ---------------------------------------------------------------------------
 function Resolve-SignTool {
     $cmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
@@ -200,15 +283,69 @@ function Invoke-Sign {
 $signed = Invoke-Sign -Files @($GuiDst, $CliDst)
 
 # ---------------------------------------------------------------------------
-# 4. Portable ZIP
+# 5. Portable + symbol ZIPs
 # ---------------------------------------------------------------------------
 $ZipPath = Join-Path $StageRoot "Ferail-$Version-win-x64.zip"
 Write-Step "Writing $ZipPath"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 Compress-Archive -Path $StageDir -DestinationPath $ZipPath -CompressionLevel Optimal
 
+function Get-CodeViewIdentity {
+    param([string]$File, [string]$DumpBin)
+    $headers = (& $DumpBin /nologo /headers $File 2>&1) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw "dumpbin headers failed for $File ($LASTEXITCODE)" }
+    if ($headers -notmatch 'Format:\s+RSDS,\s+\{(?<guid>[0-9A-Fa-f-]+)\},\s+(?<age>\d+),\s+(?:\r?\n\s*)?(?<pdb>[^\r\n]+\.pdb)') {
+        throw "CodeView RSDS identity missing from $File"
+    }
+    [ordered]@{
+        guid = $Matches.guid.ToUpperInvariant()
+        age = [int]$Matches.age
+        pdb = $Matches.pdb.Trim()
+    }
+}
+
+$SymbolsDir = Join-Path $StageRoot 'Ferail-symbols'
+if (Test-Path $SymbolsDir) { Remove-Item $SymbolsDir -Recurse -Force }
+New-Item -ItemType Directory -Path $SymbolsDir -Force | Out-Null
+Copy-Item $GuiPdbSrc (Join-Path $SymbolsDir 'ferail_gpui.pdb')
+Copy-Item $CliPdbSrc (Join-Path $SymbolsDir 'ferail.pdb')
+
+$commit = (& git -C $RepoRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'could not determine Git revision for symbol manifest' }
+$symbolManifest = [ordered]@{
+    product = 'Ferail'
+    version = $Version
+    target = 'x86_64-pc-windows-msvc'
+    commit = $commit
+    crt = 'static'
+    created_utc = (Get-Date).ToUniversalTime().ToString('o')
+    binaries = @(
+        [ordered]@{
+            package_path = 'Ferail.exe'
+            sha256 = (Get-FileHash $GuiDst -Algorithm SHA256).Hash
+            dependencies = $DependencySets['ferail-gpui.exe']
+            codeview = Get-CodeViewIdentity -File $GuiDst -DumpBin $DumpBin
+            pdb_sha256 = (Get-FileHash $GuiPdbSrc -Algorithm SHA256).Hash
+        },
+        [ordered]@{
+            package_path = 'cli/ferail.exe'
+            sha256 = (Get-FileHash $CliDst -Algorithm SHA256).Hash
+            dependencies = $DependencySets['ferail.exe']
+            codeview = Get-CodeViewIdentity -File $CliDst -DumpBin $DumpBin
+            pdb_sha256 = (Get-FileHash $CliPdbSrc -Algorithm SHA256).Hash
+        }
+    )
+}
+$ManifestPath = Join-Path $SymbolsDir 'manifest.json'
+$symbolManifest | ConvertTo-Json -Depth 8 | Set-Content $ManifestPath -Encoding UTF8
+
+$SymbolsZipPath = Join-Path $StageRoot "Ferail-$Version-win-x64-symbols.zip"
+Write-Step "Writing $SymbolsZipPath"
+if (Test-Path $SymbolsZipPath) { Remove-Item $SymbolsZipPath -Force }
+Compress-Archive -Path $SymbolsDir -DestinationPath $SymbolsZipPath -CompressionLevel Optimal
+
 # ---------------------------------------------------------------------------
-# 5. Installer (optional — needs Inno Setup's iscc)
+# 6. Installer (optional — needs Inno Setup's iscc)
 # ---------------------------------------------------------------------------
 function Resolve-Iscc {
     $cmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
@@ -248,10 +385,10 @@ if ($NoInstaller) {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Verify + summary
+# 7. Verify + summary
 # ---------------------------------------------------------------------------
 Write-Step 'Artifacts'
-foreach ($a in @($ZipPath, $InstallerPath) | Where-Object { $_ -and (Test-Path $_) }) {
+foreach ($a in @($ZipPath, $SymbolsZipPath, $InstallerPath) | Where-Object { $_ -and (Test-Path $_) }) {
     $size = [math]::Round((Get-Item $a).Length / 1MB, 1)
     Write-Host ("  {0}  ({1} MB)" -f $a, $size)
 }
