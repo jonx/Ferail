@@ -17,7 +17,7 @@
 //! `IPropertyStore` provider planned by WIN-014 is additive, not a
 //! replacement for this.
 
-use std::io::BufReader;
+use std::io::{BufReader, Seek as _, SeekFrom};
 use std::path::Path;
 
 use exif::{In, Tag, Value};
@@ -32,21 +32,31 @@ const IMAGE_EXTS: &[&str] = &[
 
 /// Read image metadata for `path`. `None` when the extension isn't an
 /// image type or nothing at all could be read.
+///
+/// One open serves both probes: the header dimensions and the EXIF pass
+/// share the reader (a second `open` would double the round-trips on a
+/// network share or a spun-down drive, per file).
 pub fn read_image_meta(path: &Path) -> Option<ImageMeta> {
+    ferail_core::path_guard::assert_off_ui_thread("image_meta::read_image_meta");
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     if !IMAGE_EXTS.contains(&ext.as_str()) {
         return None;
     }
 
     let mut meta = ImageMeta::default();
-    if let Ok((w, h)) = image::image_dimensions(path) {
+    let file = std::fs::File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    if let Ok((w, h)) = image::ImageReader::new(&mut reader)
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+    {
         meta.width = Some(w);
         meta.height = Some(h);
     }
-    if let Ok(file) = std::fs::File::open(path) {
-        if let Ok(exif) = exif::Reader::new().read_from_container(&mut BufReader::new(file)) {
-            apply_exif(&mut meta, &exif);
-        }
+    let _ = reader.seek(SeekFrom::Start(0));
+    if let Ok(exif) = exif::Reader::new().read_from_container(&mut reader) {
+        apply_exif(&mut meta, &exif);
     }
     if meta.is_empty() {
         None
