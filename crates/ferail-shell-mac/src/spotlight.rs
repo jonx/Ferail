@@ -32,6 +32,7 @@ pub enum SpotlightScope {
 /// most "find a file" intents want). Otherwise the bare query string is
 /// Spotlight's natural-language search, which also matches file
 /// *content* and metadata.
+#[cfg(any(target_os = "macos", test))]
 fn mdfind_args(scope: &SpotlightScope, needle: &str, name_only: bool) -> Vec<String> {
     let mut args = Vec::with_capacity(5);
     if let SpotlightScope::Subtree(dir) = scope {

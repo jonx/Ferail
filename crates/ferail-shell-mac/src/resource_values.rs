@@ -144,7 +144,7 @@ pub fn set_hidden_extension(_path: &Path, _hidden: bool) -> Result<(), String> {
     Err("set_hidden_extension is macOS-only".into())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 

@@ -268,6 +268,7 @@ pub fn app_bundle_path() -> Option<String> {
 /// inherited pipes, and a small named thread `wait()`s it so it doesn't
 /// linger as a zombie until app exit. The children launched through here
 /// (`open`, `qlmanage`) exit quickly, so the reaper threads are short-lived.
+#[cfg(target_os = "macos")]
 pub(crate) fn spawn_and_reap(cmd: &mut std::process::Command) -> std::io::Result<()> {
     use std::process::Stdio;
     let mut child = cmd
