@@ -1,4 +1,4 @@
-//! IPreviewHandler-based file preview rendering.
+//! IPreviewHandler-based file preview rendering, brokered off-process.
 //!
 //! `IShellItemImageFactory` is great for files with a registered
 //! thumbnail provider (PNG, PPTX with Office installed, MP4, etc.),
@@ -7,10 +7,21 @@
 //! that render the document's content into a host window. This
 //! module wraps the dance so callers get an RGBA buffer back.
 //!
-//! v1 limitations:
-//! - Tries only `CLSCTX_INPROC_SERVER`; cross-process preview handlers
-//!   (which need OLE marshalling and are typically much slower) are
-//!   skipped.
+//! **Containment (WIN-002).** Third-party preview handlers are
+//! arbitrary native code; the 0.6.5 tester crash was a `c0000005`
+//! inside `pdfprevhndlr.dll` hosted *in* Ferail. A thread cannot
+//! contain that — it provides scheduling isolation, not memory-safety
+//! or termination isolation. So the parent never activates a handler
+//! in-process: [`try_capture`] resolves the provider CLSID, then
+//! re-launches the Ferail binary as a disposable `--preview-broker`
+//! child which does the COM hosting and writes one validated frame to
+//! stdout ([`crate::broker_proto`]). A crash or hang kills only the
+//! child: the deadline here terminates the process (never leaving a
+//! detached thread behind), and a CLSID that repeatedly crashes or
+//! times out is session-quarantined so the caller degrades to
+//! `IShellItemImageFactory` / icon fallback instead of a crash loop.
+//!
+//! v1 limitations (broker side):
 //! - Only `IInitializeWithFile` is attempted today; future revisions
 //!   should also try `IInitializeWithStream` and `IInitializeWithItem`
 //!   for handlers that refuse the file-path init.
@@ -22,14 +33,16 @@
 //!   non-background pixels, so fast handlers don't pay the whole
 //!   budget; handlers still blank at the deadline get cut.
 //!
-//! Caller must run this off the UI thread (preview handlers may post
-//! messages and call back into shell extensions that block).
+//! Caller must run this off the UI thread (process spawn + up to six
+//! seconds of waiting).
 
 #![cfg(windows)]
 
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
+
+use crate::broker_proto::{self, Quarantine};
 
 use windows::core::{Interface, GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -55,64 +68,208 @@ fn debug() -> bool {
     std::env::var("FERAIL_THUMB_DEBUG").is_ok()
 }
 
-/// Render the file's preview handler into an off-screen HWND and
-/// capture the result as RGBA bytes. Returns `None` if no preview
-/// handler is registered for the extension or the capture failed.
-///
-/// Preview handlers are STA-affine — they expect to be created on a
-/// thread that's COM-initialized as `COINIT_APARTMENTTHREADED` and
-/// that pumps its own message queue. The gpui background executor
-/// is MTA, so we spawn a fresh thread per call: the new thread can
-/// freely set itself STA without `RPC_E_CHANGED_MODE`, and the
-/// preview handler's posted completion messages reach the same
-/// queue our `pump_messages` loop is draining.
-///
-/// One thread per preview is wasteful but previews are spread out
-/// in time (selection changes), so the overhead is negligible
-/// relative to the ~hundreds-of-ms cost of the preview handler
-/// itself. A future STA-thread-pool with semaphore-capped
-/// concurrency (ShellBat pattern) is the proper next step.
-pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
-    let path = path.to_path_buf();
-    let (tx, rx) = std::sync::mpsc::channel::<Option<(Vec<u8>, u32, u32)>>();
-    let join = std::thread::Builder::new()
-        .name("ferail-preview-sta".into())
-        .spawn(move || {
-            let result = try_capture_sta(&path, size_px);
-            let _ = tx.send(result);
-        })
-        .ok()?;
-
-    // Allow up to 6s overall — the 3.5s message-pump budget plus headroom
-    // for handler startup (prevhost.exe cold-launch can take a moment).
-    let result = rx
-        .recv_timeout(std::time::Duration::from_secs(6))
-        .ok()
-        .flatten();
-    // Let the worker finish its cleanup; if it's hung past our
-    // timeout it'll exit when the process does.
-    drop(join);
-    result
+/// Session quarantine for provider CLSIDs, shared by every preview
+/// worker in this process.
+fn quarantine() -> &'static std::sync::Mutex<Quarantine> {
+    static Q: std::sync::OnceLock<std::sync::Mutex<Quarantine>> = std::sync::OnceLock::new();
+    Q.get_or_init(|| std::sync::Mutex::new(Quarantine::default()))
 }
 
-fn try_capture_sta(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
-    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+/// Record a broker failure for `clsid`; logs the quarantine transition
+/// exactly once per session per provider (redaction-safe: a CLSID and a
+/// failure kind, never a path).
+fn strike(clsid: &str, why: &str) {
+    let newly = quarantine().lock().unwrap().note_failure(clsid);
+    if newly {
+        eprintln!(
+            "preview-broker: quarantining preview handler {{{clsid}}} for this session ({why})"
+        );
+    } else if debug() {
+        eprintln!("preview-broker: {{{clsid}}} {why}");
+    }
+}
+
+/// Render the file's preview through a disposable `--preview-broker`
+/// child process and return the captured RGBA frame. Returns `None`
+/// if no preview handler is registered for the extension, the provider
+/// is quarantined, or the broker failed/crashed/timed out.
+///
+/// The child owns COM activation, the STA message pump, and the
+/// capture. The 6 s deadline here — the broker's 3.5 s pump budget
+/// plus headroom for process and handler startup — is enforced by
+/// terminating the child, so a hung provider never leaves detached
+/// work behind in this process.
+pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    use std::io::Read as _;
+    use std::process::{Command, Stdio};
+
+    ferail_core::path_guard::assert_off_ui_thread("preview_handler::try_capture");
+
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     let clsid = lookup_handler_clsid(&ext)?;
-
     if debug() {
-        eprintln!("preview_handler: CLSID for .{} = {:?}", ext, clsid);
+        eprintln!("preview_handler: CLSID for .{} = {{{clsid}}}", ext);
+    }
+    if quarantine().lock().unwrap().is_quarantined(&clsid) {
+        if debug() {
+            eprintln!("preview_handler: {{{clsid}}} is quarantined — icon fallback");
+        }
+        return None;
     }
 
-    unsafe {
-        // Fresh thread → COM is uninitialized → STA init succeeds.
+    let exe = std::env::current_exe().ok()?;
+    let mut cmd = Command::new(exe);
+    cmd.arg("--preview-broker")
+        .arg(path)
+        .arg(size_px.to_string())
+        .arg(&clsid)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(if debug() {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        });
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn().ok()?;
+
+    // Drain stdout concurrently — the frame can be several MB, far
+    // beyond the pipe buffer, so reading after exit would deadlock a
+    // healthy child. The reader always terminates: child exit or our
+    // kill() closes the pipe. `take` caps a misbehaving child at just
+    // over the largest legal frame instead of ballooning parent memory.
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::Builder::new()
+        .name("ferail-preview-broker-read".into())
+        .spawn(move || {
+            let cap = 16 + (broker_proto::MAX_DIM as u64) * (broker_proto::MAX_DIM as u64) * 4 + 1;
+            let mut buf = Vec::new();
+            let _ = stdout.by_ref().take(cap).read_to_end(&mut buf);
+            buf
+        });
+    let reader = match reader {
+        Ok(r) => r,
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+    };
+
+    const DEADLINE: Duration = Duration::from_secs(6);
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if started.elapsed() < DEADLINE => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            _ => break None,
+        }
+    };
+    let timed_out = status.is_none();
+    if timed_out {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let output = reader.join().unwrap_or_default();
+
+    match status.and_then(|s| s.code()) {
+        Some(broker_proto::EXIT_OK) => {
+            // Validate before trusting anything from a process that
+            // just hosted arbitrary native code: exact frame shape,
+            // exact requested dimensions.
+            match broker_proto::parse_frame(&output) {
+                Some((rgba, w, h)) if w == size_px && h == size_px => {
+                    quarantine().lock().unwrap().note_success(&clsid);
+                    Some((rgba, w, h))
+                }
+                _ => {
+                    strike(&clsid, "malformed frame");
+                    None
+                }
+            }
+        }
+        // Clean "no preview available" — not the provider's fault.
+        Some(broker_proto::EXIT_NO_PREVIEW) => None,
+        // Argument-contract bug on our side; don't punish the provider.
+        Some(broker_proto::EXIT_USAGE) => None,
+        // Timeout, crash, or a Windows exception code (0xC0000005 &
+        // friends): the containment case.
+        _ => {
+            strike(&clsid, if timed_out { "timeout" } else { "crash" });
+            None
+        }
+    }
+}
+
+/// Entry point of the `--preview-broker` worker mode: render one
+/// preview in this (disposable) process and write the frame to stdout.
+/// Argument contract: `<path> <size_px> <clsid-without-braces>`.
+///
+/// `FERAIL_PREVIEW_BROKER_TEST=crash|hang` forces the two containment
+/// failure modes so the acceptance matrix (WTEST-046/047) can verify
+/// that a broken provider terminates only this helper.
+pub fn preview_broker_main(args: &[String]) -> i32 {
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+
+    match std::env::var("FERAIL_PREVIEW_BROKER_TEST").as_deref() {
+        Ok("crash") => std::process::abort(),
+        Ok("hang") => loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        },
+        _ => {}
+    }
+
+    let [path, size, clsid] = args else {
+        eprintln!("usage: --preview-broker <path> <size_px> <clsid>");
+        return broker_proto::EXIT_USAGE;
+    };
+    let Ok(size_px) = size.parse::<u32>() else {
+        return broker_proto::EXIT_USAGE;
+    };
+    if size_px == 0 || size_px > broker_proto::MAX_DIM {
+        return broker_proto::EXIT_USAGE;
+    }
+    let Some(clsid) = parse_clsid(clsid) else {
+        return broker_proto::EXIT_USAGE;
+    };
+    let path = std::path::PathBuf::from(path);
+
+    let result = unsafe {
+        // Fresh process → COM is uninitialized → STA init succeeds,
+        // and the preview handler's posted completion messages reach
+        // the queue `pump_messages_until` drains.
         let co_hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let we_initialized = co_hr.is_ok();
-        let result = try_capture_inner(&clsid, path, size_px);
+        let result = try_capture_inner(&clsid, &path, size_px);
         if we_initialized {
             CoUninitialize();
         }
         result
+    };
+
+    match result {
+        Some((rgba, w, h)) => {
+            use std::io::Write as _;
+            let frame = broker_proto::encode_frame(w, h, &rgba);
+            let mut stdout = std::io::stdout().lock();
+            if stdout
+                .write_all(&frame)
+                .and_then(|()| stdout.flush())
+                .is_err()
+            {
+                // Parent went away or the pipe broke — report a clean
+                // miss so a partial frame is never mistaken for output.
+                return broker_proto::EXIT_NO_PREVIEW;
+            }
+            broker_proto::EXIT_OK
+        }
+        None => broker_proto::EXIT_NO_PREVIEW,
     }
 }
 
@@ -251,7 +408,11 @@ fn has_non_background_pixels(rgba: &[u8]) -> bool {
     false
 }
 
-fn lookup_handler_clsid(ext_lower: &str) -> Option<GUID> {
+/// Resolve the preview-handler CLSID registered for an extension.
+/// Returns the brace-less string form — the parent keys the quarantine
+/// on it and passes it to the broker verbatim, so both sides agree on
+/// the identity byte-for-byte.
+fn lookup_handler_clsid(ext_lower: &str) -> Option<String> {
     // IPreviewHandler IID — the shell exposes it as a verb-like
     // string under the file's ProgID via AssocQueryString.
     const IPREVIEW_HANDLER_IID_STR: &str = "{8895b1c6-b41f-4c1c-a562-0d564250836f}";
@@ -287,16 +448,24 @@ fn lookup_handler_clsid(ext_lower: &str) -> Option<GUID> {
     // mixed case) — `GUID::try_from` in windows-0.58 wants a bare
     // hex format without braces.
     let raw = String::from_utf16_lossy(&buf[..(len as usize - 1)]);
-    let cleaned = raw.trim_matches(|c| c == '{' || c == '}');
+    let cleaned = raw.trim_matches(|c| c == '{' || c == '}').to_string();
     if debug() {
         eprintln!("preview_handler: clsid = {} (raw={:?})", cleaned, raw);
     }
-    // windows-0.58 only offers the *infallible* `GUID: From<&str>`, which
-    // panics on a malformed string (the `TryFrom` that used to be called here
-    // was just the blanket impl over it, with `Error = Infallible`, so it could
-    // never actually report the failure it appeared to). Catching the panic is
-    // therefore the only way a bad registry value doesn't kill the worker.
-    std::panic::catch_unwind(|| GUID::from(cleaned)).ok()
+    // Validate up front so a bad registry value is dropped here rather
+    // than surfacing as a broker usage error.
+    parse_clsid(&cleaned)?;
+    Some(cleaned)
+}
+
+/// Parse a brace-less CLSID string. windows-0.58 only offers the
+/// *infallible* `GUID: From<&str>`, which panics on a malformed string
+/// (the `TryFrom` that used to be called here was just the blanket impl
+/// over it, with `Error = Infallible`, so it could never actually
+/// report the failure it appeared to). Catching the panic is therefore
+/// the only way a bad value doesn't kill the process.
+fn parse_clsid(s: &str) -> Option<GUID> {
+    std::panic::catch_unwind(|| GUID::from(s)).ok()
 }
 
 unsafe fn init_with_file(handler: &IPreviewHandler, path: &Path) -> windows::core::Result<()> {

@@ -8,6 +8,30 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **A broken PDF or Office preview can no longer crash Ferail on Windows.**
+  Third-party preview components (the ones other apps install so Explorer can
+  draw document previews) used to run inside Ferail itself, so a faulty one —
+  like the PDF previewer access violation reported against 0.6.5 — could take
+  the whole app down or hang it. Each preview now renders in a short-lived
+  helper process: if the component crashes or stalls, only the helper dies,
+  the file shows its icon instead, and a component that fails twice is
+  skipped for the rest of the session.
+
+- **The status bar's progress bar now sits beside the task it measures.**
+  It used to float at the far right of the status bar, over by the app
+  statistics, visually orphaned from the "Scanning…"/"Copying…" text at the
+  left. The strip now follows the task label directly.
+
+- **The Windows download now starts on a fresh PC — no Visual C++ install
+  required.** The 0.6.5 build could fail before showing a window with a
+  `VCRUNTIME140.dll was not found` error, because it expected Microsoft's
+  C++ runtime to already be present. Ferail now carries that runtime inside
+  the executable, and packaging refuses to produce a build that quietly
+  depends on any DLL Windows itself does not ship. Each Windows release now
+  also comes with a matching debug-symbols bundle so crash reports from
+  testers can be decoded against the exact published build. The Windows
+  build remains unsigned, so SmartScreen still warns on first launch.
+
 - **Windows CPU usage now matches Task Manager, and redraw activity says what
   it measures.** The status bar previously counted CPU as a percentage of one
   core, so a busy process could show 700% while Task Manager showed a much
@@ -44,21 +68,6 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   resident until Ferail quit. Flat-only row and filtered-row storage is now
   returned to the allocator while ordinary directory reloads still reuse
   their much smaller buffers.
-
-- **The status bar's progress bar now sits beside the task it measures.**
-  It used to float at the far right of the status bar, over by the app
-  statistics, visually orphaned from the "Scanning…"/"Copying…" text at the
-  left. The strip now follows the task label directly.
-
-- **The Windows download now starts on a fresh PC — no Visual C++ install
-  required.** The 0.6.5 build could fail before showing a window with a
-  `VCRUNTIME140.dll was not found` error, because it expected Microsoft's
-  C++ runtime to already be present. Ferail now carries that runtime inside
-  the executable, and packaging refuses to produce a build that quietly
-  depends on any DLL Windows itself does not ship. Each Windows release now
-  also comes with a matching debug-symbols bundle so crash reports from
-  testers can be decoded against the exact published build. The Windows
-  build remains unsigned, so SmartScreen still warns on first launch.
 
 ## 0.6.5 — 2026-08-23
 

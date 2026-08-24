@@ -229,20 +229,39 @@ termination isolation. A handler may keep callbacks or worker state past
 
 **Work.**
 
-- [ ] Move `IPreviewHandler` activation, hosting, message pumping, capture, and
-  unload into the preview broker.
-- [ ] Use a small bounded broker pool or one disposable process per provider;
-  never one unbounded thread per row/request.
-- [ ] Cancel superseded generations. Deadline expiry kills and replaces the
-  broker; it does not leave a detached thread behind.
-- [ ] Maintain a session quarantine for a CLSID that crashes or times out
+- [x] Move `IPreviewHandler` activation, hosting, message pumping, capture, and
+  unload into the preview broker. *2026-08-24: `--preview-broker` worker mode
+  of the Ferail binary itself (no extra packaged helper, version-matched by
+  construction); the parent never activates a handler in-process.*
+- [x] Use a small bounded broker pool or one disposable process per provider;
+  never one unbounded thread per row/request. *One disposable process per
+  request, bounded by the preview scheduler's one-active + latest-wins
+  waiting slots.*
+- [~] Cancel superseded generations. Deadline expiry kills and replaces the
+  broker; it does not leave a detached thread behind. *Deadline kill verified
+  on Windows (hung broker terminated at 6 s, zero orphan processes). A
+  superseded in-flight request still runs to its deadline — bounded to one
+  straggler by the scheduler; kill-on-supersede remains open.*
+- [x] Maintain a session quarantine for a CLSID that crashes or times out
   repeatedly, falling back to `IShellItemImageFactory`, the built-in decoder,
-  or a generic icon.
-- [ ] Validate RGBA dimensions and byte length before accepting broker IPC.
+  or a generic icon. *Two strikes quarantine the CLSID for the session, a
+  success clears the count, and the transition is logged once with the CLSID
+  (redaction-safe). Verified with the injected-crash hook: icon fallback,
+  main process unaffected.*
+- [x] Validate RGBA dimensions and byte length before accepting broker IPC.
+  *`broker_proto::parse_frame`: magic, dimension ceiling, exact byte count,
+  and exact requested size; unit-tested on every host, and the parent's pipe
+  reader is capped just above the largest legal frame.*
 
 **Exit gate.** Injected crash, access violation, malformed bitmap, and hung
 handler fixtures cannot terminate or freeze Ferail; the selected row receives
-a fallback within the declared deadline.
+a fallback within the declared deadline. *2026-08-24: injected crash
+(`FERAIL_PREVIEW_BROKER_TEST=crash`), hang (=`hang`, killed at the 6 s
+deadline), and malformed-frame validation all verified on a real Windows 11
+machine via the CLI chain; Edge's real `PdfPreviewHandler.dll` renders
+through the broker end-to-end. Still pending: the same matrix inside the
+interactive GUI session and a reproduction against the tester's
+`pdfprevhndlr.dll`.*
 
 ### WIN-003 — 10,000-image preview stability and scrollbar integrity (P0)
 

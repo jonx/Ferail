@@ -23,6 +23,19 @@
 #[cfg(windows)]
 mod preview_handler;
 
+// Preview-broker wire format + provider quarantine. Pure logic,
+// compiled (and unit-tested) on every host; the Windows-only process
+// plumbing lives in `preview_handler`.
+pub mod broker_proto;
+
+/// `--preview-broker` worker-mode entry point (WIN-002 crash
+/// containment): render one third-party IPreviewHandler preview in this
+/// disposable process and write the frame to stdout. Windows-only —
+/// the single call site in `main.rs` is `#[cfg(windows)]`-gated, so no
+/// non-Windows mirror exists in the other shell crates.
+#[cfg(windows)]
+pub use preview_handler::preview_broker_main;
+
 // Headless-screenshot capture via PrintWindow. macOS goes through
 // gpui_macos's MetalRenderer; gpui_windows has no equivalent so
 // the harness routes through this module instead.

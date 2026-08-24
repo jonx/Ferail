@@ -61,6 +61,13 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
         "--elevated-trash" => Ok(Some(ferail_gpui::elevation::run_elevated_trash_op_worker(
             &args,
         ))),
+        // Preview-broker worker (Windows): a disposable re-launch of this
+        // binary that hosts one third-party IPreviewHandler off-process and
+        // writes the captured frame to stdout, so a crashing or hanging
+        // provider (the 0.6.5 pdfprevhndlr.dll access violation) can only
+        // ever take down this short-lived helper. Runs before any GUI or
+        // observability init.
+        "--preview-broker" => Ok(Some(run_preview_broker(&args[1..]))),
         "help" | "-h" | "--help" => {
             print_cli_help();
             Ok(Some(0))
@@ -76,6 +83,24 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
             Ok(Some(2))
         }
         _ => Ok(None),
+    }
+}
+
+/// `--preview-broker` worker mode — Windows-only crash containment for
+/// third-party preview handlers (see `ferail_shell_win32::preview_broker_main`).
+/// The cfg-gate lives here at the single call site rather than as stubs in the
+/// other platform shell crates: this is a worker mode of the binary, not part
+/// of the shared `platform_shell` surface.
+fn run_preview_broker(args: &[String]) -> i32 {
+    #[cfg(windows)]
+    {
+        ferail_gpui::platform_shell::preview_broker_main(args)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = args;
+        eprintln!("ferail: --preview-broker is a Windows-only worker mode");
+        2
     }
 }
 
