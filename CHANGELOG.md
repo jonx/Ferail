@@ -8,6 +8,16 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Quitting no longer ends in a "leaked handles" crash after using a
+  context menu or the filter box.** On Windows, closing Ferail after a
+  normal session could exit with an error report about leaked `PopupMenu`
+  and `InputState` handles — the very "crash" files testers sent for 0.6.5.
+  The right-click menu and three text inputs (the filter box, the address
+  editor, the shortcuts search) each kept a hidden reference to themselves,
+  so they could never be released at shutdown. Those reference cycles are
+  gone, and a dismissed context menu now frees its contents immediately
+  instead of lingering until the next right-click.
+
 - **A broken PDF or Office preview can no longer crash Ferail on Windows.**
   Third-party preview components (the ones other apps install so Explorer can
   draw document previews) used to run inside Ferail itself, so a faulty one —

@@ -172,10 +172,23 @@ fn schedule_build(
             build(menu, window, cx)
         });
 
+        // Weak capture, deliberately: the App holds this closure for as long
+        // as the PopupMenu entity lives, and `SharedState.menu_view` holds
+        // that entity — a strong `shared_state` here is therefore a cycle
+        // (App → closure → SharedState → Entity → App) that leaked the menu
+        // past app quit (GPUI's "Exited with leaked handles" assertion, seen
+        // on Windows 0.6.5). Dropping the menu handle on dismiss also
+        // releases the last menu's contents right away instead of retaining
+        // them until the next right-click.
         let subscription = window.subscribe(&menu, cx, {
-            let shared_state = shared_state.clone();
+            let shared_state = Rc::downgrade(&shared_state);
             move |_, _: &DismissEvent, window, _cx| {
-                shared_state.borrow_mut().open = false;
+                if let Some(shared_state) = shared_state.upgrade() {
+                    let mut state = shared_state.borrow_mut();
+                    state.open = false;
+                    state.menu_view = None;
+                    state.built_revision = None;
+                }
                 window.refresh();
             }
         });

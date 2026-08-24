@@ -205,9 +205,17 @@ trigger.
 - [~] Make task snapshots include viewport preview and enrichment schedulers.
   Selection-driven native previews now register as ambient thumbnail tasks;
   confirm the resulting watchdog snapshot on Windows.
-- [ ] Reproduce shutdown after zero, one, and multiple windows; use
+- [~] Reproduce shutdown after zero, one, and multiple windows; use
   `LEAK_BACKTRACE=1` to locate every leaked `InputState` and `TableState`
   handle, then fix ownership rather than suppressing GPUI's assertion.
+  *2026-08-24: reproduced on Windows 11 (right-click + Esc + quit → leaked
+  `PopupMenu`; a user session also leaked an `InputState` twice). Root
+  cause was one bug class: subscription closures capturing a strong handle
+  to the entity they subscribe to (context-menu `Rc<SharedState>`, the
+  filter/breadcrumb/shortcuts-help inputs) — an App→listener→entity cycle.
+  Fixed by weak/parameter access; the scripted repro now exits 0. Still
+  open: the multi-window matrix and a `TableState` leak that has not been
+  reproduced yet.*
 - [ ] Keep redacted reports useful: row counts, extensions, provider CLSIDs,
   durations, generations, and HRESULTs are allowed; full paths are opt-in.
 

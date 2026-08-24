@@ -1623,15 +1623,21 @@ impl Shell {
         // Change so typing updates `shortcuts_help_filter` live.
         let shortcuts_help_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Search\u{2026}")));
-        let shortcuts_help_subscription = cx.subscribe_in(&shortcuts_help_input, window, {
-            let shortcuts_help_input = shortcuts_help_input.clone();
-            move |this, _state, ev: &InputEvent, window, cx| {
+        // The callback reads the input through the `state` parameter the
+        // subscription hands back — capturing a strong Entity clone here
+        // instead is a self-cycle (the App holds the listener for as long as
+        // the entity lives, and the listener would hold the entity), which
+        // surfaced as GPUI's leaked-handle assertion on Windows quit.
+        let shortcuts_help_subscription = cx.subscribe_in(
+            &shortcuts_help_input,
+            window,
+            move |this, state, ev: &InputEvent, window, cx| {
                 let Some(filter) = this.shortcuts_help_filter.clone() else {
                     return;
                 };
                 match ev {
                     InputEvent::Change => {
-                        let v = shortcuts_help_input.read(cx).value().to_string();
+                        let v = state.read(cx).value().to_string();
                         this.shortcuts_help_filter = Some(v);
                         cx.notify();
                     }
@@ -1647,8 +1653,8 @@ impl Shell {
                     }
                     _ => {}
                 }
-            }
-        });
+            },
+        );
 
         // Stage 9.b: breadcrumb-edit Input. Subscribed for
         // PressEnter (commit) and Blur (cancel). The completion
@@ -1661,11 +1667,14 @@ impl Shell {
                 Some(Rc::new(crate::path_complete::PathCompletionProvider));
             state
         });
-        let breadcrumb_subscription = cx.subscribe_in(&breadcrumb_input, window, {
-            let breadcrumb_input = breadcrumb_input.clone();
-            move |this, _state, ev: &InputEvent, _window, cx| match ev {
+        // Same as above: read through the `state` parameter, never a
+        // captured strong clone of the subscribed entity.
+        let breadcrumb_subscription = cx.subscribe_in(
+            &breadcrumb_input,
+            window,
+            move |this, state, ev: &InputEvent, _window, cx| match ev {
                 InputEvent::PressEnter { .. } => {
-                    let raw = breadcrumb_input.read(cx).value().to_string();
+                    let raw = state.read(cx).value().to_string();
                     crate::log_info!(90, "breadcrumb: commit {raw:?}");
                     let path = parse_breadcrumb_path(&raw);
                     this.breadcrumb_editing = false;
@@ -1678,8 +1687,8 @@ impl Shell {
                     cx.notify();
                 }
                 _ => {}
-            }
-        });
+            },
+        );
 
         // Foreground-executor polling task. Wakes every POLL_INTERVAL,
         // drains the channel, asks the Shell to reload if anything
@@ -2342,12 +2351,16 @@ impl Shell {
             ));
             state
         });
-        let filter_subscription = cx.subscribe_in(&filter_input, window, {
-            let filter_input = filter_input.clone();
-            move |this, _state, ev: &InputEvent, window, cx| {
+        // Read through the `state` parameter — a captured strong clone of the
+        // subscribed entity is a self-cycle that leaks the input past quit
+        // (GPUI leaked-handle assertion, seen on Windows 0.6.5).
+        let filter_subscription = cx.subscribe_in(
+            &filter_input,
+            window,
+            move |this, state, ev: &InputEvent, window, cx| {
                 match ev {
                     InputEvent::Change => {
-                        let value = filter_input.read(cx).value().to_string();
+                        let value = state.read(cx).value().to_string();
                         if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
                             this.tabs[idx].filter_text = value.clone();
                             // Flat is an explicit recursive snapshot. Typing
@@ -2380,13 +2393,13 @@ impl Shell {
                     // recursive / global search of the current folder
                     // and below (docs/features/SEARCH.md).
                     InputEvent::PressEnter { .. } => {
-                        let value = filter_input.read(cx).value().to_string();
+                        let value = state.read(cx).value().to_string();
                         this.start_subtree_search(tab_id, value, Some(window.window_handle()), cx);
                     }
                     _ => {}
                 }
-            }
-        });
+            },
+        );
         Tab::new_internal(
             tab_id,
             at,
