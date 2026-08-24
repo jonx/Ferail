@@ -174,6 +174,24 @@ path exists.
 - Optional Windows integration may fail closed with an explanation; it may
   not freeze or terminate the main process.
 
+## Collecting dumps
+
+- **Automatic.** Any unhandled native exception writes
+  `%APPDATA%\Ferail\reports\ferail-crash-<pid>.dmp` (the GUI) or
+  `ferail-preview-broker-<pid>.dmp` (a preview helper) and appends the
+  exception code/address to `ferail-crash-<pid>.txt` in the same folder.
+  Rust panics keep writing that text report as before. Injected repro:
+  `FERAIL_PREVIEW_BROKER_TEST=av` (or `crash`, `hang`) in the environment of
+  a running Ferail makes the next third-party preview fail that way.
+- **Hang or no dump written (Task Manager fallback).** Task Manager →
+  Details → right-click `Ferail.exe` → *Create dump file* writes a full dump
+  to `%TEMP%`. Use this for UI stalls, where nothing faults.
+- **Symbolizing.** Open the `.dmp` in WinDbg with the PDBs from
+  `Ferail-<version>-win-x64-symbols.zip` whose `manifest.json` commit and
+  CodeView GUID match the binary (`.sympath+ <extracted folder>`; `!analyze
+  -v`; `lm` to spot unloaded third-party modules). Never symbolize against
+  PDBs from a different build.
+
 ## End-of-session handback template
 
 Append a dated block below before leaving Windows:
@@ -236,3 +254,57 @@ Working-tree files intentionally left unstaged: none.
 Historical note: before this session, macOS preparation through `5f1a8fd`
 passed all 281 `ferail-gpui` library tests and strict all-target Clippy; that
 was preparation, not Windows acceptance.
+
+### 2026-08-24 (continued) — user-driven fixes, WIN-002 broker, WIN-001 dumps
+
+```text
+Date / machine: 2026-08-24, same Windows 11 dev machine
+Start commit: 1c0783d
+End commit(s): e3ae2fc (status-bar strip beside its label), ae210bb +
+  e74d352 (WCORPUS-OPEN generator), 4da59ce (WIN-002 preview broker),
+  00aefe9 (WIN-001 leaked-handle cycles), e56fde3 (WIN-001 minidumps)
+Cases passed:
+  - WIN-002 containment via the CLI chain: Edge PdfPreviewHandler.dll renders
+    through --preview-broker; injected crash → strike + icon fallback, app
+    alive; injected hang → child killed at 6 s, zero orphans; malformed
+    frame rejected (unit tests).
+  - WIN-001 leaked-handle assertion: reproduced with a scripted right-click +
+    Esc + close (exit 101, PopupMenu 52v3); after the cycle fixes the same
+    script plus click-into-filter + typing exits 0. The user's interactive
+    session had also leaked InputState 8v1 twice — same bug class in the
+    filter/breadcrumb/shortcuts-help subscriptions, fixed; needs the user's
+    own flow re-run to confirm.
+  - WIN-001 minidumps: FERAIL_PREVIEW_BROKER_TEST=av → real 0xC0000005 →
+    ferail-preview-broker-<pid>.dmp (MDMP, Exception/ThreadList/ModuleList/
+    HandleData streams) + sidecar line in ferail-crash-<pid>.txt.
+  - Status bar: progress strip now beside the task label (screenshot
+    screenshots/status-bar-progress-left.png).
+  - Corpus: WCORPUS-OPEN materialized (52 files, deepest path 405 chars,
+    forced CON.txt/NUL.png/trailing-dot names); JPEG/PNG/WAV/PDF/ZIP fixtures
+    validated to decode.
+Cases failed + evidence paths: none failed. Not run: interactive acceptance
+  slice; WTEST-004 (Windows Sandbox is not installed on this machine —
+  enabling it needs elevation + reboot); the real pdfprevhndlr.dll repro.
+New dumps/PDB identity: test dump ferail-preview-broker-1448.dmp under
+  %APPDATA%\Ferail\reports (debug build, no packaged PDB pairing).
+  Repackaged with the broker commit: target/package/Ferail-0.6.5-win-x64*.zip
+  (predates 00aefe9 and the minidump commit — rebuild before distributing).
+Measurements before/after: none.
+Known regressions: none observed. Note: Edge's PDF preview handler captures
+  as an all-white frame through the broker (its async paint outlasts the
+  3.5 s probe budget) — same as the old in-process path; capture quality is
+  WTEST-045 territory, containment is unaffected.
+Incident: during the user's manual testing, Cargo.toml was moved into
+  target/ by a Ferail drag/move; restored from the index (content identical).
+Next exact command or code location:
+  1. User: re-run the interactive session that leaked InputState 8v1 with
+     LEAK_BACKTRACE=1 and quit; expect exit 0.
+  2. Interactive acceptance slice (§2), now with test-data/open-reveal/ for
+     the open/reveal matrix (WTEST-060…065).
+  3. WIN-002 leftovers: kill-on-supersede for an in-flight broker;
+     IInitializeWithStream fallback for handlers refusing the file init.
+  4. WIN-004 selection audit + regression tests; WIN-003 needs the
+     WCORPUS-MEDIA-10K repro first.
+  5. Enable Windows Sandbox and run WTEST-004 on a freshly packaged ZIP.
+Working-tree files intentionally left unstaged: none.
+```
