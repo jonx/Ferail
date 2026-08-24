@@ -27,9 +27,19 @@ check-cfg = ['cfg(target_os, values("aros"))']
 disallowed_methods = "deny"
 
 [features]
+default = ["screenshot-harness"]
 # Compile in the optional mpv video provider (libmpv, loaded at runtime from
 # the path set in Settings). Off by default so a stock build needs nothing.
 mpv = ["dep:ferail-video-mpv"]
+# gpui's offscreen `Window::render_to_image` for the --screenshot harness
+# and the issue reporter's window capture. Comes with gpui's leak-detection
+# (they share the test-support feature), whose exit assertion is a developer
+# diagnostic — it must not turn a user's clean quit into exit 101, as it did
+# for the 0.6.5 Windows tester. Default ON so dev and `cargo test` keep the
+# leak detector; packaging builds pass --no-default-features to strip it.
+# Without it, --screenshot still works on Windows via the PrintWindow
+# fallback and the issue report simply omits its screenshot.
+screenshot-harness = ["gpui/test-support", "gpui_platform/test-support"]
 
 [dependencies]
 anyhow.workspace = true

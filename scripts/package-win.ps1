@@ -89,7 +89,14 @@ Write-Step "Ferail $Version (x86_64-pc-windows-msvc)"
 # 1. Build
 # ---------------------------------------------------------------------------
 if (-not $SkipBuild) {
-    $cargoArgs = @('build', '--release', '--bin', 'ferail-gpui', '--bin', 'ferail')
+    # --no-default-features strips ferail-gpui's dev-only screenshot-harness
+    # feature, and with it gpui's leak-detection exit assertion — users must
+    # never see a clean quit turn into exit 101 over a diagnostic assert.
+    # --screenshot keeps working in the packaged exe via PrintWindow.
+    # -p is load-bearing: from the virtual workspace root, cargo silently
+    # ignores --no-default-features unless the package is selected explicitly.
+    $cargoArgs = @('build', '--release', '-p', 'ferail-gpui',
+        '--bin', 'ferail-gpui', '--bin', 'ferail', '--no-default-features')
     if ($Features) { $cargoArgs += @('--features', $Features) }
     Write-Step "cargo $($cargoArgs -join ' ') (static MSVC runtime)"
 

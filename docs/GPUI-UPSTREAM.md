@@ -463,4 +463,41 @@ external payload API.
 For same-process cross-window drags, restore the original typed payload in any
 GPUI destination window rather than only the source window.
 
+## 12. gpui-component `Input` paint leaks strong handles under a second window; the leak assert shipped to users
+
+**Hit during:** the 2026-08-24 Windows session, chasing the 0.6.5 tester's
+"crash on quit" reports (`Exited with leaked handles: … InputState`).
+
+Two stacked problems:
+
+1. **gpui-component:** every paint of an `Input` element registers a
+   `window.handle_input(...)` **and** a `window.on_next_frame(...)` callback,
+   both capturing a **strong** `Entity<InputState>` clone
+   (`crates/ui/src/input/element.rs`, the `Root.focused_input` dance). In a
+   single-window app the next frame consumes the queue and teardown drops the
+   rest. With a **second window open** (Get Info), the handles accumulate —
+   deterministic repro: `--screenshot --properties` leaks one `InputState`
+   handle per paint of the main window's filter input (27 in a 3 s run),
+   tripping gpui's leak assertion at quit. The user-visible form: quitting
+   after normal use exits 101 with a leaked-handles crash report.
+2. **Feature packaging:** gpui's `leak-detection` rides along with
+   `test-support`, which we enabled workspace-wide for `render_to_image`
+   (item 7). That shipped the **diagnostic assert to end users** — the 0.6.5
+   tester's four "crash" files were exactly this assert.
+
+**Workaround:** `ferail-gpui` now owns a default-on `screenshot-harness`
+feature that forwards `gpui/test-support`; the packaging scripts build with
+`-p ferail-gpui --no-default-features` (the `-p` is load-bearing — from the
+virtual workspace root cargo silently ignores `--no-default-features`).
+Dev and `cargo test` keep the leak detector; users never see the assert, and
+`--screenshot` still works in packaged Windows builds via the PrintWindow
+fallback. The real strong-capture leak remains upstream; our own subscription
+cycles of the same class were fixed separately (`00aefe9`).
+
+**What upstream could do:** capture `WeakEntity<InputState>` in the
+`on_next_frame` reset closure and in `Root.focused_input`, or drain
+`next_frame_callbacks` on window teardown; and consider splitting
+`leak-detection` out of `test-support` so `render_to_image` doesn't drag the
+exit assert into production builds.
+
 <!-- Add new findings above this line as the bump surfaces them. -->

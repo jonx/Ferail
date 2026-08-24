@@ -93,13 +93,18 @@ lofty       = "0.24"
 # and match its style. Reproducibility comes from committing Cargo.lock.
 # test-support: enables `Window::render_to_image` + the matching impl
 # in `gpui_macos` so the headless screenshot CLI in ferail-gpui works.
-gpui = { git = "https://github.com/zed-industries/zed", features = ["test-support"] }
+# test-support is NOT enabled here: it drags in gpui's leak-detection,
+# whose exit assertion must never ship to users (the 0.6.5 tester's
+# "crashes" were that assert firing at quit). Dev/test builds get it back
+# through ferail-gpui's default `screenshot-harness` feature; packaging
+# builds pass --no-default-features to strip it.
+gpui = { git = "https://github.com/zed-industries/zed" }
 # wayland + x11 enable gpui_linux's compositor backends (gpui_platform's
 # wayland/x11 features pull gpui_linux/wayland|x11). Without them the Linux
 # build compiles but panics at startup — guess_compositor() returns "Wayland"
 # and hits the unreachable arm. No-op on macOS/Windows (gpui_linux is
 # Linux-only there).
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "test-support", "wayland", "x11"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "wayland", "x11"] }
 # Real HTTP for gpui's `cx.http_client()` (gpui itself installs a
 # NullHttpClient). Same zed source as gpui — the lock resolves them to one
 # rev — and its `zed-reqwest`/tokio underpinnings are already in the graph

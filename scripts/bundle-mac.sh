@@ -40,7 +40,14 @@ FEATURES="${FEATURES---features mpv}"
 
 echo "==> Building ${BIN_NAME} (${PROFILE})"
 if [[ "${PROFILE}" == "release" ]]; then
-	cargo build --release --bin "${BIN_NAME}" ${FEATURES}
+	# --no-default-features strips the dev-only screenshot-harness feature,
+	# and with it gpui's leak-detection exit assertion — a distributed app
+	# must never turn a clean quit into exit 101 over a diagnostic assert.
+	# (-p is load-bearing: from the virtual workspace root cargo silently
+	# ignores --no-default-features without an explicit package.) Debug
+	# bundles keep the defaults, and with them the leak detector.
+	cargo build --release -p ferail-gpui --bin "${BIN_NAME}" \
+		--no-default-features ${FEATURES}
 	BIN_PATH="${REPO_ROOT}/target/release/${BIN_NAME}"
 else
 	cargo build --bin "${BIN_NAME}" ${FEATURES}

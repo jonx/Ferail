@@ -669,6 +669,8 @@ pub fn run(args: Args) -> Result<()> {
                 .expect("failed to open window for screenshot");
 
             let simulate_slow_load = shell_args.simulate_slow_load.clone();
+            // Read before `apply` consumes shell_args below.
+            let capture_newest_window = shell_args.properties;
             let shell_for_late_flags = shell_entity.clone();
             if let Some(shell) = shell_entity {
                 shell_args.apply(&shell, &handle, cx).await;
@@ -701,7 +703,32 @@ pub fn run(args: Args) -> Result<()> {
                 });
             }
 
-            let img = capture_window(&handle, cx)
+            // Get Info opens as its own OS window (entry_info::open), so a
+            // --properties run captures that window — the newest one —
+            // instead of the main shell behind it. On Windows that capture
+            // must take the PrintWindow path directly: `render_to_image` on
+            // a second live window re-renders its element tree outside the
+            // normal frame loop, and every such pass leaks entity handles
+            // into the quit assertion (observed as dozens of leaked
+            // InputState handles after a --properties run).
+            let capture_handle: AnyWindowHandle = if capture_newest_window {
+                cx.update(|cx| cx.windows().last().copied())
+                    .unwrap_or_else(|| handle.into())
+            } else {
+                handle.into()
+            };
+            #[cfg(windows)]
+            let img = if capture_newest_window {
+                capture_window_printwindow(&capture_handle, cx)
+                    .await
+                    .expect("screenshot capture failed")
+            } else {
+                capture_window(&capture_handle, cx)
+                    .await
+                    .expect("screenshot capture failed")
+            };
+            #[cfg(not(windows))]
+            let img = capture_window(&capture_handle, cx)
                 .await
                 .expect("screenshot capture failed");
 
@@ -739,20 +766,41 @@ pub fn run(args: Args) -> Result<()> {
 // no taskbar button and no focus steal before reading it back.
 
 async fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<image::RgbaImage> {
-    let rendered = cx
-        .update_window(*handle, |_, window, _| window.render_to_image())
-        .map_err(|e| anyhow::anyhow!("update_window failed: {e}"))?;
+    #[cfg(feature = "screenshot-harness")]
+    {
+        let rendered = cx
+            .update_window(*handle, |_, window, _| window.render_to_image())
+            .map_err(|e| anyhow::anyhow!("update_window failed: {e}"))?;
 
-    match rendered {
-        Ok(img) => Ok(img),
+        match rendered {
+            Ok(img) => Ok(img),
+            #[cfg(windows)]
+            Err(primary) => capture_window_printwindow(handle, cx).await.map_err(|fallback| {
+                anyhow::anyhow!(
+                    "render_to_image failed: {primary}; PrintWindow fallback also failed: {fallback}"
+                )
+            }),
+            #[cfg(not(windows))]
+            Err(e) => Err(anyhow::anyhow!("render_to_image failed: {e}")),
+        }
+    }
+    // Without the harness feature `Window::render_to_image` does not even
+    // compile (it is test-support-gated in gpui); Windows still captures
+    // through PrintWindow, other platforms lose --screenshot in packaged
+    // builds — the dev workflow keeps the default feature.
+    #[cfg(not(feature = "screenshot-harness"))]
+    {
         #[cfg(windows)]
-        Err(primary) => capture_window_printwindow(handle, cx).await.map_err(|fallback| {
-            anyhow::anyhow!(
-                "render_to_image failed: {primary}; PrintWindow fallback also failed: {fallback}"
-            )
-        }),
+        {
+            capture_window_printwindow(handle, cx).await
+        }
         #[cfg(not(windows))]
-        Err(e) => Err(anyhow::anyhow!("render_to_image failed: {e}")),
+        {
+            let _ = (handle, cx);
+            Err(anyhow::anyhow!(
+                "--screenshot needs the screenshot-harness feature on this platform"
+            ))
+        }
     }
 }
 

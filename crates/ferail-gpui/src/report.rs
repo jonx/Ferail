@@ -178,8 +178,14 @@ pub fn finish_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<PathB
 /// In-app redaction (a modal to black out regions before bundling) is the next
 /// iteration; until then the bundled README asks the user to redact the PNG
 /// before sending.
-pub fn open_reporter(window: &mut gpui::Window) {
+pub fn open_reporter(#[allow(unused_variables)] window: &mut gpui::Window) {
+    #[cfg(feature = "screenshot-harness")]
     let shot = window.render_to_image().ok();
+    // render_to_image is test-support-gated in gpui and packaged builds
+    // strip that feature (it drags in the leak-detection exit assert) —
+    // the bundle then simply omits the screenshot, as documented above.
+    #[cfg(not(feature = "screenshot-harness"))]
+    let shot: Option<image::RgbaImage> = None;
     // Only the capture needs the window/UI thread. Bundle assembly is
     // zip + disk I/O and the reveal can block on a D-Bus round-trip
     // (Linux) — run them on their own thread (Prime Directive).
