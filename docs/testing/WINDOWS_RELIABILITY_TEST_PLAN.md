@@ -101,7 +101,7 @@ path into memory.
 | Corpus | Required shape and purpose |
 | --- | --- |
 | `WCORPUS-SMALL` | 500 items: folders/files, empty and non-empty, Unicode, spaces, `#`, `%`, `!`, very long names/paths, hidden/read-only files, symlink/junction, local and broken `.lnk`, and mixed supported/unknown extensions. |
-| `WCORPUS-OPEN` | Associated JPEG, PNG, PDF, TXT, MP4, archive, executable, no-association file, folder, UNC item, and special-character/long-path copies. |
+| `WCORPUS-OPEN` | Associated JPEG, PNG, PDF, TXT, MP4, archive, executable, no-association file, folder, UNC item, and special-character/long-path copies. Materialized by `test-data/filename-hazards/generate.py` into `test-data/open-reveal/` (see its README; the generator prints the manifest checksum). |
 | `WCORPUS-MEDIA-10K` | Exactly 10,000 visible rows: 8,500 small JPEG/PNG images, resized/oriented examples, 250 videos, 250 PDFs, 500 unsupported files, 250 corrupt/truncated media files, and 250 folders/shortcuts. Contents may be repeated but identities/mtimes vary. |
 | `WCORPUS-WIDE-100K` | 100,000 files in one directory. Exercises ordinary listing, selection, file details, sort/filter, and avoids confusing Flat View with a wide directory. |
 | `WCORPUS-FLAT-1M` | Exactly 1,048,576 zero-byte files beneath 1,024 directories, with deterministic names and an average relative path near 80–100 UTF-16 code units. |
