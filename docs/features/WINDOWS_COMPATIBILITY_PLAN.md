@@ -196,10 +196,20 @@ trigger.
 
 **Work.**
 
-- [ ] Build Debug and Release-with-diagnostics on Windows; retain matching PDBs
+- [x] Build Debug and Release-with-diagnostics on Windows; retain matching PDBs
   as CI/release-workflow artifacts even if they are not shipped publicly.
-- [ ] Enable minidump capture for unhandled native exceptions and document the
-  Task Manager full-dump fallback.
+  *2026-08-24: `win.yml` uploads and releases
+  `Ferail-<version>-win-x64-symbols.zip` (PDBs + CodeView/commit manifest)
+  alongside the app ZIP.*
+- [x] Enable minidump capture for unhandled native exceptions and document the
+  Task Manager full-dump fallback. *2026-08-24:
+  `ferail_shell_win32::install_crash_dump_handler` — a top-level exception
+  filter writes `reports/ferail-<role>-<pid>.dmp` (threads, modules,
+  unloaded modules, handles, exception) and appends the exception code and
+  address to `ferail-crash-<pid>.txt`; installed in the GUI (OS handling
+  continues) and the preview broker (quiet). Verified with a real
+  `0xC0000005` via `FERAIL_PREVIEW_BROKER_TEST=av`. Fallback documented in
+  the handover (§ Collecting dumps).*
 - [ ] Add activity breadcrumbs around navigation, selection transitions,
   thumbnail/preview request generations, Shell calls, and table refreshes.
 - [~] Make task snapshots include viewport preview and enrichment schedulers.
@@ -216,8 +226,11 @@ trigger.
   Fixed by weak/parameter access; the scripted repro now exits 0. Still
   open: the multi-window matrix and a `TableState` leak that has not been
   reproduced yet.*
-- [ ] Keep redacted reports useful: row counts, extensions, provider CLSIDs,
+- [~] Keep redacted reports useful: row counts, extensions, provider CLSIDs,
   durations, generations, and HRESULTs are allowed; full paths are opt-in.
+  *Provider CLSID + failure kind (crash/timeout/malformed frame) are logged
+  on quarantine; the minidump sidecar carries exception code and address,
+  never a path. Durations/generations in reports remain open.*
 
 **Exit gate.** A forced UI stall produces a symbolized UI stack and recent
 activity; a forced broker crash identifies the provider and leaves Ferail

@@ -211,14 +211,23 @@ pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u3
 /// preview in this (disposable) process and write the frame to stdout.
 /// Argument contract: `<path> <size_px> <clsid-without-braces>`.
 ///
-/// `FERAIL_PREVIEW_BROKER_TEST=crash|hang` forces the two containment
+/// `FERAIL_PREVIEW_BROKER_TEST=crash|av|hang` forces the containment
 /// failure modes so the acceptance matrix (WTEST-046/047) can verify
-/// that a broken provider terminates only this helper.
+/// that a broken provider terminates only this helper: `crash` aborts,
+/// `av` raises a genuine access violation (exercising the minidump
+/// filter), `hang` never returns.
 pub fn preview_broker_main(args: &[String]) -> i32 {
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 
     match std::env::var("FERAIL_PREVIEW_BROKER_TEST").as_deref() {
         Ok("crash") => std::process::abort(),
+        Ok("av") => {
+            // black_box keeps the optimizer from proving the pointer null
+            // and folding the store into a trap instruction; we want the
+            // real 0xC0000005 the tester saw.
+            let p = std::hint::black_box(0usize) as *mut u32;
+            unsafe { p.write_volatile(1) };
+        }
         Ok("hang") => loop {
             std::thread::sleep(Duration::from_secs(3600));
         },

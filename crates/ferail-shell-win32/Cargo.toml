@@ -65,6 +65,10 @@ windows = { version = "0.58", features = [
     # force_close_processes → Restart Manager + OpenProcess/TerminateProcess
     "Win32_System_RestartManager",
     "Win32_System_Threading",
+    # crash_dump → SetUnhandledExceptionFilter + MiniDumpWriteDump; the
+    # EXCEPTION_POINTERS/CONTEXT types they take live behind System_Kernel
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Kernel",
 ] }
 
 [target.'cfg(windows)'.dev-dependencies]

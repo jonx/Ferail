@@ -94,6 +94,16 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
 fn run_preview_broker(args: &[String]) -> i32 {
     #[cfg(windows)]
     {
+        // A faulting third-party handler should leave a minidump that names
+        // the module (WIN-001) — quietly, so a broken previewer can't pop
+        // Windows Error Reporting UI for every file it is asked about.
+        if let Some(dir) = ferail_gpui::app_state::config_dir() {
+            ferail_gpui::platform_shell::install_crash_dump_handler(
+                &dir.join("reports"),
+                "preview-broker",
+                true,
+            );
+        }
         ferail_gpui::platform_shell::preview_broker_main(args)
     }
     #[cfg(not(windows))]

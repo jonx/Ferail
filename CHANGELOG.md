@@ -27,6 +27,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   the file shows its icon instead, and a component that fails twice is
   skipped for the rest of the session.
 
+- **Windows crashes in native code now leave a minidump next to the crash
+  report.** A fault inside a driver, shell extension, or preview component
+  used to vanish without a trace — the text report only covered Rust-side
+  panics. Ferail (and its preview helper) now write
+  `%APPDATA%\Ferail\reports\ferail-<role>-<pid>.dmp` and note the exception
+  code in `ferail-crash-<pid>.txt`; with the published symbols bundle that
+  is enough to name the faulting module and line.
+
 - **The status bar's progress bar now sits beside the task it measures.**
   It used to float at the far right of the status bar, over by the app
   statistics, visually orphaned from the "Scanning…"/"Copying…" text at the

@@ -36,6 +36,14 @@ pub mod broker_proto;
 #[cfg(windows)]
 pub use preview_handler::preview_broker_main;
 
+// Native-exception minidumps next to the panic-hook text report
+// (WIN-001). Windows-only like the worker mode above: the call sites in
+// `obs::init` and `main.rs` are `#[cfg(windows)]`-gated.
+#[cfg(windows)]
+mod crash_dump;
+#[cfg(windows)]
+pub use crash_dump::install_crash_dump_handler;
+
 // Headless-screenshot capture via PrintWindow. macOS goes through
 // gpui_macos's MetalRenderer; gpui_windows has no equivalent so
 // the harness routes through this module instead.

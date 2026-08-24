@@ -53,6 +53,14 @@ pub fn init() {
     }
 
     install_panic_hook();
+    // Native exceptions (access violations in drivers, shell extensions,
+    // GPU code) never reach the panic hook; on Windows a minidump lands
+    // next to the text report instead, and the OS keeps its default
+    // handling afterwards. See `ferail_shell_win32::install_crash_dump_handler`.
+    #[cfg(windows)]
+    if let Some(dir) = crate::app_state::config_dir() {
+        crate::platform_shell::install_crash_dump_handler(&dir.join("reports"), "crash", false);
+    }
     print_startup_banner();
 
     // On booted AROS a shell command's stderr goes to the AROS console, not the
