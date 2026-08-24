@@ -309,6 +309,13 @@ pub fn render_en_json(extracted: &Extracted) -> String {
     pack.to_json()
 }
 
+/// Compare generated catalogue text while accepting Git's platform-native
+/// checkout line endings. All other formatting remains significant.
+#[cfg(test)]
+fn catalog_text_matches(rendered: &str, on_disk: &str) -> bool {
+    rendered == on_disk.replace("\r\n", "\n")
+}
+
 /// Path of `locales/en.json` under `root`.
 pub fn en_json_path(root: &Path) -> PathBuf {
     root.join("locales").join("en.json")
@@ -383,6 +390,19 @@ mod tests {
         assert_eq!(out.locations["Hello"], vec!["x.rs:3"]);
     }
 
+    #[test]
+    fn catalogue_freshness_accepts_crlf_checkouts() {
+        let rendered = "{\n  \"language\": \"en\"\n}\n";
+        assert!(catalog_text_matches(
+            rendered,
+            "{\r\n  \"language\": \"en\"\r\n}\r\n"
+        ));
+        assert!(!catalog_text_matches(
+            rendered,
+            "{\r\n  \"language\": \"fr\"\r\n}\r\n"
+        ));
+    }
+
     /// `locales/en.json` must match the sources. Regenerate with
     /// `FERAIL_I18N_UPDATE=1 cargo test -p ferail-core i18n::extract`.
     #[test]
@@ -392,7 +412,7 @@ mod tests {
         let rendered = render_en_json(&extracted);
         let path = en_json_path(&root);
         let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
-        if rendered == on_disk {
+        if catalog_text_matches(&rendered, &on_disk) {
             return;
         }
         if std::env::var_os("FERAIL_I18N_UPDATE").is_some() {
