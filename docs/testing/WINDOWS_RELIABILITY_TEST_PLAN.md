@@ -233,7 +233,15 @@ signature output, and clean-machine recording.
   helper role/provider, offers/falls back safely, and can service the next
   request with a restarted helper.
 - [ ] `WTEST-014` Start with a profile upgraded from 0.6.5 and with a clean
-  profile. Built-in commands and settings resolve identically.
+  profile. Built-in commands and settings resolve identically; startup emits no
+  `unknown command id` for bundled resources, and Ctrl+Shift+L toggles Flat
+  View. Run the compiled
+  `keymap::tests::every_bundled_shortcut_has_a_recognized_route` test from the
+  exact packaged commit before the interactive check.
+- [ ] `WTEST-015` Deliberately test a package with one stale catalogue/resource
+  fixture. CI or startup diagnostics identify the bundled artifact mismatch as
+  a product/build error, distinct from an obsolete user binding; the release
+  package with matching executable/resources reports one commit/version.
 
 Release blocker: any in-process crash, shutdown assertion, unsymbolizable dump,
 or orphan helper.

@@ -17,6 +17,8 @@ use ferail_core::commands::{CommandId, Shortcut, all_commands};
 use gpui::{App, KeyBinding};
 
 use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
+#[cfg(windows)]
+use crate::shell::ShowWindowsContextMenu;
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseToolResult, CloseWindow, CopyFiles, CopyPath, CursorDown,
     CursorDownExtend, CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp,
@@ -26,8 +28,8 @@ use crate::shell::{
     MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, NextTab,
     OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend,
     PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage, PrevTab, QuickLook, Refresh, RenameSelected,
-    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ShowWindowsContextMenu,
-    ToggleFlatView, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
+    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleFlatView, ToggleHidden,
+    TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDelete, ViewerDismiss, ViewerLeft, ViewerNext,
@@ -154,61 +156,67 @@ fn translate_key(key: &str) -> Option<String> {
 /// For each known command ID, bind its shortcut to the matching
 /// gpui Action type. Unknown / not-yet-ported IDs are logged once
 /// and skipped so the keymap installer never blocks startup.
-fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
+fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
     let ctx = Some(shell::SHELL_CONTEXT);
-    match id.0 {
+    macro_rules! bind {
+        ($action:expr, $context:expr) => {{
+            cx.bind_keys([KeyBinding::new(kb_str, $action, $context)]);
+            true
+        }};
+    }
+    let recognized = match id.0 {
         // -- App --------------------------------------------------
-        "app.settings" => cx.bind_keys([KeyBinding::new(kb_str, OpenSettings, None)]),
+        "app.settings" => bind!(OpenSettings, None),
 
         // -- File -------------------------------------------------
-        "file.new_tab" => cx.bind_keys([KeyBinding::new(kb_str, NewTab, ctx)]),
-        "file.close_tab" => cx.bind_keys([KeyBinding::new(kb_str, CloseTab, ctx)]),
-        "file.reopen_closed_tab" => cx.bind_keys([KeyBinding::new(kb_str, ReopenClosedTab, ctx)]),
-        "file.new_folder" => cx.bind_keys([KeyBinding::new(kb_str, NewFolder, ctx)]),
-        "file.move_to_trash" => cx.bind_keys([KeyBinding::new(kb_str, MoveToTrash, ctx)]),
+        "file.new_tab" => bind!(NewTab, ctx),
+        "file.close_tab" => bind!(CloseTab, ctx),
+        "file.reopen_closed_tab" => bind!(ReopenClosedTab, ctx),
+        "file.new_folder" => bind!(NewFolder, ctx),
+        "file.move_to_trash" => bind!(MoveToTrash, ctx),
         // No catalogue shortcut (the Shortcut DSL lacks Delete);
         // install_extras binds shift-delete / secondary-alt-backspace.
-        "file.delete_immediately" => {}
+        "file.delete_immediately" => true,
         // No catalogue shortcut (the Shortcut DSL lacks Delete);
         // install_extras binds Finder's cmd-shift-backspace chord.
-        "file.empty_trash" => {}
-        "file.copy_path" => cx.bind_keys([KeyBinding::new(kb_str, CopyPath, ctx)]),
-        "file.copy" => cx.bind_keys([KeyBinding::new(kb_str, CopyFiles, ctx)]),
-        "file.cut" => cx.bind_keys([KeyBinding::new(kb_str, CutFiles, ctx)]),
-        "file.paste" => cx.bind_keys([KeyBinding::new(kb_str, PasteFiles, ctx)]),
-        "file.move_paste" => cx.bind_keys([KeyBinding::new(kb_str, MovePasteFiles, ctx)]),
-        "file.reveal_in_finder" => cx.bind_keys([KeyBinding::new(kb_str, RevealInFinder, ctx)]),
-        "file.refresh" => cx.bind_keys([KeyBinding::new(kb_str, Refresh, ctx)]),
+        "file.empty_trash" => true,
+        "file.copy_path" => bind!(CopyPath, ctx),
+        "file.copy" => bind!(CopyFiles, ctx),
+        "file.cut" => bind!(CutFiles, ctx),
+        "file.paste" => bind!(PasteFiles, ctx),
+        "file.move_paste" => bind!(MovePasteFiles, ctx),
+        "file.reveal_in_finder" => bind!(RevealInFinder, ctx),
+        "file.refresh" => bind!(Refresh, ctx),
 
         // -- View -------------------------------------------------
-        "view.search" => cx.bind_keys([KeyBinding::new(kb_str, FocusFilter, ctx)]),
-        "view.toggle_hidden" => cx.bind_keys([KeyBinding::new(kb_str, ToggleHidden, ctx)]),
-        "view.edit_breadcrumb" => cx.bind_keys([KeyBinding::new(kb_str, EditBreadcrumb, ctx)]),
-        "view.toggle_preview" => cx.bind_keys([KeyBinding::new(kb_str, TogglePreview, ctx)]),
-        "view.toggle_flat" => cx.bind_keys([KeyBinding::new(kb_str, ToggleFlatView, ctx)]),
-        "view.open_viewer" => cx.bind_keys([KeyBinding::new(kb_str, OpenViewer, ctx)]),
+        "view.search" => bind!(FocusFilter, ctx),
+        "view.toggle_hidden" => bind!(ToggleHidden, ctx),
+        "view.edit_breadcrumb" => bind!(EditBreadcrumb, ctx),
+        "view.toggle_preview" => bind!(TogglePreview, ctx),
+        "view.toggle_flat" => bind!(ToggleFlatView, ctx),
+        "view.open_viewer" => bind!(OpenViewer, ctx),
         // Sort commands have no shortcut today; the arms exist so the
         // catalogue→palette path (and any future binding) recognizes
         // them instead of falling through to the unknown-id warning.
-        "view.sort_name" => {}
-        "view.sort_size" => {}
-        "view.sort_kind" => {}
-        "view.sort_modified" => {}
-        "view.sort_ant_trail" => {}
-        "view.zoom_in" => cx.bind_keys([KeyBinding::new(kb_str, ZoomIn, ctx)]),
-        "view.zoom_out" => cx.bind_keys([KeyBinding::new(kb_str, ZoomOut, ctx)]),
-        "view.zoom_reset" => cx.bind_keys([KeyBinding::new(kb_str, ZoomReset, ctx)]),
+        "view.sort_name" => true,
+        "view.sort_size" => true,
+        "view.sort_kind" => true,
+        "view.sort_modified" => true,
+        "view.sort_ant_trail" => true,
+        "view.zoom_in" => bind!(ZoomIn, ctx),
+        "view.zoom_out" => bind!(ZoomOut, ctx),
+        "view.zoom_reset" => bind!(ZoomReset, ctx),
 
         // -- File: Get Info --------------------------------------
-        "file.get_info" => cx.bind_keys([KeyBinding::new(kb_str, GetInfo, ctx)]),
+        "file.get_info" => bind!(GetInfo, ctx),
 
         // -- Selection cursor nav --------------------------------
-        "selection.cursor_up" => cx.bind_keys([KeyBinding::new(kb_str, CursorUp, ctx)]),
-        "selection.cursor_down" => cx.bind_keys([KeyBinding::new(kb_str, CursorDown, ctx)]),
-        "selection.cursor_first" => cx.bind_keys([KeyBinding::new(kb_str, CursorFirst, ctx)]),
-        "selection.cursor_last" => cx.bind_keys([KeyBinding::new(kb_str, CursorLast, ctx)]),
-        "selection.page_up" => cx.bind_keys([KeyBinding::new(kb_str, PageUp, ctx)]),
-        "selection.page_down" => cx.bind_keys([KeyBinding::new(kb_str, PageDown, ctx)]),
+        "selection.cursor_up" => bind!(CursorUp, ctx),
+        "selection.cursor_down" => bind!(CursorDown, ctx),
+        "selection.cursor_first" => bind!(CursorFirst, ctx),
+        "selection.cursor_last" => bind!(CursorLast, ctx),
+        "selection.page_up" => bind!(PageUp, ctx),
+        "selection.page_down" => bind!(PageDown, ctx),
 
         // -- Help -------------------------------------------------
         "help.shortcuts" => {
@@ -220,50 +228,51 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
             cx.bind_keys([
                 KeyBinding::new(kb_str, ShortcutsHelp, ctx),
                 KeyBinding::new("secondary-k", ShortcutsHelp, ctx),
-            ])
+            ]);
+            true
         }
 
         // -- Disk Usage -------------------------------------------
-        "view.disk_usage" => cx.bind_keys([KeyBinding::new(kb_str, OpenDiskUsage, ctx)]),
-        "view.close_results" => cx.bind_keys([KeyBinding::new(kb_str, CloseToolResult, ctx)]),
+        "view.disk_usage" => bind!(OpenDiskUsage, ctx),
+        "view.close_results" => bind!(CloseToolResult, ctx),
         "disk_usage.open_in_window" => {
-            cx.bind_keys([KeyBinding::new(kb_str, PopOutDiskUsage, ctx)])
+            bind!(PopOutDiskUsage, ctx)
         }
-        "view.find_duplicates" => cx.bind_keys([KeyBinding::new(kb_str, FindDuplicates, ctx)]),
+        "view.find_duplicates" => bind!(FindDuplicates, ctx),
         "view.find_similar_images" => {
-            cx.bind_keys([KeyBinding::new(kb_str, FindSimilarImages, ctx)])
+            bind!(FindSimilarImages, ctx)
         }
 
         // -- Go ---------------------------------------------------
-        "go.back" => cx.bind_keys([KeyBinding::new(kb_str, NavigateBack, ctx)]),
-        "go.forward" => cx.bind_keys([KeyBinding::new(kb_str, NavigateForward, ctx)]),
-        "go.parent" => cx.bind_keys([KeyBinding::new(kb_str, NavigateParent, ctx)]),
-        "go.home" => cx.bind_keys([KeyBinding::new(kb_str, GoHome, ctx)]),
+        "go.back" => bind!(NavigateBack, ctx),
+        "go.forward" => bind!(NavigateForward, ctx),
+        "go.parent" => bind!(NavigateParent, ctx),
+        "go.home" => bind!(GoHome, ctx),
         // No context: Cmd+G has to reach the App-level fallback in
         // `boot` when no Shell window is open (the process stays
         // resident at zero windows), the same way Cmd+N does.
-        "go.go_to_folder" => cx.bind_keys([KeyBinding::new(kb_str, GoToFolder, None)]),
+        "go.go_to_folder" => bind!(GoToFolder, None),
 
         // -- Selection --------------------------------------------
-        "selection.activate" => cx.bind_keys([KeyBinding::new(kb_str, OpenSelected, ctx)]),
+        "selection.activate" => bind!(OpenSelected, ctx),
         "selection.rename" | "selection.start_rename" => {
-            cx.bind_keys([KeyBinding::new(kb_str, RenameSelected, ctx)])
+            bind!(RenameSelected, ctx)
         }
         "selection.collapse_or_parent" => {
-            cx.bind_keys([KeyBinding::new(kb_str, NavigateParent, ctx)])
+            bind!(NavigateParent, ctx)
         }
         "selection.expand_or_first_child" => {
-            cx.bind_keys([KeyBinding::new(kb_str, OpenSelected, ctx)])
+            bind!(OpenSelected, ctx)
         }
-        "selection.dismiss" => cx.bind_keys([KeyBinding::new(kb_str, ClearFilter, ctx)]),
+        "selection.dismiss" => bind!(ClearFilter, ctx),
 
         // -- Window: tab cycling ---------------------------------
-        "window.next_tab" => cx.bind_keys([KeyBinding::new(kb_str, NextTab, ctx)]),
-        "window.prev_tab" => cx.bind_keys([KeyBinding::new(kb_str, PrevTab, ctx)]),
-        "window.close_window" => cx.bind_keys([KeyBinding::new(kb_str, CloseWindow, ctx)]),
+        "window.next_tab" => bind!(NextTab, ctx),
+        "window.prev_tab" => bind!(PrevTab, ctx),
+        "window.close_window" => bind!(CloseWindow, ctx),
 
         // -- File: open in new tab -------------------------------
-        "file.open_in_new_tab" => cx.bind_keys([KeyBinding::new(kb_str, OpenInNewTab, ctx)]),
+        "file.open_in_new_tab" => bind!(OpenInNewTab, ctx),
 
         // -- Tab cycling. These aren't in the canonical catalogue
         //    yet (Stage 5.5.d added them locally); bind from the
@@ -297,17 +306,19 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         | "disk_usage.coloring_depth"
         | "disk_usage.size_apparent"
         | "disk_usage.size_allocated"
-        | "help.github" => {}
+        | "help.github" => true,
 
-        _ => {
-            crate::log_warn!(
-                90,
-                "keymap: unknown command id '{}'; binding '{}' skipped",
-                id.0,
-                kb_str
-            );
-        }
+        _ => false,
+    };
+    if !recognized {
+        crate::log_warn!(
+            90,
+            "keymap: unknown command id '{}'; binding '{}' skipped",
+            id.0,
+            kb_str
+        );
     }
+    recognized
 }
 
 /// Tab-cycling and filter-escape bindings live outside the
@@ -501,4 +512,34 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("secondary-shift-1", ViewerActualSize, Some(VIEWER_CONTEXT)),
         KeyBinding::new("secondary-shift-=", ViewerZoomIn, Some(VIEWER_CONTEXT)),
     ]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    /// Exercises the same dispatcher used at startup. Adding a shortcut to the
+    /// bundled catalogue without adding its GPUI/external/deferred route now
+    /// fails on every target instead of becoming a customer log warning.
+    #[gpui::test]
+    fn every_bundled_shortcut_has_a_recognized_route(cx: &mut TestAppContext) {
+        let mut unresolved = Vec::new();
+        cx.update(|app| {
+            for spec in all_commands() {
+                for shortcut in spec.shortcuts {
+                    let Some(binding) = translate_shortcut(shortcut) else {
+                        // `+` is an explicitly documented alternate for `=`;
+                        // GPUI's DSL uses plus as its chord separator.
+                        assert_eq!(shortcut.key, "+");
+                        continue;
+                    };
+                    if !install_binding(app, spec.id, &binding) {
+                        unresolved.push((spec.id.0, binding));
+                    }
+                }
+            }
+        });
+        assert!(unresolved.is_empty(), "unresolved bindings: {unresolved:?}");
+    }
 }

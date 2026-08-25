@@ -802,7 +802,11 @@ source consistency bug, not an upgraded-profile or initialization issue.
 - [x] Identify whether the command catalogue, keymap, or packaged resource
   versions disagree: the missing GPUI dispatch arm was the root cause.
 - [ ] Re-run with both a clean and an upgraded Windows profile.
-- [ ] Add a startup test that every bundled binding resolves on every target.
+- [~] Add a startup test that every bundled binding resolves on every target.
+  *The test now executes the real GPUI startup dispatcher for every
+  translatable shortcut in the compiled platform catalogue; an omitted route
+  fails with the command id and binding. It passes on macOS; Windows CI and the
+  packaged-profile run remain.*
 - [ ] Version user keymap migrations and distinguish an obsolete user binding
   from a broken built-in binding in diagnostics.
 - [ ] Stamp the executable, helper, resources, and report header from one build

@@ -283,6 +283,41 @@ Windows implementation still required:
 Windows cases claimed from macOS: none.
 ```
 
+### 2026-08-25 — macOS preparation for WIN-016 command consistency
+
+```text
+Shared/startup guard prepared:
+  - install_binding now returns whether the exact production dispatcher
+    recognized a catalogue id; startup behavior remains non-fatal for a truly
+    unknown id and keeps its explicit warning;
+  - a GPUI test creates a real TestAppContext, translates every shortcut in the
+    platform-compiled bundled catalogue, and passes each binding through that
+    same production dispatcher;
+  - any future catalogue shortcut lacking a GPUI, app-level or deliberately
+    deferred route fails the test with its command id and translated binding;
+  - the documented `+` alternate remains the only accepted untranslatable key
+    because GPUI reserves plus as its chord separator and `=` is also bound.
+Host proof:
+  - cargo test -p ferail-gpui \
+      keymap::tests::every_bundled_shortcut_has_a_recognized_route
+  - cargo check -p ferail-gpui
+Windows implementation/qualification still required:
+  1. Run that exact test under the Windows target/build used for packaging; the
+     cfg-compiled catalogue differs (for example preview and reveal labels).
+  2. Launch the exact packaged executable once with a clean profile and once
+     over a copied 0.6.5 profile. Capture startup logs and verify no bundled
+     `unknown command id`; press Ctrl+Shift+L and the other Windows chords.
+  3. Add versioned user-keymap migration if/when user bindings are persisted.
+     Diagnostics must call an obsolete user id a user migration issue, not a
+     broken bundled catalogue.
+  4. Finish the packaging consistency gate: executable, helper(s), bundled
+     resources, report header and symbol manifest must share one version and
+     commit; inject a stale fixture to prove the gate fails.
+  5. Execute WTEST-014 and WTEST-015. Do not mark either complete from the
+     macOS test alone.
+Windows cases claimed from macOS: none.
+```
+
 At handover creation, two unrelated user changes intentionally remain outside
 the Windows commits: `CHANGELOG.md` and
 `crates/ferail-gpui/src/file_list.rs` (Flat row-buffer release work). Preserve
