@@ -404,7 +404,9 @@ Explorer opens an unrelated default folder, or path characters change.
 - [ ] `WTEST-072` Test built-in, 7-Zip, Git, Defender/AV, owner-draw item,
   dynamic submenu, disabled item, Properties, and Cancel. Repeat the matrix on
   at least one ordinary file and one ordinary directory; both must resolve
-  their own native Shell menu only after explicit invocation.
+  their own native Shell menu only after explicit invocation. For Properties,
+  verify the complete sheet appears, every installed page can be selected, and
+  Ferail's disposable broker remains alive until the sheet closes.
 - [ ] `WTEST-073` Invoke rename/delete/archive/provider verbs and verify the
   affected Ferail view refreshes while preserving valid selection/scroll.
 - [ ] `WTEST-074` Same-parent multi-selection reaches the native menu. A
@@ -419,7 +421,9 @@ Explorer opens an unrelated default folder, or path characters change.
 - [ ] `WTEST-076` Leave the native menu open for two minutes. It is not killed
   as a “timeout”; keyboard/mouse submenu behavior remains native.
 - [ ] `WTEST-077` After cancel/invoke, the helper exits on idle policy and no
-  PIDL/HMENU/COM/USER handle leaks across 100 opens.
+  PIDL/HMENU/COM/USER handle leaks across 100 opens. Repeat with Properties
+  held open for two minutes: exactly one broker remains while it is visible and
+  exits promptly after it closes; Ferail itself stays responsive throughout.
 
 Release blocker: any selection/hover prefetch, Shell extension in Ferail's
 process, normal-menu regression, or uncontained handler failure.

@@ -487,6 +487,12 @@ system.
   path; the directory and namespace acceptance matrix remains to be recorded.*
 - [x] Once the native popup is visible it is user-modal, not timed out. Before
   display, a wedged provider can be abandoned by terminating the broker.
+- [~] Keep the isolated broker alive for modeless UI launched by a selected
+  Shell verb. *2026-08-25: `Properties` now invokes the exact selected
+  `IContextMenu` command and the broker pumps messages until its owned property
+  sheet closes; the previous `SHObjectProperties` shortcut returned and let the
+  disposable process exit before the sheet became usable. Real-Windows file,
+  directory, multi-selection and third-party page validation remains.*
 - [ ] After a verb, refresh only possibly affected locations while preserving
   selection/scroll when their targets still exist.
 
@@ -504,8 +510,8 @@ third-party extension matrix still require the real-window manual gate.
 unchanged; 7-Zip/Defender/Git-style test extensions appear only on explicit
 request; a crashing or blocked handler cannot stop Ferail. *2026-08-25: the
 user reports that the native Windows menu works in normal use. The hostile
-extension, 100-open handle soak and post-mutation targeted-refresh cases remain
-open.*
+extension, Properties lifetime, 100-open handle soak and post-mutation
+targeted-refresh cases remain open.*
 
 ### WIN-008 — default open/double-click uses the wrong verb or path (P0)
 

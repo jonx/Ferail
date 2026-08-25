@@ -364,6 +364,44 @@ Windows/shared integration still required:
 Windows cases claimed from macOS: none.
 ```
 
+### 2026-08-25 — native Properties lifetime correction
+
+```text
+Reported symptom:
+  - choosing Properties from Ferail's original Windows Shell menu appears to do
+    nothing.
+Root cause and source correction:
+  - the context-menu broker correctly recognized the canonical `properties`
+    verb, but replaced the selected command with SHObjectProperties (or
+    SHMultiFileProperties) and exited as soon as that API reported successful
+    invocation;
+  - property sheets may be modeless. The sheet and its property-page handlers
+    therefore lost their STA owner/message pump with the disposable broker;
+  - the broker now invokes the exact selected IContextMenu offset, preserving
+    built-in and third-party pages, then pumps messages while an owned property
+    sheet exists. Once observed, the dialog is user-modal and has no timeout;
+  - synchronous handlers and handlers which transfer UI to another process do
+    not become errors. The pre-popup eight-second extension deadline and normal
+    right-click fast path are unchanged.
+Host proof:
+  - cargo check -p ferail-shell-win32 --target x86_64-pc-windows-msvc
+  - cargo clippy -p ferail-shell-win32 --target x86_64-pc-windows-msvc --
+      -D warnings
+Windows validation still required:
+  1. WTEST-072 on one file, one directory and same-parent multi-selection.
+     Open each built-in/third-party tab, Apply/Cancel/OK, and verify the exact
+     selected objects are shown.
+  2. While Properties is open for two minutes, confirm one context-menu broker
+     remains, Ferail is responsive, and normal browsing creates no menu work.
+     Closing the sheet must let that broker exit promptly.
+  3. Repeat 100 open/close cycles and record process, USER/GDI handle and COM
+     growth for WTEST-077. Crash/hang a third-party property page if a safe test
+     handler is available; only the broker may fail.
+  4. Re-test 7-Zip/Git/Defender verbs to prove the general InvokeCommand path
+     and normal menu latency did not regress.
+Windows cases claimed from macOS: none.
+```
+
 At handover creation, two unrelated user changes intentionally remain outside
 the Windows commits: `CHANGELOG.md` and
 `crates/ferail-gpui/src/file_list.rs` (Flat row-buffer release work). Preserve

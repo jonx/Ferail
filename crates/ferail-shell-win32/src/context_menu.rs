@@ -13,14 +13,14 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{OnceLock, mpsc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use windows::{
     Win32::{
-        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM},
+        Foundation::{BOOL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM},
         System::{
-            Com::{CoTaskMemFree, IBindCtx, IDataObject},
+            Com::{CoTaskMemFree, IBindCtx},
             Ole::{OleInitialize, OleUninitialize},
         },
         UI::{
@@ -30,14 +30,16 @@ use windows::{
                 CMIC_MASK_SHIFT_DOWN, CMINVOKECOMMANDINFO, CMINVOKECOMMANDINFOEX, GCS_VERBA,
                 GCS_VERBW, IContextMenu, IContextMenu2, IContextMenu3, IShellFolder,
                 SEE_MASK_NO_CONSOLE, SEE_MASK_NOASYNC, SEE_MASK_UNICODE, SHBindToParent,
-                SHMultiFileProperties, SHOP_FILEPATH, SHObjectProperties, SHParseDisplayName,
+                SHParseDisplayName,
             },
             WindowsAndMessaging::{
                 CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-                GetCursorPos, HMENU, PostMessageW, RegisterClassExW, SW_SHOWNORMAL,
-                SetForegroundWindow, ShowWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx,
-                WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_NULL, WNDCLASSEXW,
-                WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
+                DispatchMessageW, EnumWindows, GW_OWNER, GetCursorPos, GetWindow, HMENU, IsWindow,
+                MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW,
+                PostMessageW, QS_ALLINPUT, RegisterClassExW, SW_SHOWNORMAL, SetForegroundWindow,
+                ShowWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage,
+                WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_NULL, WM_QUIT,
+                WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -51,6 +53,8 @@ const LAST_COMMAND_ID: u32 = 0x7fff;
 const BROKER_ARG: &str = "--windows-context-menu-broker";
 const READY_MARKER: &str = "FERAIL_CONTEXT_MENU_READY";
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(8);
+const PROPERTY_DIALOG_APPEAR_TIMEOUT: Duration = Duration::from_secs(3);
+const SYNCHRONOUS_PROPERTY_INVOKE_FLOOR: Duration = Duration::from_millis(250);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Clone, Default)]
@@ -250,40 +254,73 @@ fn canonical_verb(context_menu: &IContextMenu, offset: u32) -> Option<String> {
     None
 }
 
-fn show_properties(
-    owner: HWND,
-    paths: &[PathBuf],
-    folder: &IShellFolder,
-    children: &[*const ITEMIDLIST],
-) -> Result<(), String> {
-    if paths.len() == 1 {
-        let path = super::strip_verbatim(&paths[0]);
-        let wide = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect::<Vec<_>>();
-        let invoked = unsafe {
-            SHObjectProperties(
-                owner,
-                SHOP_FILEPATH,
-                PCWSTR::from_raw(wide.as_ptr()),
-                PCWSTR::null(),
-            )
-        };
-        if invoked.as_bool() {
-            return Ok(());
-        }
-        return Err(format!(
-            "Windows refused to open Properties for {}",
-            path.display()
-        ));
+/// Some Shell verbs, notably Properties, create a modeless owned window and
+/// return from `InvokeCommand` immediately even when `CMIC_MASK_NOASYNC` was
+/// requested. The disposable broker must therefore keep its STA/message pump
+/// alive until that window closes. No timeout applies after the dialog appears:
+/// it is user-modal and may legitimately stay open for minutes.
+fn owned_popup_exists(owner: HWND) -> bool {
+    struct Search {
+        owner: HWND,
+        found: bool,
     }
 
-    let data_object: IDataObject = unsafe { folder.GetUIObjectOf(owner, children, None) }
-        .map_err(|error| format!("could not create the Properties selection: {error}"))?;
-    unsafe { SHMultiFileProperties(&data_object, 0) }
-        .map_err(|error| format!("Windows could not open the merged Properties sheet: {error}"))
+    unsafe extern "system" fn visit(window: HWND, state: LPARAM) -> BOOL {
+        let state = unsafe { &mut *(state.0 as *mut Search) };
+        if window != state.owner
+            && unsafe { IsWindow(window) }.as_bool()
+            && unsafe { GetWindow(window, GW_OWNER) }.ok() == Some(state.owner)
+        {
+            state.found = true;
+            return false.into();
+        }
+        true.into()
+    }
+
+    let mut search = Search {
+        owner,
+        found: false,
+    };
+    unsafe {
+        let _ = EnumWindows(
+            Some(visit),
+            LPARAM((&mut search as *mut Search).cast::<()>() as isize),
+        );
+    }
+    search.found
+}
+
+fn pump_owned_property_dialog(owner: HWND) -> Result<(), String> {
+    let appear_deadline = Instant::now() + PROPERTY_DIALOG_APPEAR_TIMEOUT;
+    let mut appeared = false;
+
+    loop {
+        let mut message = MSG::default();
+        while unsafe { PeekMessageW(&mut message, HWND::default(), 0, 0, PM_REMOVE) }.as_bool() {
+            if message.message == WM_QUIT {
+                return Err("the Properties message loop quit unexpectedly".into());
+            }
+            unsafe {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+
+        if owned_popup_exists(owner) {
+            appeared = true;
+        } else if appeared {
+            return Ok(());
+        } else if Instant::now() >= appear_deadline {
+            // The selected handler may have completed synchronously or handed
+            // the sheet to another process. InvokeCommand already succeeded,
+            // so absence of our own popup is not an error.
+            return Ok(());
+        }
+
+        unsafe {
+            MsgWaitForMultipleObjectsEx(None, 100, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+    }
 }
 
 /// Launch the disposable broker and wait for its native menu to close.
@@ -439,11 +476,8 @@ fn show_menu(paths: &[PathBuf], extended: bool) -> Result<(), String> {
 
     if selected >= FIRST_COMMAND_ID {
         let offset = selected - FIRST_COMMAND_ID;
-        if canonical_verb(&context_menu, offset)
-            .is_some_and(|verb| verb.eq_ignore_ascii_case("properties"))
-        {
-            return show_properties(owner.0, paths, &folder, &children);
-        }
+        let is_properties = canonical_verb(&context_menu, offset)
+            .is_some_and(|verb| verb.eq_ignore_ascii_case("properties"));
         // This process is deliberately disposable. Ask handlers to finish
         // synchronously so a modeless in-proc command (Properties is the
         // canonical example) cannot be torn down when the broker exits.
@@ -467,11 +501,18 @@ fn show_menu(paths: &[PathBuf], extended: bool) -> Result<(), String> {
             ptInvoke: point,
             ..Default::default()
         };
+        let invoke_started = Instant::now();
         unsafe {
             context_menu
                 .InvokeCommand(&info as *const CMINVOKECOMMANDINFOEX as *const CMINVOKECOMMANDINFO)
         }
         .map_err(|error| format!("Shell command failed: {error}"))?;
+        if is_properties
+            && (owned_popup_exists(owner.0)
+                || invoke_started.elapsed() < SYNCHRONOUS_PROPERTY_INVOKE_FLOOR)
+        {
+            pump_owned_property_dialog(owner.0)?;
+        }
     }
 
     Ok(())
