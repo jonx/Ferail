@@ -16,6 +16,8 @@
 //! very cost this record avoids), so the preview simply attempts the cover read
 //! and shows whatever comes back.
 
+use std::fmt;
+
 /// One audio file's embedded tags and decoded audio properties, pre-parsed off
 /// the UI thread. Every text field is already the display string; the numeric
 /// fields stay raw so the formatting helpers below can compose different
@@ -182,7 +184,7 @@ fn number_of(n: Option<u32>, total: Option<u32>) -> String {
 /// `"192 kbps"` precedent above): units and numbers only. Words that need
 /// translating — the row labels, the orientation wording, the GPS-presence
 /// phrase — belong to the UI layer.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct ImageMeta {
     /// Pixel dimensions from the image *header* (never a full decode).
     pub width: Option<u32>,
@@ -208,6 +210,36 @@ pub struct ImageMeta {
     /// coordinates are never parsed into this DTO, logged, or persisted
     /// (WIN-014's privacy treatment). A deliberate reveal can come later.
     pub gps_present: bool,
+}
+
+/// EXIF strings can identify a person, device, or time. Keep them available to
+/// the explicit Get Info UI while making accidental diagnostic formatting
+/// reveal presence only, never values.
+impl fmt::Debug for ImageMeta {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImageMeta")
+            .field(
+                "has_dimensions",
+                &(self.width.is_some() && self.height.is_some()),
+            )
+            .field(
+                "has_camera",
+                &(!self.camera_make.is_empty() || !self.camera_model.is_empty()),
+            )
+            .field("has_lens", &!self.lens_model.is_empty())
+            .field("has_taken", &!self.taken.is_empty())
+            .field("has_orientation", &self.orientation.is_some())
+            .field(
+                "has_exposure",
+                &(!self.exposure_time.is_empty()
+                    || !self.f_number.is_empty()
+                    || !self.focal_length.is_empty()
+                    || self.iso.is_some()),
+            )
+            .field("gps_present", &self.gps_present)
+            .finish()
+    }
 }
 
 impl ImageMeta {
@@ -315,11 +347,32 @@ mod tests {
         assert_eq!(ImageMeta::default().dimensions_label(), "");
         assert_eq!(ImageMeta::default().exposure_label(), "");
         // GPS presence alone keeps the section alive.
-        assert!(!ImageMeta {
+        assert!(
+            !ImageMeta {
+                gps_present: true,
+                ..Default::default()
+            }
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn image_meta_debug_redacts_exif_values() {
+        let meta = ImageMeta {
+            camera_make: "Private Make".into(),
+            camera_model: "Alice's Camera".into(),
+            lens_model: "Family Lens".into(),
+            taken: "2042-03-04 05:06:07".into(),
+            exposure_time: "secret exposure".into(),
             gps_present: true,
-            ..Default::default()
+            ..ImageMeta::default()
+        };
+        let debug = format!("{meta:?}");
+        for private in ["Private", "Alice", "Family", "2042", "secret"] {
+            assert!(!debug.contains(private));
         }
-        .is_empty());
+        assert!(debug.contains("has_camera: true"));
+        assert!(debug.contains("gps_present: true"));
     }
 
     #[test]
@@ -425,20 +478,26 @@ mod tests {
     #[test]
     fn empty_and_metadata_predicates() {
         assert!(MediaTags::default().is_empty());
-        assert!(!MediaTags {
-            codec: "MP3".into(),
-            ..Default::default()
-        }
-        .is_empty());
-        assert!(!MediaTags {
-            codec: "MP3".into(),
-            ..Default::default()
-        }
-        .has_metadata());
-        assert!(MediaTags {
-            title: "Song".into(),
-            ..Default::default()
-        }
-        .has_metadata());
+        assert!(
+            !MediaTags {
+                codec: "MP3".into(),
+                ..Default::default()
+            }
+            .is_empty()
+        );
+        assert!(
+            !MediaTags {
+                codec: "MP3".into(),
+                ..Default::default()
+            }
+            .has_metadata()
+        );
+        assert!(
+            MediaTags {
+                title: "Song".into(),
+                ..Default::default()
+            }
+            .has_metadata()
+        );
     }
 }

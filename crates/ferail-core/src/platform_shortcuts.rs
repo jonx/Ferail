@@ -7,7 +7,6 @@
 //! filesystem directory; every other shortcut is invoked by the platform so
 //! arguments, working directory and provider semantics are preserved.
 
-use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
@@ -16,14 +15,8 @@ use std::sync::atomic::AtomicBool;
 
 use crate::NodeId;
 use crate::platform_namespace::PlatformLocation;
-
-/// Revision of a derived record. Callers obtain this from the same stat used
-/// to enumerate the row; no extra file open is required on the UI thread.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FileRevision {
-    pub byte_len: u64,
-    pub modified_ns: Option<i128>,
-}
+pub use crate::revision_cache::FileRevision;
+use crate::revision_cache::RevisionCache;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShortcutTargetKind {
@@ -160,59 +153,8 @@ impl ShortcutInfo {
     }
 }
 
-/// Small, bounded, process-memory-only cache keyed by the existing compact
-/// row identity. It stores no source paths. A revision mismatch evicts the
-/// stale record immediately so rewritten shortcuts cannot retain old targets.
-#[derive(Debug)]
-pub struct ShortcutCache {
-    capacity: usize,
-    order: VecDeque<NodeId>,
-    entries: HashMap<NodeId, (FileRevision, Arc<ShortcutInfo>)>,
-}
-
-impl ShortcutCache {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            order: VecDeque::new(),
-            entries: HashMap::new(),
-        }
-    }
-
-    pub fn get(&mut self, id: NodeId, revision: FileRevision) -> Option<Arc<ShortcutInfo>> {
-        let (cached_revision, value) = self.entries.get(&id)?;
-        if *cached_revision == revision {
-            return Some(value.clone());
-        }
-        self.entries.remove(&id);
-        self.order.retain(|cached| *cached != id);
-        None
-    }
-
-    pub fn insert(&mut self, id: NodeId, revision: FileRevision, value: ShortcutInfo) {
-        if self.capacity == 0 {
-            return;
-        }
-        if self.entries.contains_key(&id) {
-            self.order.retain(|cached| *cached != id);
-        }
-        self.entries.insert(id, (revision, Arc::new(value)));
-        self.order.push_back(id);
-        while self.entries.len() > self.capacity {
-            if let Some(evicted) = self.order.pop_front() {
-                self.entries.remove(&evicted);
-            }
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-}
+/// Bounded process-memory shortcut cache with compact, path-free keys.
+pub type ShortcutCache = RevisionCache<NodeId, FileRevision, ShortcutInfo>;
 
 #[cfg(test)]
 mod tests {

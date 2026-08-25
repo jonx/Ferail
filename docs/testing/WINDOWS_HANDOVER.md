@@ -239,6 +239,50 @@ Windows implementation still required:
 Windows cases claimed from macOS: none.
 ```
 
+### 2026-08-25 — macOS preparation for WIN-014 property data
+
+```text
+Shared contract prepared:
+  - RevisionCache is a reusable bounded process-memory FIFO keyed by compact
+    identity + caller-owned revision. It stores no source path, evicts a stale
+    revision immediately, supports explicit clear/drop, and Debug reports only
+    capacity and count;
+  - the existing shortcut cache now uses that same implementation, preserving
+    its public contract and revision invalidation;
+  - PlatformProperties is an owned grouped DTO restricted to useful text/list,
+    boolean, integer and timestamp values. Native blobs, PROPVARIANTs, COM
+    interfaces and borrowed strings cannot enter shared/UI state;
+  - property values, localized display names, section names, target paths and
+    provider identities are redacted from Debug. ImageMeta now similarly
+    reports only EXIF-field presence, never camera/lens/time/exposure values;
+  - PlatformPropertiesProvider is a cancellable worker-only seam. Filesystem
+    surfaces can cache by NodeId + FileRevision; a tab provider can cache by
+    its compact item id + generation/revision without persisting a parsing name.
+Host proof:
+  - cargo test -p ferail-core revision_cache
+  - cargo test -p ferail-core platform_properties
+  - cargo test -p ferail-core platform_shortcuts
+  - cargo test -p ferail-core image_meta_debug_redacts_exif_values
+  - cargo clippy -p ferail-core --all-targets -- -D warnings
+Windows implementation still required:
+  1. Define an explicit allowlist of useful PROPERTYKEY values not already
+     supplied by portable metadata. Read them through IPropertyStore on the
+     bounded Windows worker and convert/clear every PROPVARIANT there.
+  2. Merge returned DTO sections into Get Info without duplicate portable
+     fields. Fetch only on explicit Get Info/visible details demand; render,
+     listing, hover and Flat scanning must perform no property I/O.
+  3. Add one process/surface-owned bounded cache. Apply results only when item
+     identity, file/provider revision and UI generation still match; clear it
+     when its owner closes and never write it to metadata.db or disk.
+  4. Add Windows Properties through the explicit PROPERTIES capability using
+     the native isolated ownership rules. Cover ordinary files, directories,
+     .lnk files, provider files and provider containers.
+  5. Execute WTEST-110–115 and WTEST-120–123 with unique privacy canaries,
+     malformed values, replacement/revision invalidation, disconnect and low
+     memory. Re-run ordinary listing and Flat 1M/4M performance gates.
+Windows cases claimed from macOS: none.
+```
+
 At handover creation, two unrelated user changes intentionally remain outside
 the Windows commits: `CHANGELOG.md` and
 `crates/ferail-gpui/src/file_list.rs` (Flat row-buffer release work). Preserve

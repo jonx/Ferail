@@ -730,15 +730,22 @@ Windows user also expects access to the native Properties surface.
   demand off-thread and cache by file identity/revision. *2026-08-24:
   `image_meta::read_image_meta` (header dimensions + kamadak-exif subset)
   feeds Get Info's Image section on every platform; GPS is presence-only —
-  coordinates are never parsed, shown, logged, or persisted. Remaining:
-  the identity/revision cache (Get Info parses one file per open today).*
-- [ ] Add a Windows property provider for useful `IPropertyStore` fields that
+  coordinates are never parsed, shown, logged, or persisted. A reusable
+  bounded, path-free identity/revision cache now exists; wiring it into Get
+  Info remains (Get Info parses one file per open today). `ImageMeta::Debug`
+  exposes presence flags only, never EXIF strings.*
+- [~] Add a Windows property provider for useful `IPropertyStore` fields that
   are not available from portable parsing, returning neutral key/value DTOs.
+  *The shared grouped DTO, restricted scalar/list value set, cancellable
+  provider seam and generic identity/revision cache are complete. All values,
+  display names and paths are redacted from diagnostics. The approved Windows
+  key mapping, `IPropertyStore` worker and Get Info merge remain.*
 - [ ] Add **Windows Properties…** through the native Shell action capability;
   do not try to recreate every installed property page inside Ferail.
-- [ ] Never log metadata values or paths by default. GPS coordinates require a
+- [~] Never log metadata values or paths by default. GPS coordinates require a
   deliberate reveal and are not persisted unless the metadata cache policy is
-  explicitly approved.
+  explicitly approved. *Shared EXIF/property DTOs and both revision caches are
+  process-memory-only and debug-redacted; the Windows canary audit remains.*
 
 **Exit gate.** JPEG/TIFF/HEIC fixtures show correct portable metadata, malformed
 files fail safely, and Windows Properties opens for filesystem and supported

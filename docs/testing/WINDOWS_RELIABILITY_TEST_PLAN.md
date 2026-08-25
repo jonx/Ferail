@@ -537,6 +537,12 @@ leakage, or any local/Flat regression caused by WSL state.
 - [ ] `WTEST-114` **Windows Properties…** opens the native property surface for
   a file, folder, shortcut, and supported namespace item without blocking
   Ferail.
+- [ ] `WTEST-115` Read approved `IPropertyStore` fields containing unique
+  canary strings, then rewrite/replace the file and refresh a provider item.
+  Identity/revision changes invalidate the old result; cache size stays
+  bounded, closing the owning surface/process releases it, and no value,
+  display name, path, PROPVARIANT or raw provider identity appears in logs or
+  reports. Repaint and ordinary directory/Flat listing trigger no property I/O.
 
 ### M. Privacy and failure recovery
 
