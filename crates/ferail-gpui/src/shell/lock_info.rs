@@ -76,7 +76,9 @@ impl LockInfoView {
         cx.spawn(async move |this, cx| {
             let scan = cx
                 .background_executor()
-                .spawn(async move { crate::platform_shell::processes_using_tree(&paths, MAX_SCAN_FILES) })
+                .spawn(async move {
+                    crate::platform_shell::processes_using_tree(&paths, MAX_SCAN_FILES)
+                })
                 .await;
             let _ = this.update(cx, |view, cx| {
                 if view.generation == generation {
@@ -107,8 +109,10 @@ impl LockInfoView {
                     return;
                 }
                 if let Err(detail) = result {
-                    view.error =
-                        Some(tr!("Some programs couldn’t be closed: {detail}", detail = detail));
+                    view.error = Some(tr!(
+                        "Some programs couldn’t be closed: {detail}",
+                        detail = detail
+                    ));
                 }
                 view.start_scan(cx);
             });
@@ -144,7 +148,12 @@ impl Render for LockInfoView {
                     Phase::Closing => tr!("Closing programs…"),
                     _ => tr!("Checking which programs have files open…"),
                 }))
-                .child(Progress::new("lock-scan-progress").small().loading(true).value(0.))
+                .child(
+                    Progress::new("lock-scan-progress")
+                        .small()
+                        .loading(true)
+                        .value(0.),
+                )
                 .into_any_element(),
             Phase::Ready(scan) if scan.holders.is_empty() => {
                 let mut col = v_flex().w_full().gap_2().child(self.banner(
@@ -209,9 +218,14 @@ impl Render for LockInfoView {
                         scan.scanned
                     )));
                 }
-                col = col.child(div().text_scale_xs().text_color(cx.theme().warning).child(tr!(
-                    "Closing a program this way can discard its unsaved changes."
-                )));
+                col = col.child(
+                    div()
+                        .text_scale_xs()
+                        .text_color(cx.theme().warning)
+                        .child(tr!(
+                            "Closing a program this way can discard its unsaved changes."
+                        )),
+                );
                 col.into_any_element()
             }
         };
@@ -342,13 +356,8 @@ fn open_lock_dialog(
             .title(tr!("What’s Locking This?"))
             .w(px(520.))
             .child(state_for_dialog.clone())
-            .footer(
-                DialogFooter::new().child(
-                    div().w(px(96.)).child(
-                        DialogClose::new()
-                            .child(Button::new("lock-info-done").label(tr!("Done")).small()),
-                    ),
-                ),
-            )
+            .footer(DialogFooter::new().child(div().w(px(96.)).child(
+                DialogClose::new().child(Button::new("lock-info-done").label(tr!("Done")).small()),
+            )))
     })
 }

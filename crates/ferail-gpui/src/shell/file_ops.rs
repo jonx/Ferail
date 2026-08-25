@@ -1329,10 +1329,8 @@ impl Shell {
                                     .iter()
                                     .filter_map(|entry| {
                                         let path = delegate.path_for_entry(entry.id)?;
-                                        let is_dir = matches!(
-                                            entry.kind,
-                                            ferail_core::EntryKind::Directory
-                                        );
+                                        let is_dir =
+                                            matches!(entry.kind, ferail_core::EntryKind::Directory);
                                         Some((path, is_dir))
                                     })
                                     .collect::<Vec<_>>(),
@@ -1367,7 +1365,13 @@ impl Shell {
         let items: Vec<(PathBuf, bool)> = (0..row_count)
             .filter_map(|row| {
                 let is_dir = matches!(
-                    self.active_tab().table.read(cx).delegate().entries.get(row)?.kind,
+                    self.active_tab()
+                        .table
+                        .read(cx)
+                        .delegate()
+                        .entries
+                        .get(row)?
+                        .kind,
                     ferail_core::EntryKind::Directory
                 );
                 Some((self.path_for_row(row, cx)?, is_dir))
@@ -1397,7 +1401,10 @@ impl Shell {
         }
         let (text, count) = build_file_list_text(&items, false, include_hidden);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        window.push_notification(Notification::success(copy_file_list_toast(count, false)), cx);
+        window.push_notification(
+            Notification::success(copy_file_list_toast(count, false)),
+            cx,
+        );
     }
 
     pub(super) fn on_reveal_in_finder(
