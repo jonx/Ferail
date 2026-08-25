@@ -15,6 +15,7 @@ pub mod navigation;
 pub mod node_store;
 pub mod path_guard;
 pub mod platform_locations;
+pub mod platform_namespace;
 pub mod power;
 pub mod terminal;
 pub mod video;
