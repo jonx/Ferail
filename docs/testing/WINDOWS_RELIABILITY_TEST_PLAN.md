@@ -328,16 +328,22 @@ growth, or >10% memory/performance regression.
 
 - [ ] `WTEST-040` Open `WCORPUS-MEDIA-10K` in list and grid. Initial requests
   cover only the viewport plus overscan; worker and upload queues stay within
-  configured bounds.
+  configured bounds. Record active/pending counts independently for provider,
+  decode, upload and apply lanes. Before the interactive run, execute
+  `cargo test -p ferail-core asset_work`; its four-million-request stress case
+  must retain only the configured constant-size queue.
 - [ ] `WTEST-041` Perform ten top↔bottom scroll passes at varied speeds. The
   scrollbar remains visible/stable, rows never reset to the top, and a stale
   thumbnail never lands on a reused row.
 - [ ] `WTEST-042` Toggle previews off/on during load; pending work cancels and
-  generic icons remain correct.
+  generic icons remain correct. A cancelled active provider retains its lane
+  slot until the worker/broker acknowledges completion, while its reservation
+  becomes retryable rather than a permanent negative cache entry.
 - [ ] `WTEST-043` Resize icon/thumbnail size repeatedly while scrolling. Old
   size generations are dropped; memory settles after each pass.
 - [ ] `WTEST-044` Navigate between two media folders quickly 50 times. No old
-  folder preview appears in the current folder.
+  folder preview appears in the current folder. A stale-generation completion
+  cannot release or overwrite a newer request for the same compact identity.
 - [ ] `WTEST-045` Preview safe PDF/image/video files and corrupt variants.
   Every failure becomes a fallback, never a crash.
 - [ ] `WTEST-046` Test a deliberately crashing preview provider in the broker.

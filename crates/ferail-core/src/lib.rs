@@ -3,6 +3,7 @@
 //! convention, not the compiler — if you find yourself reaching for `windows`
 //! or `winit` here, stop.
 
+pub mod asset_work;
 pub mod commands;
 pub mod entry_info;
 pub mod favorites;

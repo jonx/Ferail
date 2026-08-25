@@ -636,10 +636,18 @@ folders and providers may not behave like ordinary extension-based files.
     (`ttf/otf/ttc/fon/pfb/pfm`) in `fetch_shell_image`.*
   - *Still open: offline-file (cloud placeholder) flags and special
     shell folders beyond Fonts.*
-- [ ] Cache type icons by stable type/provider key and content thumbnails by
+- [~] Cache type icons by stable type/provider key and content thumbnails by
   file identity/mtime/size; never cache a transient provider failure forever.
-- [ ] Run all provider calls through the bounded Windows asset scheduler and
-  isolate unsafe provider fallbacks.
+  *The shared asset key now contains only compact file/provider identity,
+  revision and asset kind/size. Existing caches still need migration to that
+  identity and an expiring transient-negative policy.*
+- [~] Run all provider calls through the bounded Windows asset scheduler and
+  isolate unsafe provider fallbacks. *A pure `BoundedAssetLane` now enforces
+  fixed concurrency and pending capacity, deduplicates requests, prioritizes
+  selected/visible work over overscan, favors the newest viewport, cancels old
+  generations without releasing an active slot early, and rejects stale
+  completion. Process-level GPUI integration and Windows broker/provider
+  routing remain.*
 - [ ] Compare the Fonts fixture and a representative type corpus visually
   against Explorer at multiple DPI scales.
 

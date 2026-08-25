@@ -318,6 +318,47 @@ Windows implementation/qualification still required:
 Windows cases claimed from macOS: none.
 ```
 
+### 2026-08-25 — macOS preparation for WIN-011 asset scheduling
+
+```text
+Shared scheduling primitive prepared:
+  - AssetKey carries a compact NodeId or tab-local PlatformItemId, a file or
+    opaque provider revision, and the requested icon/thumbnail/property/link
+    kind. It contains no path, PIDL, pixels, COM object or provider string;
+  - BoundedAssetLane has fixed active concurrency and pending capacity.
+    Submitting four million speculative requests retains only the configured
+    constant-size queue;
+  - selected work outranks visible work, visible work outranks overscan, and
+    ties favor the newest request so rapid scrolling does not create a train;
+  - duplicate work is coalesced/reprioritized. When a generation is retired,
+    pending work is dropped and active cancellation tokens are set, but slots
+    remain occupied until worker acknowledgement, preserving the hard cap;
+  - completion is keyed by asset identity/revision plus UI generation, so a
+    stale worker cannot release a newer reservation.
+Host proof:
+  - cargo test -p ferail-core asset_work
+  - cargo clippy -p ferail-core --all-targets -- -D warnings
+Windows/shared integration still required:
+  1. Own one coordinator in process state with separately configured provider,
+     decode, upload and UI-apply lanes. Feed it only selected/visible/overscan
+     compact identities; never enumerate a whole directory to populate it.
+  2. Route IShellItemImageFactory, SHGetFileInfo, .lnk resolution and approved
+     property reads through the provider lane. Keep IPreviewHandler/PDF/unsafe
+     fallbacks in their disposable broker boundary and count each broker as an
+     active provider slot.
+  3. Apply results only by identity + revision + generation, under a per-frame
+     upload/apply budget, then invalidate affected visible rows only. Never
+     change row count or scrollbar geometry from an asset completion.
+  4. Migrate type-icon caching to stable type/provider identity and content
+     thumbnails to file/provider identity + revision + size. Add explicit byte
+     and handle budgets and an expiring transient-negative result; cancellation
+     is not a negative result.
+  5. Publish lane counts/cancellations in task snapshots without causing a
+     repaint. Execute WTEST-040–048, WTEST-087, WTEST-106 and WTEST-123 plus
+     the 10k media and Flat 1M/4M regressions at multiple DPI values.
+Windows cases claimed from macOS: none.
+```
+
 At handover creation, two unrelated user changes intentionally remain outside
 the Windows commits: `CHANGELOG.md` and
 `crates/ferail-gpui/src/file_list.rs` (Flat row-buffer release work). Preserve
