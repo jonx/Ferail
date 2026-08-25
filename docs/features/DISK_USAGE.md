@@ -13,9 +13,10 @@ control are macOS-native rewrites.
 
 Shipped with follow-ups. The docked Disk Usage result surface, scanner, treemap,
 Top-N panel, package handling, category filtering, allocated/apparent size
-modes, screenshot path, and CLI all ship. APFS-clone-aware sizing, richer
-iCloud download-state handling, and explicit dock/pop-out state migration remain
-open — see "Still open" below.
+modes, screenshot path, CLI, native batched APFS enumeration, bounded directory
+parallelism and scan-local identity storage all ship. APFS-clone-aware sizing,
+the privileged NTFS fast backend, richer iCloud download-state handling, and
+explicit dock/pop-out state migration remain open — see "Still open" below.
 
 ## Surface
 
@@ -47,7 +48,9 @@ open — see "Still open" below.
   `.app`, `.bundle`, `.framework`, `.plugin`, `.kext`, `.xcodeproj`
   are treated as opaque leaves, matching Finder. Toggling re-scans.
 - **Right-click a rect** (shipped): the file-list verbs on the resolved
-  selection — Open, Reveal in Finder, Get Info (when opened from a
+  selection — Open, Open in New Tab for a single item (a file opens its
+  containing folder and is selected), Reveal in Finder,
+  Get Info (when opened from a
   shell), Copy (real file URLs), Copy Path(s), an **Export as HTML**
   submenu (Copy/Save This Folder for a single folder target,
   Copy/Save Whole View), Zoom In/Out, Move to Trash. Finder targeting
@@ -84,9 +87,9 @@ the `disk_usage.*` ids in keymap.rs are still placeholders.)
 ## Architecture
 
 ```
-+------------------- worker thread (scan_disk_usage) ----------------+
-|  std::fs::read_dir DFS, batches DiskUsageFact, throttles progress  |
-|  cancellable via Arc<AtomicBool>; flushes buffer + exits on cancel |
++---------------- worker pool (scan_disk_usage) ---------------------+
+| native batched reads; bounded parallel folders on local APFS       |
+| coordinator owns policy/facts; cancellable; bounded result batches |
 +--------------------------------------------------------------------+
                        |
                        | Arc<Mutex<VecDeque<ScanMsg>>>
@@ -107,7 +110,7 @@ the `disk_usage.*` ids in keymap.rs are still placeholders.)
 | Crate | Responsibility |
 |---|---|
 | `ferail-disk-usage` | Pure data model + squarified treemap. No I/O, no platform deps. Houses `DiskUsageTree`, `DiskUsageNode`, `DiskUsageLayoutNode`, `DiskUsageFact`, `compute_treemap`, `hit_test`, `build_layout_node`, `FileCategory`. |
-| `ferail-fs-native` | `NativeFs::scan_disk_usage` worker — DFS via `read_dir`, `symlink_metadata` (no follow), absorbs per-subdir permission errors, batched fact callback (`DEFAULT_DU_BATCH = 256`), throttled progress (~250 ms). |
+| `ferail-fs-native` | `NativeFs::scan_disk_usage` worker plus the shared native directory reader. macOS uses `getattrlistbulk`; other filesystems/platforms safely fall back to `read_dir` and cached `DirEntry` metadata. A bounded coordinator parallelizes local, non-removable APFS directory reads and keeps all descent policy and fact creation on one thread. |
 | `ferail-gpui` | `disk_usage.rs` — the Disk Usage view: squarified treemap + top-list views, hover/selection state, and worker orchestration, all as GPUI elements. |
 
 ### Data flow
@@ -127,17 +130,23 @@ the `disk_usage.*` ids in keymap.rs are still placeholders.)
 
 ### Worker contract
 
-`NativeFs::scan_disk_usage(root, batch_size, cancel, descend_packages,
-on_batch, on_progress) -> Option<EnumerationError>`:
+The GPUI surface calls `NativeFs::scan_disk_usage_local(root, batch_size,
+cancel, descend_packages, id_base, on_batch, on_progress)`. The public
+`scan_disk_usage` compatibility entry point has the same scan semantics but
+uses process-global identities.
 
-- Iterative DFS via an explicit `Vec<PathBuf>` stack — no Rust
-  recursion, so deep trees can't blow the stack.
-- `symlink_metadata` only; symlinks count as 0-byte leaves to keep
-  the walk cycle-safe.
-- Per-subdir `read_dir` failures are absorbed and emit
+- The shared coordinator owns a bounded directory queue. On local internal
+  APFS it uses up to eight I/O workers; removable, network, unknown and
+  non-APFS volumes stay serial. Workers return batches of at most 256 entries
+  and never mutate the tree or invoke UI callbacks.
+- macOS requests name, kind, sizes, times, flags, file id, link count and mount
+  status together via `getattrlistbulk`. A missing attribute or unsupported
+  filesystem falls back safely; the normal path does not issue one `stat` per
+  file. Symlinks are never followed and count as zero-byte leaves.
+- Per-subdirectory read failures are absorbed and emit
   `ContainerScanCompleted` for the bad dir so the UI doesn't hang in
-  "Scanning" forever. The top-level open failure is the only thing
-  that returns an error.
+  "Scanning" forever. The final summary states how many folders were skipped.
+  The top-level open failure is the only thing that returns an error.
 - macOS package directories (`.app`, `.bundle`, `.framework`,
   `.plugin`, `.kext`, `.xcodeproj`) are emitted as `NodeKind::File`
   leaves when `descend_packages` is `false`; the scanner walks inside
@@ -146,6 +155,25 @@ on_batch, on_progress) -> Option<EnumerationError>`:
 - Apparent size (`metadata.len()`) and allocated size
   (`MetadataExt::blocks() * 512`) are both stored. APFS-clone-aware
   deduplication remains deferred (see Still open).
+- IDs generated for the interactive surface live in a reserved scan-local
+  namespace. The view stores only one parent id per node and reconstructs a
+  path on an explicit action. Closing or refreshing Disk Usage drops that
+  arena and its tree; millions of scan paths are not retained by NativeFs's
+  process-lifetime navigation map.
+
+### macOS access
+
+Full Disk Access is about **coverage**, not speed. Native batched reading works
+without it. If a scan actually encounters TCC-protected folders, the result is
+kept as an explicit partial scan: the skipped count is shown in warning colour
+and an action opens the Full Disk Access pane. The same optional action lives
+under Settings › Performance › Disk Usage access. Ferail copies its app path
+for the system picker and asks the user to relaunch after granting access; it
+does not claim to detect the setting reliably.
+
+Starting Disk Usage on a subdirectory scans only that subtree. Starting at a
+volume root scans that volume while retaining the existing `du -x` boundary
+rule and macOS firmlink exceptions.
 
 ## Verification
 

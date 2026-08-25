@@ -52,6 +52,7 @@ pub use file_ops::ArchiveOpSettled;
 pub(crate) use file_ops::pick_destination_folder;
 pub(crate) use file_ops::{ArchiveSaveRequest, TransferMode};
 mod loading;
+pub(crate) use loading::FULL_DISK_ACCESS_SETTINGS_URL;
 mod lock_info;
 mod path;
 pub(crate) mod render;
@@ -4019,9 +4020,10 @@ impl Shell {
         window.refresh();
     }
 
-    /// Open the selected folder(s) in a new tab (context-menu command).
-    /// Only folders can seed a tab, so file targets are dropped; falls back
-    /// to the active tab's current dir when nothing is targeted.
+    /// Open the selected folder(s) in a new tab (context-menu command). A
+    /// single file opens its containing folder and selects the file there —
+    /// useful for recursive Search results. Multi-selection still fans out
+    /// folders only; opening one tab per selected file would be explosive.
     fn on_open_in_new_tab(
         &mut self,
         _: &OpenInNewTab,
@@ -4036,10 +4038,23 @@ impl Shell {
             self.open_path_in_new_tab(path, window, cx);
             return;
         }
+        if targets.len() == 1 {
+            let (_, entry, path) = &targets[0];
+            if !matches!(entry.kind, EntryKind::Directory) {
+                let Some(parent) = path.parent().map(Path::to_path_buf) else {
+                    return;
+                };
+                let names = path
+                    .file_name()
+                    .map(|name| vec![name.to_string_lossy().into_owned()])
+                    .unwrap_or_default();
+                self.reveal_in_new_tab(parent, names, window, cx);
+                return;
+            }
+        }
         // FanOut: a tab per folder (Finder's "Open in New Tabs"); a tab is a
-        // folder view, so files can't anchor one and are skipped — matching
-        // the menu, which hides the item on a file anchor
-        // (`file_list::avail_anchor_dir`). A file-only target set is a no-op.
+        // folder view, so files in a multi-selection are skipped. A file-only
+        // multi-selection is deliberately a no-op and has no menu command.
         let folders: Vec<PathBuf> = targets
             .into_iter()
             .filter(|(_, e, _)| matches!(e.kind, EntryKind::Directory))

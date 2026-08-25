@@ -784,7 +784,7 @@ where
 
     fn on_row_right_click(
         &mut self,
-        event: &MouseDownEvent,
+        _event: &MouseDownEvent,
         row_ix: Option<usize>,
         _: &mut Window,
         cx: &mut Context<Self>,
@@ -794,7 +794,7 @@ where
         self.right_clicked_cell = None;
         cx.emit(TableEvent::RightClickedRow(row_ix));
         #[cfg(windows)]
-        if event.modifiers.shift {
+        if _event.modifiers.shift {
             cx.stop_propagation();
             cx.emit(TableEvent::NativeContextMenuRequested(row_ix));
         }

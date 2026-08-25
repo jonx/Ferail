@@ -55,6 +55,8 @@ decoder that does not route personal images through an external service.
 
 Similar results always use the existing virtualized card panel, with small
 in-card previews, dimensions, hash distance, and a **Best copy** badge. The
+context menu on any member can open its containing folder in a new tab and
+select that exact file; this works identically for exact and similar groups. The
 default keeper is ranked by pixel area, then encoded bytes, then oldest mtime.
 Two inline, session-only controls independently tighten the structure/dHash
 (0–7) and detail/pHash (0–12) limits; lower values demand a closer match, and

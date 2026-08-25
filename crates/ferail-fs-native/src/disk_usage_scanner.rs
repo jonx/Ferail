@@ -24,6 +24,18 @@ pub const DEFAULT_DU_BATCH: usize = 256;
 /// Minimum gap between progress callbacks.
 const PROGRESS_THROTTLE_MS: u128 = 250;
 
+struct DuDirectory {
+    path: PathBuf,
+    id: ferail_core::NodeId,
+    device: Option<u64>,
+}
+
+impl crate::directory_reader::DirectoryContext for DuDirectory {
+    fn directory_path(&self) -> &Path {
+        &self.path
+    }
+}
+
 impl NativeFs {
     /// Recursive depth-first scan of `root`. Emits [`DiskUsageFact`]s in
     /// batches of up to `batch_size`, calling `on_batch` whenever the
@@ -65,9 +77,70 @@ impl NativeFs {
         batch_size: usize,
         cancel: &AtomicBool,
         descend_packages: bool,
+        on_batch: impl FnMut(Vec<DiskUsageFact>),
+        on_progress: impl FnMut(DiskUsageStats),
+    ) -> Option<EnumerationError> {
+        self.scan_disk_usage_with_identity(
+            root,
+            batch_size,
+            cancel,
+            descend_packages,
+            |path| self.id_for_path(path),
+            on_batch,
+            on_progress,
+        )
+    }
+
+    /// Scan with identities owned by the caller rather than inserting every
+    /// discovered path into [`NativeFs`]'s process-lifetime path maps.
+    ///
+    /// `id_base + 1` is the root and every subsequent discovery increments the
+    /// low part of that scan-local namespace. The consumer can therefore keep
+    /// a compact parent-index arena and release the entire scan when its result
+    /// surface closes. `id_base` must come from a namespace disjoint from
+    /// ordinary `NativeFs` ids (the GPUI Disk Usage surface reserves bit 62).
+    #[allow(clippy::too_many_arguments)]
+    pub fn scan_disk_usage_local(
+        &self,
+        root: &Path,
+        batch_size: usize,
+        cancel: &AtomicBool,
+        descend_packages: bool,
+        id_base: u64,
+        on_batch: impl FnMut(Vec<DiskUsageFact>),
+        on_progress: impl FnMut(DiskUsageStats),
+    ) -> Option<EnumerationError> {
+        let mut next_raw = id_base.saturating_add(1);
+        self.scan_disk_usage_with_identity(
+            root,
+            batch_size,
+            cancel,
+            descend_packages,
+            move |_path| {
+                let id = ferail_core::NodeId::from_raw(next_raw)
+                    .expect("disk-usage scan-local ids are nonzero");
+                next_raw = next_raw
+                    .checked_add(1)
+                    .expect("disk-usage scan-local identity space exhausted");
+                id
+            },
+            on_batch,
+            on_progress,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scan_disk_usage_with_identity(
+        &self,
+        root: &Path,
+        batch_size: usize,
+        cancel: &AtomicBool,
+        descend_packages: bool,
+        mut id_for_path: impl FnMut(&Path) -> ferail_core::NodeId,
         mut on_batch: impl FnMut(Vec<DiskUsageFact>),
         mut on_progress: impl FnMut(DiskUsageStats),
     ) -> Option<EnumerationError> {
+        ferail_core::path_guard::assert_off_ui_thread("NativeFs::scan_disk_usage");
         // Canonicalize so firmlink twins and `..`-laden roots land on one
         // identity — but fall back to the path as given where the platform
         // can't (AROS's std stubs `canonicalize` as Unsupported; killing
@@ -82,7 +155,7 @@ impl NativeFs {
             Err(e) => return Some(map_io_error(&e)),
         }
 
-        let root_id = self.id_for_path(&canonical_root);
+        let root_id = id_for_path(&canonical_root);
         let mut buffer: Vec<DiskUsageFact> = Vec::with_capacity(batch_size);
         let mut stats = DiskUsageStats::default();
         let mut last_progress = Instant::now();
@@ -119,187 +192,149 @@ impl NativeFs {
         // Hardlinked files already counted, keyed (dev, ino).
         let mut seen_links: HashSet<(u64, u64)> = HashSet::new();
 
-        // DFS stack of (container path, container node id, container dev).
-        let mut stack: Vec<(PathBuf, ferail_core::NodeId, Option<u64>)> =
-            vec![(canonical_root, root_id, root_dev)];
-
-        while let Some((dir_path, dir_id, dir_dev)) = stack.pop() {
-            if cancel.load(Ordering::Relaxed) {
-                if !buffer.is_empty() {
-                    on_batch(std::mem::take(&mut buffer));
-                }
-                return None;
-            }
-
-            buffer.push(DiskUsageFact::ContainerScanStarted { container: dir_id });
-            stats.dirs_scanned = stats.dirs_scanned.saturating_add(1);
-
-            let read_dir = match fs::read_dir(&dir_path) {
-                Ok(rd) => rd,
-                Err(_) => {
-                    // Permission denied or transient I/O — skip the dir
-                    // body but still mark it complete so the UI doesn't
-                    // see "Scanning" forever.
-                    buffer.push(DiskUsageFact::ContainerScanCompleted { container: dir_id });
-                    if buffer.len() >= batch_size {
-                        on_batch(std::mem::take(&mut buffer));
-                        buffer.reserve(batch_size);
+        let workers = crate::directory_reader::recommended_recursive_workers(&canonical_root);
+        crate::directory_reader::walk(
+            DuDirectory {
+                path: canonical_root,
+                id: root_id,
+                device: root_dev,
+            },
+            cancel,
+            workers,
+            |event| {
+                use crate::directory_reader::DirectoryWalkEvent;
+                let mut children = Vec::new();
+                match event {
+                    DirectoryWalkEvent::Started(directory) => {
+                        buffer.push(DiskUsageFact::ContainerScanStarted {
+                            container: directory.id,
+                        });
+                        stats.dirs_scanned = stats.dirs_scanned.saturating_add(1);
                     }
-                    continue;
-                }
-            };
+                    DirectoryWalkEvent::Batch(directory, entries) => {
+                        for entry in entries {
+                            let is_symlink = entry.is_symlink();
+                            let is_dir = entry.is_dir() && !is_symlink;
+                            let mtime = entry.mtime;
+                            let identity = entry.identity;
+                            let entry_size = entry.size;
+                            let entry_allocated = entry.allocated;
+                            let is_mount_point = entry.mount_point;
+                            let child_path = entry.path;
+                            let name = entry.name;
+                            let child_id = id_for_path(&child_path);
 
-            for dirent in read_dir.flatten() {
-                if cancel.load(Ordering::Relaxed) {
-                    if !buffer.is_empty() {
-                        on_batch(std::mem::take(&mut buffer));
-                    }
-                    return None;
-                }
+                            let mut boundary_stub = is_mount_point;
+                            if is_dir {
+                                if let (Some((dev, ino, _)), Some(parent_dev)) =
+                                    (identity, directory.device)
+                                {
+                                    let crosses = dev != parent_dev;
+                                    let sanctioned =
+                                        !crosses || firmlinks.iter().any(|f| f == &child_path);
+                                    if !sanctioned || !seen_dirs.insert((dev, ino)) {
+                                        boundary_stub = true;
+                                    }
+                                }
+                            }
 
-                let child_path = dirent.path();
-                let Some(name) = child_path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(str::to_owned)
-                else {
-                    continue;
-                };
+                            let mac_pkg = is_mac_package(&child_path);
+                            let treat_as_leaf =
+                                !is_dir || boundary_stub || (mac_pkg && !descend_packages);
+                            let already_counted = if is_dir {
+                                false
+                            } else {
+                                match identity {
+                                    Some((dev, ino, nlink)) if nlink > 1 => {
+                                        !seen_links.insert((dev, ino))
+                                    }
+                                    _ => false,
+                                }
+                            };
 
-                // `DirEntry::metadata()` over `symlink_metadata(path)`:
-                // no per-file handle open — on Windows a path-stat
-                // would hydrate OneDrive placeholders (see the
-                // matching note in `recursive_size`). Does not follow
-                // symlinks, same as before.
-                let metadata = match dirent.metadata() {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
-                let ft = metadata.file_type();
-                let is_dir = ft.is_dir() && !ft.is_symlink();
-                let mtime = metadata.modified().ok();
-                let child_id = self.id_for_path(&child_path);
-                let identity = file_identity(&metadata);
+                            let (kind, file_category, size, allocated) = if treat_as_leaf {
+                                let category = if boundary_stub {
+                                    FileCategory::Other
+                                } else if mac_pkg {
+                                    FileCategory::Executable
+                                } else {
+                                    classify_path(&child_path)
+                                };
+                                let sizes = if is_symlink || boundary_stub || already_counted {
+                                    (0, 0)
+                                } else if mac_pkg && !descend_packages && is_dir {
+                                    recursive_sizes(&child_path, cancel)
+                                } else {
+                                    (entry_size, entry_allocated)
+                                };
+                                (NodeKind::File, category, sizes.0, sizes.1)
+                            } else {
+                                (NodeKind::Container, FileCategory::Other, 0, entry_allocated)
+                            };
 
-                // Filesystem-boundary rule (see method docs): a child
-                // dir on a different device is a mount point — emit a
-                // 0-byte stub instead of walking it, unless it's a
-                // macOS firmlink. The (dev, ino) set catches any
-                // remaining aliased directory.
-                let mut boundary_stub = false;
-                if is_dir {
-                    if let (Some((dev, ino, _)), Some(parent_dev)) = (identity, dir_dev) {
-                        let crosses = dev != parent_dev;
-                        let sanctioned = !crosses || firmlinks.iter().any(|f| f == &child_path);
-                        if !sanctioned || !seen_dirs.insert((dev, ino)) {
-                            boundary_stub = true;
+                            let child_is_cloud = root_is_cloud || is_icloud_path(&child_path);
+                            buffer.push(DiskUsageFact::NodeDiscovered {
+                                node: child_id,
+                                kind,
+                                file_category,
+                                mtime,
+                                name,
+                                is_cloud: child_is_cloud,
+                            });
+                            buffer.push(DiskUsageFact::NodeLinked {
+                                container: directory.id,
+                                node: child_id,
+                            });
+                            if size > 0 {
+                                buffer.push(DiskUsageFact::NodeSizeAdded {
+                                    node: child_id,
+                                    size_bytes: size,
+                                });
+                            }
+                            if allocated > 0 {
+                                buffer.push(DiskUsageFact::NodeAllocatedAdded {
+                                    node: child_id,
+                                    bytes: allocated,
+                                });
+                            }
+
+                            if matches!(kind, NodeKind::File) {
+                                stats.files_scanned = stats.files_scanned.saturating_add(1);
+                                stats.bytes_scanned = stats.bytes_scanned.saturating_add(size);
+                            } else {
+                                children.push(DuDirectory {
+                                    path: child_path,
+                                    id: child_id,
+                                    device: identity.map(|(dev, _, _)| dev),
+                                });
+                            }
                         }
                     }
-                }
-
-                let mac_pkg = is_mac_package(&child_path);
-                let treat_as_leaf = !is_dir || boundary_stub || (mac_pkg && !descend_packages);
-
-                // Hardlinked file already counted under another name?
-                // The node still appears in the tree; its bytes don't
-                // count twice.
-                let already_counted = if is_dir {
-                    false
-                } else {
-                    match identity {
-                        Some((dev, ino, nlink)) if nlink > 1 => !seen_links.insert((dev, ino)),
-                        _ => false,
+                    DirectoryWalkEvent::Done(directory, error) => {
+                        if let Some(error) = error {
+                            stats.dirs_skipped = stats.dirs_skipped.saturating_add(1);
+                            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                                stats.permission_denied_dirs =
+                                    stats.permission_denied_dirs.saturating_add(1);
+                            }
+                        }
+                        buffer.push(DiskUsageFact::ContainerScanCompleted {
+                            container: directory.id,
+                        });
                     }
-                };
-
-                let (kind, file_category, size, allocated) = if treat_as_leaf {
-                    let fc = if boundary_stub {
-                        FileCategory::Other
-                    } else if mac_pkg {
-                        FileCategory::Executable
-                    } else {
-                        classify_path(&child_path)
-                    };
-                    let (size, allocated) = if ft.is_symlink() || boundary_stub || already_counted {
-                        (0, 0)
-                    } else if mac_pkg && !descend_packages && is_dir {
-                        // Bundle as opaque leaf — but we still want a
-                        // Finder-style rolled-up total, not the
-                        // useless inode-stat size. Walk the package
-                        // contents and sum BOTH size axes: crediting
-                        // only the directory inode's blocks made a
-                        // 12 GB Xcode.app render as a kilobyte tile
-                        // in allocated mode.
-                        recursive_sizes(&child_path, cancel)
-                    } else {
-                        (metadata.len(), allocated_size(&metadata))
-                    };
-                    (NodeKind::File, fc, size, allocated)
-                } else {
-                    // Allocated size on macOS comes from the block
-                    // count. A symlink reports 0; a tiny file reports
-                    // the 4 KB block tax; a sparse file reports much
-                    // less than its apparent size. Falls back to 0 on
-                    // platforms that don't expose block counts.
-                    (
-                        NodeKind::Container,
-                        FileCategory::Other,
-                        0u64,
-                        allocated_size(&metadata),
-                    )
-                };
-
-                let child_is_cloud = root_is_cloud || is_icloud_path(&child_path);
-                buffer.push(DiskUsageFact::NodeDiscovered {
-                    node: child_id,
-                    kind,
-                    file_category,
-                    mtime,
-                    name,
-                    is_cloud: child_is_cloud,
-                });
-                buffer.push(DiskUsageFact::NodeLinked {
-                    container: dir_id,
-                    node: child_id,
-                });
-                if size > 0 {
-                    buffer.push(DiskUsageFact::NodeSizeAdded {
-                        node: child_id,
-                        size_bytes: size,
-                    });
-                }
-                if allocated > 0 {
-                    buffer.push(DiskUsageFact::NodeAllocatedAdded {
-                        node: child_id,
-                        bytes: allocated,
-                    });
-                }
-
-                if matches!(kind, NodeKind::File) {
-                    stats.files_scanned = stats.files_scanned.saturating_add(1);
-                    stats.bytes_scanned = stats.bytes_scanned.saturating_add(size);
-                } else {
-                    // Will be popped off the stack and entered later.
-                    stack.push((child_path, child_id, identity.map(|(dev, _, _)| dev)));
                 }
 
                 if buffer.len() >= batch_size {
                     on_batch(std::mem::take(&mut buffer));
                     buffer.reserve(batch_size);
                 }
-            }
-
-            buffer.push(DiskUsageFact::ContainerScanCompleted { container: dir_id });
-            if buffer.len() >= batch_size {
-                on_batch(std::mem::take(&mut buffer));
-                buffer.reserve(batch_size);
-            }
-
-            if last_progress.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
-                on_progress(stats);
-                last_progress = Instant::now();
-            }
-        }
+                if last_progress.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
+                    on_progress(stats);
+                    last_progress = Instant::now();
+                }
+                children
+            },
+        );
 
         if !buffer.is_empty() {
             on_batch(buffer);
@@ -571,6 +606,35 @@ mod tests {
         assert_eq!(layout.children.len(), 2);
         assert_eq!(layout.children[0].size_bytes, 50);
         assert_eq!(layout.children[0].kind, NodeKind::Container);
+    }
+
+    #[test]
+    fn local_scan_ids_do_not_enter_process_path_map() {
+        let tmp = fixture();
+        let fs_native = NativeFs::new();
+        let cancel = AtomicBool::new(false);
+        let id_base = 1_u64 << 62;
+        let mut all = Vec::new();
+        let err = fs_native.scan_disk_usage_local(
+            tmp.path(),
+            DEFAULT_DU_BATCH,
+            &cancel,
+            false,
+            id_base,
+            |batch| all.extend(batch),
+            |_| {},
+        );
+        assert!(err.is_none());
+
+        let ids: Vec<_> = all
+            .iter()
+            .filter_map(|fact| match fact {
+                DiskUsageFact::NodeDiscovered { node, .. } => Some(*node),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids.first().map(|id| id.as_raw()), Some(id_base + 1));
+        assert!(ids.iter().all(|id| fs_native.path_for(*id).is_none()));
     }
 
     #[test]

@@ -62,7 +62,8 @@ row; scripts live in the session scratchpad, not the repo.
 
 ### 2.1 Enumeration floor
 
-A single-threaded DFS with the walker's syscall shape (`read_dir` +
+Historical baseline before the native-reader work: a single-threaded DFS with
+the walker's old syscall shape (`read_dir` +
 `symlink_metadata` per dirent, plus `dirent.metadata()` for every matched
 entry — and in flat mode *every* entry matches):
 
@@ -77,9 +78,13 @@ network volume, minutes. Flat mode is therefore a *scan*, not a
 *listing*: it must stream, show progress, be cancellable, and never
 pretend to be instant.
 
-Free win noted in passing: the walker stats twice per match —
-`fs::symlink_metadata` in the loop and then `dirent.metadata()` inside
-`dirent_to_file_entry`. Removing the redundant one is ~15%.
+The shipped walker no longer has that shape. Flat View shares the same native
+directory layer as ordinary listings, recursive search and Disk Usage. On
+macOS, `getattrlistbulk` returns the row metadata in batches and a bounded
+coordinator reads multiple directories concurrently only on local,
+non-removable APFS. Other media use the conservative serial fallback. This
+changes enumeration latency without changing Flat's compact rows, scan-local
+identity, bounded worker/UI channel or viewport-only enrichment.
 
 ### 2.2 Memory per row
 
@@ -334,7 +339,12 @@ rewrite later.
    dedicated sub-100-byte Flat row is deliberately deferred after real-world
    measurements reached about 1.1 GB for 4.1 million rows. The remaining scale
    work is off-thread sort/filter indexes and segmented scroll coordinates.
-4. **Phase 3 — page-backed scale.** Add a spillable/on-disk row and sort index
+4. **Phase 2.5 — shared native enumeration (shipped).** macOS batches stat-like
+   attributes with `getattrlistbulk`; local internal APFS scans use a bounded
+   directory worker pool, while removable/network/unknown media stay serial.
+   The same implementation serves ordinary listings, recursive search and
+   Disk Usage, and cancellation clears queued directories immediately.
+5. **Phase 3 — page-backed scale.** Add a spillable/on-disk row and sort index
    for data sets larger than RAM. Spotlight can
    enumerate a scope near-instantly, and `ferail-meta` could hold a
    queryable index. Both change freshness and completeness guarantees

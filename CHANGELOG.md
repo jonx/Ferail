@@ -8,6 +8,30 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Tool results can open their location directly in a new tab.** Right-click
+  one Disk Usage square, recursive Search result, or Duplicate member and
+  choose Open in New Tab. A folder opens directly; a file opens its containing
+  folder and is selected there, while the result remains in place for
+  comparison.
+
+- **Large folders, Flat View, recursive search, and Disk Usage enumerate much
+  faster on macOS.** Ferail now reads a directory's names, types, sizes, dates,
+  flags and identities in native batches instead of issuing one metadata call
+  per item. Recursive scans use bounded parallel directory reads on local APFS
+  volumes while removable, network and unknown disks keep the conservative
+  serial path.
+
+- **Closing Disk Usage releases its scan index.** Its file identities and
+  parent links now belong to the result surface instead of the process-wide
+  navigation map, so scanning millions of files no longer permanently retains
+  every discovered path. Explicit actions reconstruct only the paths they use.
+
+- **Incomplete Disk Usage scans are visible.** The summary counts skipped
+  folders instead of presenting a partial total as complete. On macOS, a scan
+  that reaches protected folders offers Full Disk Access, also available in
+  Settings › Performance; the faster reader itself does not require that
+  permission.
+
 ## 0.6.8 — 2026-08-25 (Windows-only release)
 
 This release publishes Windows x64 portable and symbols archives only. macOS

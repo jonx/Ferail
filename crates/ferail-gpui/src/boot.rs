@@ -458,6 +458,7 @@ fn quit_after_dev_cleanup(cx: &mut App) {
     cx.quit();
 }
 
+#[cfg(not(target_os = "macos"))]
 fn dev_quit_cleanup_in_progress() -> bool {
     #[cfg(feature = "screenshot-harness")]
     {

@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
@@ -20,6 +20,7 @@ use ferail_core::{
 };
 
 pub mod archive;
+mod directory_reader;
 mod disk_usage_scanner;
 mod dupes;
 pub mod file_ops;
@@ -134,9 +135,9 @@ pub const DEFAULT_ENUMERATION_BATCH: usize = 256;
 
 impl NativeFs {
     /// Stream entries from `path` in batches of up to `batch_size`,
-    /// invoking `on_batch` each time the buffer fills or `read_dir`
-    /// drains. Pure-function: returns `Some(error)` on hard failure
-    /// (typically the initial `read_dir` open) and `None` on either
+    /// invoking `on_batch` each time the buffer fills or the native directory
+    /// reader drains. Pure-function: returns `Some(error)` on hard failure
+    /// (typically the initial directory open) and `None` on either
     /// successful completion or cooperative cancellation.
     ///
     /// `cancel` is checked between entries and (lazily) between batches.
@@ -155,31 +156,20 @@ impl NativeFs {
         mut on_batch: impl FnMut(Vec<FileEntry>),
     ) -> Option<EnumerationError> {
         ferail_core::path_guard::assert_off_ui_thread("NativeFs::enumerate_streaming");
-        let read_dir = match std::fs::read_dir(path) {
-            Ok(rd) => rd,
-            Err(e) => return Some(map_io_error(&e)),
-        };
         let mut buffer: Vec<FileEntry> = Vec::with_capacity(batch_size);
-        for dirent in read_dir.flatten() {
-            if cancel.load(Ordering::Relaxed) {
-                if !buffer.is_empty() {
-                    on_batch(std::mem::take(&mut buffer));
-                }
-                return None;
-            }
-            let Some(entry) = self.dirent_to_file_entry(&dirent) else {
-                continue;
-            };
-            buffer.push(entry);
+        let result = directory_reader::for_each(path, cancel, |entry| {
+            let id = self.id_for_path(&entry.path);
+            buffer.push(self.file_entry_from_directory_entry_with_id(&entry, id));
             if buffer.len() >= batch_size {
                 on_batch(std::mem::take(&mut buffer));
                 buffer.reserve(batch_size);
             }
-        }
+            true
+        });
         if !buffer.is_empty() {
             on_batch(buffer);
         }
-        None
+        result.err().map(|error| map_io_error(&error))
     }
 
     /// Build a `FileEntry` for an arbitrary path (used by global search,
@@ -194,20 +184,6 @@ impl NativeFs {
             .map(str::to_owned)?;
         let metadata = std::fs::symlink_metadata(path).ok()?;
         Some(self.file_entry_from_metadata(path, name, &metadata))
-    }
-
-    /// Build a `FileEntry` from a single `DirEntry`. Returns `None` for
-    /// names that aren't valid UTF-8 or whose metadata can't be read —
-    /// matching the existing eager `enumerate` policy of skipping them
-    /// rather than failing the whole listing.
-    fn dirent_to_file_entry(&self, dirent: &std::fs::DirEntry) -> Option<FileEntry> {
-        let child_path = dirent.path();
-        let name = child_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(str::to_owned)?;
-        let metadata = dirent.metadata().ok()?;
-        Some(self.file_entry_from_metadata(&child_path, name, &metadata))
     }
 
     /// Shared `FileEntry` construction from a resolved `(path, name,
@@ -244,22 +220,58 @@ impl NativeFs {
         let mtime_unix = metadata
             .modified()
             .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
+            .and_then(system_time_unix)
             .unwrap_or(0);
+        let created_unix = metadata.created().ok().and_then(system_time_unix);
+        let hidden = entry_is_hidden(&name, metadata);
+        let locked = entry_is_locked(metadata);
+        self.file_entry_from_values(
+            name,
+            kind,
+            size,
+            mtime_unix,
+            created_unix,
+            hidden,
+            locked,
+            id,
+        )
+    }
+
+    fn file_entry_from_directory_entry_with_id(
+        &self,
+        entry: &crate::directory_reader::DirectoryEntry,
+        id: NodeId,
+    ) -> FileEntry {
+        self.file_entry_from_values(
+            entry.name.clone(),
+            entry.kind,
+            entry.size,
+            entry.mtime.and_then(system_time_unix).unwrap_or(0),
+            entry.created.and_then(system_time_unix),
+            entry.hidden,
+            entry.locked,
+            id,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn file_entry_from_values(
+        &self,
+        name: String,
+        kind: EntryKind,
+        size: u64,
+        mtime_unix: i64,
+        created_unix: Option<i64>,
+        hidden: bool,
+        locked: bool,
+        id: NodeId,
+    ) -> FileEntry {
         let display_size = if matches!(kind, EntryKind::Directory) {
             String::new()
         } else {
             humanize_bytes(size)
         };
         let display_kind = describe_kind(kind, &name);
-        let hidden = entry_is_hidden(&name, metadata);
-        let created_unix = metadata
-            .created()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64);
-        let locked = entry_is_locked(metadata);
         // User-facing leaf (macOS shows an on-disk `:` as `/`, Finder-style),
         // and a precomputed hazard flag so the dense row paint never runs the
         // deceptive-character analysis itself.
@@ -292,6 +304,12 @@ impl NativeFs {
             locked,
         }
     }
+}
+
+fn system_time_unix(time: std::time::SystemTime) -> Option<i64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
 }
 
 /// Platform "locked" semantics for `FileEntry::locked`, evaluated once

@@ -1611,7 +1611,7 @@ fn appearance_page(
 /// persist and update a process global so open windows react without a
 /// relaunch.
 fn performance_page() -> SettingPage {
-    SettingPage::new(tr!("Performance"))
+    let mut page = SettingPage::new(tr!("Performance"))
         .icon(Icon::empty().path("icons/cpu.svg"))
         .group(
             SettingGroup::new()
@@ -1666,7 +1666,83 @@ fn performance_page() -> SettingPage {
                         cx.set_global(crate::prefetch::FileDetailScan(val));
                     },
                 )),
-        )
+        );
+
+    #[cfg(target_os = "macos")]
+    {
+        page = page.group(
+            SettingGroup::new()
+                .title(tr!("Disk Usage access"))
+                .item(full_disk_access_setting()),
+        );
+    }
+
+    page
+}
+
+#[cfg(target_os = "macos")]
+fn full_disk_access_setting() -> SettingItem {
+    let title = tr!("Full Disk Access");
+    let description = tr!(
+        "Optional. Lets Disk Usage include folders protected by macOS. Fast directory reading works without it; Ferail asks only when a scan encounters protected folders."
+    );
+    let keyword_title = title.clone();
+    let keyword_description = description.clone();
+    SettingItem::render(move |_options, _window, cx| {
+        use gpui_component::{ActiveTheme as _, Sizable as _, button::Button};
+        let foreground = cx.theme().foreground;
+        let muted = cx.theme().muted_foreground;
+        gpui_component::v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                gpui_component::h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_scale_sm()
+                            .text_color(foreground)
+                            .child(title.clone()),
+                    )
+                    .child(
+                        Button::new("settings-full-disk-access")
+                            .label(tr!("Open System Settings"))
+                            .outline()
+                            .small()
+                            .on_click(|_, window, cx| {
+                                use gpui_component::{WindowExt as _, notification::Notification};
+                                if let Some(path) = crate::platform_shell::app_bundle_path() {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(path));
+                                    window.push_notification(
+                                        Notification::info(tr!(
+                                            "Ferail's path is copied. Add it in Full Disk Access, then relaunch Ferail."
+                                        ))
+                                        .autohide(false),
+                                        cx,
+                                    );
+                                }
+                                cx.background_spawn(async move {
+                                    crate::platform_shell::open_url(
+                                        crate::shell::FULL_DISK_ACCESS_SETTINGS_URL,
+                                    );
+                                })
+                                .detach();
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .text_scale_sm()
+                    .text_color(muted)
+                    .child(description.clone()),
+            )
+    })
+    .keywords([keyword_title, keyword_description])
 }
 
 fn files_page(home_hidden_count: Option<usize>) -> SettingPage {

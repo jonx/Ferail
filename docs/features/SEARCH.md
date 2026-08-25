@@ -23,7 +23,9 @@ cancellable.
 How you trigger it: focus the filter field (Cmd+F), type, and press **Return**
 to escalate the in-directory filter into a recursive / Spotlight search of the
 current folder and below. Esc clears. The engine is selectable in Settings →
-Search & Duplicates.
+Search & Duplicates. A result file's **Open in New Tab** context command opens
+its containing folder in a new tab and selects the exact result; a result
+folder opens directly.
 
 **Honest scope — this is the mechanism, not Finder-grade search UX.** What
 ships is a *single query box*: free text (substring/name via the walker, or

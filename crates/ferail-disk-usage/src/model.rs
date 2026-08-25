@@ -255,6 +255,12 @@ pub struct DiskUsageStats {
     pub files_scanned: u64,
     pub dirs_scanned: u64,
     pub bytes_scanned: u64,
+    /// Subdirectories that could not be enumerated. Their parent still appears
+    /// in the result, but totals are explicitly partial.
+    pub dirs_skipped: u64,
+    /// Subset of `dirs_skipped` rejected for permissions/TCC. macOS uses this
+    /// to offer Full Disk Access only after incomplete coverage is observed.
+    pub permission_denied_dirs: u64,
 }
 
 #[cfg(test)]

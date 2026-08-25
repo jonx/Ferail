@@ -29,6 +29,7 @@ use ferail_core::NodeId;
 use ferail_fs_native::DupeMode;
 #[cfg_attr(target_os = "windows", allow(unused_imports))]
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_component::scroll::Scrollbar;
 
 use super::dupes::{SimilarCriterion, location_with_note, similar_criterion_range};
@@ -642,6 +643,8 @@ impl Shell {
                         }));
 
                 let shares = member.shares_storage();
+                let path_for_tab = member.path.clone();
+                let shell_for_tab = cx.weak_entity();
                 let row = h_flex()
                     .id(ElementId::Name(
                         format!("dupe-member-{group_no}-{}", node.as_raw()).into(),
@@ -701,7 +704,27 @@ impl Shell {
                                     .child(super::loading::middle_truncate_path(&location, 58)),
                             )
                             .children(image_detail),
-                    );
+                    )
+                    .context_menu(move |menu, _window, _cx| {
+                        let path = path_for_tab.clone();
+                        let shell = shell_for_tab.clone();
+                        menu.item(PopupMenuItem::new(tr!("Open in New Tab")).on_click(
+                            move |_, window, cx| {
+                                let Some(parent) = path.parent().map(Path::to_path_buf) else {
+                                    return;
+                                };
+                                let names = path
+                                    .file_name()
+                                    .map(|name| vec![name.to_string_lossy().into_owned()])
+                                    .unwrap_or_default();
+                                if let Some(shell) = shell.upgrade() {
+                                    shell.update(cx, |shell, cx| {
+                                        shell.reveal_in_new_tab(parent, names, window, cx);
+                                    });
+                                }
+                            },
+                        ))
+                    });
                 body = body.child(row);
             }
             card = card.child(body);

@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -33,6 +33,7 @@ gpui::actions!(
     [
         DuClearSelection,
         DuOpen,
+        DuOpenInNewTab,
         DuReveal,
         DuGetInfo,
         DuCopyFiles,
@@ -109,10 +110,103 @@ const DU_QUEUE_CAP: usize = 256;
 /// scanner runs on a background pool thread, so blocking it is fine.
 const DU_BACKPRESSURE_NAP: Duration = Duration::from_millis(8);
 
+// Disk Usage identities are scan-local. Bit 62 keeps them disjoint from
+// ordinary NativeFs ids; Flat View owns bit 63. Forty low bits allow more than
+// one trillion nodes per scan and the remaining bits distinguish concurrent
+// or repeated scans.
+const DU_ID_MARKER: u64 = 1 << 62;
+const DU_ROW_BITS: u32 = 40;
+static NEXT_DU_SCAN: AtomicU64 = AtomicU64::new(1);
+
+fn next_du_id_base() -> u64 {
+    let scan_mask = (1_u64 << (62 - DU_ROW_BITS)) - 1;
+    let scan = NEXT_DU_SCAN.fetch_add(1, Ordering::Relaxed) & scan_mask;
+    DU_ID_MARKER | (scan << DU_ROW_BITS)
+}
+
+/// Minimal, surface-owned path index. Node names already live in
+/// `DiskUsageTree`; retaining one parent id per node is enough to reconstruct
+/// an absolute path when an action is invoked. Closing the DU surface drops
+/// this vector and the tree together, unlike NativeFs's process-wide path map.
+struct DiskUsagePathArena {
+    root: PathBuf,
+    id_base: u64,
+    parents: Vec<Option<NodeId>>,
+}
+
+impl DiskUsagePathArena {
+    fn new(root: PathBuf, id_base: u64) -> Self {
+        Self {
+            root,
+            id_base,
+            parents: vec![None], // id_base + 1 is always the scan root.
+        }
+    }
+
+    fn root_id(&self) -> NodeId {
+        NodeId::from_raw(self.id_base + 1).expect("disk-usage root id is nonzero")
+    }
+
+    fn row_index(&self, id: NodeId) -> Option<usize> {
+        let offset = id.as_raw().checked_sub(self.id_base)?.checked_sub(1)?;
+        usize::try_from(offset).ok()
+    }
+
+    fn ensure(&mut self, id: NodeId) -> Option<usize> {
+        let row = self.row_index(id)?;
+        if self.parents.len() <= row {
+            self.parents.resize(row + 1, None);
+        }
+        Some(row)
+    }
+
+    fn apply_facts(&mut self, facts: &[DiskUsageFact]) {
+        for fact in facts {
+            match fact {
+                DiskUsageFact::NodeDiscovered { node, .. } => {
+                    self.ensure(*node);
+                }
+                DiskUsageFact::NodeLinked { container, node } => {
+                    self.ensure(*container);
+                    if let Some(row) = self.ensure(*node) {
+                        self.parents[row] = Some(*container);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn path_for(&self, id: NodeId, tree: &DiskUsageTree) -> Option<PathBuf> {
+        if id == self.root_id() {
+            return Some(self.root.clone());
+        }
+        let mut current = id;
+        let mut components = Vec::new();
+        // The bound turns corrupt/cyclic fact input into a missing action
+        // target instead of an infinite loop.
+        for _ in 0..self.parents.len() {
+            if current == self.root_id() {
+                let mut path = self.root.clone();
+                for component in components.iter().rev() {
+                    path.push(component);
+                }
+                return Some(path);
+            }
+            let node = tree.nodes.get(&current)?;
+            components.push(node.display_name.as_str());
+            let row = self.row_index(current)?;
+            current = self.parents.get(row).copied().flatten()?;
+        }
+        None
+    }
+}
+
 pub struct DiskUsageView {
     root_path: PathBuf,
     root_id: NodeId,
     fs: Arc<NativeFs>,
+    path_arena: DiskUsagePathArena,
 
     tree: DiskUsageTree,
     stats: DiskUsageStats,
@@ -195,15 +289,6 @@ pub struct DiskUsageView {
     /// shell window.
     host_size: Option<(f32, f32)>,
 
-    /// True once we've adopted the scanner's canonical root NodeId
-    /// from the first incoming fact. Phase 6 regression fix: the
-    /// constructor keeps the UI snappy by skipping `canonicalize()`,
-    /// but the scanner canonicalises internally, so its facts arrive
-    /// under a different NodeId than the one we computed up front.
-    /// Without this, focus_id() points at an orphan node and the
-    /// treemap layout renders empty even though tree.nodes has data.
-    root_resolved: bool,
-
     focus_handle: FocusHandle,
 }
 
@@ -232,7 +317,9 @@ impl DiskUsageView {
         // canonicalisation before walking; opening the window should
         // not wait on filesystem resolution.
         let canonical = root_path.clone();
-        let root_id = fs.id_for_path(&canonical);
+        let id_base = next_du_id_base();
+        let path_arena = DiskUsagePathArena::new(canonical.clone(), id_base);
+        let root_id = path_arena.root_id();
         let cancel = Arc::new(AtomicBool::new(false));
         let msg_queue = Arc::new(Mutex::new(VecDeque::new()));
         // Volume capacity for the header bar arrives off-thread below —
@@ -243,6 +330,7 @@ impl DiskUsageView {
             root_path: canonical.clone(),
             root_id,
             fs: fs.clone(),
+            path_arena,
             tree: DiskUsageTree::new(root_id),
             stats: DiskUsageStats::default(),
             scan_complete: false,
@@ -270,7 +358,6 @@ impl DiskUsageView {
             dock_owner,
             host: ToolHostContext::Windowed,
             host_size: None,
-            root_resolved: false,
             focus_handle: cx.focus_handle(),
         };
         view.start_scan(fs, cx);
@@ -387,6 +474,7 @@ impl DiskUsageView {
         let cancel = self.cancel.clone();
         let cancel_for_push = self.cancel.clone();
         let descend = self.descend_packages;
+        let id_base = self.path_arena.id_base;
         let queue_for_scan = self.msg_queue.clone();
         let queue_for_progress = self.msg_queue.clone();
         let queue_for_done = self.msg_queue.clone();
@@ -402,11 +490,12 @@ impl DiskUsageView {
         // BG: run the scan. Synchronous I/O on the executor's pool.
         cx.background_executor()
             .spawn(async move {
-                let err = fs.scan_disk_usage(
+                let err = fs.scan_disk_usage_local(
                     &root,
                     ferail_fs_native::DEFAULT_DU_BATCH,
                     &cancel,
                     descend,
+                    id_base,
                     |batch| {
                         // Backpressure: never let the queue outrun the FG
                         // drain. When it's full, park this (background pool)
@@ -545,21 +634,7 @@ impl DiskUsageView {
     fn apply_scan_msg(&mut self, msg: ScanMsg) {
         match msg {
             ScanMsg::Batch(facts) => {
-                // First scanner fact is a ContainerScanStarted for the
-                // *canonical* root NodeId. Adopt it as our root_id so
-                // focus_id() points at the node the rest of the
-                // facts actually populate. Without this, the layout
-                // is rooted at the as-passed (non-canonical) path's
-                // id which has no children → empty treemap.
-                if !self.root_resolved {
-                    for fact in &facts {
-                        if let DiskUsageFact::ContainerScanStarted { container } = fact {
-                            self.root_id = *container;
-                            self.root_resolved = true;
-                            break;
-                        }
-                    }
-                }
+                self.path_arena.apply_facts(&facts);
                 self.tree.apply_facts(&facts);
             }
             ScanMsg::Progress(p) => self.stats = p,
@@ -614,6 +689,9 @@ impl DiskUsageView {
         if let Some(id) = self.task_id.take() {
             self.with_tasks(cx, |reg| reg.end(id));
         }
+        let id_base = next_du_id_base();
+        self.path_arena = DiskUsagePathArena::new(self.root_path.clone(), id_base);
+        self.root_id = self.path_arena.root_id();
         self.tree = DiskUsageTree::new(self.root_id);
         self.stats = DiskUsageStats::default();
         self.scan_complete = false;
@@ -705,7 +783,7 @@ impl DiskUsageView {
     fn selected_paths(&self) -> Vec<(PathBuf, bool, NodeId)> {
         let mut out = Vec::with_capacity(self.selected.len());
         for id in &self.selected {
-            let Some(path) = self.fs.path_for(*id) else {
+            let Some(path) = self.path_arena.path_for(*id, &self.tree) else {
                 continue;
             };
             let is_dir = self
@@ -760,6 +838,7 @@ impl DiskUsageView {
         let scanned = humanize_bytes(self.stats.bytes_scanned);
         let files = self.stats.files_scanned;
         let folders = self.stats.dirs_scanned;
+        let skipped = self.stats.dirs_skipped;
         let scanning = !self.scan_complete;
         // A failed scan must say so — it used to store the error and
         // render "0 files, 0 folders, 0 B", indistinguishable from an
@@ -773,6 +852,16 @@ impl DiskUsageView {
                 ferail_core::EnumerationError::Other(msg) => msg.clone(),
             };
             tr!("Scan failed \u{2014} {detail}", detail = why).to_string()
+        } else if self.scan_complete && skipped > 0 {
+            trn!(
+                "{files} files, {folders} folders, {scanned} · {n} folder skipped",
+                "{files} files, {folders} folders, {scanned} · {n} folders skipped",
+                skipped as usize,
+                files = files,
+                folders = folders,
+                scanned = scanned
+            )
+            .to_string()
         } else if self.scan_complete {
             tr!(
                 "{files} files, {folders} folders, {scanned}",
@@ -791,6 +880,8 @@ impl DiskUsageView {
         };
         let summary_color = if self.error.is_some() {
             theme.danger
+        } else if skipped > 0 {
+            theme.warning
         } else {
             theme.muted_foreground
         };
@@ -891,6 +982,41 @@ impl DiskUsageView {
                             .text_scale_xs()
                             .text_color(summary_color)
                             .child(SharedString::from(summary)),
+                    )
+                    .when(
+                        cfg!(target_os = "macos")
+                            && self.stats.permission_denied_dirs > 0,
+                        |this| {
+                            this.child(
+                                Button::new("du-full-disk-access")
+                                    .small()
+                                    .label(tr!("Full Disk Access"))
+                                    .tooltip(tr!(
+                                        "Include folders protected by macOS in future scans"
+                                    ))
+                                    .on_click(cx.listener(|_, _, window, cx| {
+                                        use gpui_component::notification::Notification;
+                                        if let Some(path) =
+                                            crate::platform_shell::app_bundle_path()
+                                        {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(path));
+                                            window.push_notification(
+                                                Notification::info(tr!(
+                                                    "Ferail's path is copied. Add it in Full Disk Access, then relaunch Ferail."
+                                                ))
+                                                .autohide(false),
+                                                cx,
+                                            );
+                                        }
+                                        cx.background_spawn(async move {
+                                            crate::platform_shell::open_url(
+                                                crate::shell::FULL_DISK_ACCESS_SETTINGS_URL,
+                                            );
+                                        })
+                                        .detach();
+                                    })),
+                            )
+                        },
                     )
                     .child(
                         ButtonGroup::new("du-size-mode")
@@ -1244,14 +1370,21 @@ impl DiskUsageView {
                         .menu(tr!("Save View as HTML\u{2026}"), Box::new(DuSaveViewHtml)),
                     Some((_node, is_container)) => {
                         let single = count == 1;
-                        let mut menu = menu.menu(tr!("Open"), Box::new(DuOpen)).menu(
-                            if cfg!(target_os = "macos") {
-                                tr!("Reveal in Finder")
-                            } else {
-                                tr!("Reveal in File Manager")
-                            },
-                            Box::new(DuReveal),
-                        );
+                        let mut menu = menu
+                            .menu(tr!("Open"), Box::new(DuOpen))
+                            .menu_with_disabled(
+                                tr!("Open in New Tab"),
+                                Box::new(DuOpenInNewTab),
+                                !(has_shell && single),
+                            )
+                            .menu(
+                                if cfg!(target_os = "macos") {
+                                    tr!("Reveal in Finder")
+                                } else {
+                                    tr!("Reveal in File Manager")
+                                },
+                                Box::new(DuReveal),
+                            );
                         if has_shell {
                             menu = menu.menu(tr!("Get Info"), Box::new(DuGetInfo));
                         }
@@ -1456,6 +1589,37 @@ impl DiskUsageView {
             }
         })
         .detach();
+    }
+
+    fn on_du_open_in_new_tab(
+        &mut self,
+        _: &DuOpenInNewTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(shell) = self.shell.as_ref().and_then(gpui::WeakEntity::upgrade) else {
+            return;
+        };
+        let mut selected = self.selected_paths().into_iter();
+        let Some((path, is_dir, _)) = selected.next() else {
+            return;
+        };
+        // The menu permits exactly one item. Keep that invariant in the
+        // handler too so a synthetic action cannot fan out millions of tabs.
+        if selected.next().is_some() {
+            return;
+        }
+        shell.update(cx, |shell, cx| {
+            if is_dir {
+                shell.open_path_in_new_tab(path, window, cx);
+            } else if let Some(parent) = path.parent().map(PathBuf::from) {
+                let names = path
+                    .file_name()
+                    .map(|name| vec![name.to_string_lossy().into_owned()])
+                    .unwrap_or_default();
+                shell.reveal_in_new_tab(parent, names, window, cx);
+            }
+        });
     }
 
     fn on_du_reveal(&mut self, _: &DuReveal, _: &mut Window, cx: &mut Context<Self>) {
@@ -1875,6 +2039,7 @@ impl Render for DiskUsageView {
             // these through the view's focus context).
             .on_action(cx.listener(Self::on_du_clear_selection))
             .on_action(cx.listener(Self::on_du_open))
+            .on_action(cx.listener(Self::on_du_open_in_new_tab))
             .on_action(cx.listener(Self::on_du_reveal))
             .on_action(cx.listener(Self::on_du_get_info))
             .on_action(cx.listener(Self::on_du_copy_files))
@@ -2044,5 +2209,62 @@ fn short_path(p: &std::path::Path) -> String {
         full
     } else {
         format!("\u{2026}/{}", tail)
+    }
+}
+
+#[cfg(test)]
+mod path_arena_tests {
+    use super::*;
+
+    #[test]
+    fn scan_local_parent_index_reconstructs_paths_without_native_fs() {
+        let base = 1_u64 << 62;
+        let mut arena = DiskUsagePathArena::new(PathBuf::from("/scan-root"), base);
+        let root = arena.root_id();
+        let folder = NodeId::from_raw(base + 2).unwrap();
+        let file = NodeId::from_raw(base + 3).unwrap();
+        let facts = vec![
+            DiskUsageFact::NodeDiscovered {
+                node: root,
+                kind: ferail_disk_usage::NodeKind::Container,
+                file_category: FileCategory::Other,
+                mtime: None,
+                name: "scan-root".into(),
+                is_cloud: false,
+            },
+            DiskUsageFact::NodeDiscovered {
+                node: folder,
+                kind: ferail_disk_usage::NodeKind::Container,
+                file_category: FileCategory::Other,
+                mtime: None,
+                name: "nested".into(),
+                is_cloud: false,
+            },
+            DiskUsageFact::NodeLinked {
+                container: root,
+                node: folder,
+            },
+            DiskUsageFact::NodeDiscovered {
+                node: file,
+                kind: ferail_disk_usage::NodeKind::File,
+                file_category: FileCategory::Document,
+                mtime: None,
+                name: "report.txt".into(),
+                is_cloud: false,
+            },
+            DiskUsageFact::NodeLinked {
+                container: folder,
+                node: file,
+            },
+        ];
+        let mut tree = DiskUsageTree::new(root);
+        arena.apply_facts(&facts);
+        tree.apply_facts(&facts);
+
+        assert_eq!(
+            arena.path_for(file, &tree),
+            Some(PathBuf::from("/scan-root/nested/report.txt"))
+        );
+        assert_eq!(arena.parents.len(), 3);
     }
 }

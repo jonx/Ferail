@@ -86,7 +86,10 @@ relative to the daily value. Ordered by bang-for-buck.
   It uses an explicit match-all walker, scan-local identities and a compact
   per-directory path arena, so toggling it off releases every recursive path;
   no Flat path enters `NodeStore` or `NativeFs`'s lifetime maps. Streaming
-  application is O(batch), filtering is snapshot-local, Refresh rescans, and
+  enumeration now shares macOS `getattrlistbulk` reads and bounded local-APFS
+  directory parallelism with Disk Usage and recursive search, without changing
+  the compact row/path model or viewport-only enrichment. Batch application is
+  O(batch), filtering is snapshot-local, Refresh rescans, and
   whole-list magic/folder-size workers stay off. The shared `FileEntry` payload
   is down from 264 to 160 bytes, empty Flat decorations are no longer allocated,
   names/directories/repeated display values share storage, and visible rows
@@ -352,9 +355,10 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - Finish the stable **NodeStore identity** model for rename, move, mount
   changes, Ant Trail, selection, watcher events, and metadata cache keys.
 - **NodeId intern-map lifecycle**: `NativeFs`'s `NodeId ↔ PathBuf` maps (and
-  `NodeStore`'s) are add-only — a disk-usage scan or duplicate sweep of a
+  `NodeStore`'s) are add-only — a duplicate sweep or ordinary recursive search of a
   multi-million-file volume permanently pins one `PathBuf` per file for the
-  process lifetime (GB-scale RSS surviving window close). A safe fix needs an
+  process lifetime (GB-scale RSS surviving window close). Disk Usage and Flat
+  View now use drop-with-surface scan-local arenas. The remaining tools need an
   id *lifecycle*, not an eviction hack: scan-minted ids interleave with ids
   live tabs/selections/history hold (the path-keyed map returns the same id to
   both), so range- or ownership-based forgetting can misdirect a later
@@ -397,9 +401,11 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - Streaming-enumeration tests: delayed batches, cancellation, stale generation
   delivery, and partial-error delivery; surface partial enumeration errors in
   the task/notification UI instead of logging only.
-- Duplicate/Disk Usage fast-walk follow-up: platform bulk enumeration
-  (`getattrlistbulk`, NTFS MFT/USN, Linux `statx`/`io_uring`) after device and
-  filesystem identity are modeled.
+- Platform fast-walk follow-up: macOS `getattrlistbulk` plus bounded APFS
+  parallelism now serve ordinary listings, Flat View, recursive search and Disk
+  Usage. Add an opt-in elevated NTFS MFT backend on Windows (isolated helper,
+  portable fallback) and evaluate Linux `statx`/`io_uring`; duplicate finding
+  should adopt the shared reader without weakening clone/cloud rules.
 
 ## Settings, Commands & Accessibility
 

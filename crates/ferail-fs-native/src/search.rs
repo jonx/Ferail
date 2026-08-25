@@ -15,7 +15,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use ferail_core::{EnumerationError, FileEntry, NodeId};
@@ -174,55 +174,38 @@ impl NativeFs {
         let mut buffer: Vec<SearchHit> = Vec::with_capacity(batch_size);
         let mut stats = SearchStats::default();
         let mut last_progress = Instant::now();
-        let mut stack: Vec<PathBuf> = vec![canonical_root.clone()];
+        let workers = crate::directory_reader::recommended_recursive_workers(&canonical_root);
 
-        while let Some(dir_path) = stack.pop() {
-            if cancel.load(Ordering::Relaxed) {
-                if !buffer.is_empty() {
-                    on_batch(std::mem::take(&mut buffer));
+        crate::directory_reader::walk(canonical_root.clone(), cancel, workers, |event| {
+            use crate::directory_reader::DirectoryWalkEvent;
+            let DirectoryWalkEvent::Batch(_directory, entries) = event else {
+                if matches!(event, DirectoryWalkEvent::Started(_)) {
+                    stats.dirs_scanned = stats.dirs_scanned.saturating_add(1);
                 }
-                return None;
-            }
-            stats.dirs_scanned = stats.dirs_scanned.saturating_add(1);
-
-            let read_dir = match fs::read_dir(&dir_path) {
-                Ok(rd) => rd,
-                // Permission denied / transient — skip the body but keep
-                // walking the rest of the tree.
-                Err(_) => continue,
+                if last_progress.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
+                    on_progress(stats);
+                    last_progress = Instant::now();
+                }
+                return Vec::new();
             };
-
-            for dirent in read_dir.flatten() {
-                if cancel.load(Ordering::Relaxed) {
-                    if !buffer.is_empty() {
-                        on_batch(std::mem::take(&mut buffer));
-                    }
-                    return None;
-                }
-
-                let child_path = dirent.path();
-                let Some(name) = child_path.file_name().and_then(|s| s.to_str()) else {
-                    continue;
-                };
-                let metadata = match fs::symlink_metadata(&child_path) {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
+            let mut children = Vec::new();
+            for entry in entries {
+                let child_path = &entry.path;
+                let name = entry.name.as_str();
 
                 // Hidden filter: gate both matching and descent so a
                 // hidden tree doesn't get walked when not requested.
-                if !include_hidden && crate::entry_is_hidden(name, &metadata) {
+                if !include_hidden && entry.hidden {
                     continue;
                 }
                 // Never download an iCloud placeholder just to search it.
-                if is_icloud_path(&child_path) && is_dataless(&metadata) {
+                if is_icloud_path(child_path) && is_dataless_flags(entry.flags) {
                     continue;
                 }
 
-                let ft = metadata.file_type();
-                let is_symlink = ft.is_symlink();
-                let mac_pkg = is_mac_package(&child_path);
-                let is_dir = ft.is_dir() && !is_symlink;
+                let is_symlink = entry.is_symlink();
+                let mac_pkg = is_mac_package(child_path);
+                let is_dir = entry.is_dir() && !is_symlink;
                 let descend = is_dir && (!mac_pkg || descend_packages);
 
                 // Test the match against name or relative path.
@@ -232,7 +215,7 @@ impl NativeFs {
                         let haystack = if query.match_path {
                             child_path
                                 .strip_prefix(&canonical_root)
-                                .unwrap_or(&child_path)
+                                .unwrap_or(child_path)
                                 .to_string_lossy()
                                 .to_lowercase()
                         } else {
@@ -247,19 +230,14 @@ impl NativeFs {
                 let include_directories = local_identity.is_none_or(|(_, include)| include);
                 let emit = text_ok && (include_directories || !is_dir || mac_pkg);
                 if emit {
-                    // Reuse the symlink metadata already read for traversal
-                    // policy. The former second metadata call dominated warm
-                    // all-entry walks and bought no additional information.
                     let id = local_identity.and_then(|(base, _)| {
                         NodeId::from_raw(base.saturating_add(stats.matches).saturating_add(1))
                     });
-                    let entry = id.map_or_else(
-                        || self.file_entry_from_metadata(&child_path, name.to_owned(), &metadata),
-                        |id| self.file_entry_from_metadata_with_id(name.to_owned(), &metadata, id),
-                    );
-                    if expr.is_none_or(|e| e.metadata_matches(&entry)) {
+                    let id = id.unwrap_or_else(|| self.id_for_path(child_path));
+                    let row = self.file_entry_from_directory_entry_with_id(&entry, id);
+                    if expr.is_none_or(|e| e.metadata_matches(&row)) {
                         buffer.push(SearchHit {
-                            entry,
+                            entry: row,
                             path: child_path.clone(),
                         });
                         stats.matches = stats.matches.saturating_add(1);
@@ -271,15 +249,15 @@ impl NativeFs {
                 }
 
                 if descend {
-                    stack.push(child_path);
+                    children.push(entry.path);
                 }
             }
-
             if last_progress.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
                 on_progress(stats);
                 last_progress = Instant::now();
             }
-        }
+            children
+        });
 
         if !buffer.is_empty() {
             on_batch(buffer);
@@ -293,16 +271,15 @@ impl NativeFs {
 /// dataless / `SF_DATALESS`). Reading it would trigger a network
 /// download — the prime directive forbids that off a semantic event.
 #[cfg(target_os = "macos")]
-fn is_dataless(meta: &fs::Metadata) -> bool {
-    use std::os::macos::fs::MetadataExt;
+fn is_dataless_flags(flags: u32) -> bool {
     // <sys/stat.h>: SF_DATALESS — "file is dataless object" (the
     // placeholder for a not-yet-materialized iCloud / FileProvider file).
     const SF_DATALESS: u32 = 0x4000_0000;
-    (meta.st_flags() & SF_DATALESS) != 0
+    flags & SF_DATALESS != 0
 }
 
 #[cfg(not(target_os = "macos"))]
-fn is_dataless(_meta: &fs::Metadata) -> bool {
+fn is_dataless_flags(_flags: u32) -> bool {
     false
 }
 
@@ -312,6 +289,7 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
     use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::Ordering;
 
     /// Self-cleaning unique temp dir (the crate has no `tempfile` dep;
     /// the disk-usage tests roll their own too).

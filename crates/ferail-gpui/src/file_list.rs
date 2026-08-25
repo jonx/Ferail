@@ -3313,9 +3313,12 @@ impl TableDelegate for FileListDelegate {
             Availability::SingleOnly.allows(t) && Availability::When(avail_anchor_file).allows(t);
         let show_terminal = Availability::When(avail_anchor_dir).allows(t);
         let show_favorites = Availability::When(avail_anchor_dir).allows(t);
-        // A tab is a folder view: only a folder anchor can seed one, so the
-        // item hides on a file row instead of opening a tab that can't list.
-        let show_new_tab = Availability::When(avail_anchor_dir).allows(t);
+        // A folder seeds a tab directly. One file seeds its parent tab and is
+        // selected there; this is especially useful from recursive Search
+        // results, where the containing folder is not already on screen.
+        let show_new_tab = Availability::When(avail_anchor_dir).allows(t)
+            || (Availability::SingleOnly.allows(t)
+                && Availability::When(avail_anchor_file).allows(t));
         let show_clear_quarantine = Availability::When(avail_any_quarantined).allows(t);
         let show_extract = Availability::When(avail_any_archive).allows(t);
         let show_single_only = Availability::SingleOnly.allows(t);

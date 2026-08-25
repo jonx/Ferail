@@ -381,7 +381,7 @@ pub(super) fn dir_has_subdir(path: &Path) -> bool {
 /// Full Disk Access pane of Privacy & Security. Unlike Files and
 /// Folders, this pane has a "+" button so the user can add Ferail
 /// manually rather than waiting for a per-folder TCC prompt.
-pub(super) const FULL_DISK_ACCESS_SETTINGS_URL: &str =
+pub(crate) const FULL_DISK_ACCESS_SETTINGS_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
 
 /// An in-pane error: a title, prose body, and an optional clickable

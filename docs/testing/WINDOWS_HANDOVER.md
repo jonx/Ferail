@@ -919,3 +919,130 @@ Working-tree files intentionally left unstaged: all WIN-017 implementation,
   locale and planning files listed by `git status --short`; preserve unrelated
   concurrent user work when isolating the commit.
 ```
+
+### 2026-08-26 — fast recursive enumeration / Disk Usage handover
+
+```text
+Date / machine: 2026-08-26, macOS development machine
+Commit: uncommitted; record the eventual isolated commit before moving to PC
+
+Implemented and verified on macOS:
+  - one shared directory reader now serves ordinary streamed listings, Flat
+    View, recursive search and Disk Usage;
+  - macOS reads name, type, sizes, dates, flags, file id, link count and mount
+    status with getattrlistbulk; a direct APFS test proves the normal fixture
+    returns with zero per-entry metadata fallbacks;
+  - recursive callers use a bounded coordinator and up to eight workers only
+    on local, non-removable APFS; other media/platforms stay serial;
+  - worker results are capped at two 256-entry batches per worker, cancellation
+    clears queued directories, and all policy/counters/callbacks remain on the
+    single coordinator thread;
+  - Disk Usage uses scan-local ids plus one parent id per node. Closing or
+    refreshing the tool drops its path index instead of retaining millions of
+    paths in NativeFs;
+  - skipped subdirectories are counted. A macOS TCC denial exposes Full Disk
+    Access contextually and in Settings > Performance; FDA changes coverage,
+    not the fast-reader availability.
+
+Host proof:
+  - cargo check -p ferail-fs-native
+  - cargo test -p ferail-fs-native --lib (190 passed)
+  - cargo check -p ferail-gpui
+  - cargo test -p ferail-core i18n::extract
+  - cargo test -p ferail-core i18n::pack (bundled packs fully cover source)
+
+Windows behavior in this slice:
+  - directory_reader uses the existing portable DirEntry metadata path, which
+    is backed by WIN32_FIND_DATA and keeps the OneDrive no-hydration rule;
+  - recommended_recursive_workers returns one, so no Windows concurrency or
+    behavior change is claimed before a real-machine run;
+  - no administrator requirement, prompt, raw-volume access or MFT parser has
+    been added to the main application.
+  - a macOS cross-check of ferail-fs-native for x86_64-pc-windows-msvc stops in
+    existing C dependencies before Rust application code: bzip2/lzma cannot
+    find the Windows stdlib headers and blake3 cannot find ml64.exe. This is a
+    host toolchain boundary; it is not a Windows compile claim for this slice.
+
+Required Windows implementation (next isolated feature):
+  1. Keep Ferail itself asInvoker. Add a narrowly scoped helper that is started
+     with runas only after the user explicitly chooses Fast NTFS scan; never
+     relaunch the whole GUI elevated.
+  2. Put a versioned, length-prefixed protocol over a per-request named pipe
+     protected for the invoking user. Send the requested root only in memory;
+     do not log, persist or include it in reports. Authenticate the helper with
+     a random nonce and reject oversized/malformed frames.
+  3. Probe the volume first. Offer the fast engine only for local NTFS and keep
+     the portable scanner for FAT/exFAT/ReFS/network/WSL and every denial,
+     cancellation, helper crash, timeout or parser inconsistency.
+  4. Read NTFS volume data and MFT extents sequentially, parse FILE records
+     with fixup validation, and emit owned neutral records containing FRN,
+     parent FRN, name, attributes, logical size and allocated size. Account for
+     multiple FILE_NAME attributes/hard links, sparse/compressed files and
+     records changing on a live volume. Never expose raw parser pointers.
+  5. Reconstruct ancestry by FRN. A subdirectory request may use the same
+     volume index but must emit only descendants of the requested root. Drop
+     the entire index/helper when Disk Usage closes or cancellation completes.
+  6. Stream bounded batches to the existing Disk Usage coordinator and keep
+     the current generation/cancel/backpressure gates. Do not adapt MFT rows
+     into Flat View until Disk Usage correctness and memory gates pass.
+  7. Add an explicit engine label in the Disk Usage surface: Portable or Fast
+     NTFS (administrator). Suggest Fast NTFS for a volume-sized portable scan,
+     never at Ferail startup; remember a preference, not administrator state.
+
+Real-Windows acceptance gates (none claimed from macOS):
+  - build/package remains asInvoker and a normal launch shows no UAC prompt;
+  - standard-user denial/cancel/helper crash all fall back visibly and leave
+    the GUI usable; no orphan helper, handle or named pipe remains;
+  - compare portable and fast totals/trees on a local NTFS fixture containing
+    hard links, sparse/compressed files, Unicode/long names, inaccessible
+    folders, junctions, mount points and files mutating during the scan;
+  - scan C:\ and a deep subdirectory; the latter contains no sibling records;
+  - cancel during volume read, parse and delivery, then close the tool and
+    verify memory is reusable and helper/private index memory is gone;
+  - repeat 20 open/cancel/close cycles and record GUI/helper private bytes,
+    handles, elapsed time and output counts;
+  - re-run ordinary listing, OneDrive no-hydration, WSL, 10k media and Flat
+    1M/4M baselines. Fast DU must not alter their worker count or row model;
+  - inspect logs, reports, metadata.db and crash bundles for requested paths,
+    MFT names, pipe nonce and raw records: none may persist.
+```
+
+### 2026-08-26 — Open result location in a new tab
+
+```text
+Date / machine: 2026-08-26, macOS development machine
+Commit: uncommitted; record the eventual isolated commit before moving to PC
+
+Implemented in shared UI code:
+  - Open in New Tab now accepts one folder or one file from an ordinary file
+    list, including recursive Search results. A folder opens directly; a file
+    opens its containing folder and queues selection of the exact filename;
+  - every exact-duplicate or similar-image member has the same command in its
+    card context menu, independently of the panel's marked-for-trash set;
+  - a Disk Usage square has the same single-item semantics. Its scan-local
+    path is reconstructed only when the user invokes the command;
+  - building any of these menus performs no filesystem I/O. Multi-selection
+    remains folder-only with the existing fan-out confirmation, so selecting
+    millions of result files cannot accidentally create millions of tabs;
+  - the implementation is cross-platform and does not invoke the Windows
+    native-shell menu path. It therefore does not add prefetch work or change
+    ordinary listing, Search, Duplicate Finder, Flat View or Disk Usage worker
+    counts.
+
+Required real-Windows checks (not claimed from macOS):
+  1. Right-click one ordinary folder and one ordinary file; verify the folder
+     opens directly and the file opens its parent with the exact row selected.
+  2. Repeat for a recursive Search file result, an exact-duplicate member, a
+     similar-image member, and both a folder and a file Disk Usage square.
+  3. Repeat with spaces, non-ASCII names, a long-path-enabled NTFS path, a
+     OneDrive placeholder, and a WSL UNC row. Confirm no placeholder hydration
+     or WSL distribution start occurs merely from opening the context menu.
+  4. Verify multi-selected folders retain the existing confirmation and that
+     Open in New Tab is absent for a multi-selection containing only files.
+  5. Run each command during and after result streaming, then close the source
+     result tab. Confirm the destination tab remains usable, selection appears
+     after its listing arrives, and there is no crash, hang or stale selection.
+  6. Re-run the native Windows context-menu tests separately: this shared menu
+     command must not re-enable background native-menu prefetch or alter the
+     Ctrl/right-click native-shell path.
+```
