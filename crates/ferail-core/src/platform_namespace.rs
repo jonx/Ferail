@@ -142,6 +142,119 @@ impl PlatformCapabilities {
     pub const fn contains(self, capability: Self) -> bool {
         self.0 & capability.0 == capability.0
     }
+
+    pub const fn supports(self, action: PlatformAction) -> bool {
+        self.contains(action.required_capability())
+    }
+}
+
+/// User-requested operation on provider-owned items. File and container rows
+/// use the same capability mapping: support is never guessed from row kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformAction {
+    Open,
+    Browse,
+    Properties,
+    Reveal,
+    NativeMenu { extended: bool },
+    Copy,
+    Move,
+    Link,
+    CreateChild,
+    ReadStream,
+    Thumbnail,
+    TrashRecoverable,
+    DeletePermanent,
+}
+
+impl PlatformAction {
+    pub const fn required_capability(self) -> PlatformCapabilities {
+        match self {
+            Self::Open => PlatformCapabilities::OPEN,
+            Self::Browse => PlatformCapabilities::ENUMERATE,
+            Self::Properties => PlatformCapabilities::PROPERTIES,
+            Self::Reveal => PlatformCapabilities::REVEAL,
+            Self::NativeMenu { .. } => PlatformCapabilities::NATIVE_MENU,
+            Self::Copy => PlatformCapabilities::COPY,
+            Self::Move => PlatformCapabilities::MOVE,
+            Self::Link => PlatformCapabilities::LINK,
+            Self::CreateChild => PlatformCapabilities::CREATE_CHILD,
+            Self::ReadStream => PlatformCapabilities::READ_STREAM,
+            Self::Thumbnail => PlatformCapabilities::THUMBNAIL,
+            Self::TrashRecoverable => PlatformCapabilities::TRASH_RECOVERABLE,
+            Self::DeletePermanent => PlatformCapabilities::DELETE_PERMANENT,
+        }
+    }
+}
+
+/// Symbolic selection handed to an explicit provider action. Select All does
+/// not materialize millions of ids: `all` changes the meaning of `ids` from
+/// included items to excluded exceptions.
+#[derive(Clone, Eq, PartialEq)]
+pub struct PlatformSelectionSpec {
+    pub all: bool,
+    pub ids: Vec<PlatformItemId>,
+}
+
+impl PlatformSelectionSpec {
+    pub fn explicit(mut ids: Vec<PlatformItemId>) -> Self {
+        ids.sort_unstable();
+        ids.dedup();
+        Self { all: false, ids }
+    }
+
+    pub fn all_except(mut ids: Vec<PlatformItemId>) -> Self {
+        ids.sort_unstable();
+        ids.dedup();
+        Self { all: true, ids }
+    }
+
+    pub fn selected_count(&self, total: usize) -> usize {
+        if self.all {
+            total.saturating_sub(self.ids.len())
+        } else {
+            self.ids.len()
+        }
+    }
+}
+
+impl fmt::Debug for PlatformSelectionSpec {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PlatformSelectionSpec")
+            .field("all", &self.all)
+            .field("id_count", &self.ids.len())
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformActionRequest {
+    pub location: PlatformLocation,
+    pub selection: PlatformSelectionSpec,
+    pub action: PlatformAction,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub enum PlatformActionOutcome {
+    NoChange,
+    Changed,
+    /// Provider item(s) resolved to real paths and can rejoin an existing
+    /// NativeFs/file-operation flow. Paths remain redacted from Debug.
+    FileSystemTargets(Vec<PathBuf>),
+}
+
+impl fmt::Debug for PlatformActionOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoChange => formatter.write_str("NoChange"),
+            Self::Changed => formatter.write_str("Changed"),
+            Self::FileSystemTargets(paths) => formatter
+                .debug_tuple("FileSystemTargets")
+                .field(&format_args!("{} redacted path(s)", paths.len()))
+                .finish(),
+        }
+    }
 }
 
 /// Cached, render-safe characteristics corresponding to provider attributes
@@ -215,6 +328,7 @@ impl fmt::Debug for PlatformBreadcrumb {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlatformLocationErrorKind {
     Unavailable,
+    Unsupported,
     NotFound,
     PermissionDenied,
     TimedOut,
@@ -266,6 +380,16 @@ pub trait PlatformNamespaceProvider: Send + Sync {
         cancel: &AtomicBool,
         emit: &mut dyn FnMut(PlatformListingBatch) -> bool,
     ) -> Result<(), PlatformLocationErrorKind>;
+
+    /// Explicit, capability-gated action. The default keeps enumeration-only
+    /// providers safe; Windows overrides this on its worker/broker boundary.
+    fn perform_action(
+        &self,
+        _request: PlatformActionRequest,
+        _cancel: &AtomicBool,
+    ) -> Result<PlatformActionOutcome, PlatformLocationErrorKind> {
+        Err(PlatformLocationErrorKind::Unsupported)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -576,5 +700,44 @@ mod tests {
         let path = PathBuf::from(r"C:\Users\Test\OneDrive");
         let row = item("OneDrive", LocationTarget::FileSystem(path.clone()));
         assert_eq!(row.target, LocationTarget::FileSystem(path));
+    }
+
+    #[test]
+    fn actions_are_capability_gated_without_kind_inference() {
+        let caps = PlatformCapabilities::NATIVE_MENU
+            .union(PlatformCapabilities::PROPERTIES)
+            .union(PlatformCapabilities::COPY);
+        assert!(caps.supports(PlatformAction::NativeMenu { extended: false }));
+        assert!(caps.supports(PlatformAction::NativeMenu { extended: true }));
+        assert!(caps.supports(PlatformAction::Properties));
+        assert!(caps.supports(PlatformAction::Copy));
+        assert!(!caps.supports(PlatformAction::Move));
+        assert!(!caps.supports(PlatformAction::TrashRecoverable));
+    }
+
+    #[test]
+    fn select_all_action_snapshot_stays_symbolic_and_private() {
+        let selection = PlatformSelectionSpec::all_except(vec![
+            item_id("private-a"),
+            item_id("private-b"),
+            item_id("private-a"),
+        ]);
+        assert!(selection.all);
+        assert_eq!(selection.ids.len(), 2);
+        assert_eq!(selection.selected_count(4_000_000), 3_999_998);
+        let debug = format!("{selection:?}");
+        assert_eq!(debug, "PlatformSelectionSpec { all: true, id_count: 2 }");
+        assert!(!debug.contains("private"));
+    }
+
+    #[test]
+    fn action_outcome_debug_redacts_filesystem_targets() {
+        let outcome = PlatformActionOutcome::FileSystemTargets(vec![PathBuf::from(
+            r"C:\Users\Private\Family Photos",
+        )]);
+        let debug = format!("{outcome:?}");
+        assert!(debug.contains("1 redacted path"));
+        assert!(!debug.contains("Private"));
+        assert!(!debug.contains("Family"));
     }
 }

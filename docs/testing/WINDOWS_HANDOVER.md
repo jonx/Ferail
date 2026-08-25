@@ -195,6 +195,50 @@ Windows implementation still required:
 Windows cases claimed from macOS: none.
 ```
 
+### 2026-08-25 — macOS preparation for WIN-012/013 provider actions
+
+```text
+Shared contract prepared:
+  - every platform action maps to one advertised capability; file/container
+    appearance never implies support;
+  - native-menu requests distinguish normal and extended invocation but share
+    the same explicit, capability-gated route for provider files and folders;
+  - a provider action receives its tab-owned PlatformLocation plus a symbolic
+    selection. Select All is `all + exceptions`, so four million rows do not
+    become four million ids, PIDLs or paths in GPUI;
+  - explicit selections and exceptions are sorted/deduplicated at the request
+    boundary, and Debug output exposes only their count;
+  - enumeration-only providers safely return Unsupported by default;
+  - a provider can hand resolved real paths back to existing NativeFs/file-op
+    flows, but those paths remain redacted from Debug output.
+Host proof:
+  - cargo test -p ferail-core platform_namespace
+  - cargo test -p ferail-gpui platform_namespace
+  - cargo check -p ferail-gpui
+Windows implementation still required:
+  1. Override perform_action in the tab-owned Shell provider. Validate the
+     advertised capability again on its worker and resolve each compact id
+     from that provider's owned PIDL arena; reject ids from another generation.
+  2. Expand a complement selection incrementally on the worker only after an
+     explicit action. Bound intermediate PIDL/data-object storage and honour
+     cancellation; never materialize Select All from render, selection change,
+     menu construction or drag hover.
+  3. Extend the isolated context-menu broker input to owned namespace
+     identities. Request `IContextMenu` for both provider files and provider
+     containers only when NATIVE_MENU is present; keep the instant Ferail menu
+     unchanged and do not restore QueryContextMenu prefetch.
+  4. Implement `IDataObject`/`CFSTR_SHELLIDLIST`, `CF_HDROP` when real paths
+     exist, and Preferred DropEffect for clipboard and drag. Delayed provider
+     extraction starts only on explicit paste/drop and exposes progress/cancel.
+  5. Hand real resolved paths to existing collision/quarantine-aware file-op
+     flows. For pathless or unsupported transfers, return a precise message;
+     never fabricate a path or silently drop an item.
+  6. Execute WTEST-070–077, WTEST-090–096, WTEST-100–106 and WTEST-121. Include
+     file and directory native menus, provider file and container menus, plus
+     symbolic Select All at four million rows; re-run Flat 1M/4M baselines.
+Windows cases claimed from macOS: none.
+```
+
 At handover creation, two unrelated user changes intentionally remain outside
 the Windows commits: `CHANGELOG.md` and
 `crates/ferail-gpui/src/file_list.rs` (Flat row-buffer release work). Preserve

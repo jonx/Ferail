@@ -664,9 +664,12 @@ classified rather than reimplementing the happy path.
   placeholders, `.lnk`, and Shell-only items.
 - [ ] Verify `CF_HDROP`, `Preferred DropEffect`, and lifetime/ownership rules
   for normal files; distinguish clipboard from OLE drag failures in logs.
-- [ ] Accept Shell ID-list/data-object formats for virtual or delayed-rendered
+- [~] Accept Shell ID-list/data-object formats for virtual or delayed-rendered
   items where a real path is unavailable; stream/materialize only after an
-  explicit drop/paste.
+  explicit drop/paste. *The shared provider action contract now carries
+  capability-gated Copy/Move/Link requests and an O(1) symbolic Select All
+  snapshot without fabricating paths. The Windows `IDataObject`/OLE bridge,
+  delayed rendering and materialization remain.*
 - [ ] Keep all COM data extraction off paint/input callbacks and expose progress
   and cancellation for delayed transfers.
 - [ ] Reject unsupported virtual transfers with a precise message rather than
@@ -696,10 +699,14 @@ filesystem path is known.
   path and **This PC** (or **Windows Desktop**) for the namespace root.
 - [ ] Surface Recycle Bin, OneDrive/provider roots, and connected portable
   devices only when enumerated by the Shell.
-- [ ] Route open, parent, breadcrumb, refresh, icon, properties, context menu,
+- [~] Route open, parent, breadcrumb, refresh, icon, properties, context menu,
   clipboard, and drag through capabilities when no path exists. Native context
   menus must cover both file and container items, and must be requested only
-  after the explicit menu action.
+  after the explicit menu action. *A neutral `PlatformAction` maps each action
+  to one advertised capability, independent of displayed row kind; providers
+  default to explicit `Unsupported`. Action requests retain tab-owned location
+  identity and a compact explicit-or-complement selection. The Windows action
+  executor and UI affordances remain.*
 - [ ] Keep direct filesystem enumeration for every namespace item which
   resolves to a normal directory. Do not recursively enumerate a disk through
   COM.

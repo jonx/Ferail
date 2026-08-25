@@ -395,7 +395,10 @@ Explorer opens an unrelated default folder, or path characters change.
   affected Ferail view refreshes while preserving valid selection/scroll.
 - [ ] `WTEST-074` Same-parent multi-selection reaches the native menu. A
   mixed-parent or unsupported virtual selection is disabled/explained without
-  collapsing or mis-targeting the selection.
+  collapsing or mis-targeting the selection. Repeat from a provider surface
+  with Select All over 4,000,000 synthetic rows plus two deselections: the UI
+  and request snapshot stay O(1), carry only the two exceptions, and the
+  provider expands work incrementally only after native-menu invocation.
 - [ ] `WTEST-075` Crash and hang a context-menu handler before popup display.
   Only the broker fails; Ferail remains interactive and normal right-click
   continues to work.
@@ -442,6 +445,9 @@ For each `WCORPUS-CLIPBOARD` set, test Explorer→Ferail and Ferail→Explorer.
   after explicit transfer and expose progress/cancel when delayed.
 - [ ] `WTEST-095` Shell-only/MTP items use supported data-object formats or
   produce an explicit unsupported message; they never silently disappear.
+  Repeat with a symbolic Select All selection: no eager PIDL/path/data-object
+  list is built on selection, copy, or drag hover; explicit paste/drop may
+  materialize incrementally with progress and cancellation.
 - [ ] `WTEST-096` Repeat one matrix pass with another Windows file manager to
   catch assumptions specific to Explorer.
 
@@ -465,7 +471,9 @@ materialization, or silent failure.
   properties, context menu, clipboard, and drag in pathless locations. Exercise
   the native context menu separately on a provider file and provider container;
   unsupported capability states must be disabled/explained, not guessed from
-  the displayed row kind.
+  the displayed row kind. For Select All over the 4,000,000-row synthetic
+  provider, inspect diagnostics/memory before invoking an action: the selection
+  snapshot remains symbolic and contains only deselected exceptions.
 - [ ] `WTEST-106` Re-run local NTFS navigation and Flat 1M after namespace work;
   timings/memory stay within the global 5%/10% gates.
 

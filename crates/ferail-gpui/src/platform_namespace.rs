@@ -101,6 +101,15 @@ impl PlatformSelection {
         }
     }
 
+    pub fn descriptor(&self) -> ferail_core::platform_namespace::PlatformSelectionSpec {
+        let ids: Vec<PlatformItemId> = self.ids.iter().copied().collect();
+        if self.all {
+            ferail_core::platform_namespace::PlatformSelectionSpec::all_except(ids)
+        } else {
+            ferail_core::platform_namespace::PlatformSelectionSpec::explicit(ids)
+        }
+    }
+
     pub fn lead(&self) -> Option<PlatformItemId> {
         self.lead
     }
@@ -485,6 +494,9 @@ mod tests {
         );
         assert!(session.selection().is_selected(&item_id("A")));
         assert!(!session.selection().is_selected(&item_id("B")));
+        let descriptor = session.selection().descriptor();
+        assert!(descriptor.all);
+        assert_eq!(descriptor.ids, vec![item_id("B")]);
     }
 
     #[test]
