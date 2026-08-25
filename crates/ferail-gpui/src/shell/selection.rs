@@ -1093,6 +1093,11 @@ impl Shell {
     }
 
     pub(super) fn on_cursor_up(&mut self, _: &CursorUp, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(session) = self.active_tab_mut().platform_namespace.as_mut() {
+            session.move_selection(-1);
+            cx.notify();
+            return;
+        }
         if self.dupe_move_similar_focus(false, cx) {
             return;
         }
@@ -1104,6 +1109,11 @@ impl Shell {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(session) = self.active_tab_mut().platform_namespace.as_mut() {
+            session.move_selection(1);
+            cx.notify();
+            return;
+        }
         if self.dupe_move_similar_focus(true, cx) {
             return;
         }
@@ -1115,6 +1125,11 @@ impl Shell {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(session) = self.active_tab_mut().platform_namespace.as_mut() {
+            session.select_edge(false);
+            cx.notify();
+            return;
+        }
         self.move_selection(SelectionDelta::First, false, cx);
     }
     pub(super) fn on_cursor_last(
@@ -1123,6 +1138,11 @@ impl Shell {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(session) = self.active_tab_mut().platform_namespace.as_mut() {
+            session.select_edge(true);
+            cx.notify();
+            return;
+        }
         self.move_selection(SelectionDelta::Last, false, cx);
     }
     pub(super) fn on_page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -1182,6 +1202,11 @@ impl Shell {
     }
 
     pub(super) fn on_select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(session) = self.active_tab_mut().platform_namespace.as_mut() {
+            session.selection_mut().select_all();
+            cx.notify();
+            return;
+        }
         self.select_all_visible(cx);
     }
 
@@ -1191,6 +1216,11 @@ impl Shell {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(session) = self.active_tab_mut().platform_namespace.as_mut() {
+            session.selection_mut().clear();
+            cx.notify();
+            return;
+        }
         self.clear_active_selection(cx);
     }
 

@@ -69,6 +69,9 @@ pub struct StatusMetrics {
     pub selected_count: usize,
     pub selected_size: u64,
     pub total_size: u64,
+    /// Provider-owned namespace items do not necessarily expose byte sizes.
+    /// Do not present unknown values as a misleading `0 B`.
+    pub sizes_unavailable: bool,
     pub free_bytes: Option<u64>,
     pub volume_name: Option<SharedString>,
     /// The tab's volume is mounted read-only (CD/DVD, locked card,
@@ -267,7 +270,13 @@ pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String
         };
         return (group_large_numbers(&label), None);
     }
-    let count_label = if entries != 1 && metrics.selected_count > 0 {
+    let count_label = if metrics.sizes_unavailable {
+        if entries != 1 && metrics.selected_count > 0 {
+            format!("{}/{}", metrics.selected_count, entries)
+        } else {
+            trn!("{n} item", "{n} items", entries).to_string()
+        }
+    } else if entries != 1 && metrics.selected_count > 0 {
         let size = humanize_bytes(metrics.selected_size);
         match density {
             Density::Full | Density::Short => trn!(
@@ -913,6 +922,15 @@ mod count_label_tests {
         assert_eq!(group_large_numbers("999 items"), "999 items");
         let (count, _) = count_labels(&metrics(4_138_016, 0, 0, 0), Density::Full);
         assert_eq!(count, "4.138.016 items · 0 B");
+    }
+
+    #[test]
+    fn namespace_count_does_not_present_unknown_size_as_zero_bytes() {
+        let mut m = metrics(4_138_016, 0, 0, 0);
+        m.sizes_unavailable = true;
+        assert_eq!(count_labels(&m, Density::Full).0, "4.138.016 items");
+        m.selected_count = 12;
+        assert_eq!(count_labels(&m, Density::Full).0, "12/4.138.016");
     }
 
     #[test]

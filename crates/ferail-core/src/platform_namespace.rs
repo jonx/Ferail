@@ -394,6 +394,14 @@ impl PlatformLocationHistory {
         &self.current
     }
 
+    pub fn can_go_back(&self) -> bool {
+        !self.back.is_empty()
+    }
+
+    pub fn can_go_forward(&self) -> bool {
+        !self.forward.is_empty()
+    }
+
     pub fn navigate_to(&mut self, target: PlatformLocation) {
         if self.current == target {
             return;

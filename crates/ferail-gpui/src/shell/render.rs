@@ -693,7 +693,143 @@ impl Shell {
     /// Either the file Table, or an inline error/empty state when
     /// the directory couldn't be listed (typically macOS TCC denial
     /// on ~/Documents, ~/Desktop, ~/Downloads in a sandboxed runner).
+    fn platform_namespace_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        use ferail_core::platform_namespace::{
+            PlatformItemFlags, PlatformItemKind, PlatformSurfacePhase,
+        };
+
+        let Some(session) = self.active_tab().platform_namespace.as_ref() else {
+            return div().into_any_element();
+        };
+        let centered = |message: SharedString| {
+            v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_3()
+                .child(
+                    svg()
+                        .path("icons/inbox.svg")
+                        .icon_px(48.0)
+                        .text_color(cx.theme().muted_foreground.opacity(0.5)),
+                )
+                .child(
+                    div()
+                        .text_scale_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(message),
+                )
+                .into_any_element()
+        };
+        match session.phase() {
+            PlatformSurfacePhase::Idle | PlatformSurfacePhase::Loading
+                if session.store().items().is_empty() =>
+            {
+                return centered(tr!("Loading…").into());
+            }
+            PlatformSurfacePhase::Unavailable(_) => {
+                return centered(tr!("Unavailable").into());
+            }
+            PlatformSurfacePhase::Ready if session.store().items().is_empty() => {
+                return centered(tr!("This folder is empty.").into());
+            }
+            _ => {}
+        }
+
+        let row_count = session.store().items().len();
+        let tab_id = self.active_tab().id;
+        let weak = cx.weak_entity();
+        let selected_bg = cx.theme().accent.opacity(0.20);
+        let hover_bg = cx.theme().accent.opacity(0.10);
+        let foreground = cx.theme().foreground;
+        let muted = cx.theme().muted_foreground;
+        let scroll = session.scroll().clone();
+        let list = uniform_list(
+            "platform-namespace-list",
+            row_count,
+            move |visible, _window, app| {
+                let Some(shell_entity) = weak.upgrade() else {
+                    return Vec::new();
+                };
+                let shell = shell_entity.read(app);
+                let Some(session) = shell
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(|tab| tab.platform_namespace.as_ref())
+                else {
+                    return Vec::new();
+                };
+                visible
+                    .filter_map(|index| {
+                        let item = session.store().items().get(index)?;
+                        let item_id = item.id;
+                        let selected = session.selection().is_selected(&item_id);
+                        let hidden = item.flags.contains(PlatformItemFlags::HIDDEN);
+                        let icon = match item.kind {
+                            PlatformItemKind::Container => "icons/folder.svg",
+                            PlatformItemKind::Link => "icons/file/symlink.svg",
+                            PlatformItemKind::File => "icons/file/generic.svg",
+                        };
+                        let label: SharedString = item.label.to_string().into();
+                        let tooltip = label.clone();
+                        let row_shell = weak.clone();
+                        Some(
+                            h_flex()
+                                .id(("platform-namespace-row", index))
+                                .w_full()
+                                .h(px(32.0))
+                                .px_3()
+                                .gap_2()
+                                .cursor_pointer()
+                                .text_color(if hidden { muted } else { foreground })
+                                .when(hidden, |row| row.opacity(0.65))
+                                .when(selected, |row| row.bg(selected_bg))
+                                .when(!selected, |row| row.hover(|hover| hover.bg(hover_bg)))
+                                .child(svg().path(icon).icon_px(18.0).flex_shrink_0())
+                                .child(div().min_w_0().truncate().child(label))
+                                .tooltip(move |window, cx| {
+                                    gpui_component::tooltip::Tooltip::new(tooltip.clone())
+                                        .build(window, cx)
+                                })
+                                .on_click(move |event: &ClickEvent, _window, app| {
+                                    let toggle = event.modifiers().platform;
+                                    let activate = event.click_count() >= 2;
+                                    let _ = row_shell.update(app, |shell, cx| {
+                                        shell.click_platform_item(
+                                            tab_id, item_id, toggle, activate, cx,
+                                        );
+                                    });
+                                })
+                                .into_any_element(),
+                        )
+                    })
+                    .collect()
+            },
+        )
+        .track_scroll(&scroll)
+        .size_full();
+        div()
+            .relative()
+            .size_full()
+            .child(list)
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .w(px(16.0))
+                    .child(gpui_component::scroll::Scrollbar::vertical(&scroll)),
+            )
+            .size_full()
+            .into_any_element()
+    }
+
     fn file_pane_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.active_tab().platform_namespace.is_some() {
+            return self.platform_namespace_body(cx);
+        }
         if let Some(err) = self.active_tab().last_error.clone() {
             let copy = error_copy(&err);
             let mut pane = v_flex()
@@ -2156,8 +2292,17 @@ impl Shell {
         use gpui_component::menu::DropdownMenu;
         use gpui_component::menu::PopupMenuItem;
         use gpui_component::sidebar::SidebarToggleButton;
-        let can_back = self.active_tab().history_index > 0;
-        let can_forward = self.active_tab().history_index + 1 < self.active_tab().history.len();
+        let (can_back, can_forward) = self
+            .active_tab()
+            .platform_namespace
+            .as_ref()
+            .map(|session| (session.can_go_back(), session.can_go_forward()))
+            .unwrap_or_else(|| {
+                (
+                    self.active_tab().history_index > 0,
+                    self.active_tab().history_index + 1 < self.active_tab().history.len(),
+                )
+            });
         let collapsed = self.sidebar_collapsed;
         // Active sort drives the sort button's glyph (asc/descending)
         // and the checkmark in its menu. Read once here — render-time
@@ -2946,6 +3091,55 @@ impl Shell {
     }
 
     fn breadcrumb(&self, cx: &mut Context<Self>) -> Div {
+        if let Some(session) = self.active_tab().platform_namespace.as_ref() {
+            let mut row = h_flex()
+                .w_full()
+                .items_center()
+                .gap_1()
+                .px_4()
+                .py_1()
+                .border_b_1()
+                .border_color(cx.theme().border);
+            let breadcrumbs = session.store().breadcrumbs().to_vec();
+            let tab_id = self.active_tab().id;
+            for (index, breadcrumb) in breadcrumbs.into_iter().enumerate() {
+                if index > 0 {
+                    row = row.child(
+                        div()
+                            .px_1()
+                            .text_scale_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("›"),
+                    );
+                }
+                let is_last = index + 1 == session.store().breadcrumbs().len();
+                let weak = cx.weak_entity();
+                let location = breadcrumb.location;
+                row = row.child(
+                    div()
+                        .id(("platform-breadcrumb", index))
+                        .px_2()
+                        .py_1()
+                        .rounded(cx.theme().radius)
+                        .text_scale_sm()
+                        .text_color(if is_last {
+                            cx.theme().foreground
+                        } else {
+                            cx.theme().muted_foreground
+                        })
+                        .when(is_last, |crumb| crumb.font_weight(FontWeight::SEMIBOLD))
+                        .cursor_pointer()
+                        .hover(|crumb| crumb.bg(cx.theme().secondary))
+                        .child(SharedString::from(breadcrumb.label.to_string()))
+                        .on_click(move |_: &ClickEvent, _window, app| {
+                            let _ = weak.update(app, |shell, cx| {
+                                shell.navigate_platform_location(tab_id, location.clone(), cx);
+                            });
+                        }),
+                );
+            }
+            return row;
+        }
         if self.breadcrumb_editing {
             // Key routing for the autocomplete menu. Two upstream
             // quirks would otherwise leak keystrokes to the Shell
@@ -3594,30 +3788,65 @@ impl Render for Shell {
                 )
             })
             .unwrap_or((entry_count, total_size, selected_count, selected_size));
+        let platform_mode = self.active_tab().platform_namespace.is_some();
+        let (
+            entry_count,
+            total_size,
+            selected_count,
+            selected_size,
+            free_bytes,
+            volume_name,
+            volume_read_only,
+        ) = self
+            .active_tab()
+            .platform_namespace
+            .as_ref()
+            .map(|session| {
+                let count = session.store().items().len();
+                (
+                    count,
+                    0,
+                    session.selection().selected_count(count),
+                    0,
+                    None,
+                    None,
+                    false,
+                )
+            })
+            .unwrap_or((
+                entry_count,
+                total_size,
+                selected_count,
+                selected_size,
+                free_bytes,
+                volume_name,
+                volume_read_only,
+            ));
         let metrics = crate::status_bar::StatusMetrics {
             entries: entry_count,
             selected_count,
             selected_size,
             total_size,
+            sizes_unavailable: platform_mode,
             free_bytes,
             volume_name,
             volume_read_only,
-            hidden_count: if archive_mode {
+            hidden_count: if archive_mode || platform_mode {
                 0
             } else {
                 hidden_summary.count
             },
-            hidden_bytes: if archive_mode {
+            hidden_bytes: if archive_mode || platform_mode {
                 0
             } else {
                 hidden_summary.bytes
             },
-            filtered_count: if archive_mode {
+            filtered_count: if archive_mode || platform_mode {
                 0
             } else {
                 filter_summary.count
             },
-            filtered_bytes: if archive_mode {
+            filtered_bytes: if archive_mode || platform_mode {
                 0
             } else {
                 filter_summary.bytes

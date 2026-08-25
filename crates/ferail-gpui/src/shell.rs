@@ -17,6 +17,10 @@ use std::sync::{
 use std::time::Duration;
 
 use ferail_core::favorites::FavoriteState;
+use ferail_core::platform_namespace::{
+    LocationTarget, PlatformBatchApply, PlatformCapabilities, PlatformItemId,
+    PlatformListingRequest, PlatformLocation, PlatformLocationErrorKind, PlatformNamespaceProvider,
+};
 use ferail_core::{EntryKind, EnumerationError, FileEntry, NodeId};
 use ferail_fs_native::{NativeFs, home_dir};
 use gpui::*;
@@ -1207,6 +1211,161 @@ impl Shell {
     #[inline]
     pub fn active_tab_mut(&mut self) -> &mut Tab {
         &mut self.tabs[self.active]
+    }
+
+    /// Replace the active tab's filesystem surface with a provider-owned,
+    /// pathless namespace surface. The provider itself (and therefore its
+    /// identity arena) is owned by the tab session.
+    pub fn open_platform_namespace(
+        &mut self,
+        provider: Arc<dyn PlatformNamespaceProvider>,
+        initial: PlatformLocation,
+        cx: &mut Context<Self>,
+    ) -> Result<(), PlatformLocationErrorKind> {
+        let mut session =
+            crate::platform_namespace::PlatformNamespaceSession::new(provider, initial)?;
+        let (request, cancel) = session.refresh();
+        let tab_id = self.active_tab().id;
+        let tab = self.active_tab_mut();
+        if let Some(directory_cancel) = tab.load_cancel.take() {
+            directory_cancel.store(true, Ordering::Relaxed);
+        }
+        tab.tool_result = None;
+        tab.last_error = None;
+        tab.platform_namespace = Some(session);
+        self.start_platform_listing(tab_id, request, cancel, cx);
+        cx.notify();
+        Ok(())
+    }
+
+    fn click_platform_item(
+        &mut self,
+        tab_id: TabId,
+        item_id: PlatformItemId,
+        toggle: bool,
+        activate: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return;
+        };
+        let target = {
+            let Some(session) = self.tabs[index].platform_namespace.as_mut() else {
+                return;
+            };
+            if toggle {
+                session.selection_mut().toggle(item_id);
+            } else {
+                session.selection_mut().select_only(item_id);
+            }
+            activate.then(|| {
+                session
+                    .store()
+                    .items()
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .filter(|item| item.capabilities.contains(PlatformCapabilities::OPEN))
+                    .map(|item| item.target.clone())
+            })
+        }
+        .flatten();
+
+        match target {
+            Some(LocationTarget::FileSystem(path)) => self.load_path_for_tab(tab_id, path, cx),
+            Some(LocationTarget::Platform(location)) => {
+                let request = self.tabs[index]
+                    .platform_namespace
+                    .as_mut()
+                    .and_then(|session| session.navigate_to(location).ok());
+                if let Some((request, cancel)) = request {
+                    self.start_platform_listing(tab_id, request, cancel, cx);
+                }
+            }
+            None => cx.notify(),
+        }
+    }
+
+    fn navigate_platform_location(
+        &mut self,
+        tab_id: TabId,
+        location: PlatformLocation,
+        cx: &mut Context<Self>,
+    ) {
+        let request = self
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| tab.platform_namespace.as_mut())
+            .and_then(|session| session.navigate_to(location).ok());
+        if let Some((request, cancel)) = request {
+            self.start_platform_listing(tab_id, request, cancel, cx);
+        }
+    }
+
+    fn start_platform_listing(
+        &mut self,
+        tab_id: TabId,
+        request: PlatformListingRequest,
+        cancel: Arc<AtomicBool>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(provider) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| tab.platform_namespace.as_ref())
+            .map(|session| session.provider())
+        else {
+            return;
+        };
+        let (sender, receiver) =
+            async_channel::bounded(crate::platform_namespace::PLATFORM_PENDING_BATCHES_MAX);
+        cx.background_executor()
+            .spawn(async move {
+                crate::platform_namespace::run_provider_stream(provider, request, cancel, sender);
+            })
+            .detach();
+
+        cx.spawn(async move |this, cx| {
+            while let Ok(event) = receiver.recv().await {
+                let terminal = matches!(
+                    &event,
+                    crate::platform_namespace::PlatformListingEvent::Finished { .. }
+                );
+                let stale = this
+                    .update(cx, |this, cx| {
+                        let Some(index) = this.tabs.iter().position(|tab| tab.id == tab_id) else {
+                            return true;
+                        };
+                        let Some(session) = this.tabs[index].platform_namespace.as_mut() else {
+                            return true;
+                        };
+                        let stale = match event {
+                            crate::platform_namespace::PlatformListingEvent::Batch(batch) => {
+                                session.apply_batch(batch) != PlatformBatchApply::Applied
+                            }
+                            crate::platform_namespace::PlatformListingEvent::Finished {
+                                request,
+                                result,
+                            } => {
+                                session.finish_provider(&request, result);
+                                false
+                            }
+                        };
+                        // A background tab stores its bounded result but does
+                        // not redraw the active surface for invisible batches.
+                        if index == this.active {
+                            cx.notify();
+                        }
+                        stale
+                    })
+                    .unwrap_or(true);
+                if stale || terminal {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     #[inline]
@@ -2641,6 +2800,13 @@ impl Shell {
     }
 
     fn on_open_selected(&mut self, _: &OpenSelected, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(session) = self.active_tab().platform_namespace.as_ref() {
+            if let Some(item_id) = session.selection().lead() {
+                let tab_id = self.active_tab().id;
+                self.click_platform_item(tab_id, item_id, false, true, cx);
+            }
+            return;
+        }
         let entries = self.action_entries_visible_order(cx);
         if entries.is_empty() {
             return;
@@ -2687,6 +2853,18 @@ impl Shell {
         // by rendering; Safe Mode deliberately suppresses platform probes.
         if !crate::safe_mode::enabled() {
             crate::platform_locations::refresh(cx);
+        }
+        if self.active_tab().platform_namespace.is_some() {
+            let tab_id = self.active_tab().id;
+            let request = self
+                .active_tab_mut()
+                .platform_namespace
+                .as_mut()
+                .map(|session| session.refresh());
+            if let Some((request, cancel)) = request {
+                self.start_platform_listing(tab_id, request, cancel, cx);
+            }
+            return;
         }
         if self
             .active_tab()
@@ -3928,6 +4106,18 @@ impl Shell {
     }
 
     pub fn navigate_back(&mut self, cx: &mut Context<Self>) {
+        if self.active_tab().platform_namespace.is_some() {
+            let tab_id = self.active_tab().id;
+            let request = self
+                .active_tab_mut()
+                .platform_namespace
+                .as_mut()
+                .and_then(|session| session.go_back());
+            if let Some((request, cancel)) = request {
+                self.start_platform_listing(tab_id, request, cancel, cx);
+            }
+            return;
+        }
         let (path, mut snapshot, came_from_path) = {
             let tab = self.active_tab_mut();
             if tab.history_index == 0 {
@@ -3961,6 +4151,18 @@ impl Shell {
     }
 
     pub fn navigate_forward(&mut self, cx: &mut Context<Self>) {
+        if self.active_tab().platform_namespace.is_some() {
+            let tab_id = self.active_tab().id;
+            let request = self
+                .active_tab_mut()
+                .platform_namespace
+                .as_mut()
+                .and_then(|session| session.go_forward());
+            if let Some((request, cancel)) = request {
+                self.start_platform_listing(tab_id, request, cancel, cx);
+            }
+            return;
+        }
         let (path, snapshot) = {
             let tab = self.active_tab_mut();
             if tab.history_index + 1 >= tab.history.len() {

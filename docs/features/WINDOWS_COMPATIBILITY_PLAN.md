@@ -676,9 +676,10 @@ filesystem path is known.
 
 - [~] Introduce `LocationTarget`/platform location identity without changing
   ordinary `PathBuf` tabs or Flat View rows. *The pure core contract and
-  tab-owned GPUI session exist on macOS with compact ids, capability/flag DTOs,
-  bounded batches, generation rejection, history, recoverable errors and O(1)
-  Select All. The shared visual surface and real Windows provider remain.*
+  tab-owned GPUI surface exist on macOS with compact ids, capability/flag DTOs,
+  bounded worker/UI back-pressure, generation rejection, virtualized rows,
+  breadcrumbs, history, recoverable errors and O(1) Select All. The real
+  Windows provider remains.*
 - [ ] Implement a Windows namespace provider with streaming batches,
   cancellation, generation checks, and PIDL arena ownership scoped to the tab.
 - [ ] Add distinctly named Locations: **Desktop folder** for the filesystem
@@ -1258,8 +1259,8 @@ cross-platform or four-million-row regression remains.
 
 - [~] WIN-017 cached WSL discovery, explicit activation and path-backed
   `NativeFs` handoff implemented in source; WTEST-130–139 remain on Windows.
-- [~] WIN-013 pure platform-location contract and tab-owned session complete;
-  shared visual surface and Windows namespace provider remain.
+- [~] WIN-013 pure platform-location contract, bounded worker bridge and
+  tab-owned virtualized surface complete; Windows namespace provider remains.
 - [ ] Ship This PC, Recycle Bin, OneDrive/provider roots, and devices
   incrementally behind capability checks.
 - [ ] Prove again that ordinary filesystem browsing never enters the namespace

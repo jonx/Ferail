@@ -90,6 +90,15 @@ Implemented in shared code:
     provider's ids;
   - streamed batches are capped at 512 rows, generation checked, cancelled on
     navigation/drop, and have explicit loading/ready/unavailable states;
+  - the worker/UI channel holds at most four batches (2,048 rows); a full queue
+    backpressures the provider, a dropped receiver stops it, and a provider
+    returning without a final batch fails visibly instead of loading forever;
+  - the specialized GPUI surface is virtualized and renders only provider DTOs;
+    cached breadcrumbs, Back/Forward, Refresh, double-click/Enter and arrow-key
+    selection route through the provider while filesystem targets immediately
+    return to NativeFs;
+  - batches for a background tab update its bounded model but do not notify and
+    redraw the unrelated active surface;
   - platform selection is complement-based, so Select All is O(1) even for a
     provider exposing millions of items;
   - ordinary filesystem navigation drops the specialized session before
@@ -114,16 +123,18 @@ Native context-menu requirement:
   - never prefetch QueryContextMenu on selection, navigation, hover or render.
 Host tests passed:
   - cargo test -p ferail-core platform_namespace (8 passed)
-  - cargo test -p ferail-gpui platform_namespace (6 passed)
+  - cargo check -p ferail-gpui
+  - cargo test -p ferail-gpui platform_namespace (9 passed)
 Windows cases claimed: none. WTEST-100–106 and the expanded WTEST-072 remain
   real-Windows gates.
 Next exact shared work on macOS:
-  1. Build the GPUI platform surface over this session without adapting rows
-     into FileEntry or fake PathBuf values.
-  2. Run providers on a background executor with a bounded channel; apply only
-     the current tab/request generation and coalesce notifications per batch.
-  3. Wire history, breadcrumbs, refresh, selection and recoverable unavailable
-     state against a deterministic in-memory provider.
+  1. Add seeded/screenshot access to the in-memory provider surface and finish
+     visual polish without adapting rows into FileEntry or fake PathBuf values.
+  2. Add capability-gated platform action plumbing for properties, transfers,
+     icons and the explicit native menu request; unsupported actions stay
+     absent or explain why they cannot run.
+  3. Keep the pathless status bar/filter semantics distinct from the stale
+     filesystem tab state before exposing the first Windows location.
 Next exact Windows work:
   1. Add a ferail-shell-win32 provider whose tab-owned arena stores copied
      absolute PIDL bytes plus an optional desktop-absolute parsing name. Never
