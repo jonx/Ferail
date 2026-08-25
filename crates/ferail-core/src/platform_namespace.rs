@@ -7,9 +7,10 @@
 //! unchanged.
 
 use std::fmt;
+use std::num::NonZeroU64;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Maximum number of rows accepted in one provider emission. Providers may
 /// emit any number of batches, but each UI apply remains predictably bounded.
@@ -41,9 +42,30 @@ macro_rules! opaque_id {
 }
 
 opaque_id!(PlatformProviderId);
-opaque_id!(PlatformItemId);
 
-/// Stable process-owned identity for a platform item.
+/// Compact session-local index into the provider's tab-owned identity arena.
+/// The arena may contain owned PIDL bytes or parsing names; rows contain only
+/// this integer and cannot expose or accidentally persist those values.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PlatformItemId(NonZeroU64);
+
+impl PlatformItemId {
+    pub fn from_raw(raw: u64) -> Option<Self> {
+        NonZeroU64::new(raw).map(Self)
+    }
+
+    pub fn as_raw(self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl fmt::Debug for PlatformItemId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PlatformItemId(<opaque>)")
+    }
+}
+
+/// Session-local identity for a platform item.
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub struct PlatformLocation {
     pub provider: PlatformProviderId,
@@ -69,10 +91,19 @@ impl fmt::Debug for PlatformLocation {
 /// A navigation target is either the existing fast filesystem path or an
 /// opaque item owned by one platform provider. A provider should hand a real
 /// path back as soon as one exists so normal browsing stays in `NativeFs`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum LocationTarget {
     FileSystem(PathBuf),
     Platform(PlatformLocation),
+}
+
+impl fmt::Debug for LocationTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FileSystem(_) => formatter.write_str("FileSystem(<redacted>)"),
+            Self::Platform(location) => formatter.debug_tuple("Platform").field(location).finish(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,6 +127,13 @@ impl PlatformCapabilities {
     pub const TRANSFER: Self = Self(1 << 5);
     pub const TRASH_RECOVERABLE: Self = Self(1 << 6);
     pub const DELETE_PERMANENT: Self = Self(1 << 7);
+    pub const RENAME: Self = Self(1 << 8);
+    pub const COPY: Self = Self(1 << 9);
+    pub const MOVE: Self = Self(1 << 10);
+    pub const LINK: Self = Self(1 << 11);
+    pub const CREATE_CHILD: Self = Self(1 << 12);
+    pub const READ_STREAM: Self = Self(1 << 13);
+    pub const THUMBNAIL: Self = Self(1 << 14);
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -106,26 +144,72 @@ impl PlatformCapabilities {
     }
 }
 
+/// Cached, render-safe characteristics corresponding to provider attributes
+/// such as `SFGAO_HIDDEN` and `SFGAO_SYSTEM`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PlatformItemFlags(u8);
+
+impl PlatformItemFlags {
+    pub const HIDDEN: Self = Self(1 << 0);
+    pub const SYSTEM: Self = Self(1 << 1);
+    pub const LINK: Self = Self(1 << 2);
+    pub const PLACEHOLDER: Self = Self(1 << 3);
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub const fn contains(self, flag: Self) -> bool {
+        self.0 & flag.0 == flag.0
+    }
+}
+
 /// One row returned by a platform namespace provider. It belongs only to the
 /// specialized platform surface and must never be converted into a fake path
 /// or inserted into the global filesystem `NodeStore`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct PlatformItem {
     pub id: PlatformItemId,
     pub label: Arc<str>,
     pub kind: PlatformItemKind,
     pub target: LocationTarget,
     pub capabilities: PlatformCapabilities,
+    pub flags: PlatformItemFlags,
     /// Opaque, non-personal cache identity such as a stock icon kind. Raw
     /// PIDLs, paths and provider object addresses are forbidden here.
     pub icon_key: Option<Arc<str>>,
 }
 
+impl fmt::Debug for PlatformItem {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PlatformItem")
+            .field("id", &self.id)
+            .field("label", &"<redacted>")
+            .field("kind", &self.kind)
+            .field("target", &self.target)
+            .field("capabilities", &self.capabilities)
+            .field("flags", &self.flags)
+            .field("icon_key", &self.icon_key)
+            .finish()
+    }
+}
+
 /// Display-only breadcrumb identity supplied by the same provider.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct PlatformBreadcrumb {
     pub location: PlatformLocation,
     pub label: Arc<str>,
+}
+
+impl fmt::Debug for PlatformBreadcrumb {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PlatformBreadcrumb")
+            .field("location", &self.location)
+            .field("label", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -345,16 +429,24 @@ mod tests {
     }
 
     fn location(name: &str) -> PlatformLocation {
-        PlatformLocation::new(provider(), PlatformItemId::new(name))
+        PlatformLocation::new(provider(), item_id(name))
+    }
+
+    fn item_id(name: &str) -> PlatformItemId {
+        let raw = name.bytes().fold(1u64, |value, byte| {
+            value.wrapping_mul(131) ^ u64::from(byte)
+        });
+        PlatformItemId::from_raw(raw.max(1)).unwrap()
     }
 
     fn item(name: &str, target: LocationTarget) -> PlatformItem {
         PlatformItem {
-            id: PlatformItemId::new(name),
+            id: item_id(name),
             label: Arc::from(name),
             kind: PlatformItemKind::Container,
             target,
             capabilities: PlatformCapabilities::OPEN.union(PlatformCapabilities::ENUMERATE),
+            flags: PlatformItemFlags::default(),
             icon_key: Some(Arc::from("stock:folder")),
         }
     }
@@ -375,6 +467,20 @@ mod tests {
     fn opaque_ids_do_not_leak_through_debug() {
         assert_eq!(format!("{:?}", provider()), "PlatformProviderId(<opaque>)");
         assert!(!format!("{:?}", location("personal-device-name")).contains("personal"));
+        let private_path = PathBuf::from(r"C:\Users\Private\Family Photos");
+        let private_item = PlatformItem {
+            id: item_id("private-item"),
+            label: Arc::from("My iPhone"),
+            kind: PlatformItemKind::Container,
+            target: LocationTarget::FileSystem(private_path),
+            capabilities: PlatformCapabilities::OPEN,
+            flags: PlatformItemFlags::default(),
+            icon_key: Some(Arc::from("stock:folder")),
+        };
+        let debug = format!("{private_item:?}");
+        assert!(!debug.contains("Private"));
+        assert!(!debug.contains("Family Photos"));
+        assert!(!debug.contains("iPhone"));
     }
 
     #[test]

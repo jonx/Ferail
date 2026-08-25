@@ -388,7 +388,9 @@ Explorer opens an unrelated default folder, or path characters change.
 - [ ] `WTEST-071` **More options from Windows…**, `Shift`+right-click, and
   `Shift+F10` open the real Windows menu only after invocation.
 - [ ] `WTEST-072` Test built-in, 7-Zip, Git, Defender/AV, owner-draw item,
-  dynamic submenu, disabled item, Properties, and Cancel.
+  dynamic submenu, disabled item, Properties, and Cancel. Repeat the matrix on
+  at least one ordinary file and one ordinary directory; both must resolve
+  their own native Shell menu only after explicit invocation.
 - [ ] `WTEST-073` Invoke rename/delete/archive/provider verbs and verify the
   affected Ferail view refreshes while preserving valid selection/scroll.
 - [ ] `WTEST-074` Same-parent multi-selection reaches the native menu. A
@@ -451,7 +453,10 @@ materialization, or silent failure.
   Stale PIDLs become an unavailable state; Ferail does not dereference or
   persist raw pointers.
 - [ ] `WTEST-105` Exercise breadcrumb parent, back/forward, new tab, refresh,
-  properties, context menu, clipboard, and drag in pathless locations.
+  properties, context menu, clipboard, and drag in pathless locations. Exercise
+  the native context menu separately on a provider file and provider container;
+  unsupported capability states must be disabled/explained, not guessed from
+  the displayed row kind.
 - [ ] `WTEST-106` Re-run local NTFS navigation and Flat 1M after namespace work;
   timings/memory stay within the global 5%/10% gates.
 

@@ -69,6 +69,82 @@ git rev-parse HEAD
 git log -8 --oneline
 ```
 
+### 2026-08-25 — macOS preparation for WIN-013 Shell namespace
+
+```text
+Date / machine: 2026-08-25, macOS development machine
+Start commit: 6622f0d (WIN-017 WSL locations)
+Preparation commits: ced5588 (pure platform namespace contract)
+Reference source:
+  - /Users/jkn/Source/ShellBat at
+    7b8268d60648b74f5a874be8edde3b4fc17f7cdc
+  - upstream: https://github.com/smourier/ShellBat
+Implemented in shared code:
+  - LocationTarget distinguishes an ordinary FileSystem(PathBuf) handoff from
+    a pathless PlatformLocation;
+  - provider and item identities have redacted Debug output; a row contains a
+    compact non-zero integer id, never a parsing name, PIDL, COM pointer or
+    Windows type;
+  - the provider instance is owned by exactly one tab session, so its Windows
+    identity arena will drop with the tab and cannot be mixed with another
+    provider's ids;
+  - streamed batches are capped at 512 rows, generation checked, cancelled on
+    navigation/drop, and have explicit loading/ready/unavailable states;
+  - platform selection is complement-based, so Select All is O(1) even for a
+    provider exposing millions of items;
+  - ordinary filesystem navigation drops the specialized session before
+    loading through NativeFs. FileEntry, Flat View and NodeStore are unchanged.
+ShellBat semantics deliberately adopted for the Windows provider:
+  - retain the desktop-absolute Shell identity independently from an optional
+    SIGDN_FILESYSPATH and hand real filesystem directories to NativeFs;
+  - obtain parent/breadcrumb identity from IShellItem::GetParent;
+  - enumerate pathless children through BHID_EnumItems / IEnumShellItems;
+  - map actions from SFGAO capabilities rather than guessing from item kind.
+ShellBat mechanics deliberately not copied:
+  - no full-list materialization or sorting before display;
+  - no one-row UI apply loop; Ferail streams bounded batches;
+  - no Shell/extension call on the GPUI thread and no personal parsing identity
+    in a shared row, report, persistent store or cache key.
+Native context-menu requirement:
+  - preserve the instant Ferail menu as default;
+  - request the real Windows menu only through More options / Shift+right-click
+    / Shift+F10, for both files and directories;
+  - for pathless provider files and containers, pass the selected owned Shell
+    identities to the isolated broker only when NATIVE_MENU is advertised;
+  - never prefetch QueryContextMenu on selection, navigation, hover or render.
+Host tests passed:
+  - cargo test -p ferail-core platform_namespace (8 passed)
+  - cargo test -p ferail-gpui platform_namespace (6 passed)
+Windows cases claimed: none. WTEST-100–106 and the expanded WTEST-072 remain
+  real-Windows gates.
+Next exact shared work on macOS:
+  1. Build the GPUI platform surface over this session without adapting rows
+     into FileEntry or fake PathBuf values.
+  2. Run providers on a background executor with a bounded channel; apply only
+     the current tab/request generation and coalesce notifications per batch.
+  3. Wire history, breadcrumbs, refresh, selection and recoverable unavailable
+     state against a deterministic in-memory provider.
+Next exact Windows work:
+  1. Add a ferail-shell-win32 provider whose tab-owned arena stores copied
+     absolute PIDL bytes plus an optional desktop-absolute parsing name. Never
+     retain borrowed ITEMIDLIST pointers or COM objects across apartments.
+  2. Construct/reconstruct IShellItem on its worker STA, enumerate with
+     BHID_EnumItems, retrieve SIGDN_NORMALDISPLAY / SIGDN_FILESYSPATH /
+     SIGDN_DESKTOPABSOLUTEPARSING as needed, and map SFGAO capability flags.
+  3. Emit no more than 512 DTOs per batch and stop promptly on cancellation;
+     a disconnected item becomes NotFound/Unavailable, never a stale-pointer
+     dereference.
+  4. Extend the isolated context-menu broker input from same-parent paths to
+     owned namespace identities. Validate separate file and directory menus,
+     then provider file/container menus, without restoring prefetch.
+  5. Execute WTEST-100–106, WTEST-072 and WTEST-121, then re-run local NTFS and
+     Flat 1M/4M performance baselines.
+Working-tree files intentionally excluded from this slice:
+  - crates/ferail-gpui/src/shell/file_ops.rs
+  - crates/ferail-gpui/src/shell/lock_info.rs
+  They contain concurrent formatting/work and must not be staged with WIN-013.
+```
+
 At handover creation, two unrelated user changes intentionally remain outside
 the Windows commits: `CHANGELOG.md` and
 `crates/ferail-gpui/src/file_list.rs` (Flat row-buffer release work). Preserve

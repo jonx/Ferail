@@ -72,6 +72,8 @@ source rather than a moving branch:
 - Ferail-Win32: `4fcb2ffb2c622c49b4c333b115588626e4f74245`
 - Filociraptor: `c3adf308ead1b9e2badd54e93d754791af8fc18d`
   ([smourier/Filociraptor](https://github.com/smourier/Filociraptor))
+- ShellBat: `7b8268d60648b74f5a874be8edde3b4fc17f7cdc`
+  ([smourier/ShellBat](https://github.com/smourier/ShellBat))
 
 The useful Filociraptor lesson is its split path: `ShellLocation` holds a
 normal path when one exists and a PIDL only for virtual Shell locations;
@@ -80,6 +82,15 @@ slower and therefore never replaces direct directory enumeration. Its native
 context menu is a useful reference for PIDL binding, `IContextMenu`, message
 forwarding, `TrackPopupMenu`, invocation, and post-menu refresh. We will not
 copy its in-process extension boundary.
+
+ShellBat is the stronger semantic reference for pathless Shell items. It keeps
+the desktop-absolute parsing identity/PIDL separate from the optional
+`SIGDN_FILESYSPATH`, obtains parents from `IShellItem::GetParent`, enumerates
+with `BHID_EnumItems`, and maps supported operations from `SFGAO_*` attributes.
+Ferail adopts those semantics, but not ShellBat's list materialization or
+one-item-at-a-time UI scheduling: enumeration remains cancellable, streamed
+and bounded. Ferail rows carry only compact session-local ids; the tab-owned
+provider arena owns PIDL bytes and any parsing names and releases them together.
 
 Ferail-Win32 confirms why its old prefetch is not coming back:
 `menu_preload.rs` started `QueryContextMenu` shortly after every selection
@@ -120,11 +131,14 @@ enum LocationTarget {
 }
 ```
 
-`PlatformLocationKey` is an opaque, serializable key. On Windows it can carry
-a parsing name and arena-owned PIDL bytes. COM interfaces, raw PIDL pointers,
-`HWND`, and Windows crate types never enter `ferail-core` or the row renderer.
-PIDLs are stored only for namespace surfaces which require them—not on every
-ordinary filesystem row and never in the millions-of-rows Flat View payload.
+`PlatformLocationKey` is an opaque, compact id scoped to one provider session.
+On Windows it indexes a tab-owned arena containing owned PIDL bytes and, only
+where needed, a desktop-absolute parsing name. The parsing name is not copied
+into rows, persisted or emitted in default diagnostics. COM interfaces, raw
+PIDL pointers, `HWND`, and Windows crate types never enter `ferail-core` or the
+row renderer. PIDLs are stored only for namespace surfaces which require
+them—not on every ordinary filesystem row and never in the millions-of-rows
+Flat View payload.
 
 Use small capability-oriented seams rather than one giant operating-system
 interface:
@@ -466,6 +480,11 @@ system.
   explain why the Windows action is unavailable. *Same-parent filesystem
   selections work; mixed-parent selections return an explicit notification;
   namespace-only items remain future work.*
+- [~] Resolve and show the native menu for both filesystem **files and
+  directories**, using their actual Shell items. Extend the same explicit,
+  capability-gated path to supported namespace files/containers; never infer
+  menu support from row kind alone. *Filesystem items share the current broker
+  path; the directory and namespace acceptance matrix remains to be recorded.*
 - [x] Once the native popup is visible it is user-modal, not timed out. Before
   display, a wedged provider can be abandoned by terminating the broker.
 - [ ] After a verb, refresh only possibly affected locations while preserving
@@ -655,8 +674,11 @@ filesystem path is known.
 
 **Work.**
 
-- [ ] Introduce `LocationTarget`/platform location identity without changing
-  ordinary `PathBuf` tabs or Flat View rows.
+- [~] Introduce `LocationTarget`/platform location identity without changing
+  ordinary `PathBuf` tabs or Flat View rows. *The pure core contract and
+  tab-owned GPUI session exist on macOS with compact ids, capability/flag DTOs,
+  bounded batches, generation rejection, history, recoverable errors and O(1)
+  Select All. The shared visual surface and real Windows provider remain.*
 - [ ] Implement a Windows namespace provider with streaming batches,
   cancellation, generation checks, and PIDL arena ownership scoped to the tab.
 - [ ] Add distinctly named Locations: **Desktop folder** for the filesystem
@@ -664,7 +686,9 @@ filesystem path is known.
 - [ ] Surface Recycle Bin, OneDrive/provider roots, and connected portable
   devices only when enumerated by the Shell.
 - [ ] Route open, parent, breadcrumb, refresh, icon, properties, context menu,
-  clipboard, and drag through capabilities when no path exists.
+  clipboard, and drag through capabilities when no path exists. Native context
+  menus must cover both file and container items, and must be requested only
+  after the explicit menu action.
 - [ ] Keep direct filesystem enumeration for every namespace item which
   resolves to a normal directory. Do not recursively enumerate a disk through
   COM.
@@ -1108,7 +1132,8 @@ that smaller boundary is stable.
 - Complete WSL symlink, `/mnt/<drive>`, stopped/disconnected and privacy tests
   before adding PIDL-backed browsing. This preserves the useful behavior from
   Ferail-Win32 without its UI-adjacent blocking calls or broad metadata skip.
-- Implement arena-owned PIDL/parsing-name keys scoped to each namespace tab;
+- Implement a tab-owned identity arena containing PIDL bytes and optional
+  parsing names, indexed by compact integer ids in the shared rows;
   enumerate This PC, Recycle Bin, provider roots and MTP in streaming batches.
 - Route only pathless items through provider capabilities for open, parent,
   breadcrumbs, properties, native menu, transfers and icons. Immediately hand
@@ -1233,7 +1258,8 @@ cross-platform or four-million-row regression remains.
 
 - [~] WIN-017 cached WSL discovery, explicit activation and path-backed
   `NativeFs` handoff implemented in source; WTEST-130–139 remain on Windows.
-- [ ] WIN-013 platform location model and namespace provider.
+- [~] WIN-013 pure platform-location contract and tab-owned session complete;
+  shared visual surface and Windows namespace provider remain.
 - [ ] Ship This PC, Recycle Bin, OneDrive/provider roots, and devices
   incrementally behind capability checks.
 - [ ] Prove again that ordinary filesystem browsing never enters the namespace

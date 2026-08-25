@@ -4050,6 +4050,10 @@ impl Shell {
         let Some(tab_index) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
         };
+        // A real filesystem target always leaves the specialized namespace
+        // surface. Dropping the tab-owned session cancels its provider worker
+        // and releases all opaque item identities in one operation.
+        self.tabs[tab_index].platform_namespace = None;
         let node_id = self.process.fs.id_for_path(&path);
         self.process
             .node_store

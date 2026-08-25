@@ -451,6 +451,10 @@ pub struct Tab {
     /// moves through this NodeId state first.
     pub nav: NavigationState,
     pub current_dir: PathBuf,
+    /// Present only for pathless provider-owned locations (This PC, Recycle
+    /// Bin, MTP, etc.). Ordinary filesystem and Flat View tabs keep this
+    /// `None`; opaque provider identities therefore never enter their rows.
+    pub platform_namespace: Option<crate::platform_namespace::PlatformNamespaceSession>,
     pub history: Vec<HistoryEntry>,
     pub history_index: usize,
     /// Multi-selection set keyed by `NodeId`. Per spec §2.2 this is
@@ -719,6 +723,7 @@ impl Tab {
             id,
             nav: NavigationState::new(node_id),
             current_dir: at.clone(),
+            platform_namespace: None,
             history: vec![HistoryEntry::new(at)],
             history_index: 0,
             selection: HashSet::new(),
