@@ -1285,11 +1285,14 @@ cross-platform or four-million-row regression remains.
 
 - [~] WIN-007 isolated native Windows context menu, with no prefetch; UI and
   third-party-extension manual matrix remains.
-- [ ] WIN-010 shortcut semantics.
+- [~] WIN-010 shortcut contract/cache complete; Windows resolver, GPUI wiring
+  and acceptance remain.
 - [~] WIN-011 icon/thumbnail correctness: Fonts and fallback separation ship;
-  cloud/special-provider cache and multi-DPI work remains.
-- [~] WIN-014 portable photo metadata ships; caching, Windows property values
-  and direct native Properties remain.
+  shared bounded scheduling exists, while process integration,
+  cloud/special-provider cache and multi-DPI work remain.
+- [~] WIN-014 portable photo metadata and private property/cache contracts
+  exist; GPUI cache wiring, Windows property values and direct native
+  Properties remain.
 
 ### Phase 5 — Windows platform locations
 

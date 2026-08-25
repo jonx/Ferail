@@ -19,19 +19,23 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 ## Current resume point
 
 - Branch: `main`
-- Current commit: `3cc8b7e` (`release: Ferail 0.6.8 Windows drag
-  responsiveness`)
+- Last published Windows baseline: `3cc8b7e` (`release: Ferail 0.6.8 Windows
+  drag responsiveness`)
+- Mac-first preparation series: `6622f0d` through `77a5d36`, followed by the
+  current handover/audit commit. Use `git rev-parse HEAD` after pulling rather
+  than assuming the last abbreviated hash in this document.
 - Current Windows release: `0.6.8`
 - Published artifacts: unsigned portable Windows x64 ZIP plus its matching
   x64 symbols ZIP
-- Next campaign: implement the remaining shared contracts and UI on macOS,
-  then finish and accept their Windows mechanisms on a real Windows machine;
+- Next campaign: connect the prepared shared contracts to their GPUI owners,
+  then implement and accept the Windows Shell mechanisms on a real Windows
+  machine;
   see the
   [Mac-first continuation plan](../features/WINDOWS_COMPATIBILITY_PLAN.md#continuation-plan-mac-first-windows-final).
-- Added scope: restore WSL distributions as a cached dynamic **Linux**
-  location, adapted from the pinned Ferail-Win32 reference. Implement its
-  neutral stopped/starting/ready contract on macOS first; perform registry,
-  `wsl.exe`, UNC and symlink work only on Windows (WIN-017/WTEST-130–139).
+- Added scope: WSL distributions are implemented in source as cached dynamic
+  **Linux** locations, adapted from the pinned Ferail-Win32 reference. Registry,
+  `wsl.exe`, UNC and symlink behavior still requires real-Windows qualification
+  (WIN-017/WTEST-130–139).
 
 User acceptance reported on 2026-08-25 against the current Windows work:
 
@@ -127,14 +131,15 @@ Host tests passed:
   - cargo test -p ferail-gpui platform_namespace (9 passed)
 Windows cases claimed: none. WTEST-100–106 and the expanded WTEST-072 remain
   real-Windows gates.
-Next exact shared work on macOS:
-  1. Add seeded/screenshot access to the in-memory provider surface and finish
-     visual polish without adapting rows into FileEntry or fake PathBuf values.
-  2. Add capability-gated platform action plumbing for properties, transfers,
-     icons and the explicit native menu request; unsupported actions stay
-     absent or explain why they cannot run.
-  3. Keep the pathless status bar/filter semantics distinct from the stale
-     filesystem tab state before exposing the first Windows location.
+Later preparation blocks in this handover supersede the original shared-work
+list above: capability-gated actions, symbolic transfer selection, shortcut
+and property DTOs/caches, asset scheduling, and command consistency now exist.
+Remaining shared/UI work before or alongside the Windows provider:
+  1. Add seeded/screenshot access and visual polish without adapting rows into
+     FileEntry or fake PathBuf values.
+  2. Connect action/property/shortcut/asset contracts to process/tab owners;
+     unsupported capabilities stay absent or explain why they cannot run.
+  3. Keep pathless status/filter semantics distinct from filesystem tab state.
 Next exact Windows work:
   1. Add a ferail-shell-win32 provider whose tab-owned arena stores copied
      absolute PIDL bytes plus an optional desktop-absolute parsing name. Never
@@ -199,8 +204,8 @@ Windows cases claimed from macOS: none.
 
 ```text
 Shared contract prepared:
-  - every platform action maps to one advertised capability; file/container
-    appearance never implies support;
+  - every platform action (including Rename) maps to one advertised
+    capability; file/container appearance never implies support;
   - native-menu requests distinguish normal and extended invocation but share
     the same explicit, capability-gated route for provider files and folders;
   - a provider action receives its tab-owned PlatformLocation plus a symbolic
@@ -506,23 +511,26 @@ path exists.
 ## Current remaining work
 
 The original crash report's principal P0 user flows now pass in real Windows
-use. Resume implementation in this order:
+use. The Mac-first series has prepared the namespace, WSL, shortcut, action,
+transfer-selection, properties/cache, asset-budget and command-consistency
+contracts. Resume implementation in this order:
 
-1. Close the bounded-work contracts shared by previews, thumbnails, file
-   details and selection: process-wide I/O/cache budgets, per-frame apply
-   limits, affected-row invalidation, stable row geometry, and stale-selection
-   regression tests.
+1. Connect `BoundedAssetLane` to one process-owned coordinator: provider,
+   decode, upload and apply budgets, per-frame apply limits, affected-row
+   invalidation and stable row geometry. Then run the 10k/hostile-provider
+   matrix without changing the ordinary/Flat row model.
 2. Complete path-based interoperability: actionable Open/Reveal failures,
-   targeted refresh after a native Shell verb, `.lnk` resolution, and the
-   Explorer clipboard/drag format matrix.
+   targeted refresh after a native Shell verb, the prepared `.lnk` resolver,
+   and the Explorer clipboard/drag format matrix through symbolic selections.
 3. Qualify the source-complete WSL path-backed location slice through
    WTEST-130–139: cached installed distributions, no implicit start, explicit
    stopped→starting→path activation, then a `NativeFs` handoff. Only after that
    gate, follow with PIDL-backed This PC, Recycle Bin, provider roots and MTP.
    Never put WSL provider state, PIDLs or COM state on ordinary filesystem or
    Flat View rows.
-4. Complete metadata and Properties: shared cached metadata DTOs first,
-   Windows `IPropertyStore` and the native Properties action second.
+4. Complete metadata and Properties by connecting the prepared bounded
+   revision cache/neutral DTO, then add the Windows `IPropertyStore` worker and
+   direct native Properties action.
 5. Qualify the exact release artifacts: clean/upgraded profiles, constrained
    machine and DPI passes, helper/handle soaks, privacy audit, Authenticode,
    then macOS/Linux regression.
@@ -544,6 +552,8 @@ menu prefetch while doing any of this.
   compact row/path representation.
 - Optional Windows integration may fail closed with an explanation; it may
   not freeze or terminate the main process.
+- Native action availability comes only from advertised capability, for both
+  files and containers. It is never inferred from row kind.
 
 ## Collecting dumps
 

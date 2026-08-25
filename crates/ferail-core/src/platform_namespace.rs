@@ -160,6 +160,7 @@ pub enum PlatformAction {
     Copy,
     Move,
     Link,
+    Rename,
     CreateChild,
     ReadStream,
     Thumbnail,
@@ -178,6 +179,7 @@ impl PlatformAction {
             Self::Copy => PlatformCapabilities::COPY,
             Self::Move => PlatformCapabilities::MOVE,
             Self::Link => PlatformCapabilities::LINK,
+            Self::Rename => PlatformCapabilities::RENAME,
             Self::CreateChild => PlatformCapabilities::CREATE_CHILD,
             Self::ReadStream => PlatformCapabilities::READ_STREAM,
             Self::Thumbnail => PlatformCapabilities::THUMBNAIL,
@@ -712,6 +714,7 @@ mod tests {
         assert!(caps.supports(PlatformAction::Properties));
         assert!(caps.supports(PlatformAction::Copy));
         assert!(!caps.supports(PlatformAction::Move));
+        assert!(!caps.supports(PlatformAction::Rename));
         assert!(!caps.supports(PlatformAction::TrashRecoverable));
     }
 
