@@ -135,6 +135,14 @@ impl NodeStore {
         id
     }
 
+    /// Return an id for an already-registered path without normalizing or
+    /// allocating a temporary `PathBuf`. Callers should use this only as a
+    /// fast-path and fall back to normal identity registration when it
+    /// misses; `HashMap<PathBuf, _>` supports borrowed `Path` lookup.
+    pub fn cached_id_for_path(&self, path: &Path) -> Option<NodeId> {
+        self.path_index.get(path).copied()
+    }
+
     pub fn display_name(&self, id: NodeId) -> Option<&str> {
         self.nodes.get(&id).map(|node| node.display_name.as_str())
     }

@@ -122,6 +122,10 @@ pub struct ArchiveView {
     close_prompt_open: bool,
     /// Hover explanation shown while an external file drag is over the pane.
     drop_feedback: Option<SharedString>,
+    /// Item count used to build the current external-drop message. Mouse-move
+    /// events can arrive hundreds of times per second, but the localized text
+    /// only changes when this count or the accepted/rejected state changes.
+    drop_feedback_count: Option<usize>,
     /// Whether the current hover explanation describes an accepted drop.
     /// Archive-entry drags over their source workbench are deliberately
     /// rejected: releasing there must never bubble into the docked folder
@@ -273,6 +277,7 @@ impl ArchiveView {
             saving: false,
             close_prompt_open: false,
             drop_feedback: None,
+            drop_feedback_count: None,
             drop_feedback_allowed: false,
             host_width: None,
             preview_panel: None,
@@ -1925,7 +1930,7 @@ impl Render for ArchiveView {
         let danger = cx.theme().danger;
         let header = self.header(cx);
         let drop_allowed = self.can_stage_edits();
-        let native_archive_dragging = crate::file_list::native_archive_drag().is_some();
+        let native_archive_dragging = crate::file_list::native_archive_drag_active();
         let feedback_allowed = self.drop_feedback_allowed;
         let drag_message = if cx.has_active_drag() || native_archive_dragging {
             self.drop_feedback.clone()
@@ -2008,26 +2013,29 @@ impl Render for ArchiveView {
                     }
                     let allowed = this.can_stage_edits();
                     let count = event.drag(cx).paths().len();
-                    let message = this.edit_rejection().unwrap_or_else(|| {
-                        trn!(
-                            "Drop to add {n} item to the archive",
-                            "Drop to add {n} items to the archive",
-                            count
-                        )
-                    });
-                    if this.drop_feedback.as_ref() != Some(&message) {
+                    if this.drop_feedback_count != Some(count)
+                        || this.drop_feedback_allowed != allowed
+                    {
+                        let message = this.edit_rejection().unwrap_or_else(|| {
+                            trn!(
+                                "Drop to add {n} item to the archive",
+                                "Drop to add {n} items to the archive",
+                                count
+                            )
+                        });
                         this.drop_feedback = Some(message);
+                        this.drop_feedback_count = Some(count);
                         this.drop_feedback_allowed = allowed;
                         cx.notify();
                     }
-                    cx.set_active_drag_cursor_style(
-                        if allowed {
-                            gpui::CursorStyle::DragCopy
-                        } else {
-                            gpui::CursorStyle::OperationNotAllowed
-                        },
-                        window,
-                    );
+                    let cursor = if allowed {
+                        gpui::CursorStyle::DragCopy
+                    } else {
+                        gpui::CursorStyle::OperationNotAllowed
+                    };
+                    if cx.active_drag_cursor_style() != Some(cursor) {
+                        cx.set_active_drag_cursor_style(cursor, window);
+                    }
                 },
             ))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
@@ -2056,10 +2064,17 @@ impl Render for ArchiveView {
                     let message = tr!("Drop outside the archive to extract");
                     if this.drop_feedback.as_ref() != Some(&message) || this.drop_feedback_allowed {
                         this.drop_feedback = Some(message);
+                        this.drop_feedback_count = None;
                         this.drop_feedback_allowed = false;
                         cx.notify();
                     }
-                    cx.set_active_drag_cursor_style(gpui::CursorStyle::OperationNotAllowed, window);
+                    if cx.active_drag_cursor_style() != Some(gpui::CursorStyle::OperationNotAllowed)
+                    {
+                        cx.set_active_drag_cursor_style(
+                            gpui::CursorStyle::OperationNotAllowed,
+                            window,
+                        );
+                    }
                 },
             ))
             .on_drop(cx.listener(
@@ -2072,12 +2087,13 @@ impl Render for ArchiveView {
             // explicitly reject those here so the docked pane's parent can
             // never interpret the release as extraction into current_dir.
             .on_mouse_move(cx.listener(|this, _event, _window, cx| {
-                if crate::file_list::native_archive_drag().is_none() {
+                if !crate::file_list::native_archive_drag_active() {
                     return;
                 }
                 let message = tr!("Drop outside the archive to extract");
                 if this.drop_feedback.as_ref() != Some(&message) || this.drop_feedback_allowed {
                     this.drop_feedback = Some(message);
+                    this.drop_feedback_count = None;
                     this.drop_feedback_allowed = false;
                     cx.notify();
                 }

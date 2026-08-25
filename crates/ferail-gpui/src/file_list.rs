@@ -63,6 +63,10 @@ pub struct DragBadge {
     pub icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>,
     pub count: usize,
     pub offset: Point<Pixels>,
+    /// Flips permanently for this gesture when GPUI promotes it to the native
+    /// platform session. The typed payload may be restored on re-entry so
+    /// Ferail drop targets still work, but OLE remains the sole visual owner.
+    pub native_owned: Arc<AtomicBool>,
 }
 
 /// Max real images to render in a multi-item drag stack. Finder shows a
@@ -116,6 +120,9 @@ fn elide_label(text: &str, max_chars: usize) -> SharedString {
 
 impl Render for DragBadge {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.native_owned.load(Ordering::Acquire) {
+            return gpui::Empty.into_any_element();
+        }
         let theme = cx.theme();
         let content = if self.count <= 1 {
             // Single item: labelled chip with the file's icon/thumbnail.
@@ -232,6 +239,7 @@ impl Render for DragBadge {
             .pl(self.offset.x + px(12.0))
             .pt(self.offset.y + px(8.0))
             .child(content)
+            .into_any_element()
     }
 }
 
@@ -578,7 +586,7 @@ pub struct FileListDelegate {
     /// (Select All in a 10k folder ≈ 400k HashSet probes + PathBuf
     /// clones per pass). Invalidated by every selection write and
     /// every structural entries change.
-    drag_snapshot: Option<DragSnapshot>,
+    drag_snapshot: RefCell<Option<DragSnapshot>>,
     /// Status-bar totals, computed lazily once per model/selection
     /// change instead of O(N) sums on every render pass (`Cell` so the
     /// read-only render path can fill them). Invalidated together with
@@ -755,19 +763,22 @@ mod archive_promise_tests {
 }
 
 /// See [`FileListDelegate::drag_snapshot`].
-#[derive(Default)]
-struct DragSnapshot {
+#[derive(Clone, Default)]
+pub(crate) struct DragSnapshot {
     /// Visible-order paths of the whole selection — the real OS drag
     /// payload. Rows still clone this into their `ExternalPaths`
     /// value (gpui's mac backend needs it by value), but the walk,
     /// membership probes, and ghost assembly happen once.
-    paths: Vec<PathBuf>,
+    pub(crate) paths: Rc<Vec<PathBuf>>,
     /// Parallel to `paths`: whether each entry is a directory, from the
     /// already-listed `EntryKind` — so promoting the drag to a native
     /// session (`external_drag_payload`) never stats anything.
-    dirs: Vec<bool>,
-    names: SmallVec<[SharedString; GHOST_STACK_CAP]>,
-    icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>,
+    pub(crate) dirs: Rc<Vec<bool>>,
+    pub(crate) names: SmallVec<[SharedString; GHOST_STACK_CAP]>,
+    pub(crate) icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>,
+    /// Shared visual handoff flag for the next selected-items gesture. The
+    /// drag constructor resets it; the native payload resolver sets it.
+    pub(crate) native_owned: Arc<AtomicBool>,
 }
 
 /// Surface-local path arena for Flat View. Keeping complete relative parent
@@ -1145,7 +1156,7 @@ impl FileListDelegate {
             current_sort,
             sort_state,
             shell_focus,
-            drag_snapshot: None,
+            drag_snapshot: RefCell::new(None),
             cached_total_size: std::cell::Cell::new(None),
             cached_selected_size: std::cell::Cell::new(None),
             slow_load: None,
@@ -1197,7 +1208,7 @@ impl FileListDelegate {
     /// Drop the cached selection drag payload. Call on every
     /// selection write and structural entries change.
     pub fn invalidate_drag_snapshot(&mut self) {
-        self.drag_snapshot = None;
+        *self.drag_snapshot.get_mut() = None;
         self.cached_total_size.set(None);
         self.cached_selected_size.set(None);
     }
@@ -1205,7 +1216,7 @@ impl FileListDelegate {
     /// Selection-only invalidation. The visible model did not change, so its
     /// (potentially multi-million-row) total remains valid.
     pub fn invalidate_selection_snapshot(&mut self) {
-        self.drag_snapshot = None;
+        *self.drag_snapshot.get_mut() = None;
         self.cached_selected_size.set(None);
     }
 
@@ -1269,11 +1280,27 @@ impl FileListDelegate {
             .map(|p| ghost_name(p))
             .collect();
         DragSnapshot {
-            paths,
-            dirs,
+            paths: Rc::new(paths),
+            dirs: Rc::new(dirs),
             names,
             icons,
+            native_owned: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Shared drag snapshot for both list and grid views. `RefCell` is used
+    /// only as a lazy render cache: model/selection writes still invalidate it
+    /// through `&mut self`, and building it performs cache reads but no I/O.
+    pub(crate) fn drag_snapshot(&self, cx: &gpui::App) -> Option<DragSnapshot> {
+        if self.drag_snapshot.borrow().is_none() {
+            let snapshot = self.build_drag_snapshot(cx);
+            *self.drag_snapshot.borrow_mut() = Some(snapshot);
+        }
+        self.drag_snapshot
+            .borrow()
+            .as_ref()
+            .filter(|snapshot| !snapshot.paths.is_empty())
+            .cloned()
     }
 
     /// Push one warm-cache ghost image (thumbnail if cached, else the
@@ -2363,14 +2390,14 @@ impl TableDelegate for FileListDelegate {
                 .on_drag_move(cx.listener(
                     move |_state, e: &gpui::DragMoveEvent<ExternalPaths>, _window, cx| {
                         if e.bounds.contains(&e.event.position) {
-                            cx.set_active_drag_cursor_style(
-                                if archive_drop_allowed {
-                                    gpui::CursorStyle::DragCopy
-                                } else {
-                                    gpui::CursorStyle::OperationNotAllowed
-                                },
-                                _window,
-                            );
+                            let cursor = if archive_drop_allowed {
+                                gpui::CursorStyle::DragCopy
+                            } else {
+                                gpui::CursorStyle::OperationNotAllowed
+                            };
+                            if cx.active_drag_cursor_style() != Some(cursor) {
+                                cx.set_active_drag_cursor_style(cursor, _window);
+                            }
                             cx.emit(TableEvent::DragHover { row_ix });
                         }
                     },
@@ -2403,14 +2430,14 @@ impl TableDelegate for FileListDelegate {
                 .on_drag_move(cx.listener(
                     move |_state, event: &gpui::DragMoveEvent<ArchiveEntryDrag>, window, cx| {
                         if event.bounds.contains(&event.event.position) {
-                            cx.set_active_drag_cursor_style(
-                                if archive_entry_drop_allowed {
-                                    gpui::CursorStyle::DragCopy
-                                } else {
-                                    gpui::CursorStyle::OperationNotAllowed
-                                },
-                                window,
-                            );
+                            let cursor = if archive_entry_drop_allowed {
+                                gpui::CursorStyle::DragCopy
+                            } else {
+                                gpui::CursorStyle::OperationNotAllowed
+                            };
+                            if cx.active_drag_cursor_style() != Some(cursor) {
+                                cx.set_active_drag_cursor_style(cursor, window);
+                            }
                         }
                     },
                 ))
@@ -2434,7 +2461,7 @@ impl TableDelegate for FileListDelegate {
                 // for hover and drop. If GPUI retained the typed drag, the
                 // normal on_drop above wins and this path stays dormant.
                 .on_mouse_move(cx.listener(move |_state, _event, _window, cx| {
-                    if native_archive_drag().is_some() {
+                    if native_archive_drag_active() {
                         cx.notify();
                     }
                 }))
@@ -2491,6 +2518,13 @@ impl TableDelegate for FileListDelegate {
         // from the cached `EntryKind`, never from a stat. Spec §3.1:
         // pressing a selected row drags the full visible-order
         // selection; pressing an unselected row drags just that row.
+        // Once a drag is active GPUI already owns the listener's value in an
+        // Arc. Re-registering every visible row on every forced drag repaint
+        // only rebuilt (and, for selections, deep-cloned) payloads that can no
+        // longer start another gesture.
+        if cx.has_active_drag() {
+            return row;
+        }
         if let Some(entry) = self.entries.get(row_ix) {
             let row_is_selected = self.is_selected(entry.id);
             // Archive rows carry archive coordinates rather than paths.
@@ -2514,6 +2548,7 @@ impl TableDelegate for FileListDelegate {
                                 icons: smallvec![],
                                 count,
                                 offset,
+                                native_owned: Arc::new(AtomicBool::new(false)),
                             })
                         })
                         .external_drag_payload::<ArchiveEntryDrag>(|drag, window, cx| {
@@ -2626,33 +2661,34 @@ impl TableDelegate for FileListDelegate {
                 // per selection/model change, reused by every selected
                 // row. The old per-row walk over ALL entries made a
                 // big selection quadratic per render pass.
-                if self.drag_snapshot.is_none() {
-                    self.drag_snapshot = Some(self.build_drag_snapshot(cx));
-                }
-                if let Some(snapshot) = self.drag_snapshot.as_ref() {
-                    if !snapshot.paths.is_empty() {
-                        let count = snapshot.paths.len();
-                        let names = snapshot.names.clone();
-                        let ghost_icons = snapshot.icons.clone();
-                        let dirs = snapshot.dirs.clone();
-                        return row
-                            .on_drag(
-                                ExternalPaths(snapshot.paths.clone().into()),
-                                move |_paths, offset, _window, cx| {
-                                    cx.new(|_| DragBadge {
-                                        names: names.clone(),
-                                        icons: ghost_icons.clone(),
-                                        count,
-                                        offset,
-                                    })
-                                },
-                            )
-                            .external_drag_payload::<ExternalPaths>(move |paths, _window, _cx| {
-                                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
-                                    paths.paths().iter().cloned().zip(dirs.iter().copied()),
-                                )))
-                            });
-                    }
+                if let Some(snapshot) = self.drag_snapshot(cx) {
+                    let count = snapshot.paths.len();
+                    let names = snapshot.names.clone();
+                    let ghost_icons = snapshot.icons.clone();
+                    let dirs = snapshot.dirs.clone();
+                    let native_owned = snapshot.native_owned.clone();
+                    let native_owned_for_badge = native_owned.clone();
+                    let native_owned_for_payload = native_owned.clone();
+                    return row
+                        .on_drag(
+                            ExternalPaths(snapshot.paths.as_ref().clone().into()),
+                            move |_paths, offset, _window, cx| {
+                                native_owned_for_badge.store(false, Ordering::Release);
+                                cx.new(|_| DragBadge {
+                                    names: names.clone(),
+                                    icons: ghost_icons.clone(),
+                                    count,
+                                    offset,
+                                    native_owned: native_owned_for_badge.clone(),
+                                })
+                            },
+                        )
+                        .external_drag_payload::<ExternalPaths>(move |paths, _window, _cx| {
+                            native_owned_for_payload.store(true, Ordering::Release);
+                            Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
+                                paths.paths().iter().cloned().zip(dirs.iter().copied()),
+                            )))
+                        });
                 }
             } else if let Some(path) = self.path_for_entry(entry.id) {
                 // Unselected row: drags just itself — cheap, no snapshot.
@@ -2660,19 +2696,25 @@ impl TableDelegate for FileListDelegate {
                 self.push_ghost_icon(entry, &path, show_thumbnails(cx), &mut ghost_icons);
                 let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = smallvec![ghost_name(&path)];
                 let is_dir = matches!(entry.kind, EntryKind::Directory);
+                let native_owned = Arc::new(AtomicBool::new(false));
+                let native_owned_for_badge = native_owned.clone();
+                let native_owned_for_payload = native_owned.clone();
                 return row
                     .on_drag(
                         ExternalPaths(vec![path].into()),
                         move |_paths, offset, _window, cx| {
+                            native_owned_for_badge.store(false, Ordering::Release);
                             cx.new(|_| DragBadge {
                                 names: names.clone(),
                                 icons: ghost_icons.clone(),
                                 count: 1,
                                 offset,
+                                native_owned: native_owned_for_badge.clone(),
                             })
                         },
                     )
                     .external_drag_payload::<ExternalPaths>(move |paths, _window, _cx| {
+                        native_owned_for_payload.store(true, Ordering::Release);
                         Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
                             paths.paths().iter().cloned().map(|p| (p, is_dir)),
                         )))

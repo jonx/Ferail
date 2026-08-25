@@ -29,6 +29,10 @@ use crate::text::{IconScale as _, TextScale as _};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
@@ -401,6 +405,9 @@ fn render_tree_row(
         .map(|n| ferail_fs_native::paths::display_leaf(n.to_string_lossy().as_ref()).into_owned())
         .unwrap_or_else(|| drag_path.display().to_string())
         .into();
+    let native_owned = Arc::new(AtomicBool::new(false));
+    let native_owned_for_badge = native_owned.clone();
+    let native_owned_for_payload = native_owned.clone();
     let mut row = h_flex()
         .id(ElementId::Name(row_key))
         .relative()
@@ -421,17 +428,20 @@ fn render_tree_row(
         .on_drag(
             gpui::ExternalPaths(smallvec![drag_path]),
             move |_paths, offset, _window, cx| {
+                native_owned_for_badge.store(false, Ordering::Release);
                 cx.new(|_| crate::file_list::DragBadge {
                     names: smallvec![drag_label.clone()],
                     icons: smallvec![],
                     count: 1,
                     offset,
+                    native_owned: native_owned_for_badge.clone(),
                 })
             },
         )
         // Tree rows are always directories; promote the drag to a
         // native session when the pointer leaves the window.
         .external_drag_payload::<gpui::ExternalPaths>(move |paths, _window, _cx| {
+            native_owned_for_payload.store(true, Ordering::Release);
             Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
                 paths.paths().iter().cloned().map(|p| (p, true)),
             )))
@@ -505,7 +515,7 @@ fn render_tree_row(
             },
         )
         .on_mouse_move(|_event, window, _cx| {
-            if crate::file_list::native_archive_drag().is_some() {
+            if crate::file_list::native_archive_drag_active() {
                 window.refresh();
             }
         })

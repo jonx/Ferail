@@ -13,7 +13,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ferail_core::favorites::{Favorite, FavoriteId, FavoriteKind, FavoriteState, FavoriteTarget};
-use gpui::{Animation, AnimationExt as _, AnyElement, Context, FocusHandle, WeakEntity, div};
+use gpui::{
+    Animation, AnimationExt as _, AnyElement, Context, Entity, FocusHandle, WeakEntity, div,
+};
 use gpui::{
     App, AppContext, ElementId, ExternalPaths, FontWeight, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
@@ -23,6 +25,7 @@ use gpui_component::{
     ActiveTheme, Collapsible, h_flex, menu::ContextMenuExt as _, sidebar::SidebarItem, v_flex,
 };
 
+use crate::favorites::Favorites;
 use crate::icons::IconCache;
 use crate::shell::Shell;
 
@@ -77,11 +80,11 @@ impl Render for FavoriteDragPayload {
     }
 }
 
-/// Section payload for the user-curated Favorites group. Cloned per
-/// frame; the `Vec<Favorite>` is owned (small for typical libraries).
+/// Section payload for the user-curated Favorites group. It retains the live
+/// entity instead of cloning every `Favorite` on every window repaint.
 #[derive(Clone)]
 pub struct FavoritesSection {
-    favorites: Vec<Favorite>,
+    favorites: Entity<Favorites>,
     /// `true` ⇒ Sidebar (whole sidebar) is in icon-only collapse mode.
     /// Distinct from `section_collapsed`. Both can be true.
     icon_only: bool,
@@ -108,7 +111,7 @@ pub struct FavoritesSection {
 impl FavoritesSection {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        favorites: Vec<Favorite>,
+        favorites: Entity<Favorites>,
         section_collapsed: bool,
         shell: WeakEntity<Shell>,
         icons: Rc<RefCell<IconCache>>,
@@ -286,7 +289,9 @@ impl SidebarItem for FavoritesSection {
             return v_flex().w_full().child(header).into_any_element();
         }
 
-        let body: AnyElement = if self.favorites.is_empty() {
+        let favorites_model = self.favorites.read(cx);
+        let favorites = favorites_model.entries();
+        let body: AnyElement = if favorites.is_empty() {
             // §11.7 empty state. Muted, slightly indented so it reads
             // as guidance rather than a clickable row. It is ALSO the
             // drop target the text advertises: with no rows there are no
@@ -331,28 +336,22 @@ impl SidebarItem for FavoritesSection {
             // Snapshot per-row availability state. Reads from the
             // cached map on the entity — render never touches the
             // filesystem (Prime Directive).
-            let states: Vec<FavoriteState> = self
-                .favorites
+            let states: Vec<FavoriteState> = favorites
                 .iter()
-                .map(|f| {
-                    shell
-                        .upgrade()
-                        .map(|s| s.read(cx).process.favorites().read(cx).state_for(f.id))
-                        .unwrap_or(FavoriteState::Available)
-                })
+                .map(|f| favorites_model.state_for(f.id))
                 .collect();
             // Interleave drop-gap rows between each favorite so the
             // user can drop in a precise insertion point (§4.2). The
             // gap before the first row gets a `-INF` left bound; the
             // gap after the last row gets `+INF` right bound, both
             // routed through `Favorites::reorder_between`.
-            let mut elements: Vec<AnyElement> = Vec::with_capacity(self.favorites.len() * 2 + 1);
-            let n = self.favorites.len();
-            for (i, f) in self.favorites.iter().enumerate() {
+            let mut elements: Vec<AnyElement> = Vec::with_capacity(favorites.len() * 2 + 1);
+            let n = favorites.len();
+            for (i, f) in favorites.iter().enumerate() {
                 let before = if i == 0 {
                     f64::NEG_INFINITY
                 } else {
-                    self.favorites[i - 1].sort_index
+                    favorites[i - 1].sort_index
                 };
                 let after = f.sort_index;
                 let anim = if self.removing.contains(&f.id) {
@@ -383,7 +382,7 @@ impl SidebarItem for FavoritesSection {
             let last_idx = if n == 0 {
                 0.0
             } else {
-                self.favorites[n - 1].sort_index
+                favorites[n - 1].sort_index
             };
             elements.push(render_drop_gap(
                 n,

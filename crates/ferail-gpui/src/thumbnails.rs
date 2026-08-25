@@ -113,16 +113,17 @@ type Key = (PathBuf, u32);
 
 #[derive(Default)]
 pub struct ThumbnailCache {
-    /// `(path, size)` → resolved thumbnail. `Some(arc)` is a ready
-    /// image; `None` records "Quick Look produced nothing" so we fall
-    /// back to the icon and never re-request.
-    ready: HashMap<Key, Option<Arc<RenderImage>>>,
+    /// `path → size → resolved thumbnail`. Nesting by borrowed `Path` keeps
+    /// render-time lookups allocation-free; the previous `(PathBuf, size)`
+    /// tuple forced every `get` to manufacture a temporary owned path.
+    /// `Some(arc)` is a ready image; `None` records a negative result.
+    ready: HashMap<PathBuf, HashMap<u32, Option<Arc<RenderImage>>>>,
     /// Insertion order for LRU eviction (oldest at the front). Every key
     /// in `ready` appears here exactly once.
     order: VecDeque<Key>,
     /// Keys with a fetch currently in flight — gates re-requests while
     /// the background Quick Look call is pending.
-    in_flight: HashSet<Key>,
+    in_flight: HashMap<PathBuf, HashSet<u32>>,
 }
 
 impl ThumbnailCache {
@@ -135,7 +136,8 @@ impl ThumbnailCache {
     /// so it is safe to call from `render`.
     pub fn get(&self, path: &Path, size_px: u32) -> Option<Arc<RenderImage>> {
         self.ready
-            .get(&(path.to_path_buf(), size_px))
+            .get(path)
+            .and_then(|sizes| sizes.get(&size_px))
             .cloned()
             .flatten()
     }
@@ -164,14 +166,21 @@ impl ThumbnailCache {
     /// Whether `(path, size_px)` still needs a background fetch — i.e.
     /// it is neither resolved (positively or negatively) nor in flight.
     pub fn needs_fetch(&self, path: &Path, size_px: u32) -> bool {
-        let key = (path.to_path_buf(), size_px);
-        !self.ready.contains_key(&key) && !self.in_flight.contains(&key)
+        let ready = self
+            .ready
+            .get(path)
+            .is_some_and(|sizes| sizes.contains_key(&size_px));
+        let in_flight = self
+            .in_flight
+            .get(path)
+            .is_some_and(|sizes| sizes.contains(&size_px));
+        !ready && !in_flight
     }
 
     /// Mark a fetch as started so concurrent warming passes don't
     /// double-request the same `(path, size)`.
     pub fn mark_in_flight(&mut self, path: PathBuf, size_px: u32) {
-        self.in_flight.insert((path, size_px));
+        self.in_flight.entry(path).or_default().insert(size_px);
     }
 
     /// Release reservations for work a superseded viewport never started.
@@ -183,7 +192,13 @@ impl ThumbnailCache {
         size_px: u32,
     ) {
         for path in paths {
-            self.in_flight.remove(&(path.clone(), size_px));
+            let remove_path = self.in_flight.get_mut(path).is_some_and(|sizes| {
+                sizes.remove(&size_px);
+                sizes.is_empty()
+            });
+            if remove_path {
+                self.in_flight.remove(path);
+            }
         }
     }
 
@@ -191,15 +206,32 @@ impl ThumbnailCache {
     /// becomes a ready `RenderImage`, `None` caches the miss. Clears
     /// the in-flight marker and evicts the oldest entry past capacity.
     pub fn insert(&mut self, path: PathBuf, size_px: u32, rgba: Option<(Vec<u8>, u32, u32)>) {
-        let key = (path, size_px);
-        self.in_flight.remove(&key);
+        let remove_in_flight_path = self.in_flight.get_mut(path.as_path()).is_some_and(|sizes| {
+            sizes.remove(&size_px);
+            sizes.is_empty()
+        });
+        if remove_in_flight_path {
+            self.in_flight.remove(path.as_path());
+        }
         let image = rgba.map(|(bytes, w, h)| Arc::new(build_render_image(bytes, w, h)));
-        if self.ready.insert(key.clone(), image).is_none() {
-            self.order.push_back(key);
+        let is_new = self
+            .ready
+            .entry(path.clone())
+            .or_default()
+            .insert(size_px, image)
+            .is_none();
+        if is_new {
+            self.order.push_back((path, size_px));
         }
         while self.order.len() > CACHE_CAP {
             if let Some(old) = self.order.pop_front() {
-                self.ready.remove(&old);
+                let remove_path = self.ready.get_mut(old.0.as_path()).is_some_and(|sizes| {
+                    sizes.remove(&old.1);
+                    sizes.is_empty()
+                });
+                if remove_path {
+                    self.ready.remove(old.0.as_path());
+                }
             }
         }
     }

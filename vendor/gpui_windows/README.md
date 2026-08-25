@@ -14,9 +14,11 @@ Ferail's delta:
 
 - `src/external_drag.rs` creates the canonical Shell data object from PIDLs
   and starts the native OLE session through `SHDoDragDrop`.
-- `src/window.rs` enables that implementation and coordinates GPUI's drag
-  badge with the native Shell drag image when the pointer leaves and re-enters
-  the source window.
+- `src/window.rs` enables that implementation and limits OLE `DragOver`
+  forwarding into GPUI to a display-relevant cadence instead of repainting at
+  the mouse report rate. Once the gesture leaves Ferail, the Shell image stays
+  the sole visual owner through any re-entry; Ferail's shared badge flag hides
+  its in-window image while preserving the typed payload for internal drops.
 - `src/events.rs` defers the synchronous OLE loop through a private window
   message, after GPUI has released its mutable application borrow, and closes
   GPUI's platform-owned drag state when the OLE session ends.

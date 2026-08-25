@@ -368,11 +368,16 @@ Ferail therefore carries a narrow `gpui_windows` patch: absolute PIDLs feed
 copy/move/link effects. That synchronous modal loop **must not** start inside
 GPUI's input callback: it pumps messages while `App` is still mutably borrowed
 and a timer or paint can panic with `RefCell already borrowed`. A private
-window message defers it until the callback unwinds. When the pointer re-enters
-the source, GPUI restores its own badge and `IDropTargetHelper::Show(false)`
-hides the otherwise-duplicated Shell image; leaving restores the native image.
-The OLE return path always emits `FileDropEvent::Ended`, including cancellation
-and failure, so `platform_owned_drag` cannot remain suspended indefinitely.
+window message defers it until the callback unwinds. Once the pointer first
+leaves the source, the Shell image remains the sole visual owner until the OLE
+session ends, including after re-entry. GPUI still restores the typed payload
+so Ferail's own drop targets work; a shared atomic flag makes its restored drag
+badge render empty instead of duplicating the Shell image. OLE `DragOver` can
+arrive at the mouse report rate, so the Windows backend forwards positions into
+GPUI at most every 8 ms while effect negotiation and the native helper still
+run for every callback. The OLE return path always emits
+`FileDropEvent::Ended`, including cancellation and failure, so
+`platform_owned_drag` cannot remain suspended indefinitely.
 
 ## 10. Drag-out operation mask is hardcoded to Copy — no move, no modifiers
 

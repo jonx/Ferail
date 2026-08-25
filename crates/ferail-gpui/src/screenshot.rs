@@ -651,6 +651,9 @@ pub fn run(args: Args) -> Result<()> {
                             icons,
                             count,
                             offset: gpui::Point::default(),
+                            native_owned: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                                false,
+                            )),
                         });
                         let view = cx.new(|_| DragGhostPreview { badge });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))

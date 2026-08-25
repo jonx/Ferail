@@ -428,6 +428,14 @@ pub struct Marquee {
     /// Selection snapshot captured at press, unioned with the swept
     /// hits when `additive`. Empty for a plain (replacing) marquee.
     pub base: HashSet<NodeId>,
+    /// Cells intersected by the previous rectangle. Updating this delta is
+    /// proportional to the swept area instead of cloning the entire base
+    /// selection on every mouse packet.
+    pub hits: HashSet<NodeId>,
+    /// Whether the first selection update has replaced the pre-gesture state
+    /// with `base`. A plain background click must not clear until it actually
+    /// crosses the movement threshold.
+    pub applied: bool,
     /// True once the pointer has moved past the start threshold — until
     /// then the gesture is still a candidate plain background click
     /// (which clears the selection on release).
@@ -489,6 +497,12 @@ pub struct Tab {
     /// Scroll handle for this tab's icon-grid `uniform_list`. Per-tab so
     /// switching tabs preserves the grid scroll position.
     pub grid_scroll: UniformListScrollHandle,
+    /// Last grid viewport submitted to the thumbnail/icon warmers:
+    /// `(load generation, entry start, entry end, thumbnail px, icon px)`.
+    /// The uniform-list closure runs on every repaint, including every drag
+    /// frame; this key keeps an unchanged viewport from allocating and
+    /// hashing the same paths again.
+    pub grid_warm_key: Option<(u64, usize, usize, u32, u32)>,
     /// Last measured file-pane content width (logical px), cached for
     /// the grid's columns-per-row math — `uniform_list` needs the row
     /// count before layout, so we derive columns from the previous
@@ -712,6 +726,7 @@ impl Tab {
             table,
             view_mode,
             grid_scroll: UniformListScrollHandle::new(),
+            grid_warm_key: None,
             grid_pane_width: px(0.0),
             grid_focus,
             grid_pane_origin: gpui::Point::default(),

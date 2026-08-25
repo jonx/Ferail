@@ -109,10 +109,10 @@ pub(crate) struct WindowsWindowInner {
     /// cannot run directly from GPUI's input callback because its modal OLE
     /// loop dispatches messages re-entrantly while GPUI still borrows `App`.
     pub(crate) pending_external_drag: RefCell<Option<ExternalDragPayload>>,
-    /// True while this window owns an outbound OLE drag. On re-entry GPUI
-    /// restores its own drag badge, so the Shell drag image must be hidden to
-    /// avoid painting both images until the pointer leaves again.
-    pub(crate) external_drag_active: Cell<bool>,
+    /// Last OLE `DragOver` position forwarded into GPUI. OLE may call at the
+    /// mouse report rate; forwarding all of them forces full application
+    /// renders far faster than the display can present.
+    last_drag_over_dispatch: Cell<Option<Instant>>,
 }
 
 impl WindowsWindowState {
@@ -288,7 +288,7 @@ impl WindowsWindowInner {
             system_settings: WindowsSystemSettings::new(),
             parent_hwnd: context.parent_hwnd,
             pending_external_drag: RefCell::new(None),
-            external_drag_active: Cell::new(false),
+            last_drag_over_dispatch: Cell::new(None),
         }))
     }
 
@@ -1239,6 +1239,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 });
                 self.handle_drag_modifiers(grfkeystate);
                 self.handle_drag_drop(input);
+                self.0.last_drag_over_dispatch.set(Some(Instant::now()));
             } else {
                 *pdweffect = DROPEFFECT_NONE;
             }
@@ -1246,11 +1247,6 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 .drop_target_helper
                 .DragEnter(self.0.hwnd, idata_obj, &cursor_position, *pdweffect)
                 .log_err();
-            if self.0.external_drag_active.get() {
-                // The source window restores GPUI's original drag badge on
-                // re-entry. Keep only that badge until the pointer leaves.
-                self.0.drop_target_helper.Show(false).log_err();
-            }
         }
         Ok(())
     }
@@ -1272,27 +1268,31 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 .ok()
                 .log_err();
         }
-        let scale_factor = self.0.state.scale_factor.get();
-        let input = PlatformInput::FileDrop(FileDropEvent::Pending {
-            position: logical_point(
-                cursor_position.x as f32,
-                cursor_position.y as f32,
-                scale_factor,
-            ),
-        });
         self.handle_drag_modifiers(grfkeystate);
-        self.handle_drag_drop(input);
+        let now = Instant::now();
+        const GPUI_DRAG_OVER_INTERVAL: Duration = Duration::from_millis(8);
+        let dispatch = self.0.last_drag_over_dispatch.get().is_none_or(|previous| {
+            now.saturating_duration_since(previous) >= GPUI_DRAG_OVER_INTERVAL
+        });
+        if dispatch {
+            self.0.last_drag_over_dispatch.set(Some(now));
+            let scale_factor = self.0.state.scale_factor.get();
+            let input = PlatformInput::FileDrop(FileDropEvent::Pending {
+                position: logical_point(
+                    cursor_position.x as f32,
+                    cursor_position.y as f32,
+                    scale_factor,
+                ),
+            });
+            self.handle_drag_drop(input);
+        }
 
         Ok(())
     }
 
     fn DragLeave(&self) -> windows::core::Result<()> {
+        self.0.last_drag_over_dispatch.set(None);
         unsafe {
-            if self.0.external_drag_active.get() {
-                // GPUI suspends its badge again on exit, so hand the visual
-                // back to the native OLE drag before dismissing this target.
-                self.0.drop_target_helper.Show(true).log_err();
-            }
             self.0.drop_target_helper.DragLeave().log_err();
         }
         let input = PlatformInput::FileDrop(FileDropEvent::Exited);
@@ -1308,6 +1308,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        self.0.last_drag_over_dispatch.set(None);
         let idata_obj = pdataobj.ok()?;
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
@@ -1316,11 +1317,6 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 .drop_target_helper
                 .Drop(idata_obj, &cursor_position, *pdweffect)
                 .log_err();
-            if self.0.external_drag_active.get() {
-                // Reset only after the hidden image has completed its drop,
-                // avoiding a one-frame duplicate at the destination.
-                self.0.drop_target_helper.Show(true).log_err();
-            }
             ScreenToClient(self.0.hwnd, &mut cursor_position)
                 .ok()
                 .log_err();

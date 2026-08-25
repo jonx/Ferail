@@ -109,23 +109,13 @@ type VolumeRow = (PathBuf, String, Option<(u64, u64)>, bool, bool);
 /// `VolumeRow` plus the "is favorited" star flag.
 type VolumeRowFav = (PathBuf, String, Option<(u64, u64)>, bool, bool, bool);
 
-/// Grid drag payload shared by every selected cell in a render pass:
-/// (paths, parallel is-dir flags, ghost icons, ghost names). `Rc` so the
-/// per-cell clones share one allocation.
-type GridSelDrag = (
-    Rc<Vec<PathBuf>>,
-    Rc<Vec<bool>>,
-    smallvec::SmallVec<[Arc<gpui::RenderImage>; crate::file_list::GHOST_STACK_CAP]>,
-    smallvec::SmallVec<[SharedString; crate::file_list::GHOST_STACK_CAP]>,
-);
-
-/// Per-cell drag payload: same shape as [`GridSelDrag`] but owned, since
-/// an unselected cell drags only itself.
+/// Per-cell drag payload for an unselected cell, which drags only itself.
 type GridCellDrag = (
     smallvec::SmallVec<[PathBuf; 2]>,
     smallvec::SmallVec<[bool; 2]>,
     smallvec::SmallVec<[Arc<gpui::RenderImage>; crate::file_list::GHOST_STACK_CAP]>,
     smallvec::SmallVec<[SharedString; crate::file_list::GHOST_STACK_CAP]>,
+    Option<Arc<AtomicBool>>,
 );
 
 fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
@@ -155,6 +145,20 @@ fn icon_size_range() -> crate::scrub_slider::ScrubRange {
 }
 
 impl Shell {
+    /// Resolve a sidebar path through the UI-side identity cache first. The
+    /// first encounter still registers the backend-provided id; subsequent
+    /// repaints avoid `NativeFs`'s mutex and lexical `PathBuf` normalization.
+    fn sidebar_node_id(&self, path: &Path) -> NodeId {
+        if let Some(id) = self.process.node_store.borrow().cached_id_for_path(path) {
+            return id;
+        }
+        let id = self.process.fs.id_for_path(path);
+        self.process
+            .node_store
+            .borrow_mut()
+            .get_or_create_path_with_id(path.to_path_buf(), id)
+    }
+
     fn tool_result_breadcrumb_summary(&self) -> Option<String> {
         let surface = self.active_tab().tool_result.as_ref()?;
         match &surface.mode {
@@ -245,11 +249,7 @@ impl Shell {
             .map(|loc| loc.path.clone())
             .collect();
         let current = self.active_tab().current_dir.clone();
-        let node_id = self.process.fs.id_for_path(&home);
-        self.process
-            .node_store
-            .borrow_mut()
-            .get_or_create_path_with_id(home.clone(), node_id);
+        let node_id = self.sidebar_node_id(&home);
         let is_expanded = self.expanded.contains(&home);
         let favorited = self.process.favorites().read(cx).contains_path(&home);
         let mut rows: Vec<TreeRowSpec> = vec![TreeRowSpec {
@@ -286,18 +286,9 @@ impl Shell {
     /// the §5 favorited-indicator index. The section's collapse state
     /// flows through `favorites_section_collapsed`, persisted in
     /// `MetadataDb`.
-    fn build_user_favorites_section(
-        &mut self,
-        weak: WeakEntity<Self>,
-        cx: &mut Context<Self>,
-    ) -> ShellSidebarItem {
-        // Snapshot the current entry list; the entity is observed at
-        // construction time below so any mutation (add / remove /
-        // reorder / rename) drives a Shell repaint, which re-runs
-        // `build_user_favorites_section` with the fresh list.
-        let entries = self.process.favorites().read(cx).entries().to_vec();
+    fn build_user_favorites_section(&mut self, weak: WeakEntity<Self>) -> ShellSidebarItem {
         ShellSidebarItem::favorites(crate::favorites_section::FavoritesSection::new(
-            entries,
+            self.process.favorites(),
             self.favorites_section_collapsed,
             weak,
             self.process.icons.clone(),
@@ -480,11 +471,7 @@ impl Shell {
         let mut rows = Vec::new();
         for loc in crate::special_folders::locations(cx).iter() {
             let path = loc.path.clone();
-            let node_id = self.process.fs.id_for_path(&path);
-            self.process
-                .node_store
-                .borrow_mut()
-                .get_or_create_path_with_id(path.clone(), node_id);
+            let node_id = self.sidebar_node_id(&path);
             rows.push(crate::locations_section::LocationRow {
                 node_id,
                 is_active: path == current,
@@ -540,11 +527,7 @@ impl Shell {
             .collect();
         let _ = favs;
         for (path, name, capacity, favorited, ejectable, is_network) in entries.drain(..) {
-            let node_id = self.process.fs.id_for_path(&path);
-            self.process
-                .node_store
-                .borrow_mut()
-                .get_or_create_path_with_id(path.clone(), node_id);
+            let node_id = self.sidebar_node_id(&path);
             let is_expanded = self.expanded.contains(&path);
             rows.push(TreeRowSpec {
                 node_id,
@@ -790,7 +773,7 @@ impl Shell {
     /// `entries` + selection mirror the table does and routing every
     /// gesture through the same `Shell` methods. See `crate::grid`.
     fn grid_body(&self, cx: &mut Context<Self>) -> AnyElement {
-        use crate::file_list::{DragBadge, GHOST_STACK_CAP, MAX_EAGER_DRAG_ITEMS};
+        use crate::file_list::{DragBadge, GHOST_STACK_CAP};
         use crate::multi_table::LiveContextMenuExt as _;
         use crate::thumbnails::THUMB_PX;
         use ferail_core::EntryKind;
@@ -867,60 +850,13 @@ impl Shell {
             let n = entries.len();
             let thumbs = shell.process.thumbnails.clone();
             let icons = shell.process.icons.clone();
+            let can_begin_drag = !app.has_active_drag();
 
-            // Selection drag payload, built ONCE per visible-range
-            // render and shared by every selected cell — the previous
-            // per-cell walk over ALL entries made a large selection
-            // quadratic per pass. (List rows use the delegate's cached
-            // DragSnapshot; this closure only holds a read borrow, so
-            // it hoists instead.)
-            let show_thumbs_for_drag = show_thumbs;
-            let selected_count = del.selected_count();
-            let sel_drag: Option<GridSelDrag> = if selected_count == 0
-                || selected_count > MAX_EAGER_DRAG_ITEMS
-            {
-                None
-            } else {
-                let mut paths: Vec<PathBuf> = Vec::with_capacity(selected_count);
-                let mut dirs: Vec<bool> = Vec::with_capacity(selected_count);
-                let mut gicons: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
-                    SmallVec::new();
-                for e in entries.iter() {
-                    if !del.is_selected(e.id) {
-                        continue;
-                    }
-                    let Some(p) = del.path_for_entry(e.id) else {
-                        continue;
-                    };
-                    if gicons.len() < GHOST_STACK_CAP {
-                        let thumb = if show_thumbs_for_drag {
-                            thumbs.borrow().get(&p, THUMB_PX)
-                        } else {
-                            None
-                        };
-                        match thumb {
-                            Some(t) => gicons.push(t),
-                            None => gicons.push(icons.borrow_mut().icon_for(e, &p)),
-                        }
-                    }
-                    dirs.push(matches!(e.kind, EntryKind::Directory));
-                    paths.push(p);
-                }
-                let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = paths
-                    .iter()
-                    .take(GHOST_STACK_CAP)
-                    .map(|p| {
-                        p.file_name()
-                            .map(|n| {
-                                ferail_fs_native::paths::display_leaf(n.to_string_lossy().as_ref())
-                                    .into_owned()
-                            })
-                            .unwrap_or_default()
-                            .into()
-                    })
-                    .collect();
-                Some((Rc::new(paths), Rc::new(dirs), gicons, names))
-            };
+            // The list and grid now share one lazily-built selection snapshot,
+            // invalidated only when the model or selection changes. Before,
+            // every drag repaint made the grid walk all entries, resolve every
+            // selected path, and probe the image caches again.
+            let sel_drag = can_begin_drag.then(|| del.drag_snapshot(app)).flatten();
 
             let (row_lo, row_hi) = (row_range.start, row_range.end);
             let mut out: Vec<gpui::AnyElement> = Vec::with_capacity(row_range.len());
@@ -935,7 +871,9 @@ impl Shell {
                     let entry = &entries[i];
                     let id = entry.id;
                     let path = del.path_for_entry(id).unwrap_or_default();
-                    let selected = del.is_selected(id);
+                    // The tab owns selection state. Marquee drag updates this
+                    // incrementally and mirrors the list delegate at mouse-up.
+                    let selected = tab.is_selected(id);
                     let is_lead = del.lead == Some(id);
                     let quarantined = entry.is_quarantined;
                     // Display leaf (macOS `:` → `/`) for the grid label/tooltip;
@@ -1058,20 +996,31 @@ impl Shell {
                     // rows in the list do (name-based, no probing here).
                     let archive_add_target =
                         crate::file_list::archive_drop_target(entry.name.as_ref(), entry.kind);
-                    let (drag_paths, drag_dirs, ghost_icons, ghost_names): GridCellDrag =
-                        if selected {
+                    let (drag_paths, drag_dirs, ghost_icons, ghost_names, native_owned):
+                        GridCellDrag =
+                        if !can_begin_drag {
+                            (
+                                SmallVec::new(),
+                                SmallVec::new(),
+                                SmallVec::new(),
+                                SmallVec::new(),
+                                None,
+                            )
+                        } else if selected {
                             match &sel_drag {
-                                Some((paths, dirs, gi, gn)) => (
-                                    SmallVec::from_vec((**paths).clone()),
-                                    SmallVec::from_vec((**dirs).clone()),
-                                    gi.clone(),
-                                    gn.clone(),
+                                Some(snapshot) => (
+                                    SmallVec::from_vec(snapshot.paths.as_ref().clone()),
+                                    SmallVec::from_vec(snapshot.dirs.as_ref().clone()),
+                                    snapshot.icons.clone(),
+                                    snapshot.names.clone(),
+                                    Some(snapshot.native_owned.clone()),
                                 ),
                                 None => (
                                     SmallVec::new(),
                                     SmallVec::new(),
                                     SmallVec::new(),
                                     SmallVec::new(),
+                                    None,
                                 ),
                             }
                         } else {
@@ -1102,6 +1051,7 @@ impl Shell {
                                 SmallVec::from_vec(vec![is_dir]),
                                 gi,
                                 SmallVec::from_vec(vec![name]),
+                                Some(Arc::new(AtomicBool::new(false))),
                             )
                         };
                     let drag_count = drag_paths.len();
@@ -1270,14 +1220,20 @@ impl Shell {
                             },
                         )
                         .when(can_drag, |d| {
+                            let native_owned =
+                                native_owned.expect("draggable cell has handoff flag");
+                            let native_owned_for_badge = native_owned.clone();
+                            let native_owned_for_payload = native_owned.clone();
                             d.on_drag(
                                 ExternalPaths(drag_paths),
                                 move |_paths, offset, _window, cx| {
+                                    native_owned_for_badge.store(false, Ordering::Release);
                                     cx.new(|_| DragBadge {
                                         names: ghost_names.clone(),
                                         icons: ghost_icons.clone(),
                                         count: drag_count,
                                         offset,
+                                        native_owned: native_owned_for_badge.clone(),
                                     })
                                 },
                             )
@@ -1285,6 +1241,7 @@ impl Shell {
                             // pointer leaves the window; dir-ness comes
                             // from the cached EntryKind, never a stat.
                             .external_drag_payload::<ExternalPaths>(move |paths, _window, _cx| {
+                                native_owned_for_payload.store(true, Ordering::Release);
                                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
                                     paths.paths().iter().cloned().zip(drag_dirs.iter().copied()),
                                 )))
@@ -1465,7 +1422,7 @@ impl Shell {
                                 },
                             )
                             .on_mouse_move(|_event, window, _app| {
-                                if crate::file_list::native_archive_drag().is_some() {
+                                if crate::file_list::native_archive_drag_active() {
                                     window.refresh();
                                 }
                             })
@@ -1554,9 +1511,19 @@ impl Shell {
                 let entry_start = row_lo.saturating_mul(cols).min(n);
                 let entry_end = row_hi.saturating_mul(cols).min(n);
                 if entry_end > entry_start {
+                    let load_generation = tab.load_generation;
                     let weak_warm = weak.clone();
                     app.defer(move |app| {
                         let _ = weak_warm.update(app, |this, cx| {
+                            if this.active_tab().id != tab_id {
+                                return;
+                            }
+                            let key =
+                                (load_generation, entry_start, entry_end, bucket, icon_bucket);
+                            if this.active_tab().grid_warm_key == Some(key) {
+                                return;
+                            }
+                            this.active_tab_mut().grid_warm_key = Some(key);
                             this.warm_grid_viewport(
                                 entry_start..entry_end,
                                 bucket,
@@ -3422,7 +3389,7 @@ impl Render for Shell {
         }
         let weak = cx.weak_entity();
         let locations_rows = self.build_locations_rows(cx);
-        let favorites_section = self.build_user_favorites_section(weak.clone(), cx);
+        let favorites_section = self.build_user_favorites_section(weak.clone());
         let recents_section = self.build_recents_section(weak.clone(), cx);
         let browse_rows = self.build_browse_rows(cx);
         let volumes_rows = self.build_volumes_rows(cx);
@@ -3463,7 +3430,6 @@ impl Render for Shell {
         // macOS Window menu) in step with the active folder — without
         // it the window is nameless when switching tasks.
         self.sync_window_title(window);
-        let path_str = self.active_tab().current_dir.to_string_lossy().into_owned();
 
         // `.collapsible(false)` disables gpui-component's animatable
         // wrapper (which would otherwise force a fixed expanded
@@ -3513,8 +3479,6 @@ impl Render for Shell {
                 self.process.icons.clone(),
             )));
         }
-
-        let _ = path_str; // breadcrumb already shows the path
 
         let tabstrip = self.tabstrip(cx);
         // Phase 8: status-bar density. Compute selected count / size,
@@ -3906,7 +3870,7 @@ impl Render for Shell {
                 let open_archive = self
                     .active_archive_view()
                     .map(|view| view.read(cx).archive_path().to_path_buf());
-                let native_archive_dragging = crate::file_list::native_archive_drag().is_some();
+                let native_archive_dragging = crate::file_list::native_archive_drag_active();
                 let native_drop_color = cx.theme().accent;
                 let native_reject_color = cx.theme().danger;
                 let open_archive_for_native = open_archive.clone();
@@ -3975,7 +3939,7 @@ impl Render for Shell {
                         },
                     ))
                     .on_mouse_move(cx.listener(|_this, _event, _window, cx| {
-                        if crate::file_list::native_archive_drag().is_some() {
+                        if crate::file_list::native_archive_drag_active() {
                             // The first native update entered with no GPUI
                             // typed drag; repaint so the hover cursor/ring
                             // below reflects the coordinator payload.

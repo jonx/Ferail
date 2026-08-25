@@ -1,4 +1,8 @@
-use std::{ops::Range, rc::Rc, time::Duration};
+use std::{
+    ops::Range,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use gpui::{
     App, AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, EventEmitter,
@@ -307,6 +311,11 @@ pub struct TableState<D: TableDelegate> {
     /// The visible range of the rows and columns.
     visible_range: TableVisibleRange,
 
+    /// Last edge-scroll tick during a file drag. Mouse messages can arrive at
+    /// 1000 Hz; scrolling once per packet makes speed hardware-dependent and
+    /// rebuilds the virtual list far more often than the display can present.
+    drag_scroll_tick: Option<Instant>,
+
     _measure: Vec<Duration>,
     _load_more_task: Task<()>,
 }
@@ -336,6 +345,7 @@ where
             bounds: Bounds::default(),
             fixed_head_cols_bounds: Bounds::default(),
             visible_range: TableVisibleRange::default(),
+            drag_scroll_tick: None,
             loop_selection: true,
             col_selectable: true,
             row_selectable: true,
@@ -1220,26 +1230,57 @@ where
     /// `scroll_table_by_col_resizing` edge-scroll, against the vertical
     /// `UniformListScrollHandle`'s base offset.
     fn scroll_list_by_drag(&mut self, mouse_position: Point<Pixels>) {
+        const EDGE: f32 = 32.0;
+        const TICK: Duration = Duration::from_millis(16);
+        const MAX_ELAPSED: Duration = Duration::from_millis(50);
+        const MAX_SPEED_PX_PER_SECOND: f32 = 840.0;
+
         let bounds = self.bounds;
         // Only act while the pointer is within the table's vertical span.
         if mouse_position.y < bounds.top() || mouse_position.y > bounds.bottom() {
+            self.drag_scroll_tick = None;
             return;
         }
-        // Height of the top/bottom hot zones, and per-move scroll step.
-        let edge = px(32.);
-        let step = px(14.);
-        let top_dist = mouse_position.y - bounds.top();
-        let bottom_dist = bounds.bottom() - mouse_position.y;
+
+        // Direction and velocity both come from the edge zone. At its inner
+        // boundary scrolling is gentle; at the physical edge it reaches the
+        // old 14 px / 60 Hz rate. No edge means reset the clock so re-entry
+        // cannot accumulate a large stale delta.
+        let top_dist = f32::from(mouse_position.y - bounds.top());
+        let bottom_dist = f32::from(bounds.bottom() - mouse_position.y);
+        let direction_and_strength = if top_dist < EDGE {
+            Some((1.0, 1.0 - top_dist.max(0.0) / EDGE))
+        } else if bottom_dist < EDGE {
+            Some((-1.0, 1.0 - bottom_dist.max(0.0) / EDGE))
+        } else {
+            None
+        };
+        let Some((direction, strength)) = direction_and_strength else {
+            self.drag_scroll_tick = None;
+            return;
+        };
+
+        let now = Instant::now();
+        let elapsed = match self.drag_scroll_tick {
+            Some(previous) => now.saturating_duration_since(previous),
+            // Preserve immediate feedback on first entering the hot zone.
+            None => TICK,
+        };
+        if elapsed < TICK {
+            return;
+        }
+        self.drag_scroll_tick = Some(now);
+        let elapsed = elapsed.min(MAX_ELAPSED).as_secs_f32();
+        let step = px(MAX_SPEED_PX_PER_SECOND * elapsed * strength.max(0.15));
+
         let scroll = self.vertical_scroll_handle.0.borrow();
         let mut offset = scroll.base_handle.offset();
-        if top_dist < edge {
+        if direction > 0.0 {
             // Near the top: reveal earlier rows (offset.y toward 0).
             offset.y = (offset.y + step).min(px(0.));
-        } else if bottom_dist < edge {
+        } else {
             // Near the bottom: reveal later rows (offset.y more negative).
             offset.y -= step;
-        } else {
-            return;
         }
         scroll.base_handle.set_offset(offset);
     }
@@ -2739,9 +2780,8 @@ where
             // reachable as drop targets. Keyed on `ExternalPaths` so
             // column-reorder/resize drags don't trigger it.
             .on_drag_move(cx.listener(
-                |this, e: &gpui::DragMoveEvent<gpui::ExternalPaths>, _window, cx| {
+                |this, e: &gpui::DragMoveEvent<gpui::ExternalPaths>, _window, _cx| {
                     this.scroll_list_by_drag(e.event.position);
-                    cx.notify();
                 },
             ))
             .when(!window.is_inspector_picking(cx), |this| {

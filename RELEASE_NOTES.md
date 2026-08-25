@@ -1,38 +1,34 @@
-# Ferail 0.6.7 — Windows integration update
+# Ferail 0.6.8 — Windows drag responsiveness update
 
 This is a **Windows-only release**. It publishes the portable Windows x64 ZIP
 and its matching symbols archive; macOS and Linux remain on 0.6.5.
 
 ## Highlights
 
-- Added the real Windows Shell context menu behind “More options from
-  Windows…”, Shift+right-click, and Shift+F10. Third-party handlers run in a
-  disposable broker process: a crashing or stalling extension cannot take
-  Ferail down, and once the menu is visible it stays open with no timeout.
-- Added “What's Locking This?” on files and folders and “What's Blocking
-  Eject?” on removable volumes: a dialog names every process holding the item
-  open (via the Windows Restart Manager) and can close them — politely first,
-  forced only if they refuse. A failed USB eject now names its blockers too.
-- Files can now be dragged out of Ferail into Explorer and other Windows
-  applications, as a native Shell file drag with the usual copy/move/link
-  modifier behavior.
-- Shift-clicking “Copy File List” now includes subfolder contents recursively;
-  a plain click still copies just the visible rows.
-- The Delete Immediately confirmation opens with its Delete button focused, so
-  Enter confirms right away.
-- Fixed Software Update downloading the debug-symbols archive instead of the
-  app: the updater now skips symbols bundles, and the symbols archive was
-  renamed (`…-x64-symbols.zip`) so already-shipped builds pick the right
-  download as well.
+- Dragging files now stays responsive in large folders. Ferail reuses one
+  selection snapshot, paces edge autoscroll by elapsed time, avoids redundant
+  viewport warming and temporary cache-key allocations, and no longer drives
+  full application renders at the mouse report rate during Windows OLE
+  `DragOver` callbacks.
+- A drag that leaves Ferail now has exactly one icon stack. From the first
+  handoff onward, the native Windows Shell image remains visible even if the
+  pointer comes back over Ferail; the internal typed payload is restored
+  invisibly so Ferail folders still accept the drop.
+- Rubber-band selection in grid view visits only intersected cells and applies
+  incremental selection changes, then synchronizes the list once when the
+  gesture ends.
+- Path icon and thumbnail cache lookups no longer allocate formatted keys on
+  hot render paths, and favorites/sidebar lookups avoid repeated model clones
+  or filesystem-lock acquisition when cached identity is available.
 
 ## Packaging and diagnostics
 
 The release contains:
 
-- `Ferail-0.6.7-win-x64.zip` — unsigned portable application and CLI;
-- `Ferail-0.6.7-x64-symbols.zip` — matching PDBs and identity manifest.
+- `Ferail-0.6.8-win-x64.zip` — unsigned portable application and CLI;
+- `Ferail-0.6.8-x64-symbols.zip` — matching PDBs and identity manifest.
 
 Windows SmartScreen may warn because the build is not Authenticode-signed. The
 symbols archive is for diagnosing crash dumps and is not needed to run Ferail.
 
-The full technical list is in [CHANGELOG.md](CHANGELOG.md#067--2026-08-25-windows-only-release).
+The full technical list is in [CHANGELOG.md](CHANGELOG.md#068--2026-08-25-windows-only-release).

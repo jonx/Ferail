@@ -17,7 +17,7 @@
 //! key are a HashMap hit.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ferail_core::{EntryKind, FileEntry};
@@ -34,11 +34,17 @@ const ICON_PX: u32 = 32;
 
 #[derive(Default)]
 pub struct IconCache {
+    /// File icons keyed by extension/kind. Directory icons live in
+    /// `by_path`, whose borrowed lookups avoid formatting a path string on
+    /// every grid/tree repaint.
     by_kind: HashMap<String, Arc<RenderImage>>,
+    /// Full path → physical pixel size → icon. The small list/tree icon uses
+    /// `ICON_PX`; grid buckets occupy additional entries for the same path.
+    by_path: HashMap<PathBuf, HashMap<u32, Arc<RenderImage>>>,
     /// Path-keyed icons a background fetch is currently producing. The
     /// per-frame collectors (grid viewport, sidebar tree) skip these so a
     /// pending fetch isn't re-requested every paint.
-    in_flight: HashSet<String>,
+    in_flight: HashMap<PathBuf, HashSet<u32>>,
     /// Single fallback icon used when fetch_icon_rgba returns None
     /// for a given kind, so we don't keep retrying NSWorkspace for
     /// a file the OS doesn't know how to render.
@@ -82,8 +88,7 @@ impl IconCache {
     /// each keep their distinctive Finder icon. Per-row cost
     /// amortises over the tree's bounded entry count.
     pub fn folder_icon_for(&mut self, path: &Path) -> Arc<RenderImage> {
-        let key = format!("path:{}", path.display());
-        if let Some(arc) = self.by_kind.get(&key) {
+        if let Some(arc) = self.by_path.get(path).and_then(|sizes| sizes.get(&ICON_PX)) {
             return arc.clone();
         }
         if ferail_core::path_guard::is_rendering() {
@@ -92,19 +97,13 @@ impl IconCache {
         match fetch_icon_rgba(path, ICON_PX) {
             Some((rgba, w, h)) => {
                 let arc = Arc::new(build_render_image(rgba, w, h));
-                self.by_kind.insert(key, arc.clone());
+                self.by_path
+                    .entry(path.to_path_buf())
+                    .or_default()
+                    .insert(ICON_PX, arc.clone());
                 arc
             }
             None => self.blank_icon(),
-        }
-    }
-
-    /// Cache key for a path-keyed icon: `None` is the small list/tree
-    /// icon (`ICON_PX`), `Some` a grid bucket.
-    fn path_key(path: &Path, size_px: Option<u32>) -> String {
-        match size_px {
-            Some(s) => format!("path:{}@{}", path.display(), s),
-            None => format!("path:{}", path.display()),
         }
     }
 
@@ -118,14 +117,25 @@ impl IconCache {
     /// Non-mutating: safe from `render`, which is where the collectors
     /// run.
     pub fn needs_path_icon(&self, path: &Path, size_px: Option<u32>) -> bool {
-        let key = Self::path_key(path, size_px);
-        !self.by_kind.contains_key(&key) && !self.in_flight.contains(&key)
+        let size_px = Self::path_icon_px(size_px);
+        let cached = self
+            .by_path
+            .get(path)
+            .is_some_and(|sizes| sizes.contains_key(&size_px));
+        let in_flight = self
+            .in_flight
+            .get(path)
+            .is_some_and(|sizes| sizes.contains(&size_px));
+        !cached && !in_flight
     }
 
     /// Claim a path icon for a background fetch. Call from the scheduler
     /// before spawning, so the next frame's collector skips it.
     pub fn mark_path_icon_in_flight(&mut self, path: &Path, size_px: Option<u32>) {
-        self.in_flight.insert(Self::path_key(path, size_px));
+        self.in_flight
+            .entry(path.to_path_buf())
+            .or_default()
+            .insert(Self::path_icon_px(size_px));
     }
 
     /// Land a background fetch. `None` (the platform couldn't produce an
@@ -138,13 +148,22 @@ impl IconCache {
         size_px: Option<u32>,
         fetched: Option<(Vec<u8>, u32, u32)>,
     ) {
-        let key = Self::path_key(path, size_px);
-        self.in_flight.remove(&key);
+        let size_px = Self::path_icon_px(size_px);
+        let remove_path = self.in_flight.get_mut(path).is_some_and(|sizes| {
+            sizes.remove(&size_px);
+            sizes.is_empty()
+        });
+        if remove_path {
+            self.in_flight.remove(path);
+        }
         let icon = match fetched {
             Some((rgba, w, h)) => Arc::new(build_render_image(rgba, w, h)),
             None => self.blank_icon(),
         };
-        self.by_kind.insert(key, icon);
+        self.by_path
+            .entry(path.to_path_buf())
+            .or_default()
+            .insert(size_px, icon);
     }
 
     /// Read-only lookup of a path-keyed icon cached at a specific pixel
@@ -153,8 +172,9 @@ impl IconCache {
     /// `None` when not yet warmed — the caller falls back to the small
     /// icon as a placeholder. Non-mutating: safe from `render`.
     pub fn get_folder_icon_sized(&self, path: &Path, size_px: u32) -> Option<Arc<RenderImage>> {
-        self.by_kind
-            .get(&format!("path:{}@{}", path.display(), size_px))
+        self.by_path
+            .get(path)
+            .and_then(|sizes| sizes.get(&size_px))
             .cloned()
     }
 
@@ -390,4 +410,30 @@ pub(crate) fn build_render_image(mut rgba: Vec<u8>, w: u32, h: u32) -> RenderIma
     let buf = RgbaImage::from_raw(w, h, rgba).expect("rgba dims match");
     let frame = Frame::new(buf);
     RenderImage::new(SmallVec::from_elem(frame, 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_icon_cache_tracks_sizes_without_string_keys() {
+        let path = Path::new("C:/tmp/folder");
+        let mut cache = IconCache::new();
+
+        assert!(cache.needs_path_icon(path, None));
+        assert!(cache.needs_path_icon(path, Some(128)));
+
+        cache.mark_path_icon_in_flight(path, Some(128));
+        assert!(!cache.needs_path_icon(path, Some(128)));
+        assert!(cache.needs_path_icon(path, None));
+
+        cache.insert_path_icon(path, Some(128), None);
+        let large = cache
+            .get_folder_icon_sized(path, 128)
+            .expect("negative fetch is cached as the blank icon");
+        assert!(cache.is_blank(&large));
+        assert!(!cache.needs_path_icon(path, Some(128)));
+        assert!(cache.needs_path_icon(path, None));
+    }
 }

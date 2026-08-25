@@ -8,6 +8,28 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.6.8 — 2026-08-25 (Windows-only release)
+
+This release publishes Windows x64 portable and symbols archives only. macOS
+and Linux remain on 0.6.5; Ferail's updater selects the newest release that
+actually has an asset for the current platform.
+
+- **Dragging and rubber-band selection stay responsive in large folders.**
+  Ferail no longer rebuilds or deep-clones the whole selected path set for
+  every visible item while a drag is active. Edge autoscroll is time-paced
+  rather than mouse-poll-rate-paced, unchanged grid viewports no longer
+  resubmit thumbnail work, path icon/thumbnail cache reads no longer allocate
+  temporary keys, and grid marquee selection visits only the cells its
+  rectangle intersects before synchronizing the list once on release. Windows
+  OLE drag-over events are also capped to a display-relevant cadence instead
+  of forcing full app renders at the mouse report rate.
+
+- **A native Windows drag no longer leaves two icon stacks in Ferail.** Once a
+  drag first exits the source window, the Windows Shell drag image remains the
+  sole visual for the rest of that gesture — including if the pointer comes
+  back over Ferail. Ferail still restores the typed payload invisibly so its
+  own folders remain valid drop destinations.
+
 ## 0.6.7 — 2026-08-25 (Windows-only release)
 
 This release publishes Windows x64 portable and symbols archives only. macOS

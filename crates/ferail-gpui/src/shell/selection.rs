@@ -8,6 +8,28 @@ const GRID_ROW_PAD: f32 = 8.0;
 /// sweep rather than a plain click that clears the selection.
 const MARQUEE_THRESHOLD: f32 = 4.0;
 
+/// Convert a content-space marquee rectangle to half-open grid indexes.
+/// Keeping this pure makes the boundary behavior testable and lets the live
+/// gesture enumerate only cells the rectangle can actually intersect.
+fn marquee_grid_bounds(
+    rect: (f32, f32, f32, f32),
+    cell: (f32, f32),
+    cols: usize,
+    entries: usize,
+) -> Option<(usize, usize, usize, usize)> {
+    let (x0, x1, y0, y1) = rect;
+    let (cell_w, cell_h) = cell;
+    if x1 <= 0.0 || y1 <= 0.0 || cell_w <= 0.0 || cell_h <= 0.0 || cols == 0 {
+        return None;
+    }
+    let col_start = (x0.max(0.0) / cell_w).floor() as usize;
+    let col_end = ((x1.max(0.0) / cell_w).ceil() as usize).min(cols);
+    let total_rows = entries.div_ceil(cols);
+    let row_start = (y0.max(0.0) / cell_h).floor() as usize;
+    let row_end = ((y1.max(0.0) / cell_h).ceil() as usize).min(total_rows);
+    (col_start < col_end && row_start < row_end).then_some((col_start, col_end, row_start, row_end))
+}
+
 impl Shell {
     // -- Selection model (spec §2) ---------------------------------
     //
@@ -929,6 +951,8 @@ impl Shell {
             current: ev.position,
             additive,
             base,
+            hits: HashSet::new(),
+            applied: false,
             moved: false,
         });
     }
@@ -980,6 +1004,9 @@ impl Shell {
         if !m.moved && !m.additive {
             self.clear_active_selection(cx);
         } else {
+            // The grid reads the tab's authoritative selection during the
+            // gesture. Mirror it to the list delegate once at gesture end.
+            self.refresh_file_list_selection(cx);
             cx.notify();
         }
     }
@@ -996,11 +1023,11 @@ impl Shell {
         {
             return;
         }
-        let (start, current, base) = {
+        let (start, current) = {
             let Some(m) = self.active_tab().marquee.as_ref() else {
                 return;
             };
-            (m.start, m.current, m.base.clone())
+            (m.start, m.current)
         };
         let tab = self.active_tab();
         let icon_px = crate::grid::icon_size(cx);
@@ -1020,36 +1047,49 @@ impl Shell {
         let (bx, by) = to_content(current);
         let (x0, x1) = (ax.min(bx), ax.max(bx));
         let (y0, y1) = (ay.min(by), ay.max(by));
-        let entries: Vec<NodeId> = tab
-            .table
-            .read(cx)
-            .delegate()
-            .entries
-            .iter()
-            .map(|e| e.id)
-            .collect();
-        let mut hits = base;
+        let table = tab.table.read(cx);
+        let entries = &table.delegate().entries;
+        let mut hits = HashSet::new();
         let mut last_hit: Option<NodeId> = None;
-        for (i, id) in entries.iter().enumerate() {
-            let col = i % cols;
-            let row = i / cols;
-            let cx0 = col as f32 * cell_w;
-            let cy0 = row as f32 * cell_h;
-            // Rectangle-vs-rectangle overlap (half-open on the far edges).
-            if x0 < cx0 + cell_w && x1 > cx0 && y0 < cy0 + cell_h && y1 > cy0 {
-                hits.insert(*id);
-                last_hit = Some(*id);
+        if let Some((col_start, col_end, row_start, row_end)) =
+            marquee_grid_bounds((x0, x1, y0, y1), (cell_w, cell_h), cols, entries.len())
+        {
+            // Map the rectangle directly to intersected rows and columns. A
+            // tiny marquee no longer scans every entry in a huge folder.
+            for row in row_start..row_end {
+                for col in col_start..col_end {
+                    let i = row * cols + col;
+                    let Some(entry) = entries.get(i) else {
+                        break;
+                    };
+                    hits.insert(entry.id);
+                    last_hit = Some(entry.id);
+                }
             }
         }
         let tab = self.active_tab_mut();
         tab.selection_all = false;
-        tab.selection = hits;
+        let marquee = tab.marquee.as_mut().expect("marquee exists above");
+        if !marquee.applied {
+            tab.selection.clone_from(&marquee.base);
+            marquee.applied = true;
+        }
+        for old in marquee.hits.drain() {
+            if !marquee.base.contains(&old) {
+                tab.selection.remove(&old);
+            }
+        }
+        tab.selection.extend(hits.iter().copied());
+        marquee.hits = hits;
         tab.range_live = false;
         if let Some(l) = last_hit {
             tab.lead = Some(l);
             tab.anchor = Some(l);
+        } else if tab.lead.is_some_and(|lead| !tab.selection.contains(&lead)) {
+            let fallback = tab.selection.iter().next().copied();
+            tab.lead = fallback;
+            tab.anchor = fallback;
         }
-        self.refresh_file_list_selection(cx);
     }
 
     pub(super) fn on_cursor_up(&mut self, _: &CursorUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -1291,6 +1331,39 @@ impl Shell {
         }
         cx.notify();
         true
+    }
+}
+
+#[cfg(test)]
+mod marquee_tests {
+    use super::marquee_grid_bounds;
+
+    #[test]
+    fn marquee_bounds_only_cover_intersected_cells() {
+        assert_eq!(
+            marquee_grid_bounds((10.0, 20.0, 10.0, 20.0), (100.0, 80.0), 4, 100),
+            Some((0, 1, 0, 1))
+        );
+        assert_eq!(
+            marquee_grid_bounds((100.0, 200.0, 80.0, 160.0), (100.0, 80.0), 4, 100),
+            Some((1, 2, 1, 2))
+        );
+    }
+
+    #[test]
+    fn marquee_bounds_clip_to_grid_and_reject_outside_rectangles() {
+        assert_eq!(
+            marquee_grid_bounds((-50.0, 450.0, -40.0, 999.0), (100.0, 80.0), 4, 6),
+            Some((0, 4, 0, 2))
+        );
+        assert_eq!(
+            marquee_grid_bounds((-200.0, -1.0, 0.0, 10.0), (100.0, 80.0), 4, 100),
+            None
+        );
+        assert_eq!(
+            marquee_grid_bounds((0.0, 10.0, 0.0, 10.0), (100.0, 80.0), 0, 100),
+            None
+        );
     }
 }
 

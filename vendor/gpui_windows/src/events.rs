@@ -176,18 +176,9 @@ impl WindowsWindowInner {
 
     fn handle_external_drag(&self, handle: HWND) -> Option<isize> {
         let payload = self.pending_external_drag.borrow_mut().take()?;
-        self.external_drag_active.set(true);
         crate::external_drag::start_external_drag(handle, &payload)
             .inspect_err(|error| log::error!("Unable to start Windows external drag: {error:#}"))
             .ok();
-        self.external_drag_active.set(false);
-        // A cancellation can end while the pointer is still over the source,
-        // without a matching DragLeave. Do not leak the helper's hidden state
-        // into the next inbound drag.
-        unsafe {
-            self.drop_target_helper.Show(true).log_err();
-        }
-
         // `start_external_drag` is synchronous: returning here means the OLE
         // session ended by drop or cancellation. GPUI handed its active drag
         // to the platform before posting this message, so always close that
