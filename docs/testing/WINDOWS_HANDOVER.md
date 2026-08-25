@@ -156,6 +156,45 @@ Working-tree files intentionally excluded from this slice:
   They contain concurrent formatting/work and must not be staged with WIN-013.
 ```
 
+### 2026-08-25 — macOS preparation for WIN-010 shortcuts
+
+```text
+Shared contract prepared:
+  - ferail-core::platform_shortcuts defines an owned, Send-safe resolver
+    request/result contract for filesystem, Shell-namespace and URL targets;
+  - only a resolved real directory produces Navigate(path); files,
+    applications, URLs and provider targets produce InvokeShortcut so Windows
+    invokes the .lnk itself and preserves its arguments/working directory;
+  - broken/unsupported/cancelled states cannot fabricate a target;
+  - the bounded memory-only cache uses NodeId + file revision, never a source
+    path key, and immediately evicts a revision mismatch;
+  - custom Debug implementations redact source/target/icon/working-directory
+    paths, URLs and argument contents.
+Reference checked:
+  - ShellBat/ShellN.Extensions/Utilities/Link.cs at pinned ShellBat commit
+    7b8268d60648b74f5a874be8edde3b4fc17f7cdc.
+Host proof:
+  - cargo test -p ferail-core platform_shortcuts
+  - cargo clippy -p ferail-core --all-targets -- -D warnings
+Windows implementation still required:
+  1. Implement ShortcutResolver in ferail-shell-win32. On the worker COM
+     apartment, CoCreate ShellLink, IPersistFile::Load the .lnk and read owned
+     copies from GetIDList/GetPath/GetArguments/GetWorkingDirectory/
+     GetIconLocation. No COM interface or borrowed PIDL crosses the worker.
+  2. Classify a filesystem target without opening its contents; retain an
+     owned absolute PIDL identity when GetPath has no usable filesystem path.
+     Use bounded/cancellable resolution and never show Shell resolution UI.
+  3. Add the process cache to GPUI and request only on explicit Open/Get Info
+     or visible icon/preview work. Apply by NodeId + revision + generation.
+  4. Route Open from ShortcutInfo::open_disposition. Keep rename/copy/move/
+     trash targeting the original .lnk path unconditionally.
+  5. Add the Get Info shortcut section from cached DTO fields; never resolve
+     from render or menu construction, and never log the values.
+  6. Execute WTEST-080–087 on file/folder/app-with-arguments/relative/UNC/
+     Shell-target/broken fixtures. Re-run 10k media and Flat 1M/4M gates.
+Windows cases claimed from macOS: none.
+```
+
 At handover creation, two unrelated user changes intentionally remain outside
 the Windows commits: `CHANGELOG.md` and
 `crates/ferail-gpui/src/file_list.rs` (Flat row-buffer release work). Preserve

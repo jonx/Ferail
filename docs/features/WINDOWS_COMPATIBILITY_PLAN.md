@@ -567,9 +567,12 @@ inconsistent.
 
 **Work.**
 
-- [ ] Resolve `IShellLink` off-thread into a cached DTO: target kind/path or
+- [~] Resolve `IShellLink` off-thread into a cached DTO: target kind/path or
   Shell identity, arguments, working directory, icon location, and broken
-  state.
+  state. *The shared `platform_shortcuts` contract now defines a cancellable
+  resolver, neutral failure states, privacy-redacted owned DTOs and a bounded
+  process-memory cache keyed by `NodeId` plus file revision. The Windows COM
+  resolver and GPUI application remain.*
 - [ ] On Open, navigate inside Ferail only when the resolved target is a real
   folder; otherwise invoke the shortcut through the Shell so arguments and
   provider behavior are preserved.
@@ -588,6 +591,13 @@ inconsistent.
   open.*
 - [ ] Show shortcut target/broken status in Get Info without resolving it from
   render or context-menu code.
+
+**ShellBat reference.** Its `ShellN.Extensions/Utilities/Link.cs` correctly
+loads the file through `IPersistFile`, then reads `IShellLinkW::GetIDList`,
+`GetPath`, `GetArguments`, `GetWorkingDirectory` and `GetIconLocation`. Ferail
+will follow those identity semantics on a cancellable worker, but will not
+retain COM objects in shared/cache state or expose raw arguments/paths in
+diagnostics.
 
 **Exit gate.** File, folder, app, argument-bearing, relative, UNC, and broken
 shortcuts match Explorer's open semantics and remain responsive.

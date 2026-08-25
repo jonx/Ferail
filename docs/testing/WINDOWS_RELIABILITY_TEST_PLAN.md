@@ -418,6 +418,15 @@ process, normal-menu regression, or uncontained handler failure.
   with a shortcut overlay where available.
 - [ ] `WTEST-084` Get Info shows target and arguments from cached off-thread
   resolution; scrolling/rendering performs no link resolution.
+- [ ] `WTEST-085` Rewrite a `.lnk` in place while Get Info is open. Its
+  size/mtime revision invalidates the memory cache and the former target is not
+  reused; closing the process releases every cached path/argument.
+- [ ] `WTEST-086` Search normal logs, hang/crash reports and persisted stores
+  after resolving a shortcut whose target, arguments, working directory and
+  icon path contain unique canary strings. None of those strings is present.
+- [ ] `WTEST-087` Resolve 10,000 distinct shortcuts while scrolling. Cache size
+  and concurrent COM work remain bounded, paint performs no I/O, cancellation
+  drops stale results, and local/Flat 1M baselines remain within their gates.
 
 ### I. Explorer clipboard and drag/drop — WIN-012
 
