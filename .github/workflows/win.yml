@@ -66,10 +66,23 @@ jobs:
             target/package/Ferail-*-x64-symbols.zip
           if-no-files-found: error
 
+      # The release title comes from the notes' H1 ("Ferail <v> — …") so
+      # automated releases match the hand-titled ones in the release list —
+      # without this, action-gh-release names the release after the bare tag
+      # (v0.6.6 and v0.6.7 shipped that way and were retitled by hand).
+      - name: Release title from the notes
+        if: github.ref_type == 'tag'
+        id: title
+        shell: pwsh
+        run: |
+          $h1 = (Get-Content RELEASE_NOTES.md -TotalCount 1) -replace '^#\s*', ''
+          "title=$h1" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - name: Attach to GitHub release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ steps.title.outputs.title }}
           body_path: RELEASE_NOTES.md
           files: |
             target/package/Ferail-*-win-x64.zip
