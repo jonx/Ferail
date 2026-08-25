@@ -144,6 +144,11 @@ pub struct ProcessState {
     /// touching the filesystem on the render path.
     pub cloud_locations: RefCell<HashMap<PathBuf, ferail_fs_native::CloudState>>,
 
+    /// Cached dynamic roots supplied by the platform (WIN-017: WSL Linux
+    /// distributions). O(number of roots), never attached to file rows;
+    /// discovery and activation run off-thread through `platform_locations`.
+    pub platform_locations: RefCell<crate::platform_locations::PlatformLocations>,
+
     /// Monotonic counter for minting process-local `TabId`s. Stable
     /// for the tab's lifetime; survives tab reorder and (Phase F)
     /// tear-off between windows.
@@ -261,6 +266,9 @@ impl ProcessState {
             // here delayed the first window by up to ~45s.
             volumes: RefCell::new(Vec::new()),
             cloud_locations: RefCell::new(HashMap::new()),
+            platform_locations: RefCell::new(
+                crate::platform_locations::PlatformLocations::default(),
+            ),
             next_tab_id: Cell::new(0),
             metadata_loaded: Cell::new(false),
             favorites_section_collapsed: Cell::new(false),
@@ -617,6 +625,10 @@ pub fn start_power_watch(cx: &mut App) {
                             shell.update(cx, |this, cx| this.reload_dir_tabs(cx));
                         }
                     }
+                    // WSL services/distributions may have stopped or started
+                    // while the machine slept. Refresh the small cached root
+                    // list off-thread; local filesystem rows are untouched.
+                    crate::platform_locations::refresh(cx);
                 });
             }
         }

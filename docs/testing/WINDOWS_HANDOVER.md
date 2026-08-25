@@ -16,6 +16,39 @@ Windows, what evidence to retain, and in what order to proceed.
 Update this handover at the end of every Windows work session. Never mark a
 Windows-only exit gate complete from macOS or cross-compilation alone.
 
+## Current resume point
+
+- Branch: `main`
+- Current commit: `3cc8b7e` (`release: Ferail 0.6.8 Windows drag
+  responsiveness`)
+- Current Windows release: `0.6.8`
+- Published artifacts: unsigned portable Windows x64 ZIP plus its matching
+  x64 symbols ZIP
+- Next campaign: implement the remaining shared contracts and UI on macOS,
+  then finish and accept their Windows mechanisms on a real Windows machine;
+  see the
+  [Mac-first continuation plan](../features/WINDOWS_COMPATIBILITY_PLAN.md#continuation-plan-mac-first-windows-final).
+- Added scope: restore WSL distributions as a cached dynamic **Linux**
+  location, adapted from the pinned Ferail-Win32 reference. Implement its
+  neutral stopped/starting/ready contract on macOS first; perform registry,
+  `wsl.exe`, UNC and symlink work only on Windows (WIN-017/WTEST-130–139).
+
+User acceptance reported on 2026-08-25 against the current Windows work:
+
+- 10,000-image preview browsing works;
+- multi-selection works;
+- Flat View works with roughly four million files;
+- default Open and Reveal in Explorer work;
+- the native Windows context menu works;
+- the portable package launches and works in a clean Windows Sandbox.
+
+This is valid feature-level Windows acceptance and should not be discarded.
+It is not evidence that every adversarial or measured subcase in
+`WINDOWS_RELIABILITY_TEST_PLAN.md` ran: provider crash/hang injection,
+100-cycle leak soaks, exact latency/memory thresholds, every unusual path,
+every third-party Shell extension, and multi-DPI passes remain separately
+tracked until their evidence is recorded.
+
 ## Repository state at handover creation
 
 - Branch: `main`
@@ -42,7 +75,7 @@ the Windows commits: `CHANGELOG.md` and
 any equivalent parallel changes that are still present after transferring the
 worktree; do not stage them into a Windows feature commit.
 
-## Completed implementation awaiting Windows acceptance
+## Historical implementation entering the first Windows acceptance pass
 
 | Commit | Change | Windows status |
 | --- | --- | --- |
@@ -179,6 +212,34 @@ Windows fork. Ordinary filesystem folders continue through `NativeFs` with no
 per-row COM/PIDL state. Shell namespace locations, Recycle Bin, MTP and virtual
 OneDrive roots use Windows-owned location tokens only when no useful direct
 path exists.
+
+## Current remaining work
+
+The original crash report's principal P0 user flows now pass in real Windows
+use. Resume implementation in this order:
+
+1. Close the bounded-work contracts shared by previews, thumbnails, file
+   details and selection: process-wide I/O/cache budgets, per-frame apply
+   limits, affected-row invalidation, stable row geometry, and stale-selection
+   regression tests.
+2. Complete path-based interoperability: actionable Open/Reveal failures,
+   targeted refresh after a native Shell verb, `.lnk` resolution, and the
+   Explorer clipboard/drag format matrix.
+3. Qualify the source-complete WSL path-backed location slice through
+   WTEST-130–139: cached installed distributions, no implicit start, explicit
+   stopped→starting→path activation, then a `NativeFs` handoff. Only after that
+   gate, follow with PIDL-backed This PC, Recycle Bin, provider roots and MTP.
+   Never put WSL provider state, PIDLs or COM state on ordinary filesystem or
+   Flat View rows.
+4. Complete metadata and Properties: shared cached metadata DTOs first,
+   Windows `IPropertyStore` and the native Properties action second.
+5. Qualify the exact release artifacts: clean/upgraded profiles, constrained
+   machine and DPI passes, helper/handle soaks, privacy audit, Authenticode,
+   then macOS/Linux regression.
+
+The detailed sequence, ownership boundaries and exit gates live in the
+implementation ledger's continuation plan. Do not restart the removed native
+menu prefetch while doing any of this.
 
 ## Performance invariants to check after every Windows feature
 
@@ -392,4 +453,131 @@ Next exact work:
   4. Run WTEST-004 in a pristine offline Windows Sandbox.
 Working-tree files intentionally left unstaged: all changes listed by git
   status; the tree is shared with another active session.
+```
+
+### 2026-08-25 — v0.6.6–0.6.8 consolidation and user acceptance
+
+```text
+Date / machine: 2026-08-25, real Windows machine; user-reported interactive
+  acceptance. Exact Windows build/hardware and evidence paths were not copied
+  into this handover.
+Start commit: work following 580d193 / the 0.6.5 investigation
+End commit(s): 4f7c322 (0.6.6), 1d65395 (0.6.7), 3cc8b7e (0.6.8)
+Cases passed at feature level:
+  - WCORPUS-MEDIA-10K / 10,000-image preview use;
+  - multi-selection;
+  - approximately four-million-row Flat View;
+  - default Open and Reveal in Explorer;
+  - explicit native Windows context menu;
+  - clean Windows Sandbox launch/use of the portable package.
+Implemented during this interval:
+  - bounded/cancellable preview and thumbnail work, native PDF rendering,
+    minidumps, line-table symbols and deterministic packaged teardown;
+  - Windows font thumbnails/icons, shortcut overlay and portable photo
+    metadata;
+  - isolated native Shell menu, Restart Manager lock/eject diagnostics and
+    native outbound OLE drag;
+  - large-selection, marquee, drag-over and hot-cache responsiveness work.
+Cases not claimed by this acceptance record:
+  - every numbered adversarial/measurement subcase, including hostile
+    providers/extensions, 100-cycle leak/handle soaks, every difficult path,
+    exact 4M memory/latency thresholds, multi-DPI and privacy inspection.
+New dumps/PDB identity: matching v0.6.8 symbols are published as
+  Ferail-0.6.8-x64-symbols.zip; copy manifest GUID/age into the next failure
+  record rather than assuming symbols by version alone.
+Measurements before/after: no durable measurement transcript added here.
+Known regressions: none reported in the accepted flows.
+Next exact work:
+  1. Start the Mac-first continuation plan in
+     docs/features/WINDOWS_COMPATIBILITY_PLAN.md.
+  2. Preserve the shared UI and million-row fast path; land neutral DTOs,
+     schedulers and contract tests before Windows COM mechanisms.
+  3. In Phase E, implement the fake path-backed Linux-root provider before
+     returning to Windows for WIN-017 registry/wsl.exe/UNC work. Do not start a
+     distro during discovery or sidebar rendering and do not copy registry
+     BasePath into shared state or logs.
+  4. Return to Windows for each phase's mechanism and acceptance matrix; append
+     evidence here before marking its exact WTEST cases complete.
+Working-tree files intentionally left unstaged: none at 3cc8b7e.
+```
+
+### 2026-08-25 — macOS preparation for WIN-017 WSL locations
+
+```text
+Date / machine: 2026-08-25, macOS development machine
+Start commit: 3cc8b7e, with the Windows continuation-plan documentation
+  already modified but uncommitted
+End commit(s): none yet; implementation and documentation remain in the
+  working tree for review before an isolated commit
+Implemented:
+  - ferail-core::platform_locations: opaque root ids, privacy-safe errors,
+    stopped/starting/ready/unavailable states and generation-safe discovery /
+    concurrent activation store;
+  - process-cached GPUI Linux section, absent when no provider roots exist;
+    cached-state-only render, explicit click activation, Cmd/Ctrl-click new-tab
+    behavior, tab/load-generation guard, explicit Refresh integration and
+    localized failure states;
+  - platform mirrors on macOS/Linux (empty capability) and a Win32 WSL
+    provider using HKCU Lxss discovery with bounded wsl.exe fallback;
+  - no MSI InstallLocation dependency and no BasePath read, DTO or log;
+  - preferred \\wsl.localhost roots while accepting \\wsl$, extended UNC,
+    Unicode/spaces and UTF-8/UTF-16 wsl.exe list output;
+  - explicit activation through argv-only `wsl.exe -d <name> --exec
+    /bin/true`, no console window, 20 s deadline, cancellation and child wait;
+    stdout is drained concurrently, retained only up to 1 MiB and rejected on
+    overflow so a full pipe cannot defeat the deadline;
+  - direct NativeFs enumeration first; explicit activation of a WSL symlink
+    and an empty failed WSL directory load both use a five-second
+    `readlink -f --` resolver with generation/cancel guard and checked
+    /mnt/<drive> conversion;
+  - previews, thumbnails and viewport details remain enabled. The existing
+    eager recursive folder-size pass is skipped for WSL until it has a
+    viewport/on-demand mode;
+  - Move to Recycle Bin fails closed for WSL with a localized explanation;
+    permanent deletion remains the existing separately confirmed command.
+Host tests passed:
+  - cargo check -p ferail-gpui
+  - cargo test -p ferail-core platform_locations (8 passed)
+  - cargo test -p ferail-gpui platform_locations (4 passed)
+  - cargo test -p ferail-shell-win32 wsl::tests (4 passed)
+  - cargo test -p ferail-core (125 passed)
+  - cargo test -p ferail-gpui --lib (291 passed, 1 network test ignored)
+  - cargo clippy -p ferail-gpui --all-targets (passes with three pre-existing /
+    concurrent-work warnings outside WIN-017)
+  - cargo clippy -p ferail-shell-win32 --target x86_64-pc-windows-msvc
+    -- -D warnings
+  - cargo test -p ferail-core i18n::extract and i18n::pack
+  - git diff --check
+Cross-check boundary:
+  - cargo check -p ferail-shell-win32 --target x86_64-pc-windows-msvc passes.
+  - cargo check -p ferail-gpui --target x86_64-pc-windows-msvc cannot finish
+    on macOS: ring/aws-lc C builds require the Windows SDK/MSVC headers
+    (`assert.h`, `windows.h`). This is the known toolchain boundary, not an
+    application or WSL compile result.
+Windows cases claimed: none. WTEST-130–139 still require the real machine.
+Known review points for Windows:
+  - confirm `wsl.exe --list --running --quiet` starts no distribution and the
+    3 s discovery deadline is sufficient on cold WSL service startup;
+  - confirm killing a timed-out/cancelled wsl.exe leaves no host child and no
+    misleading starting state; inspect distro state separately because WSL may
+    already have accepted the start request;
+  - verify I/O errors for broken/looping symlinks reach the five-second
+    fallback and `/mnt/c` hands off to the local Windows path exactly once;
+  - verify Explorer Open/Reveal, clipboard/drag and the explicit native menu
+    against WSL paths; no behavior is marked supported solely from UNC theory;
+  - inspect logs/report/metadata DB for BasePath, distro names, Linux paths or
+    captured command output.
+Next exact work on Windows:
+  1. Build/test the unchanged tree with the MSVC commands in "First Windows
+     session" and resolve Windows-only compiler errors without changing the
+     shared DTO contract.
+  2. Materialize WCORPUS-WSL in a disposable distro; record `wsl -l -v` before
+     launch, after sidebar display, and after explicit row activation.
+  3. Execute WTEST-130–139 in order, retaining logs, process/handle counts and
+     before/after Flat 1M/4M measurements.
+  4. Update WIN-017 checkboxes and this block only from recorded Windows
+     evidence; keep unverified items `[~]`.
+Working-tree files intentionally left unstaged: all WIN-017 implementation,
+  locale and planning files listed by `git status --short`; preserve unrelated
+  concurrent user work when isolating the commit.
 ```

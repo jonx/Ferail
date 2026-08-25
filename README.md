@@ -112,7 +112,7 @@ The prioritized list of open work is in **[TODO.md](TODO.md)**.
 | Platform | Status |
 |---|---|
 | **macOS** | **Primary, daily-driver.** Feature-complete for everyday use. |
-| **Windows** | **Active port**, broad native parity — clipboard, Recycle Bin, thumbnails, Open With, Media Foundation video, UAC elevation + Restart Manager lock diagnostics. Builds, runs, and screenshots on real hardware. Still missing: third-party shell-extension verbs, WSL, an indexed search engine, and the window-docking feature. ([details](docs/features/windows-port.md)) |
+| **Windows** | **Active port**, broad native parity — clipboard, Recycle Bin, thumbnails, Open With, Media Foundation video, UAC elevation + Restart Manager lock diagnostics, plus isolated native context-menu verbs on explicit demand. Builds, runs, and screenshots on real hardware. WSL Linux locations are implemented in source and awaiting real-Windows qualification; indexed search and window docking remain planned. ([details](docs/features/windows-port.md)) |
 | **Linux** | **Early port** — builds and runs; volumes, Trash, and Open With are real; clipboard, thumbnails, and video are still stubbed. ([details](docs/features/linux-port.md)) |
 | **AROS** | **Research port** — Ferail boots and runs as a browsable, themed file manager on [AROS](https://aros.org) (the open-source AmigaOS) via a from-scratch GPUI platform backend. Not at parity: some features are gated pending native shell integration. ([details](docs/features/aros-port.md)) |
 

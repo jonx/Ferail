@@ -14,12 +14,16 @@ and let git history plus release notes carry the record.
 - **Windows reliability and compatibility campaign.** The 0.6.5 tester report
   is tracked item by item in
   [docs/features/WINDOWS_COMPATIBILITY_PLAN.md](docs/features/WINDOWS_COMPATIBILITY_PLAN.md):
-  first make crashes diagnosable and isolate third-party preview handlers,
-  then bound preview/file-detail work to the viewport, repair Explorer open /
-  reveal / clipboard behavior, add the native Windows context menu strictly on
-  demand (no selection prefetch), and introduce Shell namespace locations
-  without touching the ordinary filesystem fast path. Windows-specific work is
-  accepted only after the exact
+  crash dumps/symbols, isolated preview handlers, viewport-bound detail work,
+  Open/Reveal, the on-demand native context menu and normal-path outbound OLE
+  drag now ship. On 2026-08-25 the user validated 10k previews,
+  multi-selection, Flat 4M, Open/Reveal, the native menu and the portable ZIP
+  in a clean Windows Sandbox. Continue through the ledger's **Mac-first,
+  Windows-final** plan: finish shared scheduler/selection contracts first,
+  then shortcuts/icons/transfers, Shell namespace locations, metadata/native
+  Properties and release qualification—without touching the ordinary
+  filesystem fast path. Exact adversarial/measurement work is accepted only
+  after the
   [Windows reliability test plan](docs/testing/WINDOWS_RELIABILITY_TEST_PLAN.md)
   passes interactively on a real Windows machine, including its 4,194,304-row
   regression gate. Resume work on that machine from the live
@@ -513,10 +517,24 @@ fallback). Remaining is the UX the system explorers have and we don't:
     only if a normalization-sensitive comparison surfaces.
   - Optional: an informational (not red-hazard) note in Get Info when a name
     contains a `/`-shown-as-`:`, so the on-disk reality is discoverable.
-- Windows deferred ports (windows-port.md §6b): third-party shell-extension
-  context-menu verbs (`IContextMenu`) and WSL integration. The near-term
-  behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume
-  observer, text-naming modal) all shipped.
+- **Windows WSL Linux locations**
+  ([WIN-017](docs/features/WINDOWS_COMPATIBILITY_PLAN.md#win-017--wsl-distributions-as-path-backed-linux-locations-p1)):
+  adapt the pinned Ferail-Win32 behavior behind the shared platform-location
+  seam. Discover installed distributions off-thread, show stopped ones without
+  starting them, activate only on explicit navigation, then hand
+  `\\wsl.localhost\<distro>` to the normal compact `NativeFs` surface. Add
+  bounded/cancellable symlink resolution, checked `/mnt/<drive>` conversion,
+  capability-correct trash/open/reveal semantics and privacy-redacted
+  diagnostics. **In progress:** the neutral store, cached Linux section,
+  fake-provider tests, Win32 registry discovery, bounded explicit activation,
+  UNC parsing, explicit and failed-navigation symlink resolution,
+  `/mnt/<drive>` conversion and fail-closed WSL Recycle Bin behavior are
+  implemented in the working tree. Finish and polish
+  them through WTEST-130–139 on Windows; restore WSL folder totals only after
+  the recursive size worker has a viewport/on-demand mode. Third-party
+  shell-extension context-menu verbs (`IContextMenu`) already ship on explicit
+  demand through the isolated broker; the old selection-time prefetch remains
+  deliberately removed.
 - **Windows release-readiness follow-ups** (from the 2026-07-31 pass —
   windows-port.md §2.2; the build fix, screenshot fallback, clippy and
   packaging all shipped there):

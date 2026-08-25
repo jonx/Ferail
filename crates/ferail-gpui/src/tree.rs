@@ -273,6 +273,7 @@ impl SidebarItem for LabeledMenu {
 pub enum ShellSidebarItem {
     Group(LabeledMenu),
     Locations(crate::locations_section::LocationsSection),
+    PlatformLocations(crate::locations_section::PlatformLocationsSection),
     Favorites(crate::favorites_section::FavoritesSection),
     Recents(crate::recents_section::RecentsSection),
     Tree(TreeSection),
@@ -284,6 +285,9 @@ impl ShellSidebarItem {
     }
     pub fn locations(l: crate::locations_section::LocationsSection) -> Self {
         ShellSidebarItem::Locations(l)
+    }
+    pub fn platform_locations(l: crate::locations_section::PlatformLocationsSection) -> Self {
+        ShellSidebarItem::PlatformLocations(l)
     }
     pub fn favorites(f: crate::favorites_section::FavoritesSection) -> Self {
         ShellSidebarItem::Favorites(f)
@@ -301,6 +305,7 @@ impl Collapsible for ShellSidebarItem {
         match self {
             ShellSidebarItem::Group(g) => g.is_collapsed(),
             ShellSidebarItem::Locations(l) => l.is_collapsed(),
+            ShellSidebarItem::PlatformLocations(l) => l.is_collapsed(),
             ShellSidebarItem::Favorites(f) => f.is_collapsed(),
             ShellSidebarItem::Recents(r) => r.is_collapsed(),
             ShellSidebarItem::Tree(t) => t.is_collapsed(),
@@ -310,6 +315,9 @@ impl Collapsible for ShellSidebarItem {
         match self {
             ShellSidebarItem::Group(g) => ShellSidebarItem::Group(g.collapsed(c)),
             ShellSidebarItem::Locations(l) => ShellSidebarItem::Locations(l.collapsed(c)),
+            ShellSidebarItem::PlatformLocations(l) => {
+                ShellSidebarItem::PlatformLocations(l.collapsed(c))
+            }
             ShellSidebarItem::Favorites(f) => ShellSidebarItem::Favorites(f.collapsed(c)),
             ShellSidebarItem::Recents(r) => ShellSidebarItem::Recents(r.collapsed(c)),
             ShellSidebarItem::Tree(t) => ShellSidebarItem::Tree(t.collapsed(c)),
@@ -327,6 +335,7 @@ impl SidebarItem for ShellSidebarItem {
         match self {
             ShellSidebarItem::Group(g) => g.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Locations(l) => l.render(id, window, cx).into_any_element(),
+            ShellSidebarItem::PlatformLocations(l) => l.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Favorites(f) => f.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Recents(r) => r.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Tree(t) => t.render(id, window, cx).into_any_element(),

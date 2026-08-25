@@ -528,6 +528,10 @@ pub struct Tab {
     /// on this tab. Replaced on every navigation/filter/show-hidden
     /// reload that targets this tab.
     pub load_cancel: Option<Arc<AtomicBool>>,
+    /// Bounded WSL `readlink -f` request for explicit link activation or a
+    /// failed UNC directory load. Kept separately from enumeration so a new
+    /// navigation cancels both.
+    pub wsl_resolve_cancel: Option<Arc<AtomicBool>>,
     /// Cooperative cancel flag for this tab's in-flight folder-size
     /// pass (`folder_sizes::start`). Flipped alongside `load_cancel`
     /// on every navigation/reload so a deep `recursive_size` walk
@@ -733,6 +737,7 @@ impl Tab {
             marquee: None,
             load_generation: 0,
             load_cancel: None,
+            wsl_resolve_cancel: None,
             folder_size_cancel: None,
             prefetch_cancel: None,
             load_task: None,

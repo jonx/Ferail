@@ -24,6 +24,7 @@ use gpui_component::{ActiveTheme, Collapsible, h_flex, v_flex};
 
 use crate::shell::Shell;
 use crate::text::{IconScale, TextScale};
+use ferail_core::platform_locations::{PathBackedRootState, PlatformRootId};
 use ferail_fs_native::CloudState;
 
 /// One Locations row, resolved by the shell at build time. Everything here is
@@ -70,12 +71,62 @@ impl LocationsSection {
     }
 }
 
+/// One dynamic path-backed platform root (WIN-017: a WSL distribution).
+/// The state is a cached process-level snapshot; rendering never probes the
+/// registry, launches a process or touches the UNC target.
+#[derive(Clone)]
+pub struct PlatformLocationRow {
+    pub id: PlatformRootId,
+    pub label: SharedString,
+    pub state: PathBackedRootState,
+    pub version: Option<u32>,
+    pub is_default: bool,
+    pub is_active: bool,
+}
+
+#[derive(Clone)]
+pub struct PlatformLocationsSection {
+    label: SharedString,
+    rows: Vec<PlatformLocationRow>,
+    shell: WeakEntity<Shell>,
+    ui_scale: f32,
+    collapsed: bool,
+}
+
+impl PlatformLocationsSection {
+    pub fn new(
+        label: impl Into<SharedString>,
+        rows: Vec<PlatformLocationRow>,
+        shell: WeakEntity<Shell>,
+        ui_scale: f32,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            rows,
+            shell,
+            ui_scale,
+            collapsed: false,
+        }
+    }
+}
+
 impl Collapsible for LocationsSection {
     fn is_collapsed(&self) -> bool {
         self.collapsed
     }
     fn collapsed(mut self, c: bool) -> Self {
         self.collapsed = c;
+        self
+    }
+}
+
+impl Collapsible for PlatformLocationsSection {
+    fn is_collapsed(&self) -> bool {
+        self.collapsed
+    }
+
+    fn collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
         self
     }
 }
@@ -111,6 +162,151 @@ impl SidebarItem for LocationsSection {
                     .children(rows),
             )
     }
+}
+
+impl SidebarItem for PlatformLocationsSection {
+    fn render(
+        self,
+        _id: impl Into<ElementId>,
+        _window: &mut gpui::Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        let collapsed = self.collapsed;
+        let shell = self.shell.clone();
+        let rows = self
+            .rows
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| {
+                render_platform_location_row(
+                    index,
+                    row,
+                    shell.clone(),
+                    self.ui_scale,
+                    collapsed,
+                    cx,
+                )
+            })
+            .collect::<Vec<AnyElement>>();
+        v_flex()
+            .w_full()
+            .when(!collapsed, |this| {
+                this.child(crate::tree::section_header(self.label.clone(), cx))
+            })
+            .child(
+                v_flex()
+                    .w_full()
+                    .px(px(crate::tree::TREE_ROW_INSET))
+                    .children(rows),
+            )
+    }
+}
+
+fn render_platform_location_row(
+    index: usize,
+    row: PlatformLocationRow,
+    shell: WeakEntity<Shell>,
+    icon_px: f32,
+    collapsed: bool,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let PlatformLocationRow {
+        id,
+        label,
+        state,
+        version,
+        is_default,
+        is_active,
+    } = row;
+    let status = match state {
+        PathBackedRootState::Stopped => Some(tr!("Stopped")),
+        PathBackedRootState::Starting => Some(tr!("Starting…")),
+        PathBackedRootState::Unavailable(_) => Some(tr!("Unavailable")),
+        PathBackedRootState::Ready(_) => {
+            version.map(|version| SharedString::from(format!("WSL {version}")))
+        }
+    };
+    let shell_for_click = shell.clone();
+    let label_tooltip = label.clone();
+
+    let mut element = h_flex()
+        .id(ElementId::Name(
+            format!("platform-location-row-{index}").into(),
+        ))
+        .w_full()
+        .h_9()
+        .px_2()
+        .gap_2()
+        .items_center()
+        .flex_shrink_0()
+        .rounded(theme.radius)
+        .cursor_pointer()
+        .text_scale_sm()
+        .text_color(if is_active {
+            theme.sidebar_accent_foreground
+        } else {
+            theme.sidebar_foreground
+        })
+        .when(is_active, |this| this.bg(theme.sidebar_accent))
+        .child(
+            gpui::svg()
+                .path("icons/nav/drive.svg")
+                .icon_px(icon_px)
+                .text_color(if is_active {
+                    theme.sidebar_accent_foreground
+                } else {
+                    theme.sidebar_foreground
+                })
+                .flex_shrink_0(),
+        );
+    if !collapsed {
+        element = element
+            .child(
+                div()
+                    .id(ElementId::Name(
+                        format!("platform-location-label-{index}").into(),
+                    ))
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(label)
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(label_tooltip.clone())
+                            .build(window, cx)
+                    }),
+            )
+            .when_some(status, |this, status| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.sidebar_foreground.opacity(0.7))
+                        .child(status),
+                )
+            })
+            .when(is_default, |this| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.primary)
+                        .child(tr!("Default")),
+                )
+            });
+    }
+    let hover_bg = theme.sidebar_accent.opacity(0.5);
+    element
+        .hover(move |this| if is_active { this } else { this.bg(hover_bg) })
+        .on_click(move |event, window, cx| {
+            let Some(shell) = shell_for_click.upgrade() else {
+                return;
+            };
+            let id = id.clone();
+            let open_in_new_tab = event.modifiers().platform;
+            shell.update(cx, |shell, cx| {
+                shell.open_path_backed_platform_root(id, open_in_new_tab, window, cx);
+            });
+        })
+        .into_any_element()
 }
 
 fn render_location_row(

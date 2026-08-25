@@ -69,6 +69,12 @@ pub use capture::{capture_window_rgba, hide_window_for_capture, present_offscree
 #[cfg(windows)]
 mod video_mf;
 
+mod wsl;
+pub use wsl::{
+    activate_path_backed_platform_root, discover_path_backed_platform_roots, is_wsl_path,
+    resolve_wsl_symlink_path,
+};
+
 // =============================================================
 // Path helpers
 // =============================================================

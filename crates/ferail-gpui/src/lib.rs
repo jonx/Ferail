@@ -48,6 +48,7 @@ pub mod locations_section;
 pub mod multi_table;
 pub mod obs;
 pub mod path_complete;
+pub mod platform_locations;
 pub mod prefetch;
 pub mod preview;
 pub mod preview_panel;

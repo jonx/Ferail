@@ -24,6 +24,21 @@ Status notation for a test record:
 - `[F]` fail — attach evidence and issue id
 - `[N/A]` capability unavailable on this machine, with reason
 
+### Current feature-level acceptance
+
+On 2026-08-25 the user reported successful real-Windows use of v0.6.8 for the
+10,000-image preview flow, multi-selection, roughly four-million-row Flat View,
+default Open, Reveal in Explorer, the explicit native Windows context menu and
+the portable package in a clean Windows Sandbox. This acceptance is recorded
+in `WINDOWS_HANDOVER.md` and is the baseline for continued work.
+
+The report does not by itself claim every numbered stress/adversarial subcase
+below. Leave an exact case unchecked until its defining conditions and evidence
+were exercised—for example ten complete scroll passes, injected provider
+failure, exact memory/latency limits, every path class or a 100-open handle
+soak. This preserves the user's successful validation without manufacturing
+measurements that were not retained.
+
 ## 1. What constitutes a valid run
 
 Record the following before testing:
@@ -65,6 +80,9 @@ redact the report locally before it leaves the machine.
 - At least one common third-party context-menu extension.
 - At least two preview providers, including PDF if available.
 - OneDrive Files On-Demand and, when available, an MTP phone.
+- Current WSL with at least one WSL2 distribution; keep one distribution
+  stopped for activation tests and, when practical, one WSL1 distribution for
+  compatibility coverage.
 - A local NTFS volume and a UNC share.
 
 This environment runs every case.
@@ -107,6 +125,7 @@ path into memory.
 | `WCORPUS-FLAT-1M` | Exactly 1,048,576 zero-byte files beneath 1,024 directories, with deterministic names and an average relative path near 80–100 UTF-16 code units. |
 | `WCORPUS-FLAT-4M` | Exactly 4,194,304 zero-byte files beneath 4,096 directories. This is the non-negotiable current-scale release gate. |
 | `WCORPUS-NAMESPACE` | This PC, Recycle Bin with recoverable test items, OneDrive hydrated and placeholder files, an MTP device if present, and a disconnected-device case. |
+| `WCORPUS-WSL` | A disposable WSL tree with Unicode/spaces, dotfiles, `/bin` and relative symlinks, broken and looping links, a `/mnt/c` target, supported images/documents, malformed media, a deep tree, and a generated wide directory. It contains no personal home data. |
 | `WCORPUS-CLIPBOARD` | Local/UNC/multiple-parent/special-name sets, a OneDrive placeholder, `.lnk`, and Shell-only items for copy, cut, paste, and drag tests. |
 | `WCORPUS-METADATA` | Known-answer JPEG/TIFF/HEIC images with EXIF orientation, camera, date, exposure and GPS/no-GPS variants; malformed files; a Windows property-provider document. |
 
@@ -185,9 +204,14 @@ main executable.
   DLL. *2026-08-24: both packaged binaries import 34 Windows system DLLs and
   nothing else — no `vcruntime*`/`msvcp*`/`ucrtbase`/`api-ms-win-crt-*`; the
   gate now fails packaging if one appears.*
-- [ ] `WTEST-004` Portable ZIP launches offline on WENV-C.
-- [ ] `WTEST-005` Installer install, launch, upgrade, uninstall, and retained
-  user-settings behavior pass on WENV-C.
+- [ ] `WTEST-004` Portable ZIP launches offline on WENV-C. *2026-08-25:
+  user-reported clean Windows Sandbox pass with the current v0.6.8 portable
+  package. Keep the exact case open because offline-network state, artifact
+  hash and machine transcript were not retained in the handover.*
+- [N/A] `WTEST-005` Installer install, launch, upgrade, uninstall, and retained
+  user-settings behavior pass on WENV-C. *The current Windows product is the
+  portable ZIP and v0.6.8 publishes no installer. Reopen this case before an
+  installer becomes a release artifact.*
 - [ ] `WTEST-006` `Get-AuthenticodeSignature` is valid for the executable,
   helpers, and installer intended for public release.
 
@@ -226,9 +250,10 @@ Run with file details enabled and eager full-folder indexing disabled.
   is pending. Stale generations do not update the new folder.
 - [ ] `WTEST-023` Wait idle. Queues drain, disk reads cease, and off-screen
   completions do not keep redraw rate elevated.
-- [ ] `WTEST-024` Enable optional idle whole-folder indexing, interact during
-  the pass, then disable it. Foreground input preempts it; cancellation is
-  prompt and partial cache results remain valid.
+- [N/A] `WTEST-024` Enable optional idle whole-folder indexing, interact during
+  the pass, then disable it. *No such product feature exists: Ferail deliberately
+  uses viewport details plus cache-on-demand. Reopen this case only if an
+  explicit opt-in indexer is designed.*
 - [ ] `WTEST-025` Compare Ferail CPU with Task Manager at idle, under a
   controlled one-thread load, and under multi-worker load. The status CPU uses
   Task Manager semantics and cannot show 700%; diagnostics may show core
@@ -433,7 +458,50 @@ materialization, or silent failure.
 Release blocker: path fabrication for virtual items, raw PIDL lifetime bug, or
 ordinary directories switching to Shell enumeration.
 
-### K. Metadata and Properties — WIN-014
+### K. WSL Linux locations — WIN-017
+
+- [ ] `WTEST-130` With WSL absent, then installed with no distributions, the
+  Linux location is hidden or shows a bounded unavailable/empty state. Startup,
+  sidebar paint and refresh issue no repeated registry/process queries.
+- [ ] `WTEST-131` Installed running and stopped WSL1/WSL2 distributions appear
+  from cached discovery with the right state, Unicode/spaces intact and the
+  default distro identified. Merely displaying, hovering or expanding the
+  Linux location starts none of them.
+- [ ] `WTEST-132` Activating a stopped distro shows a starting state, starts
+  only that distro, and navigates once to its root. Cancel, tab-close and
+  navigate-away during start discard late completion; timeout or startup
+  failure remains actionable and leaves no child process behind.
+- [ ] `WTEST-133` Both `\\wsl.localhost\<distro>` and `\\wsl$\<distro>` plus
+  extended-UNC forms navigate to the same distribution. Root, deep, Unicode,
+  spaced and dotfile paths render correctly without a display/identity mix-up.
+- [ ] `WTEST-134` Follow `/bin`, relative and absolute symlinks, a broken link,
+  a loop and a `/mnt/c` target. Resolution is bounded/cancellable, uses argv
+  rather than an interpolated shell command, and never launches one process
+  per listed row.
+- [ ] `WTEST-135` Browse, sort, filter, select, preview, inspect Format and
+  Description, Open and Reveal over `WCORPUS-WSL`. Unsupported native-menu,
+  transfer or trash capabilities say so explicitly; no operation silently
+  changes permanent-delete/recovery semantics.
+- [ ] `WTEST-136` Stop the active distro and restart/shutdown WSL during
+  enumeration, preview, symlink resolution and refresh. Ferail settles to a
+  recoverable unavailable state, remains navigable elsewhere and leaks no
+  worker/process/handle.
+- [ ] `WTEST-137` Inspect the report, logs, metadata database and caches after
+  the WSL suite. They contain no registry `BasePath`, raw distribution name,
+  browsed Linux path, command output, content or Ferail-created thumbnail.
+- [ ] `WTEST-138` Compare local NTFS listing, Flat 1M and Flat 4M before/after
+  enabling WSL support. No WSL object/state is allocated per ordinary row;
+  timing and memory stay within the global 5%/10% gates.
+- [ ] `WTEST-139` Run the WSL surface through a large generated tree while
+  rapidly scrolling/navigating. Work remains viewport/batch bounded, the UI
+  remains responsive and details/previews are retained rather than globally
+  disabled for WSL.
+
+Release blocker: implicit distro startup, UI-thread registry/process/network
+I/O, unsafe symlink/path conversion, misleading trash recovery, personal-path
+leakage, or any local/Flat regression caused by WSL state.
+
+### L. Metadata and Properties — WIN-014
 
 - [ ] `WTEST-110` Known-answer EXIF fields match fixture manifests for JPEG,
   TIFF, and HEIC where supported; orientation is not double-applied.
@@ -441,13 +509,14 @@ ordinary directories switching to Shell enumeration.
   available.
 - [ ] `WTEST-112` Metadata loads on demand off-thread and caches by identity /
   revision; repeated repaint/scroll performs no parse.
-- [ ] `WTEST-113` GPS is hidden until deliberately revealed, not written into
-  normal logs/reports, and follows the approved persistence policy.
+- [ ] `WTEST-113` GPS coordinates are never parsed, displayed, logged or
+  persisted. When coordinates are embedded, only a presence indicator appears
+  and no value can be recovered from Ferail's reports, cache or temporary data.
 - [ ] `WTEST-114` **Windows Properties…** opens the native property surface for
   a file, folder, shortcut, and supported namespace item without blocking
   Ferail.
 
-### L. Privacy and failure recovery
+### M. Privacy and failure recovery
 
 - [ ] `WTEST-120` Search logs, crash reports, helper logs, cache/database, and
   temporary directories after the media/metadata suite. No preview pixels,
@@ -518,6 +587,7 @@ Native context menu:      PASS / FAIL
 Shortcuts:                PASS / FAIL
 Clipboard / drag:         PASS / FAIL
 Namespace / Recycle Bin:  PASS / FAIL
+WSL Linux locations:      PASS / FAIL
 Metadata / Properties:    PASS / FAIL
 Privacy / recovery:       PASS / FAIL
 macOS/Linux regression:   PASS / FAIL

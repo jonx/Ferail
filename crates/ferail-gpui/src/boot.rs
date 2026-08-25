@@ -246,6 +246,10 @@ pub fn run_gui(args: screenshot::Args) {
             // sidebar + the Favorites mount states.
             crate::process_state::start_volume_watch(cx);
 
+            // Windows WSL roots (empty on macOS/Linux): discovery is a
+            // bounded worker operation and publishes cached sidebar state.
+            crate::platform_locations::refresh(cx);
+
             // Live sleep/wake watch: pause video + slideshow when the
             // machine or its displays sleep; re-list volumes and reload
             // directory tabs on wake (docs/features/POWER.md).

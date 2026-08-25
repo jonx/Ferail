@@ -2030,6 +2030,37 @@ pub fn force_close_processes(_pids: &[u32]) -> Result<(), String> {
     Err("closing the locking process isn't supported on this platform yet".into())
 }
 
+// ---------------------------------------------------------------------------
+// Path-backed platform roots (WIN-017).
+//
+// WSL is Windows-only. These mirrors keep the GPUI capability surface
+// platform-neutral; macOS simply publishes no roots.
+// ---------------------------------------------------------------------------
+
+pub fn discover_path_backed_platform_roots(
+    _cancel: &std::sync::atomic::AtomicBool,
+) -> Vec<ferail_core::platform_locations::PathBackedPlatformRoot> {
+    Vec::new()
+}
+
+pub fn activate_path_backed_platform_root(
+    _id: &ferail_core::platform_locations::PlatformRootId,
+    _cancel: &std::sync::atomic::AtomicBool,
+) -> Result<std::path::PathBuf, ferail_core::platform_locations::PlatformRootErrorKind> {
+    Err(ferail_core::platform_locations::PlatformRootErrorKind::Unavailable)
+}
+
+pub fn is_wsl_path(_path: &std::path::Path) -> bool {
+    false
+}
+
+pub fn resolve_wsl_symlink_path(
+    _path: &std::path::Path,
+    _cancel: &std::sync::atomic::AtomicBool,
+) -> Result<std::path::PathBuf, ferail_core::platform_locations::PlatformRootErrorKind> {
+    Err(ferail_core::platform_locations::PlatformRootErrorKind::Unavailable)
+}
+
 /// osascript-backed privileged re-exec. Two layers of quoting: each token is
 /// POSIX single-quoted for the shell, and the whole command is escaped as an
 /// AppleScript string literal.

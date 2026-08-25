@@ -489,6 +489,31 @@ impl Shell {
         rows
     }
 
+    /// Cached dynamic roots (currently Windows WSL distributions). This is
+    /// O(number of distributions) and does not touch the registry, launch a
+    /// process or probe a UNC path while rendering.
+    fn build_platform_location_rows(&self) -> Vec<crate::locations_section::PlatformLocationRow> {
+        let current = &self.active_tab().current_dir;
+        self.process
+            .platform_locations
+            .borrow()
+            .roots()
+            .iter()
+            .map(|root| crate::locations_section::PlatformLocationRow {
+                id: root.id.clone(),
+                label: root.label.to_string().into(),
+                state: root.state.clone(),
+                version: root.version,
+                is_default: root.is_default,
+                is_active: matches!(
+                    &root.state,
+                    ferail_core::platform_locations::PathBackedRootState::Ready(path)
+                        if path == current
+                ),
+            })
+            .collect()
+    }
+
     /// Build the Volumes section as a flat row list. Same recursion
     /// shape as Locations, but the depth-0 volume row carries a
     /// `(total, available)` capacity so the renderer can draw a
@@ -3389,6 +3414,7 @@ impl Render for Shell {
         }
         let weak = cx.weak_entity();
         let locations_rows = self.build_locations_rows(cx);
+        let platform_location_rows = self.build_platform_location_rows();
         let favorites_section = self.build_user_favorites_section(weak.clone());
         let recents_section = self.build_recents_section(weak.clone(), cx);
         let browse_rows = self.build_browse_rows(cx);
@@ -3458,8 +3484,18 @@ impl Render for Shell {
                     weak.clone(),
                     crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
                 ),
-            ))
-            .child(favorites_section);
+            ));
+        if !platform_location_rows.is_empty() {
+            sidebar = sidebar.child(ShellSidebarItem::platform_locations(
+                crate::locations_section::PlatformLocationsSection::new(
+                    tr!("Linux"),
+                    platform_location_rows,
+                    weak.clone(),
+                    crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
+                ),
+            ));
+        }
+        sidebar = sidebar.child(favorites_section);
         // Recents sits below Favorites, above Browse — hidden until the
         // user has navigated somewhere (build_recents_section → None).
         if let Some(recents_section) = recents_section {

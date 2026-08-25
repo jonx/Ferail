@@ -2360,6 +2360,22 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
+        // Windows Recycle Bin semantics are not defined for WSL UNC items.
+        // Never let `FOFX_RECYCLEONDELETE` degrade into an operation the UI
+        // still calls recoverable. Permanent deletion remains a separate,
+        // explicitly confirmed command.
+        if paths
+            .iter()
+            .any(|path| crate::platform_shell::is_wsl_path(path))
+        {
+            window.push_notification(
+                Notification::info(tr!(
+                    "Moving WSL files to the Recycle Bin is not supported. Use Delete Immediately only if you intend permanent deletion."
+                )),
+                cx,
+            );
+            return;
+        }
         let count = paths.len();
         let name = paths[0]
             .file_name()

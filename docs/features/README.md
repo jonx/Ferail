@@ -53,7 +53,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [ferail-windows-instances-tabs-spec.md](ferail-windows-instances-tabs-spec.md) | Partial | Process/window state split, tabs, closed-tab undo, and shared caches are in place; full multi-window/tear-off completion remains open. |
 | [linux-port.md](linux-port.md) | Partial port | The Linux shell crate compiles behind stubs; real clipboard/trash/open-with/volume/power/preview integrations remain open. |
 | [mac_port.md](mac_port.md) | Shipped with follow-ups | macOS is the primary implementation path; remaining items are mostly packaging, polish, and verification. |
-| [windows-port.md](windows-port.md) | Partial port | Windows shell surface has major compatibility work; shell-extension verbs, WSL integration, and some power/screenshot infrastructure remain open. |
+| [windows-port.md](windows-port.md) | Partial port | Broad Windows shell parity and isolated native context-menu verbs ship; WSL Linux locations (WIN-017) are implemented in source and await Windows qualification, while namespace breadth and some power/screenshot infrastructure remain open. |
 
 ## Responsiveness & data flow
 

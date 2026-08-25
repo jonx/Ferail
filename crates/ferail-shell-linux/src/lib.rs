@@ -1670,3 +1670,34 @@ pub fn processes_using_tree(_roots: &[std::path::PathBuf], _max_files: usize) ->
 pub fn force_close_processes(_pids: &[u32]) -> Result<(), String> {
     Err("force-close not implemented on Linux yet".into())
 }
+
+// ---------------------------------------------------------------------------
+// Path-backed platform roots (WIN-017).
+//
+// WSL discovery belongs to the Windows host. A native Linux build already
+// browses its own filesystem directly, so it publishes no synthetic roots.
+// ---------------------------------------------------------------------------
+
+pub fn discover_path_backed_platform_roots(
+    _cancel: &std::sync::atomic::AtomicBool,
+) -> Vec<ferail_core::platform_locations::PathBackedPlatformRoot> {
+    Vec::new()
+}
+
+pub fn activate_path_backed_platform_root(
+    _id: &ferail_core::platform_locations::PlatformRootId,
+    _cancel: &std::sync::atomic::AtomicBool,
+) -> Result<std::path::PathBuf, ferail_core::platform_locations::PlatformRootErrorKind> {
+    Err(ferail_core::platform_locations::PlatformRootErrorKind::Unavailable)
+}
+
+pub fn is_wsl_path(_path: &std::path::Path) -> bool {
+    false
+}
+
+pub fn resolve_wsl_symlink_path(
+    _path: &std::path::Path,
+    _cancel: &std::sync::atomic::AtomicBool,
+) -> Result<std::path::PathBuf, ferail_core::platform_locations::PlatformRootErrorKind> {
+    Err(ferail_core::platform_locations::PlatformRootErrorKind::Unavailable)
+}

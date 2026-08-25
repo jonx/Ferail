@@ -850,6 +850,17 @@ fn enumeration_error_message(operation: &str, err: &EnumerationError) -> String 
     }
 }
 
+/// Explicit WSL-link activation worker probe. This is called only from the
+/// background executor after `readlink -f`; the annotation documents that the
+/// blocking metadata syscall cannot migrate onto render/UI code.
+#[allow(clippy::disallowed_methods)]
+fn wsl_resolved_target_is_dir(path: &Path) -> bool {
+    ferail_core::path_guard::assert_off_ui_thread("wsl resolved-target metadata");
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+}
+
 const UNDO_STACK_CAP: usize = 20;
 
 /// Key-context name for the Shell's outer container — same convention
@@ -2671,6 +2682,12 @@ impl Shell {
     }
 
     fn on_refresh(&mut self, _: &Refresh, window: &mut Window, cx: &mut Context<Self>) {
+        // The same explicit gesture also refreshes the small cached platform
+        // root list. This remains entirely off-thread and is never triggered
+        // by rendering; Safe Mode deliberately suppresses platform probes.
+        if !crate::safe_mode::enabled() {
+            crate::platform_locations::refresh(cx);
+        }
         if self
             .active_tab()
             .tool_result
@@ -4083,6 +4100,9 @@ impl Shell {
         if let Some(cancel) = self.tabs[tab_index].load_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
+        if let Some(cancel) = self.tabs[tab_index].wsl_resolve_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
         // The folder-size and prefetch passes for the previous listing
         // are also obsolete — stop their walks before the new
         // enumeration starts competing for disk I/O.
@@ -4529,7 +4549,12 @@ impl Shell {
         });
         let row_count = self.tabs[idx].table.read(cx).delegate().entries.len();
         if row_count == 0 {
+            let try_wsl_symlink =
+                error.is_some() && crate::platform_shell::is_wsl_path(&self.tabs[idx].current_dir);
             self.tabs[idx].last_error = error;
+            if try_wsl_symlink {
+                self.start_wsl_symlink_recovery(idx, cx);
+            }
         } else {
             if let Some(err) = error {
                 crate::log_warn!(90, "directory load ended with partial rows: {err:?}");
@@ -4569,7 +4594,14 @@ impl Shell {
         // miss, streamed back as they resolve. Skipped entirely when
         // the user has disabled folder sizing (Settings → Performance)
         // — the Size column then shows a dash for directories.
-        if crate::folder_sizes::folder_sizing_enabled(cx) {
+        // WSL roots are path-backed but remote/service-mediated. The current
+        // folder-size pass recursively walks *every* directory row, so running
+        // it here would defeat viewport-bounded WSL browsing. Keep the Size
+        // column's folder totals unset until that worker gains an explicit
+        // on-demand/viewport mode; file sizes and all viewport details remain.
+        if crate::folder_sizes::folder_sizing_enabled(cx)
+            && !crate::platform_shell::is_wsl_path(&self.tabs[idx].current_dir)
+        {
             let size_cancel = Arc::new(AtomicBool::new(false));
             let size_tab_id = self.tabs[idx].id;
             let size_generation = self.tabs[idx].load_generation;
@@ -4598,6 +4630,55 @@ impl Shell {
         self.warm_loaded_viewport_in_tab(idx, cx);
         self.refresh_volume_info_in_tab(idx, cx);
         cx.notify();
+    }
+
+    /// Windows UNC enumeration cannot follow some Linux symlinks exposed by
+    /// WSL. Direct `NativeFs` enumeration is always attempted first; only an
+    /// empty failed load reaches this bounded provider fallback.
+    fn start_wsl_symlink_recovery(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get_mut(idx) else {
+            return;
+        };
+        let tab_id = tab.id;
+        let generation = tab.load_generation;
+        let original = tab.current_dir.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        tab.wsl_resolve_cancel = Some(cancel.clone());
+        cx.spawn(async move |this, cx| {
+            let worker_path = original.clone();
+            let worker_cancel = cancel.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::platform_shell::resolve_wsl_symlink_path(&worker_path, &worker_cancel)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(tab_index) = this.tabs.iter().position(|tab| tab.id == tab_id) else {
+                    return;
+                };
+                let tab = &mut this.tabs[tab_index];
+                if !tab
+                    .wsl_resolve_cancel
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &cancel))
+                {
+                    return;
+                }
+                tab.wsl_resolve_cancel = None;
+                if tab.load_generation != generation || tab.current_dir != original {
+                    return;
+                }
+                let Ok(resolved) = result else {
+                    return;
+                };
+                if resolved == original || tab_index != this.active {
+                    return;
+                }
+                this.navigate(resolved, cx);
+            });
+        })
+        .detach();
     }
 
     /// Refresh the cached free-space / volume-name pair for one tab,
@@ -6418,6 +6499,9 @@ impl Shell {
         };
         match kind {
             EntryKind::Directory => self.navigate(path, cx),
+            EntryKind::Symlink if crate::platform_shell::is_wsl_path(&path) => {
+                self.activate_wsl_symlink(path, cx);
+            }
             EntryKind::File | EntryKind::Symlink => {
                 // Platform Shell owns default invocation: `open(1)` on macOS,
                 // ShellExecuteExW on Windows, and xdg-open on Linux. All can
@@ -6429,6 +6513,74 @@ impl Shell {
                 .detach();
             }
         }
+    }
+
+    /// Resolve an explicitly activated WSL symlink once, off-thread. Windows
+    /// exposes links such as `/bin -> /usr/bin` as rows but cannot always
+    /// follow them through UNC APIs. A resolved directory re-enters normal
+    /// navigation; a resolved file goes through the normal default opener.
+    fn activate_wsl_symlink(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let tab_id = self.active_tab().id;
+        let generation = self.active_tab().load_generation;
+        if let Some(cancel) = self.active_tab_mut().wsl_resolve_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.active_tab_mut().wsl_resolve_cancel = Some(cancel.clone());
+        cx.spawn(async move |this, cx| {
+            let worker_path = path.clone();
+            let worker_cancel = cancel.clone();
+            let resolved = cx
+                .background_executor()
+                .spawn(async move {
+                    let resolved = crate::platform_shell::resolve_wsl_symlink_path(
+                        &worker_path,
+                        &worker_cancel,
+                    )?;
+                    let is_dir = wsl_resolved_target_is_dir(&resolved);
+                    Ok::<_, ferail_core::platform_locations::PlatformRootErrorKind>((
+                        resolved, is_dir,
+                    ))
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(tab_index) = this.tabs.iter().position(|tab| tab.id == tab_id) else {
+                    return;
+                };
+                if !this.tabs[tab_index]
+                    .wsl_resolve_cancel
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &cancel))
+                {
+                    return;
+                }
+                this.tabs[tab_index].wsl_resolve_cancel = None;
+                if tab_index != this.active
+                    || this.tabs[tab_index].load_generation != generation
+                    || cancel.load(Ordering::Relaxed)
+                {
+                    return;
+                }
+                match resolved {
+                    Ok((target, true)) => this.navigate(target, cx),
+                    Ok((target, false)) => {
+                        cx.background_spawn(async move {
+                            let _ = crate::platform_shell::open_with_default(&target);
+                        })
+                        .detach();
+                    }
+                    Err(_) => {
+                        // Preserve the pre-WSL fallback for an unresolved or
+                        // broken link: let the OS try its normal association.
+                        cx.background_spawn(async move {
+                            let _ = crate::platform_shell::open_with_default(&path);
+                        })
+                        .detach();
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     /// Navigate to the parent of the current directory (Backspace
