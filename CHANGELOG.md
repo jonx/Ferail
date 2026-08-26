@@ -14,6 +14,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   return to Ferail's normal filesystem engine. Shell enumeration runs in a
   cancellable, time-bounded disposable process; the tab retains only copied
   opaque PIDL bytes, never COM objects or fabricated paths.
+  Enumeration streams from the broker through bounded queues, so large device
+  folders can paint progressively without building duplicate full-list
+  snapshots; repeated refreshes reuse identical copied identities.
 
 - **WSL browsing no longer starts a distribution implicitly.** Ferail invokes
   `wsl.exe` only after an explicit distribution or symlink activation; a

@@ -245,7 +245,11 @@ Implemented:
     NativeFs. Pathless containers retain platform identity and enumerate via
     BHID_EnumItems; no fake PathBuf enters FileEntry or NodeStore;
   - UI batches remain capped at 512 and the existing four-batch GPUI channel
-    provides the final apply backpressure;
+    provides the final apply backpressure. The binary broker protocol also
+    streams through a bounded 512-record channel and flushes every 128 rows;
+    neither process constructs a duplicate full-list snapshot;
+  - repeated refreshes deduplicate identical copied PIDLs inside the tab arena
+    rather than growing one identity entry per refresh;
   - capability gating is deliberately conservative: only navigation that is
     implemented is advertised. Namespace native menus, restore/delete,
     properties and transfers remain absent rather than silently misbehaving.

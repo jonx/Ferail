@@ -4,8 +4,9 @@
 //! retains only copied absolute PIDL bytes in this tab-owned arena; no COM
 //! interface or borrowed PIDL crosses an apartment or survives the request.
 
+use std::collections::HashMap;
 use std::ffi::c_void;
-use std::io::{Read as _, Write as _};
+use std::io::{Read, Write as _};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,9 +14,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ferail_core::platform_namespace::{
-    LocationTarget, PlatformCapabilities, PlatformItem, PlatformItemFlags, PlatformItemId,
-    PlatformItemKind, PlatformListingBatch, PlatformListingRequest, PlatformLocation,
-    PlatformLocationErrorKind, PlatformNamespaceProvider, PlatformProviderId,
+    LocationTarget, PlatformBreadcrumb, PlatformCapabilities, PlatformItem, PlatformItemFlags,
+    PlatformItemId, PlatformItemKind, PlatformListingBatch, PlatformListingRequest,
+    PlatformLocation, PlatformLocationErrorKind, PlatformNamespaceProvider, PlatformProviderId,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,7 +33,12 @@ enum ShellIdentity {
 
 pub struct WindowsNamespaceProvider {
     id: PlatformProviderId,
-    arena: Mutex<Vec<ShellIdentity>>,
+    arena: Mutex<IdentityArena>,
+}
+
+struct IdentityArena {
+    entries: Vec<ShellIdentity>,
+    pidl_ids: HashMap<Arc<[u8]>, PlatformItemId>,
 }
 
 impl WindowsNamespaceProvider {
@@ -41,7 +47,10 @@ impl WindowsNamespaceProvider {
         let serial = NEXT_PROVIDER.fetch_add(1, Ordering::Relaxed);
         let provider = Arc::new(Self {
             id: PlatformProviderId::new(format!("windows-namespace-{serial}")),
-            arena: Mutex::new(vec![ShellIdentity::Root(root)]),
+            arena: Mutex::new(IdentityArena {
+                entries: vec![ShellIdentity::Root(root)],
+                pidl_ids: HashMap::new(),
+            }),
         });
         let location = PlatformLocation::new(
             provider.id.clone(),
@@ -54,14 +63,22 @@ impl WindowsNamespaceProvider {
         self.arena
             .lock()
             .ok()?
+            .entries
             .get(id.as_raw().checked_sub(1)? as usize)
             .cloned()
     }
 
     fn retain_identity(&self, identity: Arc<[u8]>) -> Option<PlatformItemId> {
         let mut arena = self.arena.lock().ok()?;
-        arena.push(ShellIdentity::AbsolutePidl(identity));
-        PlatformItemId::from_raw(arena.len() as u64)
+        if let Some(id) = arena.pidl_ids.get(&identity) {
+            return Some(*id);
+        }
+        arena
+            .entries
+            .push(ShellIdentity::AbsolutePidl(identity.clone()));
+        let id = PlatformItemId::from_raw(arena.entries.len() as u64)?;
+        arena.pidl_ids.insert(identity, id);
+        Some(id)
     }
 }
 
@@ -79,14 +96,27 @@ impl PlatformNamespaceProvider for WindowsNamespaceProvider {
         let identity = self
             .identity(request.token.location().item)
             .ok_or(PlatformLocationErrorKind::NotFound)?;
-        let records = run_broker(identity, cancel)?;
         let mut batch = Vec::with_capacity(request.suggested_batch_size.min(512));
-        for record in records {
+        let mut breadcrumbs = None;
+        let mut failed = false;
+        let batch_size = request.suggested_batch_size.clamp(1, 512);
+        run_broker(identity, cancel, |event| {
             if cancel.load(Ordering::Relaxed) {
-                return Err(PlatformLocationErrorKind::Cancelled);
+                return false;
             }
+            let record = match event {
+                BrokerEvent::Label(label) => {
+                    breadcrumbs = Some(vec![PlatformBreadcrumb {
+                        location: request.token.location().clone(),
+                        label: label.into(),
+                    }]);
+                    return true;
+                }
+                BrokerEvent::Record(record) => record,
+            };
             let Some(id) = self.retain_identity(record.pidl) else {
-                return Err(PlatformLocationErrorKind::Failed);
+                failed = true;
+                return false;
             };
             let folder = record.attributes & ATTR_FOLDER != 0;
             let filesystem = record.path.is_some();
@@ -126,20 +156,24 @@ impl PlatformNamespaceProvider for WindowsNamespaceProvider {
                 flags,
                 icon_key: None,
             });
-            if batch.len() >= request.suggested_batch_size.clamp(1, 512)
+            if batch.len() >= batch_size
                 && !emit(PlatformListingBatch {
                     token: request.token.clone(),
-                    breadcrumbs: None,
+                    breadcrumbs: breadcrumbs.take(),
                     items: std::mem::take(&mut batch),
                     is_last: false,
                 })
             {
-                return Err(PlatformLocationErrorKind::Cancelled);
+                return false;
             }
+            true
+        })?;
+        if failed {
+            return Err(PlatformLocationErrorKind::Failed);
         }
         if !emit(PlatformListingBatch {
             token: request.token,
-            breadcrumbs: None,
+            breadcrumbs,
             items: batch,
             is_last: true,
         }) {
@@ -167,10 +201,16 @@ struct BrokerRecord {
     path: Option<PathBuf>,
 }
 
+enum BrokerEvent {
+    Label(String),
+    Record(BrokerRecord),
+}
+
 fn run_broker(
     identity: ShellIdentity,
     cancel: &AtomicBool,
-) -> Result<Vec<BrokerRecord>, PlatformLocationErrorKind> {
+    mut consume: impl FnMut(BrokerEvent) -> bool,
+) -> Result<(), PlatformLocationErrorKind> {
     use std::os::windows::process::CommandExt as _;
 
     let executable = std::env::current_exe().map_err(|_| PlatformLocationErrorKind::Failed)?;
@@ -202,101 +242,120 @@ fn run_broker(
         }
     }
     drop(stdin);
-    let mut stdout = child
+    let stdout = child
         .stdout
         .take()
         .ok_or(PlatformLocationErrorKind::Failed)?;
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout
-            .by_ref()
-            .take((MAX_OUTPUT + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map(|_| bytes)
-    });
+    let (sender, receiver) = std::sync::mpsc::sync_channel(512);
+    let reader = std::thread::spawn(move || read_broker_stream(stdout, sender));
     let deadline = Instant::now() + BROKER_TIMEOUT;
-    let status = loop {
+    loop {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
+            drop(receiver);
             let _ = reader.join();
             return Err(PlatformLocationErrorKind::Cancelled);
         }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(20));
+        match receiver.recv_timeout(Duration::from_millis(20)) {
+            Ok(Ok(Some(event))) => {
+                if !consume(event) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    drop(receiver);
+                    let _ = reader.join();
+                    return Err(PlatformLocationErrorKind::Cancelled);
+                }
             }
-            Ok(None) => {
+            Ok(Ok(None)) => {
+                let status = child
+                    .wait()
+                    .map_err(|_| PlatformLocationErrorKind::Failed)?;
+                drop(receiver);
+                let reader_ok = reader.join().unwrap_or(Err(())).is_ok();
+                return if status.success() && reader_ok {
+                    Ok(())
+                } else {
+                    Err(PlatformLocationErrorKind::Failed)
+                };
+            }
+            Ok(Err(())) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = reader.join();
-                return Err(PlatformLocationErrorKind::TimedOut);
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                drop(receiver);
                 let _ = reader.join();
                 return Err(PlatformLocationErrorKind::Failed);
             }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
-    };
-    let bytes = reader
-        .join()
-        .ok()
-        .and_then(Result::ok)
-        .ok_or(PlatformLocationErrorKind::Failed)?;
-    if !status.success() || bytes.len() > MAX_OUTPUT {
-        return Err(PlatformLocationErrorKind::Failed);
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            drop(receiver);
+            let _ = reader.join();
+            return Err(PlatformLocationErrorKind::TimedOut);
+        }
     }
-    decode_records(&bytes).ok_or(PlatformLocationErrorKind::Failed)
 }
 
-fn decode_records(mut bytes: &[u8]) -> Option<Vec<BrokerRecord>> {
-    let count = take_u32(&mut bytes)? as usize;
-    if count > 1_000_000 {
-        return None;
-    }
-    let mut records = Vec::with_capacity(count.min(4096));
-    for _ in 0..count {
-        let attributes = take_u32(&mut bytes)?;
-        let pidl_len = take_u32_len(&mut bytes)?;
-        let pidl = take_bytes(&mut bytes, pidl_len)?;
-        let label_len = take_u32_len(&mut bytes)?;
-        let label = decode_utf16(take_bytes(&mut bytes, label_len)?)?;
-        let path_len = take_u32(&mut bytes)?;
-        let path = if path_len == u32::MAX {
-            None
-        } else {
-            Some(PathBuf::from(std::ffi::OsString::from_wide(
-                &bytes_to_utf16(take_bytes(&mut bytes, path_len as usize)?)?,
-            )))
+fn read_broker_stream(
+    stdout: impl Read,
+    sender: std::sync::mpsc::SyncSender<Result<Option<BrokerEvent>, ()>>,
+) -> Result<(), ()> {
+    let mut input = std::io::BufReader::new(stdout).take((MAX_OUTPUT + 1) as u64);
+    loop {
+        let mut kind = [0u8; 1];
+        input.read_exact(&mut kind).map_err(|_| ())?;
+        let event = match kind[0] {
+            0 => {
+                sender.send(Ok(None)).map_err(|_| ())?;
+                return Ok(());
+            }
+            1 => {
+                let attributes = read_u32(&mut input)?;
+                let pidl = Arc::from(read_field(&mut input)?);
+                let label = decode_utf16(&read_field(&mut input)?).ok_or(())?;
+                let path_len = read_u32(&mut input)? as usize;
+                let path = if path_len == u32::MAX as usize {
+                    None
+                } else {
+                    if path_len > MAX_RECORD_FIELD {
+                        return Err(());
+                    }
+                    let mut bytes = vec![0u8; path_len];
+                    input.read_exact(&mut bytes).map_err(|_| ())?;
+                    Some(PathBuf::from(std::ffi::OsString::from_wide(
+                        &bytes_to_utf16(&bytes).ok_or(())?,
+                    )))
+                };
+                BrokerEvent::Record(BrokerRecord {
+                    attributes,
+                    pidl,
+                    label,
+                    path,
+                })
+            }
+            2 => BrokerEvent::Label(decode_utf16(&read_field(&mut input)?).ok_or(())?),
+            _ => return Err(()),
         };
-        records.push(BrokerRecord {
-            attributes,
-            pidl: Arc::from(pidl),
-            label,
-            path,
-        });
+        sender.send(Ok(Some(event))).map_err(|_| ())?;
     }
-    bytes.is_empty().then_some(records)
 }
 
-fn take_u32(bytes: &mut &[u8]) -> Option<u32> {
-    let (head, tail) = bytes.split_at_checked(4)?;
-    *bytes = tail;
-    Some(u32::from_le_bytes(head.try_into().ok()?))
+fn read_u32(input: &mut impl Read) -> Result<u32, ()> {
+    let mut bytes = [0u8; 4];
+    input.read_exact(&mut bytes).map_err(|_| ())?;
+    Ok(u32::from_le_bytes(bytes))
 }
 
-fn take_u32_len(bytes: &mut &[u8]) -> Option<usize> {
-    let len = take_u32(bytes)? as usize;
-    (len <= MAX_RECORD_FIELD).then_some(len)
-}
-
-fn take_bytes<'a>(bytes: &mut &'a [u8], len: usize) -> Option<&'a [u8]> {
-    let (head, tail) = bytes.split_at_checked(len)?;
-    *bytes = tail;
-    Some(head)
+fn read_field(input: &mut impl Read) -> Result<Vec<u8>, ()> {
+    let len = read_u32(input)? as usize;
+    if len > MAX_RECORD_FIELD {
+        return Err(());
+    }
+    let mut bytes = vec![0u8; len];
+    input.read_exact(&mut bytes).map_err(|_| ())?;
+    Ok(bytes)
 }
 
 fn bytes_to_utf16(bytes: &[u8]) -> Option<Vec<u16>> {
@@ -365,12 +424,15 @@ fn namespace_broker_run() -> Result<(), ()> {
             }
             _ => return Err(()),
         };
+        let parent_label = shell_item_name(&parent, SIGDN_NORMALDISPLAY).ok_or(())?;
         let enumerator: IEnumShellItems = parent
             .BindToHandler(None, &BHID_EnumItems)
             .map_err(|_| ())?;
         let mask = SFGAO_FOLDER | SFGAO_FILESYSTEM | SFGAO_HIDDEN | SFGAO_SYSTEM | SFGAO_LINK;
-        type WireRecord = (u32, Vec<u8>, Vec<u8>, Option<Vec<u8>>);
-        let mut records: Vec<WireRecord> = Vec::new();
+        let mut output = std::io::BufWriter::new(std::io::stdout().lock());
+        output.write_all(&[2]).map_err(|_| ())?;
+        write_field(&mut output, &utf16_bytes(&parent_label))?;
+        let mut count = 0usize;
         loop {
             let mut fetched = 0u32;
             let mut item = [None];
@@ -392,32 +454,26 @@ fn namespace_broker_run() -> Result<(), ()> {
             CoTaskMemFree(Some(absolute.cast::<c_void>()));
             let label = shell_item_name(&item, SIGDN_NORMALDISPLAY).ok_or(())?;
             let path = shell_item_name(&item, SIGDN_FILESYSPATH);
-            records.push((
-                attributes,
-                pidl,
-                utf16_bytes(&label),
-                path.map(|p| utf16_bytes(&p)),
-            ));
-            if records.len() > 1_000_000 {
-                return Err(());
-            }
-        }
-        let mut output = std::io::stdout().lock();
-        output
-            .write_all(&(records.len() as u32).to_le_bytes())
-            .map_err(|_| ())?;
-        for (attributes, pidl, label, path) in records {
+            output.write_all(&[1]).map_err(|_| ())?;
             output
                 .write_all(&attributes.to_le_bytes())
                 .map_err(|_| ())?;
             write_field(&mut output, &pidl)?;
-            write_field(&mut output, &label)?;
+            write_field(&mut output, &utf16_bytes(&label))?;
             if let Some(path) = path {
-                write_field(&mut output, &path)?;
+                write_field(&mut output, &utf16_bytes(&path))?;
             } else {
                 output.write_all(&u32::MAX.to_le_bytes()).map_err(|_| ())?;
             }
+            count += 1;
+            if count > 1_000_000 {
+                return Err(());
+            }
+            if count % 128 == 0 {
+                output.flush().map_err(|_| ())?;
+            }
         }
+        output.write_all(&[0]).map_err(|_| ())?;
         output.flush().map_err(|_| ())
     })();
     unsafe { CoUninitialize() };
@@ -464,13 +520,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decoder_rejects_truncation_and_oversized_fields() {
-        assert!(decode_records(&1u32.to_le_bytes()).is_none());
-        let mut oversized = Vec::new();
-        oversized.extend(1u32.to_le_bytes());
-        oversized.extend(0u32.to_le_bytes());
-        oversized.extend(((MAX_RECORD_FIELD + 1) as u32).to_le_bytes());
-        assert!(decode_records(&oversized).is_none());
+    fn field_reader_rejects_truncation_and_oversized_fields() {
+        assert!(read_field(&mut &1u32.to_le_bytes()[..]).is_err());
+        assert!(read_field(&mut &((MAX_RECORD_FIELD + 1) as u32).to_le_bytes()[..]).is_err());
     }
 
     #[test]
