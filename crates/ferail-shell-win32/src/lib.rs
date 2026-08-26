@@ -32,6 +32,11 @@ mod properties;
 #[cfg(windows)]
 pub use properties::WindowsPropertiesProvider;
 
+#[cfg(windows)]
+mod namespace;
+#[cfg(windows)]
+pub use namespace::{namespace_broker_main, WindowsNamespaceProvider, WindowsNamespaceRoot};
+
 // Explicit-demand, out-of-process Explorer context menu (WIN-007).
 #[cfg(windows)]
 mod context_menu;

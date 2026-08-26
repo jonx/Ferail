@@ -3679,6 +3679,15 @@ impl Render for Shell {
                     crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
                 ),
             ));
+        #[cfg(windows)]
+        {
+            sidebar = sidebar.child(ShellSidebarItem::windows_namespace(
+                crate::locations_section::WindowsNamespaceSection::new(
+                    weak.clone(),
+                    crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
+                ),
+            ));
+        }
         if !platform_location_rows.is_empty() {
             sidebar = sidebar.child(ShellSidebarItem::platform_locations(
                 crate::locations_section::PlatformLocationsSection::new(

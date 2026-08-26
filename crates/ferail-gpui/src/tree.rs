@@ -274,6 +274,8 @@ pub enum ShellSidebarItem {
     Group(LabeledMenu),
     Locations(crate::locations_section::LocationsSection),
     PlatformLocations(crate::locations_section::PlatformLocationsSection),
+    #[cfg(windows)]
+    WindowsNamespace(crate::locations_section::WindowsNamespaceSection),
     Favorites(crate::favorites_section::FavoritesSection),
     Recents(crate::recents_section::RecentsSection),
     Tree(TreeSection),
@@ -288,6 +290,10 @@ impl ShellSidebarItem {
     }
     pub fn platform_locations(l: crate::locations_section::PlatformLocationsSection) -> Self {
         ShellSidebarItem::PlatformLocations(l)
+    }
+    #[cfg(windows)]
+    pub fn windows_namespace(l: crate::locations_section::WindowsNamespaceSection) -> Self {
+        ShellSidebarItem::WindowsNamespace(l)
     }
     pub fn favorites(f: crate::favorites_section::FavoritesSection) -> Self {
         ShellSidebarItem::Favorites(f)
@@ -306,6 +312,8 @@ impl Collapsible for ShellSidebarItem {
             ShellSidebarItem::Group(g) => g.is_collapsed(),
             ShellSidebarItem::Locations(l) => l.is_collapsed(),
             ShellSidebarItem::PlatformLocations(l) => l.is_collapsed(),
+            #[cfg(windows)]
+            ShellSidebarItem::WindowsNamespace(l) => l.is_collapsed(),
             ShellSidebarItem::Favorites(f) => f.is_collapsed(),
             ShellSidebarItem::Recents(r) => r.is_collapsed(),
             ShellSidebarItem::Tree(t) => t.is_collapsed(),
@@ -317,6 +325,10 @@ impl Collapsible for ShellSidebarItem {
             ShellSidebarItem::Locations(l) => ShellSidebarItem::Locations(l.collapsed(c)),
             ShellSidebarItem::PlatformLocations(l) => {
                 ShellSidebarItem::PlatformLocations(l.collapsed(c))
+            }
+            #[cfg(windows)]
+            ShellSidebarItem::WindowsNamespace(l) => {
+                ShellSidebarItem::WindowsNamespace(l.collapsed(c))
             }
             ShellSidebarItem::Favorites(f) => ShellSidebarItem::Favorites(f.collapsed(c)),
             ShellSidebarItem::Recents(r) => ShellSidebarItem::Recents(r.collapsed(c)),
@@ -336,6 +348,8 @@ impl SidebarItem for ShellSidebarItem {
             ShellSidebarItem::Group(g) => g.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Locations(l) => l.render(id, window, cx).into_any_element(),
             ShellSidebarItem::PlatformLocations(l) => l.render(id, window, cx).into_any_element(),
+            #[cfg(windows)]
+            ShellSidebarItem::WindowsNamespace(l) => l.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Favorites(f) => f.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Recents(r) => r.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Tree(t) => t.render(id, window, cx).into_any_element(),

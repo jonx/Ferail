@@ -1241,6 +1241,30 @@ impl Shell {
         Ok(())
     }
 
+    #[cfg(windows)]
+    pub fn open_windows_namespace(
+        &mut self,
+        root: crate::platform_shell::WindowsNamespaceRoot,
+        open_in_new_tab: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if open_in_new_tab {
+            let placeholder = self.active_tab().current_dir.clone();
+            self.open_path_in_new_tab(placeholder, window, cx);
+        }
+        let (provider, initial) = crate::platform_shell::WindowsNamespaceProvider::new(root);
+        if let Err(kind) = self.open_platform_namespace(provider, initial, cx) {
+            window.push_notification(
+                gpui_component::notification::Notification::error(match kind {
+                    PlatformLocationErrorKind::Unavailable => tr!("Windows location unavailable"),
+                    _ => tr!("Could not open the Windows location"),
+                }),
+                cx,
+            );
+        }
+    }
+
     fn click_platform_item(
         &mut self,
         tab_id: TabId,

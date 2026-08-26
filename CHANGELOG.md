@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **This PC and Recycle Bin are now first-class Windows locations.** Their
+  Shell-only children, including connected provider/MTP containers, browse in
+  a dedicated virtualized surface while real drive/folder paths immediately
+  return to Ferail's normal filesystem engine. Shell enumeration runs in a
+  cancellable, time-bounded disposable process; the tab retains only copied
+  opaque PIDL bytes, never COM objects or fabricated paths.
+
 - **WSL browsing no longer starts a distribution implicitly.** Ferail invokes
   `wsl.exe` only after an explicit distribution or symlink activation; a
   failed ordinary UNC listing now remains a recoverable error. Navigating

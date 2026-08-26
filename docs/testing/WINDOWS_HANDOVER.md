@@ -229,6 +229,32 @@ Working-tree files intentionally excluded from this slice:
   They contain concurrent formatting/work and must not be staged with WIN-013.
 ```
 
+### 2026-08-26 — WIN-013 namespace enumeration on Windows
+
+```text
+Implemented:
+  - visible Windows sidebar entries for This PC and Recycle Bin, with
+    modifier-click opening the namespace in a new tab;
+  - a tab-owned Win32 provider arena containing copied desktop-absolute PIDL
+    bytes only. Session-local integer ids remain the sole row identity;
+  - explicit Shell enumeration in a disposable worker-mode Ferail process,
+    with a ten-second deadline, cancellation, kill/wait and a 64 MiB protocol
+    ceiling. A crashing or hanging MTP/Shell provider cannot crash or consume
+    a GPUI executor worker indefinitely;
+  - filesystem children hand their SIGDN_FILESYSPATH straight back to
+    NativeFs. Pathless containers retain platform identity and enumerate via
+    BHID_EnumItems; no fake PathBuf enters FileEntry or NodeStore;
+  - UI batches remain capped at 512 and the existing four-batch GPUI channel
+    provides the final apply backpressure;
+  - capability gating is deliberately conservative: only navigation that is
+    implemented is advertised. Namespace native menus, restore/delete,
+    properties and transfers remain absent rather than silently misbehaving.
+Qualification boundary:
+  - this commit delivers namespace discovery/browsing, not the remaining
+    action slice. WTEST-100–106 stay unchecked until native actions and real
+    device/disconnect evidence are complete.
+```
+
 ### 2026-08-25 — macOS preparation for WIN-010 shortcuts
 
 ```text

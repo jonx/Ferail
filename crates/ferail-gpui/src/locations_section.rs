@@ -202,6 +202,143 @@ impl SidebarItem for PlatformLocationsSection {
     }
 }
 
+#[cfg(windows)]
+#[derive(Clone)]
+pub struct WindowsNamespaceSection {
+    shell: WeakEntity<Shell>,
+    ui_scale: f32,
+    collapsed: bool,
+}
+
+#[cfg(windows)]
+impl WindowsNamespaceSection {
+    pub fn new(shell: WeakEntity<Shell>, ui_scale: f32) -> Self {
+        Self {
+            shell,
+            ui_scale,
+            collapsed: false,
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Collapsible for WindowsNamespaceSection {
+    fn is_collapsed(&self) -> bool {
+        self.collapsed
+    }
+
+    fn collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+}
+
+#[cfg(windows)]
+impl SidebarItem for WindowsNamespaceSection {
+    fn render(
+        self,
+        _id: impl Into<ElementId>,
+        _window: &mut gpui::Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        use crate::platform_shell::WindowsNamespaceRoot;
+        let rows = [
+            (
+                tr!("This PC"),
+                "icons/nav/drive.svg",
+                WindowsNamespaceRoot::ThisPc,
+            ),
+            (
+                tr!("Recycle Bin"),
+                "icons/trash.svg",
+                WindowsNamespaceRoot::RecycleBin,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (label, icon, root))| {
+            render_windows_namespace_row(
+                index,
+                label,
+                icon,
+                root,
+                self.shell.clone(),
+                self.ui_scale,
+                self.collapsed,
+                cx,
+            )
+        })
+        .collect::<Vec<_>>();
+        v_flex()
+            .w_full()
+            .when(!self.collapsed, |this| {
+                this.child(crate::tree::section_header(tr!("Windows"), cx))
+            })
+            .child(
+                v_flex()
+                    .w_full()
+                    .px(px(crate::tree::TREE_ROW_INSET))
+                    .children(rows),
+            )
+    }
+}
+
+#[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
+fn render_windows_namespace_row(
+    index: usize,
+    label: SharedString,
+    icon: &'static str,
+    root: crate::platform_shell::WindowsNamespaceRoot,
+    shell: WeakEntity<Shell>,
+    icon_px: f32,
+    collapsed: bool,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let tooltip = label.clone();
+    h_flex()
+        .id(ElementId::Name(
+            format!("windows-namespace-row-{index}").into(),
+        ))
+        .w_full()
+        .h_9()
+        .px_2()
+        .gap_2()
+        .items_center()
+        .rounded(theme.radius)
+        .cursor_pointer()
+        .text_scale_sm()
+        .text_color(theme.sidebar_foreground)
+        .child(
+            gpui::svg()
+                .path(icon)
+                .icon_px(icon_px)
+                .text_color(theme.sidebar_foreground)
+                .flex_shrink_0(),
+        )
+        .when(!collapsed, |this| {
+            this.child(
+                div()
+                    .id(("windows-namespace-label", index))
+                    .min_w_0()
+                    .truncate()
+                    .child(label)
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                    }),
+            )
+        })
+        .hover(|this| this.bg(theme.sidebar_accent.opacity(0.5)))
+        .on_click(move |event, window, cx| {
+            let Some(shell) = shell.upgrade() else { return };
+            shell.update(cx, |shell, cx| {
+                shell.open_windows_namespace(root, event.modifiers().platform, window, cx);
+            });
+        })
+        .into_any_element()
+}
+
 fn render_platform_location_row(
     index: usize,
     row: PlatformLocationRow,

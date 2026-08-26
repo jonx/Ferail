@@ -46,6 +46,7 @@ windows = { version = "0.58", features = [
     # CreateFileW's SECURITY_ATTRIBUTES param
     "Win32_Security",
     "Win32_System_Com",
+    "Win32_System_SystemServices",
     "Win32_Graphics_Gdi",
     # IPreviewHandler fallback (preview_handler.rs)
     "Win32_UI_Shell_PropertiesSystem",
