@@ -474,6 +474,12 @@ materialization, or silent failure.
 
 ### J. Shell namespace and Recycle Bin — WIN-013
 
+Current source boundary (2026-08-26): enumeration, navigation into pathless
+containers, handoff of real filesystem paths, and the explicit native Windows
+menu are implemented. Ferail-owned open/properties/restore/delete and
+clipboard/drag for pathless items are not implemented; this section is not a
+completed first-class location claim and all gates below remain open.
+
 - [ ] `WTEST-100` Sidebar names distinguish the filesystem Desktop folder from
   This PC/Windows namespace; each opens the correct location.
 - [ ] `WTEST-101` This PC lists drives/devices without routing local drive

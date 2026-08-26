@@ -1341,3 +1341,48 @@ Manual acceptance still required:
 Deferred by scope: embedded GPS removal, audio-tag writes, and writable
 document properties are recorded in TODO.md; none are implied by this change.
 ```
+
+### 2026-08-26 — WSL activation crash and namespace scope correction
+
+```text
+Date / machine: 2026-08-26, Windows development machine
+Crash fix commit: 0861d65
+Timestamp verification commit: 73e1aed
+
+Fixed:
+  - clicking a stopped Linux/WSL distribution no longer calls the global
+    Shell notification fan-out from inside an existing Shell::update;
+  - the starting-state repaint now uses the current Context directly. The
+    completion still fans Ready/Failed state out from App::update, where no
+    Shell entity lease is held;
+  - this removes the observed GPUI double_lease_panic and the consequent
+    non-unwinding abort at the Windows callback boundary.
+
+Automated proof:
+  - cargo test -p ferail-gpui platform_locations::tests --lib (4 passed);
+  - cargo test -p ferail-fs-native writable_timestamps_round_trip --lib
+    (1 passed, including all three timestamps on a real Windows directory).
+
+Corrected scope for This PC / Recycle Bin:
+  - the current implementation is safe browse-only infrastructure, not a
+    first-class file-management surface;
+  - it implements bounded Shell enumeration, navigation through pathless
+    containers, filesystem-path handoff, selection, history/refresh and the
+    official Windows context menu;
+  - pathless Ferail-owned Open/Get Info/Properties, previews/thumbnails,
+    restore/delete, rename, clipboard and drag/drop remain unsupported. The
+    official menu may expose some of those Shell verbs, but that does not make
+    them Ferail capabilities;
+  - prioritize provider Open/Properties and Recycle Bin restore/delete next,
+    then delayed IDataObject clipboard/drag extraction. Capabilities must be
+    advertised only as each isolated provider action becomes real.
+
+Required manual retest:
+  1. Click one stopped WSL distribution and one running distribution; confirm
+     Starting -> Ready/navigation without crash, then cancel once by leaving
+     the tab during startup.
+  2. Re-run Created and Modified on a normal directory, close/reopen Get Info
+     and compare Explorer. Last opened may advance again when the directory is
+     actually enumerated; a materially different immediate read-back must now
+     produce an error rather than silent success.
+```

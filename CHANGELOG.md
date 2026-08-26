@@ -23,12 +23,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   produces an error instead of a false success. Creation-time editing is
   Windows-only for now; Unix exposes the portable modification/access pair.
 
-- **This PC and Recycle Bin are now first-class Windows locations.** Their
-  Shell-only children, including connected provider/MTP containers, browse in
-  a dedicated virtualized surface while real drive/folder paths immediately
-  return to Ferail's normal filesystem engine. Shell enumeration runs in a
-  cancellable, time-bounded disposable process; the tab retains only copied
-  opaque PIDL bytes, never COM objects or fabricated paths.
+- **This PC and Recycle Bin now have a safe browse-only Windows surface.**
+  Their Shell-only children, including connected provider/MTP containers,
+  browse in a dedicated virtualized surface while real drive/folder paths
+  immediately return to Ferail's normal filesystem engine. Shell enumeration
+  runs in a cancellable, time-bounded disposable process; the tab retains only
+  copied opaque PIDL bytes, never COM objects or fabricated paths.
   Enumeration streams from the broker through bounded queues, so large device
   folders can paint progressively without building duplicate full-list
   snapshots; repeated refreshes reuse identical copied identities. Pathless
@@ -37,7 +37,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   selected commands refresh the namespace afterward. Filesystem-only
   shortcuts, toolbar commands and pane drops are suppressed in virtual
   locations, so they can never act on the directory that happened to be open
-  before This PC or Recycle Bin.
+  before This PC or Recycle Bin. Ferail-owned open, properties, restore/delete,
+  clipboard and drag operations for pathless items remain future work; only
+  operations offered by the official Windows menu are currently available.
 
 - **WSL browsing no longer starts a distribution implicitly.** Ferail invokes
   `wsl.exe` only after an explicit distribution or symlink activation; a
