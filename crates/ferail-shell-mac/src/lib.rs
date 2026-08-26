@@ -1072,6 +1072,16 @@ pub fn clipboard_copy_file_urls(items: &[(&std::path::Path, bool)]) -> bool {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClipboardFileOperation {
+    Copy,
+    Move,
+}
+
+pub fn clipboard_cut_file_urls(items: &[(&std::path::Path, bool)]) -> bool {
+    clipboard_copy_file_urls(items)
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn clipboard_copy_file_urls(_items: &[(&std::path::Path, bool)]) -> bool {
     false
@@ -1111,6 +1121,11 @@ pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
         }
         out
     }
+}
+
+pub fn clipboard_read_file_urls_with_operation() -> (Vec<std::path::PathBuf>, ClipboardFileOperation)
+{
+    (clipboard_read_file_urls(), ClipboardFileOperation::Copy)
 }
 
 #[cfg(not(target_os = "macos"))]

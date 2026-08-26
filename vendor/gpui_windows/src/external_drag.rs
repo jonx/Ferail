@@ -96,9 +96,11 @@ mod tests {
         Foundation::S_OK,
         System::{
             Com::{DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
+            DataExchange::RegisterClipboardFormatW,
             Ole::{CF_HDROP, OleInitialize, OleUninitialize},
         },
     };
+    use windows::core::PCWSTR;
 
     use super::*;
 
@@ -138,6 +140,23 @@ mod tests {
                 tymed: TYMED_HGLOBAL.0 as u32,
             };
             assert_eq!(unsafe { data.QueryGetData(&format) }, S_OK);
+
+            // CFSTR_SHELLIDLIST is the identity-preserving companion to
+            // CF_HDROP. It keeps Explorer interoperability available for
+            // difficult names and lets the same source object evolve toward
+            // pathless Shell items without changing the drag API.
+            let shell_id_list_name: Vec<u16> = "Shell IDList Array\0".encode_utf16().collect();
+            let shell_id_list =
+                unsafe { RegisterClipboardFormatW(PCWSTR(shell_id_list_name.as_ptr())) };
+            assert_ne!(shell_id_list, 0);
+            let shell_id_list_format = FORMATETC {
+                cfFormat: shell_id_list as u16,
+                ptd: std::ptr::null_mut(),
+                dwAspect: DVASPECT_CONTENT.0,
+                lindex: -1,
+                tymed: TYMED_HGLOBAL.0 as u32,
+            };
+            assert_eq!(unsafe { data.QueryGetData(&shell_id_list_format) }, S_OK);
 
             drop(data);
             fs::remove_file(path).expect("remove drag fixture");

@@ -523,9 +523,23 @@ pub fn clipboard_copy_file_urls(_items: &[(&Path, bool)]) -> bool {
     false
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClipboardFileOperation {
+    Copy,
+    Move,
+}
+
+pub fn clipboard_cut_file_urls(_items: &[(&Path, bool)]) -> bool {
+    false
+}
+
 /// Read file paths previously placed on the clipboard. Empty if none. Stub.
 pub fn clipboard_read_file_urls() -> Vec<PathBuf> {
     Vec::new()
+}
+
+pub fn clipboard_read_file_urls_with_operation() -> (Vec<PathBuf>, ClipboardFileOperation) {
+    (Vec::new(), ClipboardFileOperation::Copy)
 }
 
 // =============================================================

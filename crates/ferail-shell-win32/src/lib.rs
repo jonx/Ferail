@@ -2217,13 +2217,43 @@ pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static + Send>
 /// `NSPasteboard` contract. Empty input is a no-op. docs/features/FILE_OPS.md.
 #[cfg(windows)]
 pub fn clipboard_copy_file_urls(items: &[(&std::path::Path, bool)]) -> bool {
+    clipboard_write_file_urls(items, ClipboardFileOperation::Copy)
+}
+
+#[cfg(windows)]
+pub fn clipboard_cut_file_urls(items: &[(&std::path::Path, bool)]) -> bool {
+    clipboard_write_file_urls(items, ClipboardFileOperation::Move)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClipboardFileOperation {
+    Copy,
+    Move,
+}
+
+#[cfg(windows)]
+fn clipboard_operation_from_effect(effect: u32) -> ClipboardFileOperation {
+    use windows::Win32::System::Ole::DROPEFFECT_MOVE;
+    if effect & DROPEFFECT_MOVE.0 != 0 {
+        ClipboardFileOperation::Move
+    } else {
+        ClipboardFileOperation::Copy
+    }
+}
+
+#[cfg(windows)]
+fn clipboard_write_file_urls(
+    items: &[(&std::path::Path, bool)],
+    operation: ClipboardFileOperation,
+) -> bool {
     use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+        CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
-    use windows::Win32::System::Ole::CF_HDROP;
+    use windows::Win32::System::Ole::{CF_HDROP, DROPEFFECT_COPY, DROPEFFECT_MOVE};
     use windows::Win32::UI::Shell::DROPFILES;
 
     if items.is_empty() {
@@ -2286,12 +2316,42 @@ pub fn clipboard_copy_file_urls(items: &[(&std::path::Path, bool)]) -> bool {
             let _ = windows::Win32::Foundation::GlobalFree(handle);
             return false;
         }
+        // Explorer's cut/copy distinction is not encoded in CF_HDROP. The
+        // registered Preferred DropEffect DWORD is the documented Shell
+        // contract used by Explorer and third-party file managers.
+        let format_name: Vec<u16> = "Preferred DropEffect\0".encode_utf16().collect();
+        let preferred_format = RegisterClipboardFormatW(PCWSTR(format_name.as_ptr()));
+        if preferred_format == 0 {
+            return false;
+        }
+        let Ok(effect_handle) = GlobalAlloc(GHND, std::mem::size_of::<u32>()) else {
+            return false;
+        };
+        let effect_ptr = GlobalLock(effect_handle) as *mut u32;
+        if effect_ptr.is_null() {
+            let _ = windows::Win32::Foundation::GlobalFree(effect_handle);
+            return false;
+        }
+        *effect_ptr = match operation {
+            ClipboardFileOperation::Copy => DROPEFFECT_COPY.0,
+            ClipboardFileOperation::Move => DROPEFFECT_MOVE.0,
+        };
+        let _ = GlobalUnlock(effect_handle);
+        if SetClipboardData(preferred_format, HANDLE(effect_handle.0)).is_err() {
+            let _ = windows::Win32::Foundation::GlobalFree(effect_handle);
+            return false;
+        }
         true
     }
 }
 
 #[cfg(not(windows))]
 pub fn clipboard_copy_file_urls(_items: &[(&std::path::Path, bool)]) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn clipboard_cut_file_urls(_items: &[(&std::path::Path, bool)]) -> bool {
     false
 }
 
@@ -2304,8 +2364,19 @@ pub fn clipboard_copy_file_urls(_items: &[(&std::path::Path, bool)]) -> bool {
 /// (that is only for `WM_DROPFILES`).
 #[cfg(windows)]
 pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
+    clipboard_read_file_urls_with_operation().0
+}
+
+#[cfg(windows)]
+pub fn clipboard_read_file_urls_with_operation() -> (Vec<std::path::PathBuf>, ClipboardFileOperation)
+{
     use std::os::windows::ffi::OsStringExt;
-    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, OpenClipboard, RegisterClipboardFormatW,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
     use windows::Win32::System::Ole::CF_HDROP;
     use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
@@ -2319,16 +2390,17 @@ pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
     }
 
     let mut out = Vec::new();
+    let mut operation = ClipboardFileOperation::Copy;
     unsafe {
         if OpenClipboard(None).is_err() {
-            return out;
+            return (out, operation);
         }
         let _guard = CloseGuard;
         let Ok(handle) = GetClipboardData(CF_HDROP.0 as u32) else {
-            return out;
+            return (out, operation);
         };
         if handle.0.is_null() {
-            return out;
+            return (out, operation);
         }
         let hdrop = HDROP(handle.0);
         let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, None);
@@ -2348,13 +2420,33 @@ pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
                 &buf,
             )));
         }
+        let format_name: Vec<u16> = "Preferred DropEffect\0".encode_utf16().collect();
+        let preferred_format = RegisterClipboardFormatW(PCWSTR(format_name.as_ptr()));
+        if preferred_format != 0 {
+            if let Ok(handle) = GetClipboardData(preferred_format) {
+                if !handle.0.is_null() {
+                    let global = HGLOBAL(handle.0);
+                    let effect = GlobalLock(global) as *const u32;
+                    if !effect.is_null() {
+                        operation = clipboard_operation_from_effect(*effect);
+                        let _ = GlobalUnlock(global);
+                    }
+                }
+            }
+        }
     }
-    out
+    (out, operation)
 }
 
 #[cfg(not(windows))]
 pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
     Vec::new()
+}
+
+#[cfg(not(windows))]
+pub fn clipboard_read_file_urls_with_operation() -> (Vec<std::path::PathBuf>, ClipboardFileOperation)
+{
+    (Vec::new(), ClipboardFileOperation::Copy)
 }
 
 /// Subscribe to volume (drive-letter) mount/unmount.
@@ -2863,6 +2955,24 @@ fn to_wide(s: &str) -> Vec<u16> {
 #[cfg(all(test, windows))]
 mod win_tests {
     use super::*;
+
+    #[test]
+    fn preferred_drop_effect_preserves_cut_semantics() {
+        use windows::Win32::System::Ole::{DROPEFFECT_COPY, DROPEFFECT_MOVE};
+
+        assert_eq!(
+            clipboard_operation_from_effect(DROPEFFECT_COPY.0),
+            ClipboardFileOperation::Copy
+        );
+        assert_eq!(
+            clipboard_operation_from_effect(DROPEFFECT_MOVE.0),
+            ClipboardFileOperation::Move
+        );
+        assert_eq!(
+            clipboard_operation_from_effect(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0),
+            ClipboardFileOperation::Move
+        );
+    }
 
     /// make_alias_in drops a real `.lnk` (via the IShellLink COM path) into
     /// the destination folder, with a unique name.

@@ -8,6 +8,15 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Windows file clipboard cut/copy semantics now interoperate with
+  Explorer.** Ferail publishes and reads the Shell's `Preferred DropEffect`
+  alongside `CF_HDROP`, so files cut in either application paste as a move and
+  ordinary copies remain copies. Ferail's cut-row marker is cleared only after
+  a fully successful move. Native outbound drags expose both filesystem paths
+  and the identity-preserving Shell ID-list format; Ctrl, Shift, Ctrl+Shift and
+  Alt continue to negotiate Copy, Move and Create Shortcut with the drop
+  target.
+
 - **Windows Open, Reveal and native verbs now report and refresh correctly.**
   Failed default-app launches and Explorer reveals produce an actionable
   notification instead of disappearing silently. After the isolated Windows

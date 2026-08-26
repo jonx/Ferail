@@ -337,6 +337,26 @@ Windows implementation still required:
 Windows cases claimed from macOS: none.
 ```
 
+### 2026-08-26 — WIN-012 path-backed clipboard and drag formats
+
+```text
+Implemented:
+  - Windows clipboard writes CF_HDROP plus Preferred DropEffect=Copy/Move and
+    reads the same effect from Explorer/other file managers;
+  - Cut state no longer clears when Paste merely starts; it clears only after
+    a non-cancelled move with no failed items;
+  - outbound OLE Shell data objects expose CF_HDROP and CFSTR_SHELLIDLIST;
+  - incoming drop negotiation maps Ctrl=Copy, Shift=Move and Ctrl+Shift or
+    Alt=Link, never advertising an effect omitted by the source; Link creates
+    .lnk files in the destination and does not mutate source targets;
+  - eager clipboard and drag expansion stays capped before symbolic Select All
+    can materialize an unbounded path list (20k clipboard, 10k drag).
+Still required:
+  - delayed FILEDESCRIPTOR/FILECONTENTS extraction for pathless provider/MTP
+    items, owned namespace PIDLs and the manual WTEST-090–096 matrix;
+  - verify hydrated/placeholder OneDrive behavior with real accounts.
+```
+
 ### 2026-08-25 — macOS preparation for WIN-014 property data
 
 ```text

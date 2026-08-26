@@ -161,7 +161,7 @@ impl Shell {
         }
         let refs: Vec<(&std::path::Path, bool)> =
             items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
-        if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
+        if !crate::platform_shell::clipboard_cut_file_urls(&refs) {
             // Don't dim rows for a Cut that can never complete its
             // move — the stub platform has no file clipboard.
             window.push_notification(
@@ -193,7 +193,8 @@ impl Shell {
     ) {
         crate::trail::command("Paste");
         use gpui_component::notification::Notification;
-        let sources = crate::platform_shell::clipboard_read_file_urls();
+        let (sources, clipboard_operation) =
+            crate::platform_shell::clipboard_read_file_urls_with_operation();
         if sources.is_empty() {
             window.push_notification(Notification::info(tr!("No files on the clipboard")), cx);
             return;
@@ -203,9 +204,9 @@ impl Shell {
         let is_cut_set = !cut.is_empty()
             && cut.len() == sources.len()
             && cut.iter().all(|p| sources.contains(p));
-        let mode = if is_cut_set {
-            self.process.cut_marker.borrow_mut().clear();
-            cx.notify();
+        let mode = if is_cut_set
+            || clipboard_operation == crate::platform_shell::ClipboardFileOperation::Move
+        {
             TransferMode::Move
         } else {
             TransferMode::Copy
@@ -816,6 +817,20 @@ impl Shell {
                         .borrow_mut()
                         .end_and_was_surfaced(task_id);
                     if let Ok((outcome, all_same_volume, effective)) = &result {
+                        if matches!(effective, TransferMode::Move)
+                            && !outcome.cancelled
+                            && !outcome.has_failures()
+                        {
+                            let marker_matches = {
+                                let marker = this.process.cut_marker.borrow();
+                                !marker.is_empty()
+                                    && marker.len() == sources.len()
+                                    && marker.iter().all(|path| sources.contains(path))
+                            };
+                            if marker_matches {
+                                this.process.cut_marker.borrow_mut().clear();
+                            }
+                        }
                         if !outcome.created.is_empty() {
                             match effective {
                                 TransferMode::Move if *all_same_volume => {
