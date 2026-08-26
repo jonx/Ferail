@@ -77,6 +77,14 @@ pub fn run_gui(args: screenshot::Args) {
     // in front of the upstream gpui-component icon pack. Both surface
     // through one `icons/X.svg` namespace.
     let app = gpui_platform::application().with_assets(FeraAssets);
+    // With leak detection enabled, GPUI's default LastWindowClosed quit fires
+    // while `update_window_id` still owns the just-removed Window box. That
+    // box can still own gpui-component input, callback, or overlay handles, so
+    // the entity map can assert before those owners are dropped. Development
+    // builds use the explicit path below and quit one foreground turn after
+    // the close observer; packaged builds keep GPUI's ordinary default.
+    #[cfg(all(feature = "screenshot-harness", not(target_os = "macos")))]
+    let app = app.with_quit_mode(QuitMode::Explicit);
     let width = args.width.unwrap_or(1180) as f32;
     let height = args.height.unwrap_or(760) as f32;
     let theme_mode = args.theme;
@@ -248,7 +256,9 @@ pub fn run_gui(args: screenshot::Args) {
 
             // Windows WSL roots (empty on macOS/Linux): discovery is a
             // bounded worker operation and publishes cached sidebar state.
-            crate::platform_locations::refresh(cx);
+            if crate::platform_locations::enabled() {
+                crate::platform_locations::refresh(cx);
+            }
 
             // Live sleep/wake watch: pause video + slideshow when the
             // machine or its displays sleep; re-list volumes and reload
@@ -313,7 +323,7 @@ pub fn run_gui(args: screenshot::Args) {
         #[cfg(not(target_os = "macos"))]
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() && !dev_quit_cleanup_in_progress() {
-                cx.quit();
+                quit_after_dev_cleanup(cx);
             }
         })
         .detach();
@@ -380,14 +390,27 @@ pub fn open_shell_window(cx: &mut App) {
     open_shell_window_sized(cx, None, None);
 }
 
-/// Dev/test-only mitigation for gpui-component Input's strong handles in
-/// next-frame callbacks (GPUI-UPSTREAM §12). Packaged builds do not compile
-/// the leak detector; development builds drain the callbacks while the Root
-/// and its InputState entities are still alive, immediately before teardown.
+#[cfg(feature = "screenshot-harness")]
+struct DevShutdownRoot;
+
+#[cfg(feature = "screenshot-harness")]
+impl Render for DevShutdownRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+/// Retire the window-owned UI graph before native teardown in builds where
+/// GPUI's leak assertion is enabled. The final rendered frame owns callbacks,
+/// element state, input handlers, and overlays independently of the root view;
+/// focusing only on `InputState` therefore left an opened `PopupMenu` behind.
+/// Blur the component root in place, then replace it with an inert root and
+/// draw again so both the old root graph and old frame are dropped before the
+/// entity map is checked.
 pub(crate) fn install_dev_window_callback_cleanup(window: &mut Window, cx: &mut App) {
     #[cfg(feature = "screenshot-harness")]
     window.on_window_should_close(cx, |window, cx| {
-        drain_dev_window_callbacks(window, cx);
+        retire_dev_window_owners(window, cx);
         true
     });
 
@@ -396,7 +419,30 @@ pub(crate) fn install_dev_window_callback_cleanup(window: &mut Window, cx: &mut 
 }
 
 #[cfg(feature = "screenshot-harness")]
-fn drain_dev_window_callbacks(window: &mut Window, cx: &mut App) {
+fn retire_dev_window_owners(window: &mut Window, cx: &mut App) {
+    // First draw the real root without focus. gpui-component's Input blur
+    // listener updates `Root`, so replacing it before the focus transition has
+    // completed would violate that invariant and panic during teardown.
+    window.disable_focus();
+    window.draw(cx).clear(cx);
+    let mut drained = drain_dev_next_frame_callbacks(window, cx);
+
+    // The blur frame may still contain menu element state and its listener
+    // closures. A second draw with an inert root swaps out and clears that
+    // entire frame without installing new component-owned handles.
+    window.replace_root(cx, |_window, _cx| DevShutdownRoot);
+    window.draw(cx).clear(cx);
+    drained += drain_dev_next_frame_callbacks(window, cx);
+
+    if drained > 0 {
+        crate::obs::breadcrumb(format_args!(
+            "shutdown drained-next-frame-callbacks={drained}"
+        ));
+    }
+}
+
+#[cfg(feature = "screenshot-harness")]
+fn drain_dev_next_frame_callbacks(window: &mut Window, cx: &mut App) -> usize {
     let mut drained = 0usize;
     // A callback may schedule one follow-up. Bound the teardown work while
     // still draining the normal one-frame Input reset queue completely.
@@ -407,11 +453,7 @@ fn drain_dev_window_callbacks(window: &mut Window, cx: &mut App) {
             break;
         }
     }
-    if drained > 0 {
-        crate::obs::breadcrumb(format_args!(
-            "shutdown drained-next-frame-callbacks={drained}"
-        ));
-    }
+    drained
 }
 
 /// Screenshot mode calls `App::quit` with windows still open, so native close
@@ -420,10 +462,10 @@ pub(crate) fn drain_dev_callbacks_before_quit(cx: &mut App) {
     #[cfg(feature = "screenshot-harness")]
     for handle in cx.windows() {
         let _ = handle.update(cx, |_root, window, cx| {
-            drain_dev_window_callbacks(window, cx);
+            retire_dev_window_owners(window, cx);
             // Screenshot mode bypasses the native close path. Remove the
-            // window so its current input handler and Root-held focused input
-            // are dropped before the entity-map leak assertion runs.
+            // window so the inert root and its empty frame are dropped before
+            // the entity-map leak assertion runs.
             window.remove_window();
         });
     }

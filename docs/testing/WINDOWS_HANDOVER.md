@@ -1386,3 +1386,41 @@ Required manual retest:
      actually enumerated; a materially different immediate read-back must now
      produce an error rather than silent success.
 ```
+
+### 2026-08-26 — opt-in WSL sidebar and GPUI exit cleanup
+
+```text
+Date / machine: 2026-08-26, Windows development machine
+
+Implemented:
+  - Settings > Files > Locations now has Show Linux (WSL), off by default;
+  - with no persisted opt-in, startup, manual Refresh and wake do not launch
+    WSL discovery. Enabling starts the bounded discovery live; disabling
+    cancels discovery and activation, clears the sidebar snapshot and
+    invalidates every late token before repainting all Shell windows;
+  - the preference persists as show_linux_locations=true/false and ships in
+    English, French and German;
+  - dev/test native close now retires the complete GPUI window-owned graph in
+    dependency order: blur and draw the real Root, drain its callbacks, draw an
+    inert replacement Root to discard the old frame, remove the window, then
+    quit on the next foreground turn;
+  - this closes both the one-handle InputState leak after preview/filter
+    activity and the subsequently exposed PopupMenu leak. Packaged builds
+    still exclude GPUI's leak detector, but ordinary debug sessions no longer
+    fail either.
+
+Automated/local proof:
+  - cargo test -p ferail-gpui linux_locations --lib (2 passed);
+  - screenshot of Settings > Files renders the new switch off by default;
+  - live Windows repro under LEAK_BACKTRACE=1: focus filter, type a value,
+    close -> exit 0;
+  - live Windows repro: select a row, show preview, close -> exit 0.
+  - live Windows repro: leave Ferail's context menu open, close -> exit 0.
+
+Manual acceptance:
+  1. On a profile without show_linux_locations, confirm no Linux section.
+  2. Enable it: distributions appear without relaunch; disable it during a
+     stopped-distro activation: the section disappears and never navigates.
+  3. Restart once in each state to prove persistence, then repeat preview and
+     focused-filter close from the window X and the app Quit command.
+```

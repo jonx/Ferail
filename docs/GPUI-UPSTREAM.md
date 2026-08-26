@@ -524,6 +524,22 @@ captures during normal rendering. Ferail's app-level Quit action uses this
 same dev/test cleanup and waits one event-loop turn; it previously called
 `cx.quit()` directly and bypassed every window's `should_close` hook.
 
+**2026-08-26 follow-up:** draining callbacks alone was incomplete for a native
+window close. If an Input retained keyboard focus (the main filter is the
+deterministic case), the Windows platform IME/input handler still owned one
+strong `Entity<InputState>`. After that was retired, a second report exposed
+the same ordering problem in the final frame's element/listener graph as one
+leaked `Entity<PopupMenu>`. Dev/test teardown is therefore deliberately
+generic: disable focus and draw the real component root, drain its callbacks
+while `Root` still exists, replace it with an inert root, draw again to discard
+all old-frame input handlers, element state, listeners and overlays, then
+remove the window. On Windows the harness also uses explicit last-window quit
+and waits one foreground turn, ensuring the removed Window box is dropped
+before the entity-map assertion. Repros with a focused edited filter, preview,
+and a context menu still open all exit 0 under `LEAK_BACKTRACE=1`. This remains
+teardown containment for upstream strong captures, not a claim that their
+normal-render ownership disappeared.
+
 **What upstream could do:** capture `WeakEntity<InputState>` in the
 `on_next_frame` reset closure and in `Root.focused_input`, or drain
 `next_frame_callbacks` on window teardown; and consider splitting

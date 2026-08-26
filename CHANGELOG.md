@@ -8,6 +8,19 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Linux/WSL locations on Windows are now opt-in.** A new Files ›
+  Locations setting controls the sidebar section and defaults to off. While
+  off, Ferail does not discover or start WSL distributions; disabling it live
+  also cancels discovery/activation already in progress and rejects late
+  results.
+
+- **Development builds now retire GPUI window owners cleanly at exit.** The
+  ordered teardown first blurs the real component root and drains its final
+  callbacks, then renders an inert root to discard the old frame's input
+  handlers, element state, listeners, and overlays. This fixes both the
+  `InputState` leak after preview/filter use and the later `PopupMenu` leak;
+  packaged builds remain unaffected by the dev-only leak detector.
+
 - **Opening a stopped WSL distribution no longer crashes Ferail.** The
   starting-state repaint now uses the `Shell` update already in progress
   instead of trying to acquire the same GPUI entity a second time; the final
