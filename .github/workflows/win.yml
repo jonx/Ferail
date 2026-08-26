@@ -75,7 +75,9 @@ jobs:
         shell: pwsh
         run: |
           $tag = '${{ github.ref_name }}'
-          if ($tag.StartsWith('retry-')) { $tag = $tag.Substring(6) }
+          if ($tag -match '^retry-(v\d+\.\d+\.\d+)(?:-.+)?$') {
+            $tag = $Matches[1]
+          }
           if ($tag -notmatch '^v\d+\.\d+\.\d+') {
             throw "invalid release target: $tag"
           }

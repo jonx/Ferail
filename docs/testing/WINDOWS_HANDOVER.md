@@ -1450,9 +1450,9 @@ Release packaging correction:
     same gate. The exact local release build and the packaging-only rerun pass
     before retagging.
   - GitHub does not enqueue a second workflow for a tag name whose run already
-    exists. win.yml therefore accepts a temporary retry-vX.Y.Z trigger and
-    resolves it back to vX.Y.Z for the release upload; delete the retry tag
-    after a successful recovery run.
+    exists. win.yml therefore accepts temporary retry-vX.Y.Z or numbered
+    retry-vX.Y.Z-N triggers and resolves them back to vX.Y.Z for the release
+    upload; delete the retry tags after a successful recovery run.
 
 This publication is not Authenticode-signed and does not close the still-open
 hardware/adversarial acceptance cases listed above. Retain those as post-
