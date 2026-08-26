@@ -211,6 +211,7 @@ impl Shell {
         };
         let origin_tab = self.active_tab().id;
         let origin_generation = self.active_tab().load_generation;
+        self.active_tab_mut().platform_root_activation_cancel = Some(cancel.clone());
         let shell = cx.weak_entity();
         let win = window.window_handle();
         notify_shells(&self.process, cx);
@@ -232,27 +233,42 @@ impl Shell {
                 notify_shells(&process, cx);
                 ready
             });
-            let _ = win.update(cx, |_, window, cx| match result {
-                Err(PlatformRootErrorKind::Cancelled) => {}
-                Err(kind) => {
-                    window.push_notification(Notification::error(failure_message(kind)), cx);
-                }
-                Ok(_) => {
-                    let Some(path) = ready else { return };
-                    let Some(shell) = shell.upgrade() else { return };
-                    if open_in_new_tab {
-                        shell.update(cx, |this, cx| {
-                            this.open_path_in_new_tab(path, window, cx);
-                        });
-                        return;
+            let _ = win.update(cx, |_, window, cx| {
+                let Some(shell) = shell.upgrade() else { return };
+                let owns_request = shell.update(cx, |this, _cx| {
+                    let Some(index) = this.tabs.iter().position(|tab| tab.id == origin_tab) else {
+                        return false;
+                    };
+                    let tab = &mut this.tabs[index];
+                    let owns = tab
+                        .platform_root_activation_cancel
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &cancel));
+                    if owns {
+                        tab.platform_root_activation_cancel = None;
                     }
-                    shell.update(cx, |this, cx| {
-                        let origin_is_current = this.active_tab().id == origin_tab
-                            && this.active_tab().load_generation == origin_generation;
-                        if origin_is_current {
-                            this.navigate(path, cx);
-                        }
-                    });
+                    owns && index == this.active
+                        && tab.load_generation == origin_generation
+                        && !cancel.load(Ordering::Relaxed)
+                });
+                if !owns_request {
+                    return;
+                }
+                match result {
+                    Err(PlatformRootErrorKind::Cancelled) => {}
+                    Err(kind) => {
+                        window.push_notification(Notification::error(failure_message(kind)), cx);
+                    }
+                    Ok(_) => {
+                        let Some(path) = ready else { return };
+                        shell.update(cx, |this, cx| {
+                            if open_in_new_tab {
+                                this.open_path_in_new_tab(path, window, cx);
+                            } else {
+                                this.navigate(path, cx);
+                            }
+                        });
+                    }
                 }
             });
         })

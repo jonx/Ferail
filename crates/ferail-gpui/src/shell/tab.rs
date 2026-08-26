@@ -536,6 +536,11 @@ pub struct Tab {
     /// failed UNC directory load. Kept separately from enumeration so a new
     /// navigation cancels both.
     pub wsl_resolve_cancel: Option<Arc<AtomicBool>>,
+    /// Explicit activation of a stopped path-backed platform root (currently
+    /// WSL). Navigation or tab/window closure flips this flag so the bounded
+    /// provider worker kills and reaps its child process instead of merely
+    /// discarding a late UI result.
+    pub platform_root_activation_cancel: Option<Arc<AtomicBool>>,
     /// Explicit Windows `.lnk` activation. Separate from WSL link resolution
     /// so either provider can be canceled independently on navigation.
     pub shortcut_resolve_cancel: Option<Arc<AtomicBool>>,
@@ -746,6 +751,7 @@ impl Tab {
             load_generation: 0,
             load_cancel: None,
             wsl_resolve_cancel: None,
+            platform_root_activation_cancel: None,
             shortcut_resolve_cancel: None,
             folder_size_cancel: None,
             prefetch_cancel: None,

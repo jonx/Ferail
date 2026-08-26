@@ -999,9 +999,8 @@ Implemented:
     stdout is drained concurrently, retained only up to 1 MiB and rejected on
     overflow so a full pipe cannot defeat the deadline;
   - direct NativeFs enumeration first; explicit activation of a WSL symlink
-    and an empty failed WSL directory load both use a five-second
-    `readlink -f --` resolver with generation/cancel guard and checked
-    /mnt/<drive> conversion;
+    uses a five-second `readlink -f --` resolver with generation/cancel guard
+    and checked /mnt/<drive> conversion;
   - previews, thumbnails and viewport details remain enabled. The existing
     eager recursive folder-size pass is skipped for WSL until it has a
     viewport/on-demand mode;
@@ -1052,6 +1051,32 @@ Next exact work on Windows:
 Working-tree files intentionally left unstaged: all WIN-017 implementation,
   locale and planning files listed by `git status --short`; preserve unrelated
   concurrent user work when isolating the commit.
+```
+
+### 2026-08-26 — WIN-017 implicit-start and cancellation audit
+
+```text
+Implemented on the real Windows development machine:
+  - removed the failed-empty-listing readlink fallback. It could invoke
+    `wsl.exe -d` merely because ordinary UNC enumeration failed after a distro
+    stopped, violating the no-implicit-start release gate. Only explicit row
+    activation may now invoke the WSL resolver;
+  - attached stopped-distro activation cancellation to the originating tab.
+    Navigation, tab close and window close now set the worker flag, whose
+    bounded process loop kills and waits for wsl.exe before returning;
+  - late activation completion must still own the exact tab cancellation
+    token and load generation before either same-tab or new-tab navigation;
+  - native Windows context menus fail explicitly for WSL paths instead of
+    handing them to arbitrary Shell extensions, and symbolic selections over
+    20,000 items are rejected before paths are materialized;
+  - UNC parsing rejects dot/dot-dot components before conversion to a Linux
+    argv path.
+Qualification boundary:
+  - these changes close the source-level implicit-start, stale-apply and child
+    ownership defects found during review;
+  - WTEST-130–139 remain unchecked until their manual environment/process,
+    privacy and performance observations have been recorded. Do not turn this
+    source audit into a claimed end-to-end pass.
 ```
 
 ### 2026-08-26 — fast recursive enumeration / Disk Usage handover

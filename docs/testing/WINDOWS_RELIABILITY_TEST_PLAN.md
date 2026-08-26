@@ -541,6 +541,13 @@ Release blocker: implicit distro startup, UI-thread registry/process/network
 I/O, unsafe symlink/path conversion, misleading trash recovery, personal-path
 leakage, or any local/Flat regression caused by WSL state.
 
+Automated/source contract coverage now includes both UNC authorities and
+extended UNC, UTF-8/UTF-16 discovery output, traversal rejection, checked
+`/mnt/<drive>` conversion, generation-owned activation, cancellation on
+navigation/tab/window close, no failed-listing activation fallback, explicit
+WSL native-menu refusal, and pre-materialization selection caps. The WTEST
+checkboxes deliberately remain manual real-machine evidence gates.
+
 ### L. Metadata and Properties — WIN-014
 
 - [ ] `WTEST-110` Known-answer EXIF fields match fixture manifests for JPEG,

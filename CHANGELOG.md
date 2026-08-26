@@ -8,6 +8,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **WSL browsing no longer starts a distribution implicitly.** Ferail invokes
+  `wsl.exe` only after an explicit distribution or symlink activation; a
+  failed ordinary UNC listing now remains a recoverable error. Navigating
+  away or closing the tab/window cancels, kills and reaps an activation
+  helper. The native Windows context menu also refuses WSL paths explicitly
+  and rejects impractically large symbolic selections before materializing
+  them.
+
 - **Get Info on Windows now includes approved Shell metadata and shortcut
   details.** Explicit Get Info reads a small allow-list from `IPropertyStore`
   on a COM worker, keeps results in a bounded identity/revision cache, and

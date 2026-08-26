@@ -1261,12 +1261,35 @@ impl Shell {
     ) {
         #[cfg(windows)]
         {
+            const MAX_SYSTEM_CONTEXT_MENU_FILES: usize = 20_000;
+            if self.action_target_count(cx) > MAX_SYSTEM_CONTEXT_MENU_FILES {
+                self.context_row = None;
+                window.push_notification(
+                    gpui_component::notification::Notification::error(tr!(
+                        "Too many items selected for the Windows context menu"
+                    )),
+                    cx,
+                );
+                return;
+            }
             let paths = self
                 .action_entries_visible_order(cx)
                 .into_iter()
                 .map(|(_, _, path)| path)
                 .collect::<Vec<_>>();
             if paths.is_empty() {
+                return;
+            }
+            if paths
+                .iter()
+                .any(|path| crate::platform_shell::is_wsl_path(path))
+            {
+                window.push_notification(
+                    gpui_component::notification::Notification::error(tr!(
+                        "The Windows context menu is not available for Linux files"
+                    )),
+                    cx,
+                );
                 return;
             }
             let extended = window.modifiers().shift;

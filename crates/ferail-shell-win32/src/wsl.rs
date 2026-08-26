@@ -53,6 +53,9 @@ pub(crate) fn parse_wsl_unc(path: &Path) -> Option<(String, String, String)> {
     let distro = parts.next()?;
     distro_unc_path(distro)?;
     let tail: Vec<&str> = parts.collect();
+    if tail.iter().any(|part| matches!(*part, "." | "..")) {
+        return None;
+    }
     let linux_path = if tail.is_empty() {
         "/".to_string()
     } else {
@@ -525,6 +528,7 @@ mod tests {
             Some(("wsl$".into(), "Ubuntu".into(), "/bin".into()))
         );
         assert_eq!(parse_wsl_unc(Path::new(r"\\server\share")), None);
+        assert_eq!(parse_wsl_unc(Path::new(r"\\wsl$\Ubuntu\home\..\etc")), None);
     }
 
     #[test]

@@ -4358,6 +4358,9 @@ impl Shell {
         if let Some(cancel) = self.tabs[tab_index].wsl_resolve_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
+        if let Some(cancel) = self.tabs[tab_index].platform_root_activation_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
         if let Some(cancel) = self.tabs[tab_index].shortcut_resolve_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
@@ -4807,12 +4810,7 @@ impl Shell {
         });
         let row_count = self.tabs[idx].table.read(cx).delegate().entries.len();
         if row_count == 0 {
-            let try_wsl_symlink =
-                error.is_some() && crate::platform_shell::is_wsl_path(&self.tabs[idx].current_dir);
             self.tabs[idx].last_error = error;
-            if try_wsl_symlink {
-                self.start_wsl_symlink_recovery(idx, cx);
-            }
         } else {
             if let Some(err) = error {
                 crate::log_warn!(90, "directory load ended with partial rows: {err:?}");
@@ -4888,55 +4886,6 @@ impl Shell {
         self.warm_loaded_viewport_in_tab(idx, cx);
         self.refresh_volume_info_in_tab(idx, cx);
         cx.notify();
-    }
-
-    /// Windows UNC enumeration cannot follow some Linux symlinks exposed by
-    /// WSL. Direct `NativeFs` enumeration is always attempted first; only an
-    /// empty failed load reaches this bounded provider fallback.
-    fn start_wsl_symlink_recovery(&mut self, idx: usize, cx: &mut Context<Self>) {
-        let Some(tab) = self.tabs.get_mut(idx) else {
-            return;
-        };
-        let tab_id = tab.id;
-        let generation = tab.load_generation;
-        let original = tab.current_dir.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        tab.wsl_resolve_cancel = Some(cancel.clone());
-        cx.spawn(async move |this, cx| {
-            let worker_path = original.clone();
-            let worker_cancel = cancel.clone();
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    crate::platform_shell::resolve_wsl_symlink_path(&worker_path, &worker_cancel)
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                let Some(tab_index) = this.tabs.iter().position(|tab| tab.id == tab_id) else {
-                    return;
-                };
-                let tab = &mut this.tabs[tab_index];
-                if !tab
-                    .wsl_resolve_cancel
-                    .as_ref()
-                    .is_some_and(|current| Arc::ptr_eq(current, &cancel))
-                {
-                    return;
-                }
-                tab.wsl_resolve_cancel = None;
-                if tab.load_generation != generation || tab.current_dir != original {
-                    return;
-                }
-                let Ok(resolved) = result else {
-                    return;
-                };
-                if resolved == original || tab_index != this.active {
-                    return;
-                }
-                this.navigate(resolved, cx);
-            });
-        })
-        .detach();
     }
 
     /// Refresh the cached free-space / volume-name pair for one tab,
@@ -6413,6 +6362,15 @@ impl Shell {
             cancel.store(true, Ordering::Relaxed);
         }
         if let Some(cancel) = &tab.prefetch_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = &tab.wsl_resolve_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = &tab.platform_root_activation_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = &tab.shortcut_resolve_cancel {
             cancel.store(true, Ordering::Relaxed);
         }
         if let Some(id) = tab.load_task {
