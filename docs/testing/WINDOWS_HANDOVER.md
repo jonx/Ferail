@@ -1453,6 +1453,10 @@ Release packaging correction:
     exists. win.yml therefore accepts temporary retry-vX.Y.Z or numbered
     retry-vX.Y.Z-N triggers and resolves them back to vX.Y.Z for the release
     upload; delete the retry tags after a successful recovery run.
+  - the first two recovery events then failed while GitHub Actions was
+    allocating/starting the Windows runner (one explicit "unexpected error",
+    one job left at "Starting job"); neither executed a repository step. These
+    are recorded as infrastructure retries, not product or packaging failures.
 
 This publication is not Authenticode-signed and does not close the still-open
 hardware/adversarial acceptance cases listed above. Retain those as post-
