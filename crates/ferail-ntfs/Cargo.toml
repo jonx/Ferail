@@ -1,0 +1,10 @@
+[package]
+name = "ferail-ntfs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bounded, platform-neutral NTFS parsing and Disk Usage indexing for Ferail"
+
+[dependencies]

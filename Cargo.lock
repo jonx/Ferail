@@ -2217,6 +2217,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferail-ntfs"
+version = "0.6.9"
+
+[[package]]
 name = "ferail-shell-aros"
 version = "0.6.9"
 dependencies = [
