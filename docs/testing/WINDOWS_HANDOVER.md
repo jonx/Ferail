@@ -1443,6 +1443,13 @@ Artifacts are produced from the tagged commit by the Windows zip workflow:
   - Ferail-0.6.9-win-x64.zip;
   - Ferail-0.6.9-x64-symbols.zip.
 
+Release packaging correction:
+  - the first tag run built successfully but the dependency gate rejected
+    propsys.dll, introduced by IPropertyStore support;
+  - propsys.dll is a Windows system DLL and is now explicitly allowed by the
+    same gate. The exact local release build and the packaging-only rerun pass
+    before retagging.
+
 This publication is not Authenticode-signed and does not close the still-open
 hardware/adversarial acceptance cases listed above. Retain those as post-
 release qualification rather than rewriting them as passed.

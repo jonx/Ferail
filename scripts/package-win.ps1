@@ -199,7 +199,7 @@ $AllowedSystemDlls = [System.Collections.Generic.HashSet[string]]::new(
     'comctl32.dll', 'crypt32.dll', 'd3d11.dll', 'dbghelp.dll', 'dcomp.dll', 'dwrite.dll',
     'dwmapi.dll', 'dxgi.dll', 'gdi32.dll', 'gdiplus.dll', 'icuuc.dll',
     'imm32.dll', 'kernel32.dll', 'mfplat.dll', 'ntdll.dll', 'ole32.dll',
-    'oleaut32.dll', 'pdh.dll', 'powrprof.dll', 'psapi.dll', 'rstrtmgr.dll',
+    'oleaut32.dll', 'pdh.dll', 'powrprof.dll', 'propsys.dll', 'psapi.dll', 'rstrtmgr.dll',
     'shell32.dll', 'shlwapi.dll', 'uiautomationcore.dll', 'user32.dll',
     'winmm.dll', 'ws2_32.dll'
 ) | ForEach-Object { [void]$AllowedSystemDlls.Add($_) }
