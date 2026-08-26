@@ -1,54 +1,55 @@
-# Next Windows update — qualification build (unreleased)
-
-This candidate completes the Windows interoperability and containment work
-after 0.6.8: Explorer-compatible cut/copy and drag effects, directory-aware
-`.lnk` opening, actionable Open/Reveal errors, approved Windows metadata in
-Get Info, explicit-only WSL activation, and first-class This PC/Recycle Bin/MTP
-browsing.
-
-Shell namespace and property providers run in disposable, time-bounded
-workers. Pathless items keep copied opaque identities in their tab, expose the
-official Windows menu through **More…** or Shift+right-click, and never fall
-through to filesystem commands aimed at a previously open folder.
-
-This is not a published release yet. The exact portable artifact must still
-pass the WSL, MTP disconnect, privacy-canary, hostile-provider and Flat 1M/4M
-Windows qualification gates recorded in
-[WINDOWS_HANDOVER.md](docs/testing/WINDOWS_HANDOVER.md).
-
----
-
-# Ferail 0.6.8 — Windows drag responsiveness update
+# Ferail 0.6.9 — Windows Shell reliability update
 
 This is a **Windows-only release**. It publishes the portable Windows x64 ZIP
 and its matching symbols archive; macOS and Linux remain on 0.6.5.
 
 ## Highlights
 
-- Dragging files now stays responsive in large folders. Ferail reuses one
-  selection snapshot, paces edge autoscroll by elapsed time, avoids redundant
-  viewport warming and temporary cache-key allocations, and no longer drives
-  full application renders at the mouse report rate during Windows OLE
-  `DragOver` callbacks.
-- A drag that leaves Ferail now has exactly one icon stack. From the first
-  handoff onward, the native Windows Shell image remains visible even if the
-  pointer comes back over Ferail; the internal typed payload is restored
-  invisibly so Ferail folders still accept the drop.
-- Rubber-band selection in grid view visits only intersected cells and applies
-  incremental selection changes, then synchronizes the list once when the
-  gesture ends.
-- Path icon and thumbnail cache lookups no longer allocate formatted keys on
-  hot render paths, and favorites/sidebar lookups avoid repeated model clones
-  or filesystem-lock acquisition when cached identity is available.
+- **This PC, Recycle Bin, and connected provider/MTP containers can now be
+  browsed safely.** Pathless Windows Shell items remain in a dedicated,
+  virtualized browse-only surface and expose the official Windows menu through
+  **More…** or Shift+right-click. Normal drive and folder paths return to
+  Ferail's full filesystem engine immediately.
+- **Explorer transfer semantics are preserved.** Clipboard cut/copy and native
+  outbound drag-and-drop now negotiate Copy, Move, and Create Shortcut using
+  the same Shell formats and modifier behavior as Explorer.
+- **Windows shortcuts and launch failures behave predictably.** Directory
+  `.lnk` files navigate inside Ferail; file/application shortcuts retain their
+  arguments and working directory. Failed Open, Reveal, and Shell verbs now
+  produce actionable errors and refresh the affected folder when appropriate.
+- **Get Info is more useful.** It includes an approved, privacy-preserving
+  allow-list of Windows Shell metadata and shortcut details. Creation,
+  modification, and access dates can be edited in place; directory writes are
+  verified after Windows closes the handle so ignored changes are not reported
+  as successful.
+- **Linux/WSL locations are opt-in and disabled by default.** Ferail does not
+  discover or start WSL distributions until enabled in Settings › Files ›
+  Locations. Activation is explicit, cancellable, and no longer causes a
+  nested GPUI update crash.
+- **Shell providers are contained and background work is bounded.** Namespace
+  enumeration, property handlers, thumbnails, and icons use process-wide
+  budgets or disposable time-bounded workers, preventing one slow or faulty
+  provider from blocking Ferail's UI or taking down the process.
 
-## Packaging and diagnostics
+## Reliability and diagnostics
+
+- Development builds now retire the complete GPUI window-owned graph in
+  dependency order. Closing after preview/filter use or with a popup menu open
+  no longer triggers the upstream leaked-handle assertion.
+- Virtual Shell locations never fall through to filesystem-only commands aimed
+  at the folder previously shown in the tab.
+- GPS coordinates and arbitrary Windows property blobs are never retained,
+  logged, or persisted.
+
+## Packaging
 
 The release contains:
 
-- `Ferail-0.6.8-win-x64.zip` — unsigned portable application and CLI;
-- `Ferail-0.6.8-x64-symbols.zip` — matching PDBs and identity manifest.
+- `Ferail-0.6.9-win-x64.zip` — unsigned portable application and CLI;
+- `Ferail-0.6.9-x64-symbols.zip` — matching PDBs and identity manifest.
 
 Windows SmartScreen may warn because the build is not Authenticode-signed. The
 symbols archive is for diagnosing crash dumps and is not needed to run Ferail.
 
-The full technical list is in [CHANGELOG.md](CHANGELOG.md#068--2026-08-25-windows-only-release).
+The full technical list is in
+[CHANGELOG.md](CHANGELOG.md#069--2026-08-26-windows-only-release).

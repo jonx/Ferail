@@ -19,19 +19,17 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 ## Current resume point
 
 - Branch: `main`
-- Last published Windows baseline: `3cc8b7e` (`release: Ferail 0.6.8 Windows
-  drag responsiveness`)
-- Mac-first preparation series: `6622f0d` through `77a5d36`, followed by the
-  current handover/audit commit. Use `git rev-parse HEAD` after pulling rather
-  than assuming the last abbreviated hash in this document.
-- Current Windows release: `0.6.8`
+- Last published Windows baseline: `v0.6.9` (Windows Shell reliability update)
+- Windows Shell implementation and qualification series: `226ec71` through
+  `7bfeefe`, followed by the `0.6.9` release commit. Use `git rev-parse HEAD`
+  after pulling rather than assuming an abbreviated hash in this document.
+- Current Windows release: `0.6.9`
 - Published artifacts: unsigned portable Windows x64 ZIP plus its matching
   x64 symbols ZIP
-- Next campaign: connect the prepared shared contracts to their GPUI owners,
-  then implement and accept the Windows Shell mechanisms on a real Windows
-  machine;
-  see the
-  [Mac-first continuation plan](../features/WINDOWS_COMPATIBILITY_PLAN.md#continuation-plan-mac-first-windows-final).
+- Next campaign: post-release qualification of the remaining adversarial and
+  hardware-dependent cases (MTP disconnect, hostile providers, long soaks and
+  multi-DPI comparison); see the
+  [acceptance plan](WINDOWS_RELIABILITY_TEST_PLAN.md).
 - Added scope: WSL distributions are implemented in source as cached dynamic
   **Linux** locations, adapted from the pinned Ferail-Win32 reference. Registry,
   `wsl.exe`, UNC and symlink behavior still requires real-Windows qualification
@@ -759,8 +757,10 @@ Not source-complete and therefore not claimed:
   - release qualification WTEST-072, 095, 100–106, 110–115 and 130–139,
     including a real MTP disconnect, stopped WSL distro, privacy-canary
     inspection, Flat 1M/4M comparison and hostile extension observation;
-  - Authenticode/signing and publication. Do not tag a successor to 0.6.8
-    until the exact portable artifact passes those real-machine gates.
+  - Authenticode/signing remains open. The owner explicitly accepted the
+    current real-Windows behavior for publication as 0.6.9; this release
+    decision does not retroactively mark the unexecuted adversarial and
+    hardware-dependent qualification cases as passed.
 
 Validation accumulated during this pass:
   - 31 ferail-shell-win32 tests pass after namespace/context integration;
@@ -1423,4 +1423,27 @@ Manual acceptance:
      stopped-distro activation: the section disappears and never navigates.
   3. Restart once in each state to prove persistence, then repeat preview and
      focused-filter close from the window X and the app Quit command.
+```
+
+### 2026-08-26 — v0.6.9 Windows release
+
+```text
+Release decision: owner accepted the current real-Windows behavior after the
+PopupMenu and InputState shutdown retests. Publish as v0.6.9, Windows-only.
+
+Release contents:
+  - Windows Shell namespace browse-only surface and isolated native menus;
+  - Explorer clipboard/drag effects and path-backed shortcut handling;
+  - bounded icon, thumbnail, namespace and property-provider work;
+  - approved Get Info metadata plus verified timestamp editing;
+  - explicit, opt-in WSL locations and the stopped-distribution crash fix;
+  - ordered GPUI dev/test teardown covering InputState and PopupMenu owners.
+
+Artifacts are produced from the tagged commit by the Windows zip workflow:
+  - Ferail-0.6.9-win-x64.zip;
+  - Ferail-0.6.9-x64-symbols.zip.
+
+This publication is not Authenticode-signed and does not close the still-open
+hardware/adversarial acceptance cases listed above. Retain those as post-
+release qualification rather than rewriting them as passed.
 ```

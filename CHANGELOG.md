@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.6.9 — 2026-08-26 (Windows-only release)
+
+This release publishes Windows x64 portable and symbols archives only. macOS
+and Linux remain on 0.6.5; Ferail's updater selects the newest release that
+actually has an asset for the current platform.
+
 - **Linux/WSL locations on Windows are now opt-in.** A new Files ›
   Locations setting controls the sidebar section and defaults to off. While
   off, Ferail does not discover or start WSL distributions; disabling it live
