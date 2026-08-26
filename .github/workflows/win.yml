@@ -5,12 +5,15 @@
 # downloads are at least verifiable.
 #
 # On a `v*` tag the ZIP is attached to that tag's GitHub release, same
-# contract as deb.yml. Manual dispatch leaves it as a run artifact.
+# contract as deb.yml. A temporary `retry-v*` tag rebuilds and attaches to the
+# corresponding `v*` release; this is the recovery path when a tag run fails
+# after GitHub has already recorded it. Manual dispatch leaves the build as a
+# run artifact.
 name: Windows zip
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "retry-v*"]
   workflow_dispatch:
 
 concurrency:
@@ -66,6 +69,18 @@ jobs:
             target/package/Ferail-*-x64-symbols.zip
           if-no-files-found: error
 
+      - name: Resolve release tag
+        if: github.ref_type == 'tag'
+        id: release
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ($tag.StartsWith('retry-')) { $tag = $tag.Substring(6) }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+') {
+            throw "invalid release target: $tag"
+          }
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       # The release title comes from the notes' H1 ("Ferail <v> — …") so
       # automated releases match the hand-titled ones in the release list —
       # without this, action-gh-release names the release after the bare tag
@@ -82,6 +97,7 @@ jobs:
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release.outputs.tag }}
           name: ${{ steps.title.outputs.title }}
           body_path: RELEASE_NOTES.md
           files: |
