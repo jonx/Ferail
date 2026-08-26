@@ -697,6 +697,7 @@ impl Shell {
         use ferail_core::platform_namespace::{
             PlatformItemFlags, PlatformItemKind, PlatformSurfacePhase,
         };
+        use gpui_component::menu::ContextMenuExt as _;
 
         let Some(session) = self.active_tab().platform_namespace.as_ref() else {
             return div().into_any_element();
@@ -766,6 +767,9 @@ impl Shell {
                         let item_id = item.id;
                         let selected = session.selection().is_selected(&item_id);
                         let hidden = item.flags.contains(PlatformItemFlags::HIDDEN);
+                        let native_menu = item.capabilities.contains(
+                            ferail_core::platform_namespace::PlatformCapabilities::NATIVE_MENU,
+                        );
                         let icon = match item.kind {
                             PlatformItemKind::Container => "icons/folder.svg",
                             PlatformItemKind::Link => "icons/file/symlink.svg",
@@ -774,6 +778,7 @@ impl Shell {
                         let label: SharedString = item.label.to_string().into();
                         let tooltip = label.clone();
                         let row_shell = weak.clone();
+                        let menu_shell = weak.clone();
                         Some(
                             h_flex()
                                 .id(("platform-namespace-row", index))
@@ -800,6 +805,33 @@ impl Shell {
                                             tab_id, item_id, toggle, activate, cx,
                                         );
                                     });
+                                })
+                                .context_menu(move |menu, window, app| {
+                                    if !native_menu {
+                                        return menu;
+                                    }
+                                    let extended = window.modifiers().shift;
+                                    if extended {
+                                        let win = window.window_handle();
+                                        let _ = menu_shell.update(app, |shell, cx| {
+                                            shell.show_platform_native_menu(
+                                                tab_id, item_id, true, win, cx,
+                                            );
+                                        });
+                                        return menu;
+                                    }
+                                    let action_shell = menu_shell.clone();
+                                    menu.item(
+                                        gpui_component::menu::PopupMenuItem::new(tr!("More…"))
+                                            .on_click(move |_event, window, app| {
+                                                let win = window.window_handle();
+                                                let _ = action_shell.update(app, |shell, cx| {
+                                                    shell.show_platform_native_menu(
+                                                        tab_id, item_id, false, win, cx,
+                                                    );
+                                                });
+                                            }),
+                                    )
                                 })
                                 .into_any_element(),
                         )

@@ -18,8 +18,9 @@ use std::time::Duration;
 
 use ferail_core::favorites::FavoriteState;
 use ferail_core::platform_namespace::{
-    LocationTarget, PlatformBatchApply, PlatformCapabilities, PlatformItemId,
-    PlatformListingRequest, PlatformLocation, PlatformLocationErrorKind, PlatformNamespaceProvider,
+    LocationTarget, PlatformAction, PlatformActionOutcome, PlatformActionRequest,
+    PlatformBatchApply, PlatformCapabilities, PlatformItemId, PlatformListingRequest,
+    PlatformLocation, PlatformLocationErrorKind, PlatformNamespaceProvider,
 };
 #[cfg(windows)]
 use ferail_core::platform_shortcuts::{ShortcutFailureKind, ShortcutInfo, ShortcutOpenDisposition};
@@ -1310,6 +1311,92 @@ impl Shell {
             }
             None => cx.notify(),
         }
+    }
+
+    fn show_platform_native_menu(
+        &mut self,
+        tab_id: TabId,
+        item_id: PlatformItemId,
+        extended: bool,
+        window: AnyWindowHandle,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return;
+        };
+        let Some(session) = self.tabs[index].platform_namespace.as_mut() else {
+            return;
+        };
+        let supported = session
+            .store()
+            .items()
+            .iter()
+            .find(|item| item.id == item_id)
+            .is_some_and(|item| {
+                item.capabilities
+                    .contains(PlatformCapabilities::NATIVE_MENU)
+            });
+        if !supported {
+            return;
+        }
+        if !session.selection().is_selected(&item_id) {
+            session.selection_mut().select_only(item_id);
+        }
+        let request = PlatformActionRequest {
+            location: session.current().clone(),
+            selection: session.selection().descriptor(),
+            action: PlatformAction::NativeMenu { extended },
+        };
+        if request
+            .selection
+            .selected_count(session.store().items().len())
+            > 128
+        {
+            let _ = window.update(cx, |_, window, cx| {
+                window.push_notification(
+                    gpui_component::notification::Notification::error(tr!(
+                        "Too many items selected for the Windows context menu"
+                    )),
+                    cx,
+                );
+            });
+            return;
+        }
+        let provider = session.provider();
+        let cancel = Arc::new(AtomicBool::new(false));
+        cx.spawn(async move |this, cx| {
+            let worker_cancel = cancel.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { provider.perform_action(request, &worker_cancel) })
+                .await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(PlatformActionOutcome::Changed) => {
+                    let Some(index) = this.tabs.iter().position(|tab| tab.id == tab_id) else {
+                        return;
+                    };
+                    let request = this.tabs[index]
+                        .platform_namespace
+                        .as_mut()
+                        .map(|session| session.refresh());
+                    if let Some((request, cancel)) = request {
+                        this.start_platform_listing(tab_id, request, cancel, cx);
+                    }
+                }
+                Ok(_) | Err(PlatformLocationErrorKind::Cancelled) => {}
+                Err(_) => {
+                    let _ = window.update(cx, |_, window, cx| {
+                        window.push_notification(
+                            gpui_component::notification::Notification::error(tr!(
+                                "Windows context menu unavailable for this item"
+                            )),
+                            cx,
+                        );
+                    });
+                }
+            });
+        })
+        .detach();
     }
 
     fn navigate_platform_location(

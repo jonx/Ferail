@@ -16,7 +16,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   opaque PIDL bytes, never COM objects or fabricated paths.
   Enumeration streams from the broker through bounded queues, so large device
   folders can paint progressively without building duplicate full-list
-  snapshots; repeated refreshes reuse identical copied identities.
+  snapshots; repeated refreshes reuse identical copied identities. Pathless
+  rows expose the real Windows menu through **More…**, while Shift+right-click
+  opens that menu directly; its PIDLs travel over a validated broker pipe and
+  selected commands refresh the namespace afterward.
 
 - **WSL browsing no longer starts a distribution implicitly.** Ferail invokes
   `wsl.exe` only after an explicit distribution or symlink activation; a

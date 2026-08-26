@@ -7,12 +7,12 @@
 use std::{
     cell::RefCell,
     ffi::{c_void, OsString},
-    io::{BufRead as _, BufReader, Write as _},
+    io::{BufRead as _, BufReader, Read as _, Write as _},
     os::windows::ffi::OsStrExt,
     os::windows::process::CommandExt as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{mpsc, OnceLock},
+    sync::{mpsc, Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -387,14 +387,108 @@ pub fn show_windows_context_menu(paths: &[PathBuf], extended: bool) -> Result<()
     }
 }
 
+pub(crate) fn show_windows_namespace_context_menu(
+    pidls: &[Arc<[u8]>],
+    extended: bool,
+) -> Result<(), String> {
+    if pidls.is_empty() || pidls.len() > 128 || pidls.iter().any(|pidl| !valid_pidl(pidl)) {
+        return Err("invalid Windows namespace selection".into());
+    }
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let mut command = Command::new(exe);
+    command.arg(BROKER_ARG).arg("--pidl-stdin");
+    if extended {
+        command.arg("--extended");
+    }
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW);
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "context-menu broker did not expose stdin".to_string())?;
+    stdin
+        .write_all(&(pidls.len() as u32).to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    for pidl in pidls {
+        stdin
+            .write_all(&(pidl.len() as u32).to_le_bytes())
+            .and_then(|_| stdin.write_all(pidl))
+            .map_err(|error| error.to_string())?;
+    }
+    drop(stdin);
+    wait_for_namespace_context_broker(child)
+}
+
+fn wait_for_namespace_context_broker(mut child: std::process::Child) -> Result<(), String> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "context-menu broker did not expose its readiness pipe".to_string())?;
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let ready = BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+            .any(|line| line.trim() == READY_MARKER);
+        let _ = ready_tx.send(ready);
+    });
+    match ready_rx.recv_timeout(PREPARE_TIMEOUT) {
+        Ok(true) => {}
+        Ok(false) => {
+            let status = child.wait().map_err(|error| error.to_string())?;
+            return Err(format!(
+                "Windows context-menu broker exited before its menu was ready ({status})"
+            ));
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("a Windows Shell extension took too long to build the menu".into());
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Windows context-menu broker closed its readiness pipe".into());
+        }
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| format!("Windows context-menu broker exited with {status}"))
+}
+
+fn valid_pidl(bytes: &[u8]) -> bool {
+    let mut offset = 0usize;
+    loop {
+        let Some(size_bytes) = bytes.get(offset..offset.saturating_add(2)) else {
+            return false;
+        };
+        let size = u16::from_le_bytes([size_bytes[0], size_bytes[1]]) as usize;
+        if size == 0 {
+            return offset + 2 == bytes.len();
+        }
+        if size < 2 || offset.saturating_add(size) > bytes.len() {
+            return false;
+        }
+        offset += size;
+    }
+}
+
 /// Entry point for the `--windows-context-menu-broker` process role.
 pub fn context_menu_broker_main(args: &[OsString]) -> i32 {
-    let (extended, path_args) = match args.first().and_then(|arg| arg.to_str()) {
-        Some("--extended") => (true, &args[1..]),
-        _ => (false, args),
-    };
+    let extended = args.iter().any(|arg| arg == "--extended");
+    let pidl_stdin = args.iter().any(|arg| arg == "--pidl-stdin");
+    let path_args = args
+        .iter()
+        .filter(|arg| arg != &"--extended" && arg != &"--pidl-stdin")
+        .cloned()
+        .collect::<Vec<_>>();
     let paths = path_args.iter().map(PathBuf::from).collect::<Vec<_>>();
-    if paths.is_empty() || !same_parent(&paths) {
+    if !pidl_stdin && (paths.is_empty() || !same_parent(&paths)) {
         eprintln!("ferail: Windows context menu requires same-folder paths");
         return 2;
     }
@@ -403,7 +497,11 @@ pub fn context_menu_broker_main(args: &[OsString]) -> i32 {
         eprintln!("ferail: unable to initialize OLE for context menu: {error}");
         return 1;
     }
-    let result = show_menu(&paths, extended);
+    let result = if pidl_stdin {
+        read_namespace_pidls().and_then(|pidls| show_menu_from_pidls(&pidls, extended))
+    } else {
+        show_menu(&paths, extended)
+    };
     unsafe { OleUninitialize() };
     match result {
         Ok(()) => 0,
@@ -415,23 +513,69 @@ pub fn context_menu_broker_main(args: &[OsString]) -> i32 {
 }
 
 fn show_menu(paths: &[PathBuf], extended: bool) -> Result<(), String> {
+    let pidls = paths
+        .iter()
+        .map(|path| parse_path(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let raw = pidls
+        .iter()
+        .map(|pidl| pidl.0.cast_const())
+        .collect::<Vec<_>>();
+    show_menu_raw(&raw, extended)
+}
+
+fn read_namespace_pidls() -> Result<Vec<Vec<u8>>, String> {
+    let mut input = std::io::stdin().lock();
+    let mut word = [0u8; 4];
+    input
+        .read_exact(&mut word)
+        .map_err(|error| error.to_string())?;
+    let count = u32::from_le_bytes(word) as usize;
+    if count == 0 || count > 128 {
+        return Err("invalid namespace selection count".into());
+    }
+    let mut pidls = Vec::with_capacity(count);
+    for _ in 0..count {
+        input
+            .read_exact(&mut word)
+            .map_err(|error| error.to_string())?;
+        let len = u32::from_le_bytes(word) as usize;
+        if len == 0 || len > 1024 * 1024 {
+            return Err("invalid namespace PIDL length".into());
+        }
+        let mut pidl = vec![0u8; len];
+        input
+            .read_exact(&mut pidl)
+            .map_err(|error| error.to_string())?;
+        if !valid_pidl(&pidl) {
+            return Err("invalid namespace PIDL".into());
+        }
+        pidls.push(pidl);
+    }
+    Ok(pidls)
+}
+
+fn show_menu_from_pidls(pidls: &[Vec<u8>], extended: bool) -> Result<(), String> {
+    let raw = pidls
+        .iter()
+        .map(|pidl| pidl.as_ptr().cast::<ITEMIDLIST>())
+        .collect::<Vec<_>>();
+    show_menu_raw(&raw, extended)
+}
+
+fn show_menu_raw(pidls: &[*const ITEMIDLIST], extended: bool) -> Result<(), String> {
     let mut point = POINT::default();
     unsafe { GetCursorPos(&mut point).map_err(|error| error.to_string())? };
     // InvokeCommand is allowed to parent dialogs (notably Properties) to the
     // supplied HWND. Keep the broker's 1px tool window at the invocation
     // point: an off-screen owner can make those dialogs open off-screen too.
     let owner = OwnerWindow::new(point).map_err(|error| error.to_string())?;
-    let pidls = paths
-        .iter()
-        .map(|path| parse_path(path))
-        .collect::<Result<Vec<_>, _>>()?;
-
     let mut first_child = std::ptr::null_mut();
-    let folder: IShellFolder = unsafe { SHBindToParent(pidls[0].0, Some(&mut first_child)) }
+    let folder: IShellFolder = unsafe { SHBindToParent(pidls[0], Some(&mut first_child)) }
         .map_err(|error| format!("could not bind the selected items' parent: {error}"))?;
     let children = pidls
         .iter()
-        .map(|pidl| unsafe { windows::Win32::UI::Shell::ILFindLastID(pidl.0) }.cast_const())
+        .map(|pidl| unsafe { windows::Win32::UI::Shell::ILFindLastID(*pidl) }.cast_const())
         .collect::<Vec<_>>();
     let context_menu: IContextMenu = unsafe { folder.GetUIObjectOf(owner.0, &children, None) }
         .map_err(|error| format!("could not obtain the Shell context menu: {error}"))?;
@@ -520,7 +664,7 @@ fn show_menu(paths: &[PathBuf], extended: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::same_parent;
+    use super::{same_parent, valid_pidl};
     use std::path::PathBuf;
 
     #[test]
@@ -533,5 +677,13 @@ mod tests {
             PathBuf::from(r"C:\one\a.txt"),
             PathBuf::from(r"C:\two\b.txt"),
         ]));
+    }
+
+    #[test]
+    fn copied_pidl_validation_stays_within_the_buffer() {
+        assert!(valid_pidl(&[2, 0, 0, 0]));
+        assert!(!valid_pidl(&[4, 0, 0]));
+        assert!(!valid_pidl(&[1, 0, 0, 0]));
+        assert!(!valid_pidl(&[0, 0, 9]));
     }
 }

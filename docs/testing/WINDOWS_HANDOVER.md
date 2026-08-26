@@ -251,8 +251,16 @@ Implemented:
   - repeated refreshes deduplicate identical copied PIDLs inside the tab arena
     rather than growing one identity entry per refresh;
   - capability gating is deliberately conservative: only navigation that is
-    implemented is advertised. Namespace native menus, restore/delete,
-    properties and transfers remain absent rather than silently misbehaving.
+    implemented is advertised;
+  - pathless rows now advertise NATIVE_MENU and pass an explicit selection of
+    at most 128 copied PIDLs to the existing disposable context-menu broker
+    over stdin. Every PIDL is structurally validated before use; the broker
+    still owns QueryContextMenu, invocation and modeless Properties lifetime;
+  - the instant Ferail row menu exposes More…, while Shift+right-click skips
+    it and requests the official Windows menu directly. Completion refreshes
+    only that namespace session;
+  - restore/delete, property DTOs and transfers remain absent rather than
+    silently misbehaving until their provider actions are implemented.
 Qualification boundary:
   - this commit delivers namespace discovery/browsing, not the remaining
     action slice. WTEST-100–106 stay unchecked until native actions and real

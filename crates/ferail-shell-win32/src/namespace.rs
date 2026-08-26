@@ -14,9 +14,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ferail_core::platform_namespace::{
-    LocationTarget, PlatformBreadcrumb, PlatformCapabilities, PlatformItem, PlatformItemFlags,
-    PlatformItemId, PlatformItemKind, PlatformListingBatch, PlatformListingRequest,
-    PlatformLocation, PlatformLocationErrorKind, PlatformNamespaceProvider, PlatformProviderId,
+    LocationTarget, PlatformAction, PlatformActionOutcome, PlatformActionRequest,
+    PlatformBreadcrumb, PlatformCapabilities, PlatformItem, PlatformItemFlags, PlatformItemId,
+    PlatformItemKind, PlatformListingBatch, PlatformListingRequest, PlatformLocation,
+    PlatformLocationErrorKind, PlatformNamespaceProvider, PlatformProviderId,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,6 +132,9 @@ impl PlatformNamespaceProvider for WindowsNamespaceProvider {
             if folder && !filesystem {
                 capabilities = capabilities.union(PlatformCapabilities::ENUMERATE);
             }
+            if !filesystem {
+                capabilities = capabilities.union(PlatformCapabilities::NATIVE_MENU);
+            }
             let mut flags = PlatformItemFlags::default();
             if record.attributes & ATTR_HIDDEN != 0 {
                 flags = flags.union(PlatformItemFlags::HIDDEN);
@@ -180,6 +184,42 @@ impl PlatformNamespaceProvider for WindowsNamespaceProvider {
             return Err(PlatformLocationErrorKind::Cancelled);
         }
         Ok(())
+    }
+
+    fn perform_action(
+        &self,
+        request: PlatformActionRequest,
+        cancel: &AtomicBool,
+    ) -> Result<PlatformActionOutcome, PlatformLocationErrorKind> {
+        let PlatformAction::NativeMenu { extended } = request.action else {
+            return Err(PlatformLocationErrorKind::Unsupported);
+        };
+        if request.selection.all || request.selection.ids.is_empty() {
+            return Err(PlatformLocationErrorKind::Unsupported);
+        }
+        if request.selection.ids.len() > 128 {
+            return Err(PlatformLocationErrorKind::Unsupported);
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Err(PlatformLocationErrorKind::Cancelled);
+        }
+        let arena = self
+            .arena
+            .lock()
+            .map_err(|_| PlatformLocationErrorKind::Failed)?;
+        let mut pidls = Vec::with_capacity(request.selection.ids.len());
+        for id in request.selection.ids {
+            let Some(ShellIdentity::AbsolutePidl(bytes)) =
+                arena.entries.get(id.as_raw().saturating_sub(1) as usize)
+            else {
+                return Err(PlatformLocationErrorKind::NotFound);
+            };
+            pidls.push(bytes.clone());
+        }
+        drop(arena);
+        super::context_menu::show_windows_namespace_context_menu(&pidls, extended)
+            .map_err(|_| PlatformLocationErrorKind::Failed)?;
+        Ok(PlatformActionOutcome::Changed)
     }
 }
 
