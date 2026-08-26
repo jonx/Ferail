@@ -1311,6 +1311,10 @@ Implemented:
   - the Windows writer requests FILE_WRITE_ATTRIBUTES with normal sharing and
     passes null pointers for timestamps not being changed, so directories and
     read-only files work without losing attributes or adjacent dates;
+  - the writer closes the handle and reads the selected value back before
+    reporting success. A provider which accepts SetFileTime but retains an old
+    or materially rounded value now produces an error; FAT's documented
+    two-second last-write precision remains accepted;
   - reparse-point rows stay read-only to avoid editing a target while showing
     link metadata. Unix shares modification/access editing; creation remains
     read-only outside Windows.
@@ -1319,11 +1323,15 @@ Automated proof on Windows:
   - cargo test -p ferail-fs-native stat_info --lib (3 passed);
   - cargo check -p ferail-gpui;
   - timestamp test covers modification/access, plus creation while the file is
-    read-only; local editor round-trip and invalid calendar values are covered.
+    read-only, and all three timestamps on a directory; local editor round-trip
+    and invalid calendar values are covered.
 
 Manual acceptance still required:
   1. Edit each date on a normal file and directory from both the preview pane
      and standalone Get Info window; close/reopen and compare Explorer.
+     Treat Last opened on a directory as volatile: opening/enumerating the
+     directory may legitimately advance it again; Created and Modified must
+     retain the requested value until a real filesystem mutation changes it.
   2. Repeat on a read-only file and confirm the read-only attribute survives.
   3. Confirm editing one date leaves the other two unchanged, and invalid text
      keeps the dialog open with an error.

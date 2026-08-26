@@ -18,8 +18,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   writes run off the UI thread and refresh the affected listing afterward.
   Windows uses `FILE_WRITE_ATTRIBUTES`, so folders and read-only files work
   without changing their attributes, and each write preserves the other two
-  timestamps. Creation-time editing is Windows-only for now; Unix exposes the
-  portable modification/access pair.
+  timestamps. Ferail now reads the selected value back after Windows closes
+  the handle, so a provider that ignores or materially changes a folder date
+  produces an error instead of a false success. Creation-time editing is
+  Windows-only for now; Unix exposes the portable modification/access pair.
 
 - **This PC and Recycle Bin are now first-class Windows locations.** Their
   Shell-only children, including connected provider/MTP containers, browse in

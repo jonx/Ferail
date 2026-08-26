@@ -174,7 +174,9 @@ pub fn read_stat_info(_path: &Path) -> Option<StatInfo> {
 ///
 /// Windows uses a `FILE_WRITE_ATTRIBUTES` handle rather than a normal writable
 /// file handle: this works for directories and read-only files, and the null
-/// pointers passed to `SetFileTime` preserve the untouched timestamps.
+/// pointers passed to `SetFileTime` preserve the untouched timestamps. The
+/// value is read back after closing the handle so an ignored/provider-rounded
+/// write is never reported to the UI as a successful exact edit.
 #[cfg(windows)]
 pub fn set_timestamp(path: &Path, kind: TimestampKind, unix: i64) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt as _;
@@ -216,7 +218,31 @@ pub fn set_timestamp(path: &Path, kind: TimestampKind, unix: i64) -> Result<(), 
     .map_err(|error| format!("SetFileTime: {error}"));
     let close_result = unsafe { CloseHandle(handle) }
         .map_err(|error| format!("CloseHandle after SetFileTime: {error}"));
-    result.and(close_result)
+    result.and(close_result)?;
+
+    let info = read_stat_info(path)
+        .ok_or_else(|| "read timestamp back after SetFileTime: path is unavailable".to_string())?;
+    let actual = match kind {
+        TimestampKind::Created => info.created_unix,
+        TimestampKind::Modified => Some(info.modified_unix),
+        TimestampKind::Accessed => info.accessed_unix,
+    }
+    .ok_or_else(|| {
+        format!(
+            "read timestamp back after SetFileTime: {:?} is unavailable",
+            kind
+        )
+    })?;
+
+    // FAT stores last-write time at two-second precision. Accept that normal
+    // filesystem rounding but reject a provider that acknowledged the write
+    // while retaining a materially different value.
+    if actual.abs_diff(unix) > 2 {
+        return Err(format!(
+            "timestamp update was not retained (requested {unix}, read back {actual})"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -799,12 +825,18 @@ mod tests {
             set_locked(&file, false).unwrap();
         }
 
-        let directory_modified = 1_700_000_004;
+        let directory_created = 1_700_000_004;
+        let directory_modified = 1_700_000_006;
+        let directory_accessed = 1_700_000_008;
+        #[cfg(windows)]
+        set_timestamp(&dir, TimestampKind::Created, directory_created).unwrap();
         set_timestamp(&dir, TimestampKind::Modified, directory_modified).unwrap();
-        assert_eq!(
-            read_stat_info(&dir).unwrap().modified_unix,
-            directory_modified
-        );
+        set_timestamp(&dir, TimestampKind::Accessed, directory_accessed).unwrap();
+        let info = read_stat_info(&dir).unwrap();
+        #[cfg(windows)]
+        assert_eq!(info.created_unix, Some(directory_created));
+        assert_eq!(info.modified_unix, directory_modified);
+        assert_eq!(info.accessed_unix, Some(directory_accessed));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
