@@ -5005,7 +5005,6 @@ impl Shell {
         }
         // Snapshot the folders and thumbnailable files in range.
         let mut folders: Vec<PathBuf> = Vec::new();
-        let mut files: Vec<PathBuf> = Vec::new();
         {
             let table = self.active_tab().table.read(cx);
             let del = table.delegate();
@@ -5019,11 +5018,33 @@ impl Shell {
                 };
                 if matches!(entry.kind, ferail_core::EntryKind::Directory) {
                     folders.push(path);
-                } else if crate::thumbnails::is_thumbnailable(entry) {
-                    files.push(path);
                 }
             }
         }
+
+        // Files share the same process dispatcher as list rows. At the
+        // largest bucket, queue the low-resolution tier first so `get_best`
+        // can paint a soft stand-in while the crisp result is still pending.
+        const PREVIEW_PX: u32 = crate::thumbnails::THUMB_PREVIEW_PX;
+        const PREVIEW_ABOVE_BUCKET: u32 = 256;
+        let table = self.active_tab().table.clone();
+        let target = crate::asset_dispatcher::ThumbnailTarget::Shell(cx.entity().downgrade());
+        table.update(cx, |state, cx| {
+            if thumb_px > PREVIEW_ABOVE_BUCKET {
+                state.delegate_mut().warm_thumbnails_sized_for_target(
+                    entry_range.clone(),
+                    PREVIEW_PX,
+                    target.clone(),
+                    cx,
+                );
+            }
+            state.delegate_mut().warm_thumbnails_sized_for_target(
+                entry_range,
+                thumb_px,
+                target,
+                cx,
+            );
+        });
 
         // Folders: the platform icon fetch on the background executor,
         // same as the file thumbnails below. (It used to be a synchronous
@@ -5040,110 +5061,6 @@ impl Shell {
             self.warm_path_icons_async(wanted, cx);
         }
 
-        // Files: Quick Look on the background executor, in bounded
-        // concurrent waves rather than the old strictly-serial loop —
-        // so a folder of photos fills in parallel instead of one icon
-        // at a time.
-        //
-        // At large icon sizes we also fetch low-res-first: a small
-        // `THUMB_PREVIEW_PX` preview before the crisp `thumb_px`, so a
-        // soft stand-in paints almost at once and then sharpens (the
-        // render side reads `get_best`, which shows the preview until
-        // the crisp bucket lands). We only bother when the crisp bucket
-        // is the largest one (512) — at smaller buckets a 128-px preview
-        // is visually indistinguishable from the final at that slot
-        // size, so the extra Quick Look call wouldn't earn its keep;
-        // there, parallelism alone carries the speed-up.
-        const PREVIEW_PX: u32 = crate::thumbnails::THUMB_PREVIEW_PX;
-        const PREVIEW_ABOVE_BUCKET: u32 = 256;
-        const WARM_CONCURRENCY: usize = 6;
-        let mut work: Vec<(PathBuf, u32)> = Vec::new();
-        {
-            let cache = self.process.thumbnails.borrow();
-            if thumb_px > PREVIEW_ABOVE_BUCKET {
-                for path in &files {
-                    // A preview is pointless once the crisp size is ready.
-                    if cache.get(path, thumb_px).is_none() && cache.needs_fetch(path, PREVIEW_PX) {
-                        work.push((path.clone(), PREVIEW_PX));
-                    }
-                }
-            }
-            for path in &files {
-                if cache.needs_fetch(path, thumb_px) {
-                    work.push((path.clone(), thumb_px));
-                }
-            }
-        }
-        if work.is_empty() {
-            return;
-        }
-        {
-            let mut cache = self.process.thumbnails.borrow_mut();
-            for (path, size) in &work {
-                cache.mark_in_flight(path.clone(), *size);
-            }
-        }
-        let task_id = self.process.tasks.borrow_mut().begin(
-            TaskKind::ThumbnailPrefetch,
-            trn!(
-                "Loading {n} thumbnail\u{2026}",
-                "Loading {n} thumbnails\u{2026}",
-                work.len()
-            )
-            .to_string(),
-            false,
-        );
-        let thumbs = self.process.thumbnails.clone();
-        let tasks = self.process.tasks.clone();
-        cx.spawn(async move |this, cx| {
-            // Each wave spawns up to `WARM_CONCURRENCY` Quick Look calls
-            // onto the background pool at once (the pool bounds real
-            // parallelism; this cap keeps some threads free for other
-            // background work), then drains them, inserting as each lands.
-            'outer: for chunk in work.chunks(WARM_CONCURRENCY) {
-                let handles: Vec<_> = chunk
-                    .iter()
-                    .cloned()
-                    .map(|(path, size)| {
-                        let fetch_path = path.clone();
-                        let handle = cx.background_executor().spawn(async move {
-                            match crate::video_poster::fetch_content_thumbnail(&fetch_path, size) {
-                                crate::video_poster::Fetched::Done(r) => r,
-                                // Awaiting yields this pool thread; the
-                                // decode runs on the poster worker.
-                                crate::video_poster::Fetched::NeedsPoster => {
-                                    crate::video_poster::fetch_poster(fetch_path, size).await
-                                }
-                            }
-                        });
-                        (path, size, handle)
-                    })
-                    .collect();
-                for (path, size, handle) in handles {
-                    let rgba = handle.await;
-                    if this
-                        .update(cx, |_this, cx| {
-                            thumbs.borrow_mut().insert(path, size, rgba);
-                            cx.notify();
-                        })
-                        .is_err()
-                    {
-                        break 'outer;
-                    }
-                }
-            }
-            // Always retire the task; drop it directly if the Shell is gone.
-            if this
-                .update(cx, |_this, cx| {
-                    tasks.borrow_mut().end(task_id);
-                    cx.notify();
-                })
-                .is_err()
-            {
-                tasks.borrow_mut().end(task_id);
-            }
-        })
-        .detach();
     }
 
     /// Warm thumbnails for the active tab's currently-visible rows.

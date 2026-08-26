@@ -177,6 +177,12 @@ impl ThumbnailCache {
         !ready && !in_flight
     }
 
+    pub fn is_resolved(&self, path: &Path, size_px: u32) -> bool {
+        self.ready
+            .get(path)
+            .is_some_and(|sizes| sizes.contains_key(&size_px))
+    }
+
     /// Mark a fetch as started so concurrent warming passes don't
     /// double-request the same `(path, size)`.
     pub fn mark_in_flight(&mut self, path: PathBuf, size_px: u32) {
@@ -206,6 +212,20 @@ impl ThumbnailCache {
     /// becomes a ready `RenderImage`, `None` caches the miss. Clears
     /// the in-flight marker and evicts the oldest entry past capacity.
     pub fn insert(&mut self, path: PathBuf, size_px: u32, rgba: Option<(Vec<u8>, u32, u32)>) {
+        let image = rgba.map(|(bytes, w, h)| Arc::new(build_render_image(bytes, w, h)));
+        self.insert_rendered(path, size_px, image);
+    }
+
+    /// UI-thread upload/apply half of [`Self::insert`]. The process asset
+    /// dispatcher constructs at most its per-frame budget of RenderImages and
+    /// hands them here, keeping provider completion from causing an unbounded
+    /// burst of image construction and row invalidation.
+    pub fn insert_rendered(
+        &mut self,
+        path: PathBuf,
+        size_px: u32,
+        image: Option<Arc<RenderImage>>,
+    ) {
         let remove_in_flight_path = self.in_flight.get_mut(path.as_path()).is_some_and(|sizes| {
             sizes.remove(&size_px);
             sizes.is_empty()
@@ -213,7 +233,6 @@ impl ThumbnailCache {
         if remove_in_flight_path {
             self.in_flight.remove(path.as_path());
         }
-        let image = rgba.map(|(bytes, w, h)| Arc::new(build_render_image(bytes, w, h)));
         let is_new = self
             .ready
             .entry(path.clone())

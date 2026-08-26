@@ -106,14 +106,30 @@ Asset coordinator slice completed:
   - independent lane caps, cross-surface isolation, eviction cleanup and stale
     completion are covered by 8 ferail-core asset_work tests;
   - ferail-core strict Clippy and ferail-gpui Windows compilation pass.
-Still open in this slice:
-  - the coordinator currently owns admission/cancellation state only. The
-    existing thumbnail/detail loops have not yet been routed through it;
-  - add the process dispatcher which owns payloads outside the compact lanes,
-    coalesces duplicate cache work across surfaces, and drains uploads/applies
-    under a per-frame budget;
-  - only then remove the old per-FileList thumbnail batch flags and route the
-    Windows icon/thumbnail/link/property providers through the provider lane.
+Thumbnail dispatcher completed in the following Windows slice:
+  - list and grid viewports now submit to one process-owned payload dispatcher;
+    the old per-FileList active/latest batch state and the grid's independent
+    six-worker waves are removed;
+  - ordinary NodeId + revision + size requests coalesce across surfaces. Flat
+    scan-local NodeIds include their numeric surface scope, so two arenas that
+    both minted NodeId(1) cannot share a job or cache result;
+  - every requester remains a separate waiter carrying table scope,
+    generation, row index and NodeId. Completion checks all four before it
+    notifies the table or grid-owning Shell; stale rows do not repaint;
+  - native thumbnail provider calls use the process provider lane (4 active,
+    128 pending). New selected/visible work can displace overscan and the
+    evicted path reservation is explicitly released as retryable;
+  - decoded image construction uses the upload lane, at most two per frame;
+    cache insertion and affected-surface notification use the apply lane, at
+    most eight per frame. Row count and scrollbar geometry are untouched;
+  - a viewport generation change removes obsolete pending waiters/jobs. An
+    already-running provider is allowed to finish into the shared cache rather
+    than being overlapped or throwing away reusable work.
+Still open in asset routing:
+  - route path/type icon warming, shortcut resolution and approved property
+    reads through the provider lane;
+  - expose aggregate lane counts/cancellations in task diagnostics without a
+    repaint and run the real 10k/hostile-provider/DPI matrix.
 Formatting note:
   - cargo fmt --all -- --check also reports pre-existing formatting drift in
     pulled core/win32 files under rustfmt 1.9.0. Files changed in this Windows

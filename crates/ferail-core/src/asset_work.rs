@@ -17,6 +17,13 @@ use crate::revision_cache::FileRevision;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AssetIdentity {
     File(NodeId),
+    /// A scan-local file identity (for example Flat View) which is meaningful
+    /// only inside its owning surface. The compact numeric scope prevents two
+    /// independent arenas that both minted NodeId(1) from sharing a cache job.
+    SurfaceFile {
+        surface: u64,
+        node: NodeId,
+    },
     Platform(PlatformItemId),
 }
 
@@ -91,6 +98,13 @@ pub enum SubmitOutcome {
     AlreadyScheduled,
     ReplacedLowerPriority,
     QueueFull,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CancelOutcome {
+    NotFound,
+    RemovedPending,
+    SignaledActive,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -267,6 +281,27 @@ impl BoundedAssetLane {
         }
     }
 
+    /// Cancel one exact reservation. Pending work is removed immediately;
+    /// active work retains its slot until `complete` acknowledges the worker.
+    pub fn cancel(&mut self, request: &AssetWorkRequest) -> CancelOutcome {
+        if let Some(index) = self.pending.iter().position(|(_, queued)| {
+            queued.scope == request.scope
+                && queued.key == request.key
+                && queued.generation == request.generation
+        }) {
+            self.pending.remove(index);
+            return CancelOutcome::RemovedPending;
+        }
+        let reservation = (request.scope, request.key);
+        if let Some(active) = self.active.get(&reservation) {
+            if active.request.generation == request.generation {
+                active.cancel.store(true, Ordering::Relaxed);
+                return CancelOutcome::SignaledActive;
+            }
+        }
+        CancelOutcome::NotFound
+    }
+
     /// Navigation/refresh boundary. Pending work is dropped; active workers
     /// receive cancellation and retain their slot until they acknowledge via
     /// `complete`, preventing concurrency from exceeding the configured cap.
@@ -355,6 +390,10 @@ impl AssetWorkCoordinator {
 
     pub fn complete(&mut self, lane: AssetLane, request: &AssetWorkRequest) -> bool {
         self.lane_mut(lane).complete(request)
+    }
+
+    pub fn cancel(&mut self, lane: AssetLane, request: &AssetWorkRequest) -> CancelOutcome {
+        self.lane_mut(lane).cancel(request)
     }
 
     pub fn retain_scope_generation(&mut self, scope: AssetWorkScope, generation: u64) {
@@ -591,6 +630,27 @@ mod tests {
             lane.start_next().expect("other surface remains").request,
             other
         );
+    }
+
+    #[test]
+    fn exact_cancel_removes_pending_but_only_signals_active_work() {
+        let mut lane = BoundedAssetLane::new(1, 4);
+        let active = request(1, 1, AssetPriority::Visible);
+        let pending = request(2, 1, AssetPriority::Visible);
+        lane.submit(active);
+        lane.submit(pending);
+        let started = lane.start_next().expect("newest request starts");
+        let queued = if started.request == active {
+            pending
+        } else {
+            active
+        };
+        assert_eq!(lane.cancel(&queued), CancelOutcome::RemovedPending);
+        assert_eq!(lane.counts(), (1, 0));
+        assert_eq!(lane.cancel(&started.request), CancelOutcome::SignaledActive);
+        assert!(started.is_cancelled());
+        assert_eq!(lane.counts(), (1, 0));
+        assert!(lane.complete(&started.request));
     }
 
     #[test]

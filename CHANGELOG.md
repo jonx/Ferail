@@ -8,6 +8,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Thumbnail work is now bounded across the whole process.** List and grid
+  viewports share one priority scheduler instead of starting independent
+  batches in every window. Visible and selected images outrank overscan,
+  duplicate requests share one provider call, Windows Shell thumbnail work is
+  capped at four concurrent calls, and image construction/result application
+  is spread across frames. A late result is applied only when its original
+  surface generation and row identity still match.
+
 - **Tool results can open their location directly in a new tab.** Right-click
   one Disk Usage square, recursive Search result, or Duplicate member and
   choose Open in New Tab. A folder opens directly; a file opens its containing

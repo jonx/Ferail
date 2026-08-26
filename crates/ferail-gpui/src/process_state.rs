@@ -87,6 +87,10 @@ pub struct ProcessState {
     /// this process object contains compact identities and cancellation state.
     pub asset_work: Rc<RefCell<AssetWorkCoordinator>>,
 
+    /// Host-side payloads/subscribers for the compact asset scheduler. Paths,
+    /// pixels and GPUI handles live here, never in ferail-core or row models.
+    pub(crate) asset_dispatcher: Rc<RefCell<crate::asset_dispatcher::ThumbnailDispatcher>>,
+
     /// Monotonic process-local scope for tables/platform surfaces using the
     /// shared asset lanes. Kept separate from TabId because archive/tool
     /// surfaces also own rows and can request assets without being a tab.
@@ -281,6 +285,9 @@ impl ProcessState {
                     pending_capacity: 256,
                 },
             }))),
+            asset_dispatcher: Rc::new(RefCell::new(
+                crate::asset_dispatcher::ThumbnailDispatcher::new(),
+            )),
             next_asset_scope: Cell::new(1),
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
             watcher,
@@ -534,6 +541,7 @@ pub fn process_state(cx: &App) -> Rc<ProcessState> {
 /// them regardless — AROS is simply the one that checks.
 pub fn install(cx: &mut App, process: Rc<ProcessState>) {
     cx.set_global(ProcessStateGlobal(process));
+    crate::asset_dispatcher::start(cx);
     cx.on_app_quit(|cx| {
         // Quit observers run before teardown, so anything reading favorites
         // during shutdown must be registered before this one.

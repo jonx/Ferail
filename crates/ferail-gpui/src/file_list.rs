@@ -483,13 +483,6 @@ pub struct FileListDelegate {
     /// Done; Flat enables it immediately because its scan streams indefinitely.
     detail_ready: bool,
     detail_force: bool,
-    /// Thumbnail admission mirrors detail admission: one active viewport per
-    /// surface and one latest pending viewport. This prevents wheel/key scroll
-    /// bursts from spawning a train of stale batches on the executor.
-    thumbnail_in_flight: bool,
-    thumbnail_active: Option<(Range<usize>, u32)>,
-    thumbnail_pending: Option<(Range<usize>, u32)>,
-    thumbnail_cancel: Option<Arc<AtomicBool>>,
     /// Shared icon cache. Lookup-or-fetch via NSWorkspace; subsequent
     /// renders for the same kind are a HashMap hit. Wrapped in
     /// Rc<RefCell> so render_td's `&mut self` can borrow without
@@ -1142,10 +1135,6 @@ impl FileListDelegate {
             detail_revision: 0,
             detail_ready: false,
             detail_force: false,
-            thumbnail_in_flight: false,
-            thumbnail_active: None,
-            thumbnail_pending: None,
-            thumbnail_cancel: None,
             icons,
             thumbnails,
             tasks,
@@ -1366,7 +1355,6 @@ impl FileListDelegate {
             return;
         }
         self.detail_revision = self.detail_revision.wrapping_add(1);
-        self.cancel_thumbnail_warm();
         let (col, asc) = resolve_ant_sort(col, asc, !self.heats.is_empty());
         // Row order changes: the drag snapshot's visible-order paths
         // are stale (totals unchanged by a re-order, but cheap to
@@ -1476,7 +1464,6 @@ impl FileListDelegate {
             cancel.store(true, Ordering::Relaxed);
         }
         self.detail_revision = self.detail_revision.wrapping_add(1);
-        self.cancel_thumbnail_warm();
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
@@ -1514,7 +1501,6 @@ impl FileListDelegate {
             cancel.store(true, Ordering::Relaxed);
         }
         self.detail_revision = self.detail_revision.wrapping_add(1);
-        self.cancel_thumbnail_warm();
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
@@ -1676,20 +1662,6 @@ impl FileListDelegate {
         self.detail_force = false;
     }
 
-    fn cancel_thumbnail_warm(&mut self) {
-        if let Some(cancel) = &self.thumbnail_cancel {
-            cancel.store(true, Ordering::Relaxed);
-        }
-        // Do not advertise the slot as free until the worker acknowledges the
-        // token and retires itself. A shell provider call already in progress
-        // cannot be interrupted here; clearing `thumbnail_in_flight` early
-        // would let the replacement viewport overlap it. Forget the active
-        // range so even an identical row range after a sort/reload is queued
-        // against the new entry order.
-        self.thumbnail_active = None;
-        self.thumbnail_pending = None;
-    }
-
     /// Hydrate only the visible part of an ordinary or Flat surface. This
     /// keeps Format, Description, and quarantine badges fully functional while
     /// bounding file opens, memory, and UI apply work to the viewport.
@@ -1813,7 +1785,6 @@ impl FileListDelegate {
         }
         self.invalidate_drag_snapshot();
         self.detail_revision = self.detail_revision.wrapping_add(1);
-        self.cancel_thumbnail_warm();
         self.flat_filter_text.clear();
         self.flat_filter_text.push_str(text);
         let mut all = std::mem::take(&mut self.entries);
@@ -1850,7 +1821,6 @@ impl FileListDelegate {
             cancel.store(true, Ordering::Relaxed);
         }
         self.detail_revision = self.detail_revision.wrapping_add(1);
-        self.cancel_thumbnail_warm();
         self.detail_in_flight = false;
         self.detail_pending = None;
         self.detail_ready = false;
@@ -2038,6 +2008,21 @@ impl FileListDelegate {
         size_px: u32,
         cx: &mut Context<TableState<Self>>,
     ) {
+        self.warm_thumbnails_sized_for_target(
+            visible_range,
+            size_px,
+            crate::asset_dispatcher::ThumbnailTarget::Table(cx.entity().downgrade()),
+            cx,
+        );
+    }
+
+    pub(crate) fn warm_thumbnails_sized_for_target(
+        &mut self,
+        visible_range: Range<usize>,
+        size_px: u32,
+        target: crate::asset_dispatcher::ThumbnailTarget,
+        cx: &mut Context<TableState<Self>>,
+    ) {
         if !show_thumbnails(cx) {
             return;
         }
@@ -2049,37 +2034,13 @@ impl FileListDelegate {
         let scope = *self
             .asset_scope
             .get_or_insert_with(|| process.mint_asset_scope());
-        process
-            .asset_work
-            .borrow_mut()
-            .retain_scope_generation(scope, self.detail_revision);
-        let request = (visible_range.clone(), size_px);
-        if self.thumbnail_in_flight {
-            if self.thumbnail_active.as_ref() == Some(&request)
-                || self.thumbnail_pending.as_ref() == Some(&request)
-            {
-                return;
-            }
-            // Constant-space/latest-wins: keep only the newest viewport and
-            // ask the active loop to stop between provider calls.
-            self.thumbnail_pending = Some(request);
-            if let Some(cancel) = &self.thumbnail_cancel {
-                cancel.store(true, Ordering::Relaxed);
-            }
-            crate::obs::breadcrumb(format_args!(
-                "thumbnail viewport superseded size={size_px} rows={}",
-                visible_range.end.saturating_sub(visible_range.start)
-            ));
-            return;
-        }
         // A little overscan so a nudge of the wheel doesn't expose a
         // blank slot before its fetch is even scheduled.
         const OVERSCAN: usize = 8;
         let start = visible_range.start.saturating_sub(OVERSCAN);
         let end = (visible_range.end + OVERSCAN).min(self.entries.len());
-
-        // Visible thumbnailable rows that aren't cached or in flight.
-        let mut todo: Vec<PathBuf> = Vec::new();
+        let surface_local_identity = self.flat_paths.is_some();
+        let mut seeds = Vec::with_capacity(end.saturating_sub(start));
         {
             let cache = self.thumbnails.borrow();
             for row in start..end {
@@ -2092,119 +2053,63 @@ impl FileListDelegate {
                 let Some(path) = self.path_for_entry(entry.id) else {
                     continue;
                 };
-                if cache.needs_fetch(&path, size_px) {
-                    todo.push(path);
+                if cache.is_resolved(&path, size_px) {
+                    continue;
                 }
-            }
-        }
-        if todo.is_empty() {
-            return;
-        }
-        // Reserve the slots up front so overlapping scroll events don't
-        // queue the same path twice.
-        {
-            let mut cache = self.thumbnails.borrow_mut();
-            for path in &todo {
-                cache.mark_in_flight(path.clone(), size_px);
-            }
-        }
-        let reserved = todo.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        self.thumbnail_in_flight = true;
-        self.thumbnail_active = Some(request);
-        self.thumbnail_cancel = Some(cancel.clone());
-        crate::obs::breadcrumb(format_args!(
-            "thumbnail batch start size={size_px} requests={}",
-            todo.len()
-        ));
-
-        // Ambient task so a slow batch shows in the status bar / panel.
-        // Sub-perceptual batches finish inside SURFACE_DELAY and never
-        // flicker a row in. (docs/features/FILE_OPS.md)
-        let task_id = self.tasks.borrow_mut().begin(
-            TaskKind::ThumbnailPrefetch,
-            trn!(
-                "Loading {n} thumbnail\u{2026}",
-                "Loading {n} thumbnails\u{2026}",
-                todo.len()
-            )
-            .to_string(),
-            false,
-        );
-        let thumbnails = self.thumbnails.clone();
-        let tasks = self.tasks.clone();
-        cx.spawn(async move |table, cx| {
-            for path in todo {
-                if cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                // Quick Look runs on a worker thread; only Send data
-                // crosses the boundary (path in, RGBA bytes out). The
-                // `RenderImage` is built back on the UI thread below.
-                let fetch_path = path.clone();
-                let rgba = cx
-                    .background_executor()
-                    .spawn(async move {
-                        match crate::video_poster::fetch_content_thumbnail(&fetch_path, size_px) {
-                            crate::video_poster::Fetched::Done(r) => r,
-                            // Awaiting yields this pool thread; the decode
-                            // runs on the dedicated poster worker.
-                            crate::video_poster::Fetched::NeedsPoster => {
-                                crate::video_poster::fetch_poster(fetch_path, size_px).await
-                            }
-                        }
-                    })
-                    .await;
-                if table
-                    .update(cx, |_table, cx| {
-                        thumbnails.borrow_mut().insert(path, size_px, rgba);
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            // Release every reservation not retired by `insert`. Cancellation
-            // is retryable, never a negative-cache result.
-            thumbnails
-                .borrow_mut()
-                .cancel_in_flight(reserved.iter(), size_px);
-
-            let next = table
-                .update(cx, |state, cx| {
-                    let delegate = state.delegate_mut();
-                    let owns_worker = delegate
-                        .thumbnail_cancel
-                        .as_ref()
-                        .is_some_and(|current| Arc::ptr_eq(current, &cancel));
-                    if !owns_worker {
-                        return None;
-                    }
-                    delegate.thumbnail_cancel = None;
-                    delegate.thumbnail_in_flight = false;
-                    delegate.thumbnail_active = None;
-                    let next = delegate.thumbnail_pending.take();
-                    cx.notify();
-                    next
-                })
-                .ok()
-                .flatten();
-            tasks.borrow_mut().end(task_id);
-            crate::obs::breadcrumb(format_args!(
-                "thumbnail batch complete canceled={} next={}",
-                cancel.load(Ordering::Relaxed),
-                next.is_some()
-            ));
-            if let Some((range, next_size)) = next {
-                let _ = table.update(cx, |state, cx| {
-                    state
-                        .delegate_mut()
-                        .warm_thumbnails_sized(range, next_size, cx);
+                let priority = if self.selected_set.contains(&entry.id) {
+                    ferail_core::asset_work::AssetPriority::Selected
+                } else if visible_range.contains(&row) {
+                    ferail_core::asset_work::AssetPriority::Visible
+                } else {
+                    ferail_core::asset_work::AssetPriority::Overscan
+                };
+                seeds.push(crate::asset_dispatcher::ThumbnailSeed {
+                    row_ix: row,
+                    node: entry.id,
+                    path,
+                    revision: ferail_core::revision_cache::FileRevision {
+                        byte_len: entry.size,
+                        modified_ns: Some(i128::from(entry.mtime_unix) * 1_000_000_000),
+                    },
+                    size_px,
+                    priority,
+                    surface_local_identity,
                 });
             }
-        })
-        .detach();
+        }
+        if seeds.is_empty() {
+            return;
+        }
+        crate::obs::breadcrumb(format_args!(
+            "thumbnail viewport submit size={size_px} requests={}",
+            seeds.len()
+        ));
+        process.asset_dispatcher.borrow_mut().submit(
+            &mut process.asset_work.borrow_mut(),
+            &mut process.thumbnails.borrow_mut(),
+            crate::asset_dispatcher::ThumbnailSubscription {
+                table: cx.entity().downgrade(),
+                target,
+                scope,
+                generation: self.detail_revision,
+            },
+            seeds,
+        );
+    }
+
+    pub(crate) fn accepts_thumbnail_result(
+        &self,
+        scope: ferail_core::asset_work::AssetWorkScope,
+        generation: u64,
+        row_ix: usize,
+        node: NodeId,
+    ) -> bool {
+        self.asset_scope == Some(scope)
+            && self.detail_revision == generation
+            && self
+                .entries
+                .get(row_ix)
+                .is_some_and(|entry| entry.id == node)
     }
 }
 

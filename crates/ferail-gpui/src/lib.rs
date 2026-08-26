@@ -23,6 +23,7 @@ pub mod archive_convert;
 pub mod archive_create;
 #[cfg(test)]
 mod archive_tests;
+mod asset_dispatcher;
 pub mod assets;
 pub mod boot;
 pub mod bulk_rename;
