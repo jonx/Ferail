@@ -214,7 +214,13 @@ impl Shell {
         self.active_tab_mut().platform_root_activation_cancel = Some(cancel.clone());
         let shell = cx.weak_entity();
         let win = window.window_handle();
-        notify_shells(&self.process, cx);
+        // This method is entered from `Shell::update`, so notifying every
+        // registered shell here would try to update this same entity again.
+        // GPUI rejects that nested mutable lease (and the panic crosses the
+        // Windows callback boundary, where it must abort). Repaint the current
+        // shell directly; the completion path below runs from `App::update`
+        // and can safely fan the final state out to every window.
+        cx.notify();
 
         cx.spawn(async move |_this, cx| {
             let worker_id = id.clone();

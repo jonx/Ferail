@@ -8,6 +8,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Opening a stopped WSL distribution no longer crashes Ferail.** The
+  starting-state repaint now uses the `Shell` update already in progress
+  instead of trying to acquire the same GPUI entity a second time; the final
+  state is still propagated to every window after activation completes.
+
 - **Get Info dates can now be edited without leaving Ferail.** Creation,
   modification, and last-access rows open a validated local date/time editor;
   writes run off the UI thread and refresh the affected listing afterward.
