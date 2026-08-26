@@ -258,7 +258,20 @@ fallback). Remaining is the UX the system explorers have and we don't:
   **inline rename inside the popup** (name is read-only there; F2 still
   renames); **undo coverage** for attribute/permission/tag edits; combined
   **multi-item Get Info**; real Windows/Linux gather (unix `stat_info` already
-  yields perms/dates; NSURL/volume-format reads are macOS-only).
+  yields perms/dates; NSURL/volume-format reads are macOS-only). Filesystem
+  timestamp editing now ships for creation/modification/access on Windows and
+  modification/access on Unix; remaining timestamp parity is a native macOS
+  creation-time writer and an explicit policy for symlinks/reparse points.
+- **Embedded metadata editing (future, not part of filesystem dates).** Start
+  with a privacy-first **Remove location data** action for JPEG/TIFF, deleting
+  location from EXIF, XMP, and IPTC through an atomic same-directory rewrite
+  that never recompresses pixels; extend to HEIC and video location atoms only
+  with container-specific validation. Separately, expose common writable audio
+  tags (title, artist, album, genre, year, track/disc) through `lofty`, and a
+  conservative allow-list of Windows document properties only when the
+  handler's `IPropertyStore` is writable. Do not add arbitrary GPS-coordinate,
+  camera, lens, exposure, orientation, or video-metadata editing until their
+  lossless round-trip behavior is proven.
 - Preview-pane providers (Quick Look image/PDF/media, inline text + markdown,
   scroll-chaining, and now lofty-backed audio tags + cover art all ship — see
   [docs/features/MEDIA-TAGS.md](docs/features/MEDIA-TAGS.md)): audio

@@ -27,6 +27,12 @@ remain bounded by their latest-wins queues.
 - Toggle with `Cmd+P` / `Ctrl+P`.
 - Shows selected item name, kind, path, size, modified date, magic label,
   description, and quarantine/provenance when available.
+- Filesystem creation, modification, and last-access dates have an **Edit**
+  action where the host can write them. The editor accepts local
+  `YYYY-MM-DD HH:MM:SS`, rejects invalid/nonexistent daylight-saving times,
+  writes on the background executor, then reloads the listing and re-gathers
+  the inspector. Windows supports all three dates; Unix supports modification
+  and access while creation/birth time remains read-only.
 - Clickable Quick Look thumbnail opens the viewer window.
 - A drag grip under the thumbnail resizes the thumbnail box (120–600 DIPs);
   the height persists across restarts (`app_state::preview_thumb_height`, on
@@ -170,6 +176,21 @@ gpui-component wraps Markdown prose.
 - Paint draws placeholder, loading state, cached result, or error.
 - No provider reads file content on the UI thread.
 
+## Metadata Editing
+
+The timestamp editor changes filesystem facts only. It does not rewrite file
+contents or embedded media/document metadata. On Windows the writer opens the
+item with `FILE_WRITE_ATTRIBUTES` plus delete/read/write sharing and passes
+null pointers for the untouched timestamps to `SetFileTime`; this keeps the
+operation valid for directories and read-only files without toggling their
+attributes. Reparse-point timestamps remain read-only in the UI so a displayed
+link cannot silently update its target.
+
+Future embedded-metadata work is deliberately separate: location scrubbing,
+audio-tag editing, and writable document properties each need format-specific
+atomic replacement, cache invalidation, and privacy/error contracts. They are
+tracked in `TODO.md`, not implied by the filesystem-date editor.
+
 ## Mac Notes
 
 - Quick Look can provide rich previews, but it must be isolated from paint and
@@ -186,3 +207,5 @@ Tracked in [TODO.md](../../TODO.md):
 - Archive/package summary provider.
 - Per-provider cancellation tokens.
 - More explicit cloud-placeholder state before reads that may fault content in.
+- Embedded metadata editing: remove location data, edit common audio tags, and
+  write supported Windows document properties (see `TODO.md`).

@@ -1294,3 +1294,42 @@ Required real-Windows checks (not claimed from macOS):
      command must not re-enable background native-menu prefetch or alter the
      Ctrl/right-click native-shell path.
 ```
+
+### 2026-08-26 — editable filesystem dates in Get Info
+
+```text
+Date / machine: 2026-08-26, Windows development machine
+Implementation commit: 429a520
+
+Implemented:
+  - Created, Modified and Last opened rows in the preview/Get Info inspector
+    now expose a validated local YYYY-MM-DD HH:MM:SS editor;
+  - parsing uses Windows timezone conversion and rejects invalid or normalized
+    local times before any write;
+  - writes run on the existing background mutation path, refresh matching
+    tabs, and re-gather the open inspector;
+  - the Windows writer requests FILE_WRITE_ATTRIBUTES with normal sharing and
+    passes null pointers for timestamps not being changed, so directories and
+    read-only files work without losing attributes or adjacent dates;
+  - reparse-point rows stay read-only to avoid editing a target while showing
+    link metadata. Unix shares modification/access editing; creation remains
+    read-only outside Windows.
+
+Automated proof on Windows:
+  - cargo test -p ferail-fs-native stat_info --lib (3 passed);
+  - cargo check -p ferail-gpui;
+  - timestamp test covers modification/access, plus creation while the file is
+    read-only; local editor round-trip and invalid calendar values are covered.
+
+Manual acceptance still required:
+  1. Edit each date on a normal file and directory from both the preview pane
+     and standalone Get Info window; close/reopen and compare Explorer.
+  2. Repeat on a read-only file and confirm the read-only attribute survives.
+  3. Confirm editing one date leaves the other two unchanged, and invalid text
+     keeps the dialog open with an error.
+  4. Confirm a junction/reparse-point row has no Edit action and no operation
+     blocks paint on local, removable, network, or cloud-placeholder storage.
+
+Deferred by scope: embedded GPS removal, audio-tag writes, and writable
+document properties are recorded in TODO.md; none are implied by this change.
+```
