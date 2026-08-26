@@ -1864,6 +1864,7 @@ impl Shell {
                 ToolResultMode::Duplicates(m) => under(&m.root),
                 ToolResultMode::DiskUsage(m) => under(&m.root),
                 ToolResultMode::Archive(m) => under(&m.archive),
+                ToolResultMode::Verify(m) => under(&m.manifest),
             });
             if surface_hit {
                 dropped_archive |= tab
@@ -2322,6 +2323,41 @@ impl Shell {
             })
             .detach();
         }
+    }
+
+    pub(super) fn on_edit_text_file(
+        &mut self,
+        _: &EditTextFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let targets = self.action_entries_visible_order(cx);
+        let [(_, entry, path)] = targets.as_slice() else {
+            return;
+        };
+        if matches!(entry.kind, EntryKind::Directory) {
+            return;
+        }
+        let path = path.clone();
+        let window = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::platform_shell::edit_text_file(&path) })
+                .await;
+            if let Err(error) = result {
+                let _ = window.update(cx, |_, window, cx| {
+                    window.push_notification(
+                        gpui_component::notification::Notification::error(tr!(
+                            "Could not open text editor: {error}",
+                            error = error
+                        )),
+                        cx,
+                    );
+                });
+            }
+        })
+        .detach();
     }
 
     /// Warm the Open With cache for the row the user just selected /

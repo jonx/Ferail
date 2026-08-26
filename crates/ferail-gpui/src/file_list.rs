@@ -8,7 +8,7 @@
 //! rendered live from `mtime_unix` so its relative label keeps counting
 //! (pure arithmetic, bounded to visible rows — still nonblocking).
 
-use crate::text::{IconScale as _, TextScale as _, TruncateMiddle as _};
+use crate::text::{IconScale as _, TextScale as _, TruncateMiddle as _, elide_label};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -81,42 +81,6 @@ pub const GHOST_NAME_CAP: usize = 3;
 /// A native drag pasteboard ultimately needs one URL per item. Keep row
 /// painting bounded when a Flat-view selection contains millions of files.
 pub const MAX_EAGER_DRAG_ITEMS: usize = 10_000;
-
-/// Elide a label to an approximate character budget while preserving the
-/// parts people use to distinguish long paths. Moderately overlong labels
-/// keep their beginning and end; very long ones also retain a sample from
-/// the centre: `beginning…middle…end`.
-fn elide_label(text: &str, max_chars: usize) -> SharedString {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= max_chars || max_chars < 12 {
-        return SharedString::from(text.to_owned());
-    }
-
-    if chars.len() <= max_chars.saturating_mul(2) {
-        let content = max_chars.saturating_sub(1);
-        let start = content / 2;
-        let end = content - start;
-        return SharedString::from(format!(
-            "{}…{}",
-            chars[..start].iter().collect::<String>(),
-            chars[chars.len() - end..].iter().collect::<String>()
-        ));
-    }
-
-    let content = max_chars.saturating_sub(2);
-    let start = content / 3;
-    let middle = content / 3;
-    let end = content - start - middle;
-    let middle_start = chars.len() / 2 - middle / 2;
-    SharedString::from(format!(
-        "{}…{}…{}",
-        chars[..start].iter().collect::<String>(),
-        chars[middle_start..middle_start + middle]
-            .iter()
-            .collect::<String>(),
-        chars[chars.len() - end..].iter().collect::<String>()
-    ))
-}
 
 impl Render for DragBadge {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3250,14 +3214,14 @@ impl TableDelegate for FileListDelegate {
         use crate::shell::{
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
             CompressTarBz2, CompressTarGz, CompressTarXz, ConvertArchive, CopyPath,
-            DeleteImmediately, Duplicate, Extract, ExtractTo, GenerateSha256, GetInfo, MakeAlias,
-            MoveToTrash, NewArchive, OpenAsArchive, OpenInNewTab, OpenSelected, OpenTerminalHere,
-            OpenWithSlot0, OpenWithSlot1, OpenWithSlot2, OpenWithSlot3, OpenWithSlot4,
-            OpenWithSlot5, OpenWithSlot6, OpenWithSlot7, OpenWithSlot8, OpenWithSlot9,
-            OpenWithSlot10, OpenWithSlot11, QuickLook, RenameSelected, RevealInFinder,
-            ShowLockHolders, SlideshowFromHere, ToggleFavoriteForTarget, ToggleTagBlue,
-            ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple, ToggleTagRed,
-            ToggleTagYellow,
+            CreateChecksumFile, DeleteImmediately, Duplicate, EditTextFile, Extract, ExtractTo,
+            GenerateSha256, GetInfo, MakeAlias, MoveToTrash, NewArchive, OpenAsArchive,
+            OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
+            OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
+            OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
+            RenameSelected, RevealInFinder, ShowLockHolders, SlideshowFromHere,
+            ToggleFavoriteForTarget, ToggleTagBlue, ToggleTagGray, ToggleTagGreen, ToggleTagOrange,
+            ToggleTagPurple, ToggleTagRed, ToggleTagYellow, VerifyChecksums,
         };
         // Anchor keyboard-shortcut resolution to the shell's stable
         // dispatch path (carries SHELL_CONTEXT, always painted) so the
@@ -3330,6 +3294,27 @@ impl TableDelegate for FileListDelegate {
         let show_slideshow = Availability::When(avail_anchor_file).allows(t);
         let show_checksum =
             Availability::SingleOnly.allows(t) && Availability::When(avail_anchor_file).allows(t);
+        let show_verify = show_checksum
+            && self.entries.get(row_ix).is_some_and(|entry| {
+                let name = entry.name.to_ascii_lowercase();
+                name.ends_with(".sfv")
+                    || name.ends_with(".md5")
+                    || name.ends_with(".sha1")
+                    || name.ends_with(".sha224")
+                    || name.ends_with(".sha256")
+                    || name.ends_with(".sha384")
+                    || name.ends_with(".sha512")
+                    || matches!(
+                        name.as_str(),
+                        "md5sums"
+                            | "sha1sums"
+                            | "sha224sums"
+                            | "sha256sums"
+                            | "sha384sums"
+                            | "sha512sums"
+                    )
+                    || entry.display_magic.contains("checksum")
+            });
         let show_terminal = Availability::When(avail_anchor_dir).allows(t);
         let show_favorites = Availability::When(avail_anchor_dir).allows(t);
         // A folder seeds a tab directly. One file seeds its parent tab and is
@@ -3356,6 +3341,16 @@ impl TableDelegate for FileListDelegate {
         if show_new_tab {
             menu = menu.menu(tr!("Open in New Tab"), Box::new(OpenInNewTab));
         }
+        if show_single_only && Availability::When(avail_anchor_file).allows(t) {
+            let label = if cfg!(target_os = "macos") {
+                tr!("Edit in TextEdit")
+            } else if cfg!(windows) {
+                tr!("Edit in Notepad")
+            } else {
+                tr!("Edit in Text Editor")
+            };
+            menu = menu.menu(label, Box::new(EditTextFile));
+        }
         let mut menu = menu
             .separator()
             .menu(tr!("Get Info"), Box::new(GetInfo))
@@ -3379,6 +3374,10 @@ impl TableDelegate for FileListDelegate {
         if show_checksum {
             menu = menu.menu(tr!("Generate SHA-256…"), Box::new(GenerateSha256));
         }
+        if show_verify {
+            menu = menu.menu(tr!("Verify Checksums…"), Box::new(VerifyChecksums));
+        }
+        menu = menu.menu(tr!("Create Checksum File…"), Box::new(CreateChecksumFile));
         if crate::platform_shell::lock_diagnostics_available() {
             // Batch diagnostic over the whole resolved set: name the
             // processes holding these files open, with force-close
@@ -4299,7 +4298,7 @@ mod column_persist_tests {
 
 #[cfg(test)]
 mod label_elision_tests {
-    use super::elide_label;
+    use crate::text::elide_label;
 
     #[test]
     fn moderately_long_labels_keep_their_ends() {

@@ -154,6 +154,22 @@ pub fn open_with_default(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Open a file in the desktop's associated text editor. Linux has no one
+/// universal editor application, so the freedesktop association is the
+/// portable equivalent of TextEdit/Notepad.
+#[cfg(target_os = "linux")]
+pub fn edit_text_file(path: &Path) -> std::io::Result<()> {
+    spawn_detached(std::process::Command::new("xdg-open").arg(path))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn edit_text_file(_path: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "no text editor is available on this platform",
+    ))
+}
+
 /// Reveal a path in the user's file manager. Tries the cross-desktop D-Bus
 /// `org.freedesktop.FileManager1.ShowItems` (Nautilus/Dolphin/Nemo/Files all
 /// implement it, and it highlights the item in its parent), falling back to

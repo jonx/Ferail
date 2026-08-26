@@ -11,11 +11,12 @@ use crate::{
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
-        ClearRecents, CloseTab, CloseWindow, CopyPath, DeleteImmediately, EmptyTrash,
-        FindDuplicates, FindSimilarImages, FocusFilter, GenerateSha256, GoHome, GoToFolder,
-        MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
+        ClearRecents, CloseTab, CloseWindow, CopyPath, CreateChecksumFile, DeleteImmediately,
+        EmptyTrash, FindDuplicates, FindSimilarImages, FocusFilter, GenerateSha256, GoHome,
+        GoToFolder, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
         OpenDiskUsage, OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell,
         ShowDesktop, ToggleFavoriteForTarget, ToggleFlatView, ToggleHidden, TogglePreview,
+        VerifyChecksums,
     },
 };
 use ferail_core::commands::{CommandId, find};
@@ -690,6 +691,14 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                 MenuItem::action(
                     title("file.generate_sha256", "Generate SHA-256…"),
                     GenerateSha256,
+                ),
+                MenuItem::action(
+                    title("file.verify_checksums", "Verify Checksums…"),
+                    VerifyChecksums,
+                ),
+                MenuItem::action(
+                    title("file.create_checksum_file", "Create Checksum File…"),
+                    CreateChecksumFile,
                 ),
                 MenuItem::separator(),
                 // Favorites (docs/features/FAVORITES.md). The Cmd+D toggle

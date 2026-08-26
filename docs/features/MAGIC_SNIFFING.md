@@ -14,7 +14,7 @@ Implemented:
 - First-4-KB bounded header reads for the main detector.
 - A ZIP-family tail read, also bounded to 4 KB, for central-directory facts.
 - Structured parsers for executables, ZIP/Office/JAR/APK, images, audio, video,
-  text/scripts, and signature-table formats.
+  text/scripts, NFO/checksum sidecars, and signature-table formats.
 - `MagicInfo::description()` for the Description column.
 - `display_magic` and `display_description` on `FileEntry`.
 - Format/Description columns, sorting, icon tinting, search filtering, mismatch
@@ -38,6 +38,11 @@ The detector reads a bounded prefix into memory and dispatches in this order:
 6. Fixed signature table.
 7. Text/script heuristics.
 8. Binary/unknown fallback.
+
+Within the text stage, content-first sidecar recognition runs before generic
+UTF-16, XML and plain-text returns. It distinguishes scene/Kodi/MsInfo NFO,
+SFV and common digest lists. The shared decoder handles UTF-8/UTF-16 and uses a
+conservative CP437-art score before retaining the ordinary Latin-1 fallback.
 
 For ZIP-family formats, `detect_magic_info` performs a second bounded tail read
 when possible. That lets the detector refine generic ZIP into Office/JAR/APK

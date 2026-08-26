@@ -1,6 +1,7 @@
 # Tool Result Surfaces
 
-Status: shipped for Search, Duplicate Finder, and docked Disk Usage.
+Status: shipped for Search, Duplicate Finder, docked Disk Usage, Archive and
+checksum Verify.
 
 Tool result surfaces are tab-local tools that temporarily replace the normal
 directory listing while keeping the tab rooted at a real folder. They are the
@@ -49,8 +50,12 @@ constructing a fresh scan; the moved view receives a host-context change event.
   virtualized card panel.
 - Disk Usage: docking the treemap/top-files view into the active tab, with
   Open in Window and Dock in Tab host moves.
+- Archive: an editable archive workbench hosted by the tab.
+- Verify: a virtualized per-manifest status report with coalesced progress,
+  cancellation, problem filtering and explicit mismatch/missing/unsafe/change
+  outcomes.
 
-All three are represented by `Tab::tool_result`, whose variants live in
+All are represented by `Tab::tool_result`, whose variants live in
 `crates/ferail-gpui/src/shell/tab.rs`.
 
 ## Architecture
@@ -60,6 +65,8 @@ All three are represented by `Tab::tool_result`, whose variants live in
 - `Search(SearchMode)`
 - `Duplicates(DupeViewMode)`
 - `DiskUsage(DiskUsageMode)`
+- `Archive(ArchiveMode)`
+- `Verify(VerifyMode)`
 - `ToolHostContext` / `ToolHostEvent`
 
 This avoids forcing unrelated workers through a trait abstraction. Search and
@@ -106,3 +113,4 @@ its host element with `on_prepaint` and sizes the treemap from that container.
 - Let Search and Duplicate Finder expose richer tool-specific filters inside
   their result bodies.
 - Consider saved tool-result identities for Smart Folders / Saved Searches.
+- Let Verify reveal rows, copy/export failures and optionally enumerate extras.

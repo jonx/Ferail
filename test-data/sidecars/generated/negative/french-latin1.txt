@@ -1,0 +1,3 @@
+ÉTÉ À PARIS - ÇA RESTE DE LA PROSE.
+ÀÉÈÇ ÀÉÈÇ ne dessinent pas un cadre, même répétés.
+Une détection CP437 ne doit pas transformer ce texte en art ANSI.

@@ -111,6 +111,11 @@ pub enum MagicType {
     Json,
     Xml,
     Html,
+    NfoScene,
+    NfoKodi,
+    NfoMsInfo,
+    ChecksumSfv,
+    ChecksumList,
     Sqlite,
     // Executables — Windows
     ExeWindows,
@@ -232,6 +237,11 @@ impl MagicType {
             MagicType::Json => "JSON",
             MagicType::Xml => "XML",
             MagicType::Html => "HTML document",
+            MagicType::NfoScene => "Scene NFO",
+            MagicType::NfoKodi => "Kodi NFO",
+            MagicType::NfoMsInfo => "System Information NFO",
+            MagicType::ChecksumSfv => "SFV checksum list",
+            MagicType::ChecksumList => "Checksum list",
             MagicType::Sqlite => "SQLite database",
 
             // Executables — keep "executable" in the string so
@@ -418,6 +428,10 @@ pub struct MagicInfo {
 
     // Script
     pub interpreter: Option<&'static str>,
+
+    // Text sidecars
+    pub text_encoding: Option<&'static str>,
+    pub checksum_algorithm: Option<&'static str>,
 
     // AmigaOS-family facts (see `magic::amiga`)
     /// Number of hunks in an AmigaOS `HUNK_HEADER` binary — the one cheap
@@ -817,6 +831,21 @@ impl MagicInfo {
             MagicType::Json => parts.push("JSON data".into()),
             MagicType::Xml => parts.push("XML document".into()),
             MagicType::Html => parts.push("HTML document".into()),
+            MagicType::NfoScene => {
+                parts.push("Scene NFO".into());
+                if let Some(encoding) = self.text_encoding {
+                    parts.push(encoding.into());
+                }
+                parts.push("text art".into());
+            }
+            MagicType::NfoKodi => parts.push("Kodi metadata".into()),
+            MagicType::NfoMsInfo => parts.push("Microsoft System Information".into()),
+            MagicType::ChecksumSfv | MagicType::ChecksumList => {
+                parts.push("Checksum manifest".into());
+                if let Some(algorithm) = self.checksum_algorithm {
+                    parts.push(algorithm.into());
+                }
+            }
             MagicType::Svg => parts.push("XML / SVG".into()),
             MagicType::TextIni => parts.push("INI configuration".into()),
             MagicType::TextReg => parts.push("Windows Registry export".into()),

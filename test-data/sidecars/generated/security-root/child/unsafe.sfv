@@ -1,0 +1,7 @@
+safe.bin 4FCF3C0A
+../outside-secret.txt 00000000
+..\outside-secret.txt 00000000
+/etc/passwd 00000000
+C:\Windows\win.ini 00000000
+\\server\share\file 00000000
+\\?\C:\device-path 00000000

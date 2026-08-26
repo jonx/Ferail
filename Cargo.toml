@@ -59,6 +59,12 @@ blake3      = "1"
 # User-facing file verification (docs/features/CHECKSUMS.md). The worker
 # feeds this incrementally, so even multi-gigabyte files stay bounded-memory.
 sha2        = "0.10"
+# Sidecar manifest interoperability (docs/features/SIDECARS.md). CRC32 is the
+# SFV format; MD5/SHA-1 are verification-only legacy formats and are labelled
+# weak in the UI. All implementations are pure Rust and stream incrementally.
+crc32fast   = "1"
+md-5        = "0.10"
+sha1        = "0.10"
 
 # Bulk-rename pattern rules (docs/features/BULK_RENAME.md): user-supplied
 # find/replace patterns with $1..$9 capture refs. MIT/Apache-2.0 — clean

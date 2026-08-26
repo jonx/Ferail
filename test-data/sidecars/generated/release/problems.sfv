@@ -1,0 +1,3 @@
+alpha.bin DEADBEEF
+missing.bin CAFEBABE
+../outside.bin BAD0C0DE

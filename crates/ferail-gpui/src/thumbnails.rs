@@ -183,6 +183,14 @@ impl ThumbnailCache {
             .is_some_and(|sizes| sizes.contains_key(&size_px))
     }
 
+    /// Drop completed image tiers beneath an explicitly refreshed directory.
+    /// In-flight reservations are left intact so their dispatcher contract is
+    /// not broken. The cache is globally capped at 512 `(path, size)` keys.
+    pub fn invalidate_ready_under(&mut self, root: &Path) {
+        self.ready.retain(|path, _| !path.starts_with(root));
+        self.order.retain(|(path, _)| !path.starts_with(root));
+    }
+
     /// Mark a fetch as started so concurrent warming passes don't
     /// double-request the same `(path, size)`.
     pub fn mark_in_flight(&mut self, path: PathBuf, size_px: u32) {
@@ -306,5 +314,20 @@ mod tests {
         assert!(!c.needs_fetch(&p, 128));
         c.cancel_in_flight([&p], 128);
         assert!(c.needs_fetch(&p, 128));
+    }
+
+    #[test]
+    fn directory_refresh_invalidates_only_ready_thumbnails_under_root() {
+        let root = Path::new("/root/folder");
+        let inside = root.join("inside.png");
+        let outside = PathBuf::from("/else/outside.png");
+        let mut cache = ThumbnailCache::new();
+        cache.insert(inside.clone(), 128, pixel());
+        cache.insert(outside.clone(), 128, pixel());
+
+        cache.invalidate_ready_under(root);
+
+        assert!(cache.get(&inside, 128).is_none());
+        assert!(cache.get(&outside, 128).is_some());
     }
 }

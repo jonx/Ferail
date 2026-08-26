@@ -1,0 +1,3 @@
+# Fixture bytes, encodings and line endings are part of the tests. Never let
+# checkout settings rewrite CRLF, CP437, UTF-16 or manifest payloads.
+generated/** -text -diff

@@ -302,6 +302,23 @@ pub fn open_with_default(_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Open one file specifically in TextEdit. This is an explicit editing verb,
+/// distinct from `open_with_default` (which may choose a viewer or Ferail).
+#[cfg(target_os = "macos")]
+pub fn edit_text_file(path: &std::path::Path) -> std::io::Result<()> {
+    let mut cmd = std::process::Command::new("/usr/bin/open");
+    cmd.arg("-a").arg("TextEdit").arg(path);
+    spawn_and_reap(&mut cmd)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn edit_text_file(_path: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "TextEdit is unavailable on this platform",
+    ))
+}
+
 /// Open Finder with `path` selected. macOS: shells out to `open -R`.
 /// Non-macOS: no-op.
 #[cfg(target_os = "macos")]

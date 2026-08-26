@@ -45,6 +45,7 @@ use crate::fs_watcher::FsWatcher;
 use crate::icons::IconCache;
 use crate::preview::PreviewCache;
 use crate::shell::{ClosedTab, Shell, UndoOp};
+use crate::sidecar_preview::FolderSidecarCache;
 use crate::tasks::TaskRegistry;
 use crate::text_preview::TextPreviewCache;
 
@@ -232,6 +233,10 @@ pub struct ProcessState {
     /// files render their content instead of a thumbnail.
     pub text_preview_cache: RefCell<TextPreviewCache>,
 
+    /// Immediate NFO/checksum sidecars for recently previewed folders. Paths
+    /// and hints are memory-only and evicted with the small preview cache.
+    pub folder_sidecar_cache: RefCell<FolderSidecarCache>,
+
     /// Mounted volumes. Refreshed lazily today; `RefCell` so a future
     /// Disk Arbitration listener can refresh it from any window.
     pub volumes: RefCell<Vec<VolumeInfo>>,
@@ -393,6 +398,7 @@ impl ProcessState {
             recents_section_collapsed: Cell::new(false),
             preview_cache: RefCell::new(PreviewCache::new()),
             text_preview_cache: RefCell::new(TextPreviewCache::new()),
+            folder_sidecar_cache: RefCell::new(FolderSidecarCache::new()),
             // Seeded EMPTY and filled asynchronously (start_volume_watch's
             // initial pass / fill_volumes_once): list_volumes touches every
             // drive root, and on Windows a dead mapped network drive makes

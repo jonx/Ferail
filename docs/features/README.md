@@ -18,7 +18,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | --- | --- | --- |
 | [ANT_TRAIL.md](ANT_TRAIL.md) | Shipped with follow-ups | Folder visit counts, sidebar heat, recents hydration, and DB persistence ship; prediction and decay remain open. |
 | [BULK_RENAME.md](BULK_RENAME.md) | Shipped with follow-ups | Pattern-rule bulk rename modal: literal/regex find-replace, case transforms, {name}/{ext}/{n}/{date} template, live preview, chain-aware apply, and batch undo ship; dimensions token, presets, and a keybinding remain open. |
-| [CHECKSUMS.md](CHECKSUMS.md) | Shipped | Streaming, cancellable SHA-256 generation with robust clipboard import, editable expected checksum, and an explicit match/mismatch result. |
+| [CHECKSUMS.md](CHECKSUMS.md) | Shipped with follow-ups | Streaming single-file SHA-256 comparison plus safe multi-file SFV/checksum verification and atomic SFV/SHA256SUMS generation ship; compact million-entry reports remain open. |
 | [CONTEXT_MENU.md](CONTEXT_MENU.md) | Shipped with follow-ups | Mac-native context menus, Open With, Services, Share, tags, Quick Look, Duplicate, Compress, and Trash ship; compact tag row and async Open With prewarm remain open. |
 | [DISK_USAGE.md](DISK_USAGE.md) | Shipped with follow-ups | Disk Usage, native batched APFS reads, bounded directory parallelism, scan-local memory, treemap/top list and partial-coverage reporting ship; APFS clone-aware sizing and the Windows MFT backend remain open. |
 | [DOCK.md](DOCK.md) | Shipped with follow-ups (macOS) | Dock the whole window to the left or right screen edge as an auto-hiding, always-on-top drawer revealed by an edge-slam, with a thin grab handle; core slide/float/all-Spaces ship. Persistence/auto-restore, borderless drawer chrome, and multi-display polish remain open. |
@@ -41,8 +41,10 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [PREVIEW.md](PREVIEW.md) | Shipped with follow-ups | Info pane, Quick Look thumbnails, inline text/Markdown/code preview, caches, scroll chaining, and viewer handoff ship; audio/archive providers and true cancellation remain open. |
 | [SCREENSHOTS.md](SCREENSHOTS.md) | Shipped with follow-ups | Headless screenshot CLI and simulated UI states ship; deterministic fixture coverage and a few deferred flags remain open. |
 | [SEARCH.md](SEARCH.md) | Shipped with follow-ups | In-folder filter, recursive walker, Spotlight/global search, streaming results, cancellation, and task integration ship; filters/operators and Linux/Windows indexers remain open. |
+| [SIDECARS.md](SIDECARS.md) | Shipped with follow-ups | Content-first NFO/DIZ recognition, CP437/ANSI/Kodi preview, safe SFV/checksum verification and generation, and a memory-only folder sidecar card ship; compact million-entry parsing/results and richer report actions remain. |
 | [STATUS_PROGRESS.md](STATUS_PROGRESS.md) | Shipped with follow-ups | Task registry, status strip, task popover, cancellation flags, recent history, and screenshot simulation ship; completion notifications and accessibility announcements remain open. |
 | [STREAMING_ENUMERATION.md](STREAMING_ENUMERATION.md) | Shipped with follow-ups | Directory enumeration is worker-driven, batched, cancellable, and notification-based; slow-path/stale-result tests and partial-error UI remain open. |
+| [TARGET_PANEL.md](TARGET_PANEL.md) | Future | Design note only: a pinned, frozen second listing ("Pick as Target") that acts as source or destination for file operations, and the batched-transfer queue it enables. Nothing implemented. |
 | [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md) | Future | Debug-overlay design remains unimplemented beyond screenshot simulation hooks. |
 | [THEMES.md](THEMES.md) | Planned (Phase 0 shipped) | User-facing theming plan: the selection-accent override + color picker ship; bundled themes, a theme picker, a drop-in user themes folder, and a generalized override layer are scoped but unbuilt. |
 | [TOOL_RESULTS.md](TOOL_RESULTS.md) | Shipped with follow-ups | Shared tab-local result surface for Search, Duplicate Finder, and docked Disk Usage ships; pop-out/state migration remains open. |
@@ -83,6 +85,9 @@ keep the UI off the I/O path.
   full-hash stages).
 - [CHECKSUMS.md](CHECKSUMS.md) — streaming SHA-256 generation and optional
   comparison with a checksum copied from a trusted source.
+- [SIDECARS.md](SIDECARS.md) — NFO/DIZ recognition and preview, safe
+  multi-file SFV/checksum verification and generation, and release-folder
+  awareness.
 - [SEARCH.md](SEARCH.md) — file search in tiers: in-directory filter, recursive
   subtree walk, and OS-index-backed global search (Spotlight / MFT / Tracker).
 - [FLAT_VIEW.md](FLAT_VIEW.md) — an uncapped recursive list with a relative
@@ -107,6 +112,9 @@ keep the UI off the I/O path.
 - [PREVIEW.md](PREVIEW.md) — preview pane with async text/image rendering.
 - [TOOL_RESULTS.md](TOOL_RESULTS.md) — shared tab-local result surfaces for
   Search, Duplicate Finder, and docked Disk Usage.
+- [TARGET_PANEL.md](TARGET_PANEL.md) — "Pick as Target": a pinned, frozen
+  second listing used as a source or destination for file operations, and the
+  batched-transfer queue it makes possible. Design note only.
 - [VIEWER.md](VIEWER.md) — viewer window: big preview, slideshow, sticky
   zoom across entries.
 - [VIDEO-MPV.md](VIDEO-MPV.md) — replacing the mpv video backend with libmpv,

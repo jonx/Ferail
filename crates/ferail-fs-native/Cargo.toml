@@ -19,6 +19,10 @@ ferail-disk-usage.workspace = true
 ferail-archive.workspace = true
 xxhash-rust.workspace = true
 blake3.workspace = true
+crc32fast.workspace = true
+md-5.workspace = true
+sha1.workspace = true
+sha2.workspace = true
 # Similar-image analysis decodes locally and keeps every derived value in
 # memory only. Keep the codec set explicit: no network/native service and no
 # persisted thumbnails or perceptual hashes.

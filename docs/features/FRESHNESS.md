@@ -87,6 +87,13 @@ how long that can hide a stale size:
   its own load; `finish_directory_load_in_tab` consumes the flag and passes it
   to `folder_sizes::start(.., force)`. A Refresh superseded before it finishes
   is dropped by the generation guard, and the superseding load resets the flag.
+  The same gesture also invalidates completed content previews, decoded text,
+  immediate-folder sidecar scans and thumbnail tiers beneath the refreshed
+  directory. These process-memory caches are strictly capped (16 paths for
+  each preview/sidecar cache and 512 thumbnail tiers), so invalidation is
+  independent of whether the directory contains ten rows or ten million.
+  Entries belonging to other directories remain warm; in-flight work keeps its
+  scheduler reservation rather than being duplicated.
 
 - **Activation re-seed.** When the window returns from the background we re-run
   the pass, but **cache-first** (`restart_folder_size_passes(force = false)`),

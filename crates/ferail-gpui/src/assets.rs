@@ -172,6 +172,8 @@ mod tests {
             "icons/folder-open.svg",
             "icons/copy.svg",
             "icons/network.svg",
+            "icons/eye.svg",
+            "icons/eye-off.svg",
             // Status / adornments
             "icons/circle-x.svg",
             "icons/circle-help.svg",

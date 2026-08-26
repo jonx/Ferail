@@ -27,6 +27,7 @@ mod audio;
 mod exe;
 mod image;
 mod ole;
+mod sidecar;
 mod text;
 pub mod types;
 mod video;
@@ -42,7 +43,7 @@ pub use types::{CpuArch, ElfOs, MagicInfo, MagicType, PeSubsystem};
 /// the current detector. Without the stamp, a label cached by an older
 /// build shadows the better answer forever — cache rows only invalidate
 /// on file mtime, and files don't change when Ferail does.
-pub const MAGIC_REVISION: u32 = 2;
+pub const MAGIC_REVISION: u32 = 3;
 
 const HEADER_BYTES: usize = 4096;
 
@@ -243,12 +244,17 @@ pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo {
         return MagicInfo::new(mt);
     }
 
-    // 8. Text / script heuristic (shebang, UTF-16, XML/HTML/JSON/INI/...)
+    // 8. Content-first sidecars, before generic UTF-16/XML/plain-text returns.
+    if let Some(info) = sidecar::sniff(buf) {
+        return info;
+    }
+
+    // 9. Text / script heuristic (shebang, UTF-16, XML/HTML/JSON/INI/...)
     if let Some(info) = text::sniff(buf) {
         return info;
     }
 
-    // 9. Binary fallback.
+    // 10. Binary fallback.
     let sample = &buf[..buf.len().min(512)];
     let printable = sample
         .iter()

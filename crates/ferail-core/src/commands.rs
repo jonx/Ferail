@@ -293,6 +293,18 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::File,
         shortcuts: &[],
     },
+    CommandSpec {
+        id: CommandId("file.verify_checksums"),
+        title: msgid!("Verify Checksums…"),
+        category: Category::File,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("file.create_checksum_file"),
+        title: msgid!("Create Checksum File…"),
+        category: Category::File,
+        shortcuts: &[],
+    },
     // Copy the whole displayed list (folder contents, duplicate-finder
     // groups, or search results) as newline-joined paths. No default
     // shortcut — reached via the toolbar menu and command palette.

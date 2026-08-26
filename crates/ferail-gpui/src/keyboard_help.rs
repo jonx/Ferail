@@ -35,6 +35,8 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "file.move_to_trash" => Box::new(MoveToTrash),
         "file.copy_path" => Box::new(CopyPath),
         "file.generate_sha256" => Box::new(GenerateSha256),
+        "file.verify_checksums" => Box::new(VerifyChecksums),
+        "file.create_checksum_file" => Box::new(CreateChecksumFile),
         "file.copy_file_list" => Box::new(CopyFileList),
         "file.reveal_in_finder" => Box::new(RevealInFinder),
         "file.refresh" => Box::new(Refresh),

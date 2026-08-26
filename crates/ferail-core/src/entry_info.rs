@@ -111,6 +111,20 @@ impl InfoSection {
         }
         self
     }
+
+    /// Push a filesystem-path row only when `value` is non-empty. Keeping the
+    /// semantic distinction lets compact inspector UIs elide paths without
+    /// applying the same treatment to ordinary prose or metadata.
+    pub fn path_if(mut self, label: impl Into<String>, value: impl Into<String>) -> Self {
+        let value = value.into();
+        if !value.is_empty() {
+            self.rows.push(InfoRow {
+                label: label.into(),
+                value: InfoValue::Path(value),
+            });
+        }
+        self
+    }
 }
 
 /// One labelled row.
@@ -127,6 +141,9 @@ pub struct InfoRow {
 pub enum InfoValue {
     /// Plain, already-formatted, read-only text.
     Text(String),
+    /// A display-form filesystem path. Renderers preserve its beginning,
+    /// middle and end when horizontal space is limited.
+    Path(String),
     /// A boolean attribute the user can toggle (Locked, Invisible, …).
     Toggle { on: bool, attr: Attr },
     /// The editable display name (rename).
@@ -364,5 +381,18 @@ mod tests {
         };
         assert_eq!(info.toggle(Attr::Locked), Some(true));
         assert_eq!(info.toggle(Attr::Invisible), None);
+    }
+
+    #[test]
+    fn path_rows_keep_their_semantic_value() {
+        let section = InfoSection::new("General").path_if("Where", "/very/long/path/file.nfo");
+        assert!(matches!(
+            &section.rows[0].value,
+            InfoValue::Path(path) if path == "/very/long/path/file.nfo"
+        ));
+        assert!(InfoSection::new("General")
+            .path_if("Where", "")
+            .rows
+            .is_empty());
     }
 }

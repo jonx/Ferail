@@ -14,6 +14,8 @@ Live providers:
 - Quick Look thumbnails for images, PDFs, videos, and other renderable file
   types.
 - Inline text, Markdown, and syntax-highlighted source preview.
+- CP437/ANSI scene NFO and structured Kodi NFO preview.
+- Memory-only folder sidecar cards for NFO and checksum manifests.
 - Quarantine/provenance details with clear-quarantine action.
 
 Remaining providers are tracked in [TODO.md](../../TODO.md): audio waveforms,
@@ -27,6 +29,9 @@ remain bounded by their latest-wins queues.
 - Toggle with `Cmd+P` / `Ctrl+P`.
 - Shows selected item name, kind, path, size, modified date, magic label,
   description, and quarantine/provenance when available.
+- Filesystem paths in the embedded Get Info sections are constrained to the
+  pane and use the shared `beginning…middle…end` elision for very long values;
+  hovering reveals the complete path.
 - Filesystem creation, modification, and last-access dates have an **Edit**
   action where the host can write them. The editor accepts local
   `YYYY-MM-DD HH:MM:SS`, rejects invalid/nonexistent daylight-saving times,
@@ -38,9 +43,16 @@ remain bounded by their latest-wins queues.
   the height persists across restarts (`app_state::preview_thumb_height`, on
   the same debounced save as the splitter widths).
 - Inline text/code preview appears before the detailed metadata for text-like
-  files. Text is detected by content, not extension: bounded read, NUL-byte
-  reject, UTF-8 decode with a Latin-1 fallback for legacy single-byte text
-  (Amiga/DOS-era readmes, scene .nfo files) gated on a printable-ratio check.
+  files. Text is detected by content, not extension: a bounded shared decoder
+  handles BOM UTF-8/UTF-16, strict UTF-8, confident CP437 artwork, then a
+  printable-ratio-gated Latin-1 fallback. Scene NFO cursor layout and safe SGR
+  colours are rendered through a bounded inert ANSI canvas, with a terminal
+  font chosen for connected CP437 box/block glyphs; Kodi NFO shows a readable
+  local summary and its source without fetching scraper URLs.
+- Selecting a folder schedules one bounded background discovery of immediate
+  NFO/checksum candidates. A small **Sidecar files** card can preview an NFO
+  without changing folder selection or open a manifest Verify surface. The
+  cache is memory-only and stores no sidecar body or hash.
 - With nothing selected and the tab parked at a volume's mount root — where a
   sidebar volume click lands — the pane previews the volume itself: name plus
   the Get Info volume section (capacity, available, used, format, a read-only
@@ -63,6 +75,7 @@ Paint reads only:
 - the selected `FileEntry`,
 - `PreviewCache`,
 - `TextPreviewCache`,
+- `FolderSidecarCache`,
 - cached quarantine and magic metadata.
 
 Provider results are path-keyed and never mutate table rows or geometry. A

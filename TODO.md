@@ -55,6 +55,14 @@ relative to the daily value. Ordered by bang-for-buck.
   self-contained modal over the selection with literal + regex find/replace,
   sequence numbering, case transforms, and a live before→after preview
   (docs/features/BULK_RENAME.md).
+- ✅ **NFO, SFV and checksum sidecars** — the primary vertical slice ships in
+  source: content-first recognition, bounded CP437/ANSI/Kodi preview, safe
+  cancellable verification, atomic SFV/SHA256SUMS generation and the
+  memory-only folder card. Follow-ups are tracked in
+  [docs/features/SIDECARS.md](docs/features/SIDECARS.md): stream/compact the
+  million-entry parser/report store, add reveal/copy/extras actions, SAUCE and
+  styled ANSI colours, then richer release completeness. Sidecar contents,
+  names, hashes and reports remain forbidden from persistence/diagnostics.
 - **Smart Folders / Saved Searches.** Wire the reserved
   `FavoriteTarget::SavedSearch` (favorites.rs) into a real feature: pin a search
   as a favorite that re-runs live on click — Spotlight-backed where available,
@@ -184,6 +192,18 @@ relative to the daily value. Ordered by bang-for-buck.
 
 ## File Ops, Trash & Drag
 
+- **Target panel ("Pick as Target") + batched transfers.** A pinned, *frozen*
+  second listing on the right: right-click a folder anywhere, pick it as the
+  target, and it stays put as a source/destination until replaced or closed —
+  no navigation, no spring-load, drops onto its folder rows allowed. It reuses
+  the existing table + `FileListDelegate` (already multi-surface via
+  `asset_scope`); the one coupling to break is that context-menu actions
+  resolve against the active tab, which funnels through `Shell::resolve_targets`
+  (27 `context_row` sites, three real functions). Phase 2 stages transfers into
+  a reviewable queue applied on commit — a batch, explicitly not a transaction,
+  re-validated at commit time. Design: [docs/features/TARGET_PANEL.md](docs/features/TARGET_PANEL.md).
+  Supersedes a dual-pane split for the "reorganize files across folders" use
+  case; the split stays optional and composes with it later.
 - Drag follow-ups: **auto-scroll near the list edges** while dragging and
   **drops on favorite rows** have shipped. Remaining drag work needs
   interactive testing — not headlessly drivable.

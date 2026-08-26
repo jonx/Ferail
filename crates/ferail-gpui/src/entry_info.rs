@@ -13,7 +13,7 @@
 //! overlay-click / focus-trap come for free (same primitive as the About
 //! box). Editing is layered on top in a later pass; today the panel reads.
 
-use crate::text::TextScale as _;
+use crate::text::{TextScale as _, TruncateMiddle as _, elide_label};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -309,7 +309,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     if let Some(app) = default_app {
         general = general.text_if(tr!("Application").to_string(), app);
     }
-    general = general.text_if(
+    general = general.path_if(
         tr!("Where").to_string(),
         ferail_fs_native::paths::display_path(path),
     );
@@ -457,7 +457,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         if v.read_only {
             volume = volume.text_if(tr!("Access").to_string(), tr!("Read-only").to_string());
         }
-        volume = volume.text_if(tr!("Mount point").to_string(), v.path.display().to_string());
+        volume = volume.path_if(tr!("Mount point").to_string(), v.path.display().to_string());
         if let Some(d) = v.bsd_device.clone() {
             volume = volume.text_if(tr!("Device").to_string(), d);
         }
@@ -525,7 +525,7 @@ fn append_windows_details(
         let mut section = InfoSection::new(tr!("Shortcut").to_string());
         match &shortcut.target {
             Ok(ShortcutTarget::FileSystem { path, .. }) => {
-                section = section.text_if(
+                section = section.path_if(
                     tr!("Target").to_string(),
                     ferail_fs_native::paths::display_path(path),
                 );
@@ -555,7 +555,7 @@ fn append_windows_details(
             );
         }
         if let Some(directory) = &shortcut.working_directory {
-            section = section.text_if(
+            section = section.path_if(
                 tr!("Start in").to_string(),
                 ferail_fs_native::paths::display_path(directory),
             );
@@ -1207,6 +1207,8 @@ impl EntryInfoView {
         cx: &mut Context<Self>,
     ) -> Div {
         h_flex()
+            .w_full()
+            .min_w_0()
             .gap_2()
             .items_start()
             .child(
@@ -1221,6 +1223,7 @@ impl EntryInfoView {
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
                     .text_scale_xs()
                     .child(self.render_value(value, ix, cx)),
             )
@@ -1229,6 +1232,17 @@ impl EntryInfoView {
     fn render_value(&self, value: &InfoValue, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         match value {
             InfoValue::Text(s) | InfoValue::Name(s) => div().child(s.clone()).into_any_element(),
+            InfoValue::Path(path) => {
+                let full: SharedString = path.clone().into();
+                div()
+                    .id(ElementId::Name(format!("entry-info-path-{ix}").into()))
+                    .w_full()
+                    .min_w_0()
+                    .truncate_middle()
+                    .child(elide_label(path, 72))
+                    .tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx))
+                    .into_any_element()
+            }
             InfoValue::Timestamp {
                 unix,
                 display,

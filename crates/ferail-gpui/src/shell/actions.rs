@@ -7,6 +7,9 @@ actions!(
         NavigateBack,
         NavigateForward,
         OpenSelected,
+        /// Explicitly open one file in the platform text editor: TextEdit on
+        /// macOS, Notepad on Windows, desktop text association on Linux.
+        EditTextFile,
         Refresh,
         /// Trigger the macOS "Show Desktop" reveal (the Dock's private
         /// `CoreDockSendNotification`). The toolbar button and menu item
@@ -26,6 +29,10 @@ actions!(
         /// Compute a selected file's SHA-256 off-thread and optionally
         /// compare it with a checksum read from the text clipboard.
         GenerateSha256,
+        /// Verify every entry in a selected SFV or checksum manifest in a
+        /// cancellable tab-local result surface.
+        VerifyChecksums,
+        CreateChecksumFile,
         /// Copy the *entire* list of items currently shown in the active
         /// tab — folder contents, duplicate-finder groups, or search
         /// results — as newline-joined full paths, regardless of

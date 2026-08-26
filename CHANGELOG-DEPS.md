@@ -13,6 +13,13 @@ copy that exact rev; when it leaves gpui unpinned (the style since ~2026-07),
 leave ours unpinned too and let the committed `Cargo.lock` carry the actual
 zed rev — bumped deliberately with `cargo update -p gpui`.
 
+## 2026-08-26 — promote checksum implementations to direct dependencies
+
+Sidecar verification now directly uses `crc32fast` 1.x, `md-5` 0.10 and
+`sha1` 0.10 alongside the existing direct `sha2` 0.10 dependency. These pure
+Rust implementations were already present transitively in `Cargo.lock`; the
+change makes the formats Ferail calls part of its explicit dependency surface.
+
 ## 2026-08-20 — add reqwest_client (same zed rev; no bumps)
 
 The update check needs real HTTP behind gpui's `cx.http_client()`, so

@@ -8,6 +8,30 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Ferail now understands NFO, SFV and checksum sidecars.** Content sniffing
+  distinguishes scene/Kodi/MsInfo NFO and common checksum lists; the preview
+  pane decodes CP437 and UTF-16, safely reconstructs ANSI layout and colours
+  with a box-art-friendly terminal font, summarizes
+  Kodi metadata locally, and exposes immediate folder sidecars without
+  persisting their contents. SFV and GNU/BSD checksum manifests open a
+  cancellable virtualized report with explicit mismatch, missing, unsafe-path
+  and changed-during-read outcomes, labelled/aligned expected-checksum columns,
+  compact icon controls, and an action to select an existing problematic
+  target in Ferail. CRC32, MD5, SHA-1 and SHA-2 verification
+  stream through bounded buffers, while SFV/SHA256SUMS generation is atomic,
+  no-clobber and available for a selection or current folder. Checksums are
+  labelled as integrity checks, never proof of authenticity. Refreshing a
+  directory now also discards its bounded in-memory NFO/text/thumbnail and
+  sidecar-discovery results, so edited files are reread without restarting
+  Ferail while unrelated directories remain cached.
+
+- **Text files can be sent straight to the platform editor from their context
+  menu.** The single-file action opens TextEdit on macOS, Notepad on Windows,
+  and the desktop text association on Linux, without blocking the UI. Long
+  filesystem paths in the Preview/Get Info pane now use Ferail's
+  `beginning…middle…end` elision and a full-path tooltip instead of overflowing
+  the inspector.
+
 ## 0.6.9 — 2026-08-26 (Windows-only release)
 
 This release publishes Windows x64 portable and symbols archives only. macOS

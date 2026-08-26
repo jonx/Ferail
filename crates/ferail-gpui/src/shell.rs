@@ -62,6 +62,7 @@ pub(crate) mod render;
 mod search;
 mod selection;
 mod tab;
+mod verify;
 
 pub use actions::*;
 pub use dock::{DockEdge, DockState, ScreenFrame};
@@ -2773,6 +2774,9 @@ impl Shell {
             self.entry_kind_at_row(row_ix, cx),
             Some(EntryKind::Directory)
         ) {
+            if let Some(path) = self.path_for_row(row_ix, cx) {
+                crate::sidecar_preview::request(self, path, cx);
+            }
             return;
         }
         if let Some(p) = self.path_for_row(row_ix, cx) {
@@ -3034,7 +3038,35 @@ impl Shell {
             return;
         }
         let path = self.active_tab().current_dir.clone();
+        // Refresh means "read this directory's current state", including the
+        // small process-memory preview caches. These collections are bounded
+        // (16 preview/text/sidecar paths and 512 thumbnail tiers), so the work
+        // never scales with a directory containing millions of rows. Keep
+        // unrelated tabs/directories warm.
+        let sidecar_to_reload = self
+            .preview_panel
+            .as_ref()
+            .and_then(|panel| panel.read(cx).open_sidecar_under(&path));
+        self.process
+            .preview_cache
+            .borrow_mut()
+            .invalidate_finished_under(&path);
+        self.process
+            .text_preview_cache
+            .borrow_mut()
+            .invalidate_finished_under(&path);
+        self.process
+            .folder_sidecar_cache
+            .borrow_mut()
+            .invalidate_finished_under(&path);
+        self.process
+            .thumbnails
+            .borrow_mut()
+            .invalidate_ready_under(&path);
         self.load_path(path, cx);
+        if let Some(sidecar) = sidecar_to_reload {
+            crate::text_preview::request(self, sidecar, cx);
+        }
         // Re-read the directory *and* re-derive everything cached about
         // it from disk: magic/description (bypassing the metadata-DB
         // cache) and the recursive folder sizes (bypassing the

@@ -16,7 +16,7 @@
 //! type scale and must not drift with it.
 
 use ferail_design::TextTokens;
-use gpui::{Styled, rems};
+use gpui::{SharedString, Styled, rems};
 
 pub use ferail_design::TextSize;
 
@@ -111,6 +111,46 @@ pub trait TruncateMiddle: Styled + Sized {
 }
 
 impl<T: Styled + Sized> TruncateMiddle for T {}
+
+/// Elide a label to an approximate character budget while preserving the
+/// parts people use to distinguish long paths. Moderately overlong labels
+/// keep their beginning and end; very long ones also retain a sample from
+/// the centre: `beginning…middle…end`.
+///
+/// Use this before [`TruncateMiddle`] on non-virtualized detail surfaces: the
+/// character pass retains three meaningful regions, then GPUI performs the
+/// final pixel-accurate fit for the actual pane width.
+pub fn elide_label(text: &str, max_chars: usize) -> SharedString {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max_chars || max_chars < 12 {
+        return SharedString::from(text.to_owned());
+    }
+
+    if chars.len() <= max_chars.saturating_mul(2) {
+        let content = max_chars.saturating_sub(1);
+        let start = content / 2;
+        let end = content - start;
+        return SharedString::from(format!(
+            "{}…{}",
+            chars[..start].iter().collect::<String>(),
+            chars[chars.len() - end..].iter().collect::<String>()
+        ));
+    }
+
+    let content = max_chars.saturating_sub(2);
+    let start = content / 3;
+    let middle = content / 3;
+    let end = content - start - middle;
+    let middle_start = chars.len() / 2 - middle / 2;
+    SharedString::from(format!(
+        "{}…{}…{}",
+        chars[..start].iter().collect::<String>(),
+        chars[middle_start..middle_start + middle]
+            .iter()
+            .collect::<String>(),
+        chars[chars.len() - end..].iter().collect::<String>()
+    ))
+}
 
 /// Pin the theme's UI and monospace families to fonts that are actually
 /// installed, where the platform default is only a *virtual* name.

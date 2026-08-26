@@ -51,6 +51,48 @@ It is not evidence that every adversarial or measured subcase in
 every third-party Shell extension, and multi-DPI passes remain separately
 tracked until their evidence is recorded.
 
+### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
+
+The shared implementation is included in the sidecar feature commit and was
+first qualified on macOS. It adds
+content-first NFO/SFV/checksum recognition, inert text-art/Kodi previews,
+cancellable verification, atomic generation and folder-sidecar hints. The
+normal macOS build, focused tests and strict Clippy pass. A Mac-hosted MSVC
+check could not reach Ferail code because the host has no Windows SDK headers
+(`windows.h`/`assert.h` fail in existing C dependencies); this is an
+environment limitation, not Windows qualification.
+
+On the real Windows machine:
+
+1. Pull the isolated commit and run `cargo check -p ferail-gpui`, strict
+   Clippy, and the `verify::tests` / `magic::sidecar` suites.
+2. Open `test-data\sidecars\generated\release`. Confirm the NFO preview is
+   legible, `release.sfv` and `SHA256SUMS` are all OK, and `problems.sfv`
+   reports one mismatch, one missing file and one unsafe traversal without
+   opening anything outside the folder.
+3. Verify from the File menu, row context menu and folder preview card. During
+   a large file, cancel once from the result and once from the task popover;
+   neither cancellation may freeze browsing or leave a live task behind.
+4. Generate both formats from a selection and the current folder. Confirm an
+   existing output is never replaced, the generated lists round-trip in
+   Ferail, and `SHA256SUMS` agrees with `certutil -hashfile <file> SHA256`.
+5. Repeat with spaces, Unicode, a long path, a junction/reparse point and a
+   OneDrive online-only file. A junction escape must be `Unsafe path`; an
+   online-only file must be `Not downloaded` and must remain unhydrated.
+6. Inspect normal logs, hang/crash reports and `metadata.db`: no NFO body,
+   Kodi URL/title, manifest entry, expected/actual hash or verification result
+   may be persisted or logged. Existing generic file-path metadata policy is
+   unchanged.
+7. Right-click one `.nfo` and one `.sfv`, choose **Edit in Notepad**, save a
+   visible change, then click the directory Refresh command. Notepad must open
+   without blocking Ferail; the NFO preview and verification report must show
+   the saved content, and long paths in Preview/Get Info must stay inside the
+   pane with beginning/middle/end retained.
+
+Do not mark this Windows pass complete from compilation alone. In particular,
+the `GetFinalPathNameByHandleW` containment check and file-ID replacement check
+need the junction/reparse race test above on NTFS.
+
 ## Repository state at handover creation
 
 - Branch: `main`
@@ -1554,6 +1596,23 @@ Required real-Windows checks for this slice:
   7. enumerate a slow MTP/device namespace which emits progress for more than
      ten seconds, then a deliberately stalled provider. The first continues;
      the second times out without taking down Ferail.
+
+Sidecar/NFO checks added for the next Windows pass:
+  1. open `test-data/sidecars/generated/nfo/ferail-release-color.nfo` in the
+     preview pane and through the folder Sidecar card. Consolas must keep every
+     single/double box and block row connected, and the ANSI colours must match
+     in both surfaces;
+  2. confirm that OSC hyperlink/clipboard controls in `scene-ansi.nfo` remain
+     inert and absent from rendered text;
+  3. open `release/problems.sfv`, click the folder icon on the mismatch row,
+     and confirm a Ferail tab selects `alpha.bin`. Missing and unsafe rows must
+     offer no misleading selection action;
+  4. click the refresh icon repeatedly. A sub-200 ms verification must retain
+     the old report without flashing the full progress surface; a longer run
+     may show only the delayed busy state on the icon;
+  5. toggle the eye/eye-off control and confirm it hides/restores OK rows while
+     the virtualized list, selection action and compact app typography remain
+     responsive.
 
 Still deliberately not claimed — Fast NTFS/MFT Disk Usage:
   - the refreshed source audit confirms there is still no executable MFT

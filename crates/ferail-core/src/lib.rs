@@ -22,6 +22,7 @@ pub mod platform_shortcuts;
 pub mod power;
 pub mod revision_cache;
 pub mod terminal;
+pub mod text_encoding;
 pub mod video;
 
 use std::{
@@ -239,7 +240,7 @@ fn formats_compatible(kind: &str, magic: &str) -> bool {
         "txt", "md", "markdown", "rst", "log", "json", "yaml", "toml", "ini", "csv", "tsv", "xml",
         "html", "css", "scss", "rs", "py", "js", "ts", "go", "rb", "c", "cpp", "h", "hpp", "java",
         "kt", "swift", "sh", "bash", "zsh", "vim", "lua", "sql", "graphql", "proto", "tex", "el",
-        "svg",
+        "svg", "nfo", "diz", "sfv", "md5", "sha1", "sha224", "sha256", "sha384", "sha512",
     ];
     if (m.contains("text") || m.contains("script") || m.contains("source"))
         && textual.iter().any(|t| k.contains(t))
@@ -409,6 +410,12 @@ fn ext_class(kind: &str) -> ExtClass {
         "plist",
         "properties",
         "env",
+        "nfo",
+        "diz",
+        "sfv",
+        "md5",
+        "sha1",
+        "sha256",
     ];
     const ARCHIVE: &[&str] = &[
         "zip", "rar", "7z", "gz", "tgz", "bz2", "tbz2", "xz", "zst", "tar", "war", "ear", "cab",

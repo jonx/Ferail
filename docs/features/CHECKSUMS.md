@@ -1,4 +1,4 @@
-# SHA-256 file verification
+# Checksums and file verification
 
 Ferail can calculate a SHA-256 checksum for one file without loading the whole
 file into memory. Select a file, then choose **Generate SHA-256…** from its
@@ -36,3 +36,20 @@ does not depend on color alone.
 SHA-256 verifies that the selected bytes match an expected checksum. It does
 not establish who published that checksum: users should obtain the expected
 value from a trusted source independent of the downloaded file.
+
+## Multi-file manifests
+
+Ferail also recognizes SFV, GNU-style checksum lists and BSD tagged lists by
+content. **Verify Checksums…** opens a tab-local, cancellable and virtualized
+report. CRC32, MD5 and SHA-1 are supported for compatibility and presented as
+legacy integrity checks; SHA-224/256/384/512 use the same streaming engine.
+
+Manifest filenames are untrusted. Unix verification opens each component
+relative to an already-open root with no-follow semantics; other platforms
+reject symlink/reparse components and re-check canonical containment. A file
+that changes while being read is reported separately rather than trusted.
+
+**Create Checksum File…** generates a no-clobber SFV or SHA256SUMS from the
+selection or current folder. Publication is atomic and cancellation removes
+the private temporary file. See [SIDECARS.md](SIDECARS.md) for the complete
+format, scale and privacy contract.

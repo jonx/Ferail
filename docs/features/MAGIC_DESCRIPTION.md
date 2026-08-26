@@ -10,6 +10,12 @@ shape.
 
 **Shipped (2026-05-15).**
 
+**Sidecar formats (2026-08-26).** Content-first recognition now distinguishes
+scene/Kodi/MsInfo NFO files, SFV manifests and GNU/BSD checksum lists before
+the generic text path. Their descriptions include the decoded text encoding
+and checksum algorithm where available. `MAGIC_REVISION = 3` invalidates stale
+cached generic-text labels after this detector expansion.
+
 **Cache correctness (2026-08-07).** Two fixes for stale labels shadowing
 better answers:
 

@@ -218,6 +218,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | List view | `icons/view-list.svg` | Lucide `list` | render.rs:1604 |
 | Icon view | `icons/view-grid.svg` | Lucide `layout-grid` | render.rs:1618 |
 | Flat view / include subfolders | `icons/folder-tree.svg` | In-house (folder feeding a two-branch tree, stroke 1.75) | render.rs `title_bar` |
+| Verify checksum manifest | `icons/check.svg` ↑ | Lucide `check` | `VerifyView` report header |
 | Smaller / larger icons | `icons/minus.svg` / `plus.svg` ↑ | Lucide | render.rs `title_bar` |
 | Reset icon size | `icons/undo-2.svg` | Lucide `undo-2` (from the spare upstream pool, stroke 2 — it sits in the all-upstream ±/ellipsis cluster, so the heavier weight is the consistent one here). A revert arrow, not a refresh circle: `nav/refresh.svg` is the Refresh *command* two buttons away and the two must not read alike. Grid view only, beside the −/＋ stepper it undoes. | render.rs `title_bar` |
 | Overflow menu | `icons/ellipsis.svg` ↑ | Lucide | render.rs:1668 |
@@ -279,6 +280,9 @@ table's icon set. The one addition is the tree disclosure caret on folder rows.
 | --- | --- | --- |
 | Cancel scan | `icons/close.svg` ↑ | Lucide |
 | Refresh / restart scan | `icons/nav/refresh.svg` | Lucide `refresh-cw` |
+| Re-run checksum verification | `icons/nav/refresh.svg` | Same refresh command language as scans; icon-only with tooltip. |
+| Filter checksum report to problems | `icons/eye-off.svg` / `icons/eye.svg` | Hide successful rows / restore every row. |
+| Select problematic checksum target | `icons/folder-open.svg` | Opens the containing folder in Ferail and selects the existing target. |
 | Dock in tab | `icons/minimize.svg` ↑ | Lucide `minimize` (inverse of pop-out's `maximize`) |
 | Zoom out (up a level) | `icons/arrow-up.svg` ↑ | Lucide |
 | Show/hide largest-files panel | `icons/panel-right-open.svg` / `panel-right-close.svg` ↑ | Lucide |

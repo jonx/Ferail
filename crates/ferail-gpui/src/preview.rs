@@ -116,6 +116,16 @@ impl PreviewCache {
         self.by_path.remove(path);
         self.order.retain(|entry| entry != path);
     }
+
+    /// Drop completed previews beneath an explicitly refreshed directory.
+    /// Pending provider work keeps its queue slot and cancellation contract.
+    pub fn invalidate_finished_under(&mut self, root: &Path) {
+        self.by_path.retain(|path, state| {
+            !path.starts_with(root) || matches!(state, PreviewState::Pending)
+        });
+        let by_path = &self.by_path;
+        self.order.retain(|path| by_path.contains_key(path));
+    }
 }
 
 /// Spawn the background fetch for `path` if we haven't already.
@@ -343,5 +353,23 @@ mod tests {
         cache.remove(&first);
         assert!(cache.get(&first).is_none());
         assert_eq!(cache.complete_request(&first), Some(latest));
+    }
+
+    #[test]
+    fn directory_refresh_keeps_unrelated_and_pending_previews() {
+        let root = Path::new("/root/folder");
+        let inside = root.join("inside.pdf");
+        let pending = root.join("pending.pdf");
+        let outside = PathBuf::from("/else/outside.pdf");
+        let mut cache = PreviewCache::new();
+        cache.insert(inside.clone(), PreviewState::Failed);
+        cache.insert(pending.clone(), PreviewState::Pending);
+        cache.insert(outside.clone(), PreviewState::Failed);
+
+        cache.invalidate_finished_under(root);
+
+        assert!(cache.get(&inside).is_none());
+        assert!(matches!(cache.get(&pending), Some(PreviewState::Pending)));
+        assert!(matches!(cache.get(&outside), Some(PreviewState::Failed)));
     }
 }

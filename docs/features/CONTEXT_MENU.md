@@ -21,7 +21,7 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
   latter additionally gated on `lock_diagnostics_available()` — Windows-only
   today, see `shell/lock_info.rs`).
 - List pane (per-row): full Finder-equivalent — Open, Open in New Tab
-  (folders), Open With submenu,
+  (folders/files), Edit in TextEdit/Notepad/Text Editor (one file), Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
   Compress (submenu: ZIP / 7-Zip / TAR ▸ Gzip·Bzip2·XZ·Uncompressed),
   Extract (archive rows only; submenu: Extract Here / Extract To…),
@@ -73,6 +73,10 @@ Slow operations run on workers and report back through
   run-loop holds no `App` borrow). Both pick a smart destination off-thread —
   extract in place when the archive has a single root folder, otherwise a
   `" 2"`-deduped wrapper named after the archive.
+- Explicit text editing launches the platform editor on a background task:
+  TextEdit on macOS, Notepad on Windows, and the desktop text association on
+  Linux. It is single-file only and never probes the file while building the
+  menu.
 
 Synchronous-but-fast Cocoa hops:
 

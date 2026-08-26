@@ -33,6 +33,11 @@ It targets the gap the default managers leave: **responsiveness under load** and
   ([how it's enforced](docs/ARCHITECTURE.md#prime-directive))
 - **It reads bytes, not extensions.** Content/magic detection identifies every
   file and reports real metadata no other manager shows.
+- **It understands sidecars.** Scene/Kodi NFO previews, safe cancellable
+  SFV/checksum verification, and atomic SFV or `SHA256SUMS` generation are
+  built in; folder previews expose useful neighbouring sidecars without
+  adding their private contents, manifest entries or results to persistent
+  storage.
 - **The power tools are built in.** Exact-duplicate finder (hash-funnel,
   clone/hard-link aware), private on-device similar-image search, disk-usage
   treemap (multi-select, act on squares,

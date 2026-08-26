@@ -1,0 +1,1 @@
+spaces are valid in manifest filenames

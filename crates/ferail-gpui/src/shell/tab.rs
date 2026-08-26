@@ -100,6 +100,12 @@ impl ToolResultSurface {
         }
     }
 
+    pub fn verify(manifest: PathBuf, view: Entity<crate::verify_view::VerifyView>) -> Self {
+        Self {
+            mode: ToolResultMode::Verify(VerifyMode { manifest, view }),
+        }
+    }
+
     pub fn archive_mode(&self) -> Option<&ArchiveMode> {
         match &self.mode {
             ToolResultMode::Archive(a) => Some(a),
@@ -121,6 +127,7 @@ impl ToolResultSurface {
                 a.view
                     .update(cx, |view, cx| view.handle_host_event(event, cx));
             }
+            ToolResultMode::Verify(_) => {}
             // Search and duplicates render through the tab and have no
             // windowed form, so host changes mean nothing to them.
             ToolResultMode::Search(_) | ToolResultMode::Flat(_) | ToolResultMode::Duplicates(_) => {
@@ -178,6 +185,7 @@ pub enum ToolResultMode {
     Duplicates(DupeViewMode),
     DiskUsage(DiskUsageMode),
     Archive(ArchiveMode),
+    Verify(VerifyMode),
 }
 
 /// A recursive, files-only snapshot of a directory tree. The rows and their
@@ -207,6 +215,12 @@ pub struct ArchiveMode {
     pub archive: PathBuf,
     /// The embedded contents/extraction view.
     pub view: Entity<crate::archive::ArchiveView>,
+}
+
+#[derive(Clone)]
+pub struct VerifyMode {
+    pub manifest: PathBuf,
+    pub view: Entity<crate::verify_view::VerifyView>,
 }
 
 /// State for a search result surface. The tab still has a

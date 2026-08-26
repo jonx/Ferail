@@ -17,6 +17,7 @@ use std::rc::Rc;
 use gpui::*;
 use gpui_component::{ActiveTheme, Sizable as _, button::ButtonVariants as _, h_flex, v_flex};
 
+use ferail_core::text_encoding::{AnsiColor, AnsiSpan};
 use ferail_core::{EntryKind, FileEntry};
 
 use crate::process_state::ProcessState;
@@ -29,6 +30,66 @@ use crate::shell::{
 };
 use crate::shell::{PREVIEW_THUMB_MAX_H, PREVIEW_THUMB_MIN_H};
 use crate::text::TextScale as _;
+
+fn terminal_font_family() -> &'static str {
+    if cfg!(target_os = "macos") {
+        // Monaco's box/block glyphs are drawn on the full character cell;
+        // Menlo leaves visible seams in CP437 artwork at small sizes.
+        "Monaco"
+    } else if cfg!(target_os = "windows") {
+        "Consolas"
+    } else {
+        "DejaVu Sans Mono"
+    }
+}
+
+fn ansi_color(color: AnsiColor) -> Hsla {
+    let rgb = match color {
+        AnsiColor::Standard(index) => [
+            0x1e1e1e, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5,
+        ][index.min(7) as usize],
+        AnsiColor::Bright(index) => [
+            0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xffffff,
+        ][index.min(7) as usize],
+        AnsiColor::Indexed(index) if index < 8 => {
+            return ansi_color(AnsiColor::Standard(index));
+        }
+        AnsiColor::Indexed(index) if index < 16 => {
+            return ansi_color(AnsiColor::Bright(index - 8));
+        }
+        AnsiColor::Indexed(index) if index < 232 => {
+            let value = index - 16;
+            let component = |part: u8| if part == 0 { 0 } else { 55 + part as u32 * 40 };
+            let red = component(value / 36);
+            let green = component((value / 6) % 6);
+            let blue = component(value % 6);
+            (red << 16) | (green << 8) | blue
+        }
+        AnsiColor::Indexed(index) => {
+            let gray = 8 + (index as u32 - 232) * 10;
+            (gray << 16) | (gray << 8) | gray
+        }
+        AnsiColor::Rgb(red, green, blue) => {
+            ((red as u32) << 16) | ((green as u32) << 8) | blue as u32
+        }
+    };
+    gpui::rgb(rgb).into()
+}
+
+fn terminal_text(document: &crate::text_preview::TextPreviewDocument) -> StyledText {
+    let highlights = document.ansi_spans.iter().map(|AnsiSpan { range, style }| {
+        (
+            range.clone(),
+            HighlightStyle {
+                color: style.foreground.map(ansi_color),
+                background_color: style.background.map(ansi_color),
+                font_weight: style.bold.then_some(FontWeight::BOLD),
+                ..HighlightStyle::default()
+            },
+        )
+    });
+    StyledText::new(document.text.clone()).with_highlights(highlights)
+}
 
 /// What the host wants previewed.
 #[derive(Clone, Debug, Default)]
@@ -118,6 +179,9 @@ pub struct PreviewPanel {
     /// height at press).
     thumb_drag: Option<(Pixels, f32)>,
     preview_info: Option<Entity<crate::entry_info::EntryInfoView>>,
+    /// NFO chosen from a folder's sidecar card. Memory-only and cleared when
+    /// the host points the panel at another target.
+    sidecar_open: Option<PathBuf>,
 }
 
 impl PreviewPanel {
@@ -132,18 +196,40 @@ impl PreviewPanel {
             thumb_h,
             thumb_drag: None,
             preview_info: None,
+            sidecar_open: None,
         }
     }
 
     /// Point the pane at something else. Cheap and idempotent — hosts call it
     /// on every selection change.
     pub fn set_target(&mut self, target: PreviewTarget, cx: &mut Context<Self>) {
+        let old_path = match &self.target {
+            PreviewTarget::File { path, .. } | PreviewTarget::Volume { path, .. } => Some(path),
+            _ => None,
+        };
+        let new_path = match &target {
+            PreviewTarget::File { path, .. } | PreviewTarget::Volume { path, .. } => Some(path),
+            _ => None,
+        };
+        if old_path != new_path {
+            self.sidecar_open = None;
+        }
         self.target = target;
         cx.notify();
     }
 
     pub fn thumb_h(&self) -> f32 {
         self.thumb_h
+    }
+
+    /// Sidecar currently expanded inside a folder card, when it belongs to
+    /// `root`. Used by the directory Refresh command to re-request the same
+    /// visible document after invalidating its process-memory cache.
+    pub fn open_sidecar_under(&self, root: &std::path::Path) -> Option<PathBuf> {
+        self.sidecar_open
+            .as_ref()
+            .filter(|path| path.starts_with(root))
+            .cloned()
     }
 
     /// Body for content we hold in memory.
@@ -477,15 +563,140 @@ impl PreviewPanel {
                 let thumb_img = crate::preview::loaded_image(thumb_state.clone());
                 // Text/code files render their content inline instead
                 // of a thumbnail (docs/features/PREVIEW.md).
-                let text_body = if is_dir {
+                let text_document = if is_dir {
                     None
                 } else {
                     let text_state = self.process.text_preview_cache.borrow().get(&full_path);
-                    crate::text_preview::loaded_text(text_state)
+                    crate::text_preview::loaded_document(text_state)
                 };
 
                 let mut col = v_flex().gap_3();
-                if let Some(text) = text_body {
+                if is_dir {
+                    if let Some(state) = self.process.folder_sidecar_cache.borrow().get(&full_path)
+                    {
+                        match state {
+                            crate::sidecar_preview::FolderSidecarsState::Pending => {
+                                col = col.child(
+                                    div()
+                                        .text_scale_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(tr!("Looking for sidecar files…")),
+                                );
+                            }
+                            crate::sidecar_preview::FolderSidecarsState::Ready {
+                                hints,
+                                truncated,
+                            } if !hints.is_empty() => {
+                                let mut card = v_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .p_2()
+                                    .rounded(cx.theme().radius)
+                                    .bg(cx.theme().secondary.opacity(0.5))
+                                    .child(
+                                        div()
+                                            .text_scale_sm()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(tr!("Sidecar files")),
+                                    );
+                                for (index, hint) in hints.into_iter().enumerate() {
+                                    let name: SharedString = hint.name.clone().into();
+                                    let format: SharedString = hint.format.into();
+                                    let path = hint.path.clone();
+                                    let action = match hint.kind {
+                                        crate::sidecar_preview::SidecarKind::Nfo => {
+                                            Button::new(("sidecar-preview", index))
+                                                .xsmall()
+                                                .label(tr!("Preview"))
+                                                .on_click(cx.listener(move |panel, _, _, cx| {
+                                                    panel.sidecar_open = Some(path.clone());
+                                                    if let Some(shell) = panel.shell.upgrade() {
+                                                        let requested = path.clone();
+                                                        shell.update(cx, |shell, cx| {
+                                                            shell
+                                                                .process
+                                                                .text_preview_cache
+                                                                .borrow_mut()
+                                                                .invalidate(&requested);
+                                                            crate::text_preview::request(
+                                                                shell, requested, cx,
+                                                            );
+                                                        });
+                                                    }
+                                                    cx.notify();
+                                                }))
+                                        }
+                                        crate::sidecar_preview::SidecarKind::Manifest => {
+                                            Button::new(("sidecar-verify", index))
+                                                .xsmall()
+                                                .label(tr!("Verify"))
+                                                .on_click(cx.listener(move |panel, _, _, cx| {
+                                                    if let Some(shell) = panel.shell.upgrade() {
+                                                        let manifest = path.clone();
+                                                        shell.update(cx, |shell, cx| {
+                                                            shell.open_verify_path(manifest, cx);
+                                                        });
+                                                    }
+                                                }))
+                                        }
+                                    };
+                                    card = card.child(
+                                        h_flex()
+                                            .w_full()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(div().flex_1().min_w_0().truncate().child(name))
+                                            .child(
+                                                div()
+                                                    .text_scale_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(format),
+                                            )
+                                            .child(action),
+                                    );
+                                }
+                                if truncated {
+                                    card = card.child(
+                                        div()
+                                            .text_scale_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(tr!("More sidecars may be present.")),
+                                    );
+                                }
+                                col = col.child(card);
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(path) = self.sidecar_open.as_ref() {
+                        if let Some(document) = crate::text_preview::loaded_document(
+                            self.process.text_preview_cache.borrow().get(path),
+                        ) {
+                            let mut preview = div()
+                                .id("folder-sidecar-text")
+                                .w_full()
+                                .max_h(px(280.))
+                                .overflow_scroll()
+                                .p_2()
+                                .rounded(cx.theme().radius)
+                                .bg(cx.theme().secondary.opacity(0.5))
+                                .text_scale_xs()
+                                .whitespace_nowrap();
+                            preview = if document.terminal_art {
+                                preview
+                                    .font_family(terminal_font_family())
+                                    .line_height(rems(11.0 / 16.0))
+                                    .child(terminal_text(&document))
+                            } else {
+                                preview
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .child(document.text.clone())
+                            };
+                            col = col.child(preview);
+                        }
+                    }
+                }
+                if let Some(document) = text_document {
                     // Render through gpui-component's TextView:
                     // markdown files format, source files highlight
                     // (the worker already capped this to 500 lines, and
@@ -516,19 +727,26 @@ impl PreviewPanel {
                         .rounded(cx.theme().radius)
                         .bg(cx.theme().secondary.opacity(0.5))
                         .text_scale_xs();
-                    let block = if text.is_empty() {
+                    let block = if document.text.is_empty() {
                         block
                             .font_family(cx.theme().mono_font_family.clone())
                             .text_color(cx.theme().muted_foreground)
                             .child(tr!("(empty file)"))
+                    } else if document.terminal_art {
+                        block
+                            .font_family(terminal_font_family())
+                            .line_height(rems(11.0 / 16.0))
+                            .whitespace_nowrap()
+                            .child(terminal_text(&document))
                     } else {
-                        let md = crate::text_preview::to_markdown_source(&entry.name, &text);
+                        let md =
+                            crate::text_preview::to_markdown_source(&entry.name, &document.text);
                         // Compact mono in code blocks, and don't wrap —
                         // long lines scroll horizontally in the block
                         // above instead of folding.
                         let style = gpui_component::text::TextViewStyle::default().code_block(
                             gpui::StyleRefinement::default()
-                                .text_size(px(9.0))
+                                .text_size(rems(11.0 / 16.0))
                                 .whitespace_nowrap(),
                         );
                         // Per-file element id (keyed on the entry id), not
@@ -574,7 +792,8 @@ impl PreviewPanel {
                         let min_w = if is_markdown {
                             PREVIEW_MD_MIN_W
                         } else {
-                            let cols = text
+                            let cols = document
+                                .text
                                 .lines()
                                 .map(|line| {
                                     line.chars()

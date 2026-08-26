@@ -509,6 +509,26 @@ pub fn open_with_default(_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Open one file specifically in Windows Notepad. Spawning is non-blocking;
+/// dropping `Child` closes Ferail's process handle without terminating the
+/// independently running editor.
+#[cfg(windows)]
+pub fn edit_text_file(path: &std::path::Path) -> std::io::Result<()> {
+    let cleaned = strip_verbatim(path);
+    std::process::Command::new("notepad.exe")
+        .arg(cleaned)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(not(windows))]
+pub fn edit_text_file(_path: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Notepad is unavailable on this platform",
+    ))
+}
+
 #[cfg(windows)]
 fn shell_execute_open(
     target: &std::ffi::OsStr,

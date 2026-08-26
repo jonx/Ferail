@@ -211,6 +211,12 @@ impl Shell {
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| tr!("Archive").to_string()),
             ),
+            super::tab::ToolResultMode::Verify(vm) => Some(
+                vm.manifest
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| tr!("Checksum manifest").to_string()),
+            ),
         }
     }
 
@@ -950,6 +956,14 @@ impl Shell {
             .map(|surface| &surface.mode)
         {
             return am.view.clone().into_any_element();
+        }
+        if let Some(super::tab::ToolResultMode::Verify(vm)) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .map(|surface| &surface.mode)
+        {
+            return vm.view.clone().into_any_element();
         }
         match self.active_tab().view_mode {
             crate::grid::ViewMode::List => DataTable::new(&self.active_tab().table)
@@ -4007,6 +4021,8 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_copy_path))
             .on_action(cx.listener(Self::on_show_windows_context_menu))
             .on_action(cx.listener(Self::on_generate_sha256))
+            .on_action(cx.listener(Self::on_verify_checksums))
+            .on_action(cx.listener(Self::on_create_checksum_file))
             .on_action(cx.listener(Self::on_copy_file_list))
             .on_action(cx.listener(Self::on_copy_files))
             .on_action(cx.listener(Self::on_cut_files))
@@ -4111,6 +4127,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_with_slot_9))
             .on_action(cx.listener(Self::on_open_with_slot_10))
             .on_action(cx.listener(Self::on_open_with_slot_11))
+            .on_action(cx.listener(Self::on_edit_text_file))
             .on_action(cx.listener(Self::on_undo_last_action))
             .on_action(cx.listener(Self::on_toggle_favorite_for_target))
             .on_action(cx.listener(Self::on_add_current_folder_to_favorites))
