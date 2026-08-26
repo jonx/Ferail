@@ -95,6 +95,15 @@ pub struct ProcessState {
     pub shortcut_resolver: Arc<crate::platform_shell::WindowsShortcutResolver>,
     #[cfg(windows)]
     pub shortcut_cache: RefCell<ferail_core::platform_shortcuts::ShortcutCache>,
+    #[cfg(windows)]
+    pub properties_provider: Arc<crate::platform_shell::WindowsPropertiesProvider>,
+    #[cfg(windows)]
+    pub properties_cache: RefCell<
+        ferail_core::platform_properties::PlatformPropertiesCache<
+            ferail_core::NodeId,
+            ferail_core::revision_cache::FileRevision,
+        >,
+    >,
 
     /// Monotonic process-local scope for tables/platform surfaces using the
     /// shared asset lanes. Kept separate from TabId because archive/tool
@@ -297,6 +306,12 @@ impl ProcessState {
             shortcut_resolver: Arc::new(crate::platform_shell::WindowsShortcutResolver),
             #[cfg(windows)]
             shortcut_cache: RefCell::new(ferail_core::platform_shortcuts::ShortcutCache::new(512)),
+            #[cfg(windows)]
+            properties_provider: Arc::new(crate::platform_shell::WindowsPropertiesProvider),
+            #[cfg(windows)]
+            properties_cache: RefCell::new(
+                ferail_core::platform_properties::PlatformPropertiesCache::new(256),
+            ),
             next_asset_scope: Cell::new(1),
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
             watcher,

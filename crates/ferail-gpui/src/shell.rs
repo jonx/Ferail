@@ -4000,7 +4000,21 @@ impl Shell {
                         .map(str::to_string)
                         .unwrap_or_default();
                     let weak = cx.weak_entity();
-                    crate::entry_info::open(path, name, target, known_size, weak, cx);
+                    crate::entry_info::open_identified(
+                        path,
+                        name,
+                        target,
+                        known_size,
+                        crate::entry_info::EntryInfoIdentity {
+                            node: entry.id,
+                            revision: ferail_core::revision_cache::FileRevision {
+                                byte_len: entry.size,
+                                modified_ns: Some(i128::from(entry.mtime_unix) * 1_000_000_000),
+                            },
+                        },
+                        weak,
+                        cx,
+                    );
                 }
             },
         );

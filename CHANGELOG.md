@@ -8,6 +8,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Get Info on Windows now includes approved Shell metadata and shortcut
+  details.** Explicit Get Info reads a small allow-list from `IPropertyStore`
+  on a COM worker, keeps results in a bounded identity/revision cache, and
+  appends owned text to the normal cross-platform sections. `.lnk` targets,
+  arguments and working directories use the same revision-aware shortcut
+  cache. GPS coordinates, arbitrary property blobs, COM interfaces and PIDLs
+  never enter the UI model, logs or persistent storage.
+
 - **Windows file clipboard cut/copy semantics now interoperate with
   Explorer.** Ferail publishes and reads the Shell's `Preferred DropEffect`
   alongside `CF_HDROP`, so files cut in either application paste as a move and

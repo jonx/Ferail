@@ -66,6 +66,11 @@ where
         }
     }
 
+    pub fn remove(&mut self, key: K) -> Option<Arc<V>> {
+        self.order.retain(|cached| *cached != key);
+        self.entries.remove(&key).map(|(_, value)| value)
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -104,6 +109,8 @@ mod tests {
         assert!(cache.get(1, 1).is_none());
         assert!(cache.get(2, 2).is_none());
         assert_eq!(cache.len(), 1);
+        assert!(cache.remove(3).is_some());
+        assert!(cache.is_empty());
         let debug = format!("{cache:?}");
         assert!(!debug.contains("private"));
     }

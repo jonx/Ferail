@@ -27,6 +27,10 @@ mod preview_handler;
 mod shortcut;
 #[cfg(windows)]
 pub use shortcut::WindowsShortcutResolver;
+#[cfg(windows)]
+mod properties;
+#[cfg(windows)]
+pub use properties::WindowsPropertiesProvider;
 
 // Explicit-demand, out-of-process Explorer context menu (WIN-007).
 #[cfg(windows)]

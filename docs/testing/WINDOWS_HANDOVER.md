@@ -401,6 +401,26 @@ Windows implementation still required:
 Windows cases claimed from macOS: none.
 ```
 
+### 2026-08-26 — WIN-014 approved Windows property data
+
+```text
+Implemented:
+  - WindowsPropertiesProvider opens IPropertyStore in a fresh STA only for an
+    explicit Get Info request and copies a fixed allow-list into owned neutral
+    property DTOs; arbitrary keys/blobs are never enumerated;
+  - GPS latitude/longitude keys are absent by construction and covered by a
+    unit test;
+  - filesystem results are cached process-wide by NodeId + FileRevision with
+    a 256-entry memory-only bound; replacement/mtime changes evict stale data;
+  - Get Info validates path/identity/revision before applying and cancels a
+    read when its embedded view retargets or window closes;
+  - .lnk Get Info reuses/resolves the bounded shortcut DTO and shows target,
+    arguments and working directory without persisting or logging values.
+Still required:
+  - namespace-item property keys once the PIDL provider lands;
+  - manual WTEST-110–115 canary/rewrite/privacy verification.
+```
+
 ### 2026-08-25 — macOS preparation for WIN-016 command consistency
 
 ```text

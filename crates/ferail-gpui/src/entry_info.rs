@@ -23,6 +23,12 @@ use ferail_core::entry_info::{
     Attr, EntryInfo, InfoSection, InfoTarget, InfoValue, PermBits, PermMatrix, SizeValue,
 };
 use ferail_core::name_hazards::{self, HazardKind};
+#[cfg(windows)]
+use ferail_core::platform_properties::{
+    PlatformProperties, PlatformPropertiesProvider as _, PlatformPropertyValue,
+};
+#[cfg(windows)]
+use ferail_core::platform_shortcuts::{ShortcutInfo, ShortcutResolver as _, ShortcutTarget};
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Root, Sizable, WindowExt as _, button::Button, checkbox::Checkbox, h_flex,
@@ -36,6 +42,12 @@ use crate::shell::Shell;
 /// (bound in `keymap::install_extras`). The embedded-in-preview instance
 /// doesn't set this context, so Esc there belongs to the shell.
 pub const ENTRY_INFO_CONTEXT: &str = "GetInfo";
+
+#[derive(Clone, Copy)]
+pub struct EntryInfoIdentity {
+    pub node: ferail_core::NodeId,
+    pub revision: ferail_core::revision_cache::FileRevision,
+}
 
 actions!(entry_info, [EntryInfoDismiss]);
 
@@ -92,6 +104,30 @@ pub fn open(
     shell: WeakEntity<Shell>,
     cx: &mut App,
 ) {
+    open_impl(path, name, target, known_size, None, shell, cx);
+}
+
+pub fn open_identified(
+    path: PathBuf,
+    name: String,
+    target: InfoTarget,
+    known_size: Option<u64>,
+    identity: EntryInfoIdentity,
+    shell: WeakEntity<Shell>,
+    cx: &mut App,
+) {
+    open_impl(path, name, target, known_size, Some(identity), shell, cx);
+}
+
+fn open_impl(
+    path: PathBuf,
+    name: String,
+    target: InfoTarget,
+    known_size: Option<u64>,
+    identity: Option<EntryInfoIdentity>,
+    shell: WeakEntity<Shell>,
+    cx: &mut App,
+) {
     let title: SharedString = tr!("Get Info \u{2014} {name}", name = name);
     // Claim the next spiral slot; the guard rides along in the view and
     // releases the slot when the window closes.
@@ -111,8 +147,18 @@ pub fn open(
     };
     let _ = cx.open_window(opts, move |window, cx| {
         crate::boot::install_dev_window_callback_cleanup(window, cx);
-        let view = cx
-            .new(|cx| EntryInfoView::new(path, name, target, known_size, shell, Some(cascade), cx));
+        let view = cx.new(|cx| {
+            EntryInfoView::new(
+                path,
+                name,
+                target,
+                known_size,
+                identity,
+                shell,
+                Some(cascade),
+                cx,
+            )
+        });
         cx.new(|cx| Root::new(view, window, cx))
     });
 }
@@ -413,6 +459,80 @@ fn orientation_label(code: u16) -> SharedString {
     }
 }
 
+#[cfg(windows)]
+fn append_windows_details(
+    info: &mut EntryInfo,
+    properties: Option<&PlatformProperties>,
+    shortcut: Option<&ShortcutInfo>,
+) {
+    if let Some(properties) = properties {
+        for section in &properties.sections {
+            let mut output = InfoSection::new(section.title.to_string());
+            for property in &section.properties {
+                let value = match &property.value {
+                    PlatformPropertyValue::Text(value) => value.to_string(),
+                    PlatformPropertyValue::TextList(values) => values
+                        .iter()
+                        .map(AsRef::<str>::as_ref)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    PlatformPropertyValue::Boolean(value) => value.to_string(),
+                    PlatformPropertyValue::Signed(value) => value.to_string(),
+                    PlatformPropertyValue::Unsigned(value) => value.to_string(),
+                    PlatformPropertyValue::TimestampUnixMillis(value) => value.to_string(),
+                };
+                output = output.text_if(property.display_name.to_string(), value);
+            }
+            if !output.rows.is_empty() {
+                info.sections.push(output);
+            }
+        }
+    }
+    if let Some(shortcut) = shortcut {
+        let mut section = InfoSection::new(tr!("Shortcut").to_string());
+        match &shortcut.target {
+            Ok(ShortcutTarget::FileSystem { path, .. }) => {
+                section = section.text_if(
+                    tr!("Target").to_string(),
+                    ferail_fs_native::paths::display_path(path),
+                );
+            }
+            Ok(ShortcutTarget::Url(url)) => {
+                section = section.text_if(tr!("Target").to_string(), url.to_string());
+            }
+            Ok(ShortcutTarget::Platform(_)) => {
+                section = section.text_if(
+                    tr!("Target").to_string(),
+                    tr!("Windows Shell item").to_string(),
+                );
+            }
+            Err(error) => {
+                section = section.text_if(tr!("Status").to_string(), format!("{error:?}"));
+            }
+        }
+        if !shortcut.arguments.is_empty() {
+            section = section.text_if(
+                tr!("Arguments").to_string(),
+                shortcut
+                    .arguments
+                    .iter()
+                    .map(|argument| argument.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+        }
+        if let Some(directory) = &shortcut.working_directory {
+            section = section.text_if(
+                tr!("Start in").to_string(),
+                ferail_fs_native::paths::display_path(directory),
+            );
+        }
+        if !section.rows.is_empty() {
+            info.sections.push(section);
+        }
+    }
+}
+
 enum GatherState {
     Loading,
     Ready(EntryInfo),
@@ -428,6 +548,10 @@ pub struct EntryInfoView {
     state: GatherState,
     /// Cancel flag for an in-flight recursive "Calculate".
     size_cancel: Option<Arc<AtomicBool>>,
+    /// Cancels native property/shortcut reads when the embedded view retargets
+    /// or a standalone window closes.
+    details_cancel: Option<Arc<AtomicBool>>,
+    identity: Option<EntryInfoIdentity>,
     /// Reloads the affected directory and hosts notifications after edits.
     shell: WeakEntity<Shell>,
     /// Embedded in the preview pane (no name header, no own scroll) vs.
@@ -451,16 +575,20 @@ pub struct EntryInfoView {
 }
 
 impl EntryInfoView {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         path: PathBuf,
         name: String,
         target: InfoTarget,
         known_size: Option<u64>,
+        identity: Option<EntryInfoIdentity>,
         shell: WeakEntity<Shell>,
         cascade: Option<CascadeGuard>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::build(path, name, target, known_size, shell, false, cascade, cx)
+        Self::build(
+            path, name, target, known_size, identity, shell, false, cascade, cx,
+        )
     }
 
     /// Construct for embedding in the preview pane: section rows only, no
@@ -474,7 +602,7 @@ impl EntryInfoView {
         shell: WeakEntity<Shell>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::build(path, name, target, known_size, shell, true, None, cx)
+        Self::build(path, name, target, known_size, None, shell, true, None, cx)
     }
 
     // The info-row builder genuinely needs each of these inputs.
@@ -484,6 +612,7 @@ impl EntryInfoView {
         name: String,
         _target: InfoTarget,
         known_size: Option<u64>,
+        identity: Option<EntryInfoIdentity>,
         shell: WeakEntity<Shell>,
         embedded: bool,
         cascade: Option<CascadeGuard>,
@@ -495,6 +624,8 @@ impl EntryInfoView {
             kind: String::new(),
             state: GatherState::Loading,
             size_cancel: None,
+            details_cancel: None,
+            identity,
             shell,
             embedded,
             scroll: ScrollHandle::new(),
@@ -538,31 +669,135 @@ impl EntryInfoView {
         if let Some(c) = self.size_cancel.take() {
             c.store(true, std::sync::atomic::Ordering::Relaxed);
         }
+        if let Some(c) = self.details_cancel.take() {
+            c.store(true, Ordering::Relaxed);
+        }
         self.path = path;
         self.name = name;
         self.kind = String::new();
         self.known_size = known_size;
+        self.identity = None;
         self.state = GatherState::Loading;
         self.refresh(cx);
     }
 
     /// (Re-)gather the record on the background executor and apply it.
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        if let Some(previous) = self.details_cancel.take() {
+            previous.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.details_cancel = Some(cancel.clone());
+        let worker_cancel = cancel.clone();
         let gather_path = self.path.clone();
         let apply_path = gather_path.clone();
         let known_size = self.known_size;
+        let identity = self.identity;
+        #[cfg(windows)]
+        let (properties_provider, cached_properties, shortcut_resolver, cached_shortcut) = {
+            let process = crate::process_state::process_state(cx);
+            (
+                process.properties_provider.clone(),
+                identity.and_then(|identity| {
+                    process
+                        .properties_cache
+                        .borrow_mut()
+                        .get(identity.node, identity.revision)
+                }),
+                process.shortcut_resolver.clone(),
+                identity.and_then(|identity| {
+                    process
+                        .shortcut_cache
+                        .borrow_mut()
+                        .get(identity.node, identity.revision)
+                }),
+            )
+        };
         cx.spawn(async move |this, cx| {
+            #[cfg(not(windows))]
             let info = cx
                 .background_executor()
                 .spawn(async move { gather(&gather_path, known_size) })
+                .await;
+            #[cfg(windows)]
+            let (info, new_properties, new_shortcut) = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut info = gather(&gather_path, known_size);
+                    let properties = if let Some(cached) = cached_properties {
+                        Some((*cached).clone())
+                    } else {
+                        properties_provider
+                            .read_properties(
+                                ferail_core::platform_properties::PlatformPropertiesRequest {
+                                    target:
+                                        ferail_core::platform_namespace::LocationTarget::FileSystem(
+                                            gather_path.clone(),
+                                        ),
+                                },
+                                &worker_cancel,
+                            )
+                            .ok()
+                    };
+                    let is_shortcut = gather_path
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("lnk"));
+                    let shortcut = if !is_shortcut {
+                        None
+                    } else if let Some(cached) = cached_shortcut {
+                        Some((*cached).clone())
+                    } else if let Some(identity) = identity {
+                        match shortcut_resolver.resolve(
+                            ferail_core::platform_shortcuts::ShortcutResolveRequest {
+                                source: gather_path.clone(),
+                                revision: identity.revision,
+                            },
+                            &worker_cancel,
+                        ) {
+                            Ok(shortcut) => Some(shortcut),
+                            Err(
+                                ferail_core::platform_shortcuts::ShortcutFailureKind::Cancelled,
+                            ) => None,
+                            Err(error) => Some(ShortcutInfo {
+                                target: Err(error),
+                                arguments: Vec::new(),
+                                working_directory: None,
+                                icon_location: None,
+                            }),
+                        }
+                    } else {
+                        None
+                    };
+                    append_windows_details(&mut info, properties.as_ref(), shortcut.as_ref());
+                    (info, properties, shortcut)
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 // Staleness guard: the panel may have been retargeted
                 // (preview-pane embedded mode) while a slow gather —
                 // e.g. a network mount — was in flight. Applying it
                 // would show file A's size/permissions under file B.
-                if this.path != apply_path {
+                if this.path != apply_path || cancel.load(Ordering::Relaxed) {
                     return;
+                }
+                #[cfg(windows)]
+                if let Some(identity) = identity {
+                    let process = crate::process_state::process_state(cx);
+                    if let Some(properties) = new_properties {
+                        process.properties_cache.borrow_mut().insert(
+                            identity.node,
+                            identity.revision,
+                            properties,
+                        );
+                    }
+                    if let Some(shortcut) = new_shortcut {
+                        process.shortcut_cache.borrow_mut().insert(
+                            identity.node,
+                            identity.revision,
+                            shortcut,
+                        );
+                    }
                 }
                 this.name = info.name.clone();
                 this.kind = info.kind.clone();
@@ -585,6 +820,13 @@ impl EntryInfoView {
     ) {
         match result {
             Ok(()) => {
+                #[cfg(windows)]
+                if let Some(identity) = self.identity {
+                    crate::process_state::process_state(cx)
+                        .properties_cache
+                        .borrow_mut()
+                        .remove(identity.node);
+                }
                 if let (Some(parent), Some(shell)) = (self.path.parent(), self.shell.upgrade()) {
                     let dir = parent.to_path_buf();
                     shell.update(cx, |s, cx| s.reload_tabs_matching_paths(&[dir], cx));
@@ -730,6 +972,9 @@ impl Drop for EntryInfoView {
         // tell it to stop — its result has nowhere to land.
         if let Some(c) = &self.size_cancel {
             c.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(c) = &self.details_cancel {
+            c.store(true, Ordering::Relaxed);
         }
     }
 }
