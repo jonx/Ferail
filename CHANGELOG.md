@@ -14,6 +14,11 @@ This release publishes Windows x64 portable and symbols archives only. macOS
 and Linux remain on 0.6.5; Ferail's updater selects the newest release that
 actually has an asset for the current platform.
 
+- **The Windows release dependency gate recognizes `propsys.dll` as a system
+  component.** The approved `IPropertyStore` integration introduced this
+  built-in Windows dependency; packaging now accepts it while continuing to
+  reject non-system runtime DLLs.
+
 - **Linux/WSL locations on Windows are now opt-in.** A new Files ›
   Locations setting controls the sidebar section and defaults to off. While
   off, Ferail does not discover or start WSL distributions; disabling it live
