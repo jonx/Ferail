@@ -451,6 +451,10 @@ pub struct FileListDelegate {
     /// and they persist across launches. See [`split_persisted_columns`].
     pub hidden_columns: Vec<Column>,
     pub fs: Arc<NativeFs>,
+    /// Unique owner inside the process asset coordinator. Unlike TabId this
+    /// also exists for archive/tool tables, and prevents one surface's local
+    /// generation counter from retiring another surface's work.
+    asset_scope: Option<ferail_core::asset_work::AssetWorkScope>,
     /// Snapshot of entry paths captured during enumeration/application.
     /// Rendering may read this cache, but must not call back into the
     /// filesystem resolver.
@@ -1127,6 +1131,7 @@ impl FileListDelegate {
             columns,
             hidden_columns,
             fs,
+            asset_scope: None,
             paths: HashMap::new(),
             flat_paths: None,
             flat_filtered_entries: Vec::new(),
@@ -2036,6 +2041,18 @@ impl FileListDelegate {
         if !show_thumbnails(cx) {
             return;
         }
+        // Synchronize this surface's local generation before admitting any
+        // viewport work. Today the legacy thumbnail loop still performs the
+        // fetch; the process dispatcher will submit the per-row requests to
+        // these same scoped lanes in the next slice.
+        let process = crate::process_state::process_state(cx);
+        let scope = *self
+            .asset_scope
+            .get_or_insert_with(|| process.mint_asset_scope());
+        process
+            .asset_work
+            .borrow_mut()
+            .retain_scope_generation(scope, self.detail_revision);
         let request = (visible_range.clone(), size_px);
         if self.thumbnail_in_flight {
             if self.thumbnail_active.as_ref() == Some(&request)

@@ -73,6 +73,54 @@ git rev-parse HEAD
 git log -8 --oneline
 ```
 
+### 2026-08-26 — Windows continuation from the Mac-first series
+
+```text
+Date / machine: 2026-08-26, real Windows development machine
+Pulled start commit: ea27263
+Windows validation and corrections:
+  - cargo check -p ferail-gpui passes;
+  - cargo clippy -p ferail-gpui --lib -- -D warnings passes;
+  - the Windows WSL contract tests pass (4 tests);
+  - the shared namespace, shortcut and property contract tests pass;
+  - the GPUI namespace tests pass with the intended --lib target (9 tests);
+  - fixed three cfg-specific warnings which macOS could not expose in
+    directory_reader.rs/settings.rs and three strict-Clippy failures in the
+    pulled shell renderer;
+  - fixed a Windows rustc stack overflow in the new Disk Usage path-arena test.
+    Its glob import captured GPUI's #[test] macro; explicit imports keep the
+    ordinary Rust test macro and remove the recursive expansion. No larger
+    recursion/stack setting is required.
+Asset coordinator slice completed:
+  - ProcessState now owns exactly one AssetWorkCoordinator with separately
+    bounded provider, decode, upload and apply lanes;
+  - requests carry a process-local surface scope because a generation number
+    belongs to one tab/surface. Retiring generation 2 in one tab can no longer
+    cancel generation 1 in another tab which happens to use the same number;
+  - active reservations are keyed by scope + compact asset key, and stale
+    completion still cannot free a newer generation's slot;
+  - detailed submit/retirement returns displaced or dropped pending requests
+    to the host. This is required to release external path/pixel payloads and
+    retryable thumbnail-cache reservations instead of leaving permanent
+    "in flight" entries;
+  - independent lane caps, cross-surface isolation, eviction cleanup and stale
+    completion are covered by 8 ferail-core asset_work tests;
+  - ferail-core strict Clippy and ferail-gpui Windows compilation pass.
+Still open in this slice:
+  - the coordinator currently owns admission/cancellation state only. The
+    existing thumbnail/detail loops have not yet been routed through it;
+  - add the process dispatcher which owns payloads outside the compact lanes,
+    coalesces duplicate cache work across surfaces, and drains uploads/applies
+    under a per-frame budget;
+  - only then remove the old per-FileList thumbnail batch flags and route the
+    Windows icon/thumbnail/link/property providers through the provider lane.
+Formatting note:
+  - cargo fmt --all -- --check also reports pre-existing formatting drift in
+    pulled core/win32 files under rustfmt 1.9.0. Files changed in this Windows
+    continuation were formatted directly; do not mix a repository-wide
+    mechanical rewrite into the scheduler behavior change without review.
+```
+
 ### 2026-08-25 — macOS preparation for WIN-013 Shell namespace
 
 ```text
@@ -553,10 +601,12 @@ use. The Mac-first series has prepared the namespace, WSL, shortcut, action,
 transfer-selection, properties/cache, asset-budget and command-consistency
 contracts. Resume implementation in this order:
 
-1. Connect `BoundedAssetLane` to one process-owned coordinator: provider,
-   decode, upload and apply budgets, per-frame apply limits, affected-row
-   invalidation and stable row geometry. Then run the 10k/hostile-provider
-   matrix without changing the ordinary/Flat row model.
+1. Complete the process-owned asset coordinator integration. The scoped,
+   independently bounded provider/decode/upload/apply owner is now present;
+   connect its payload dispatcher, per-frame apply limits, affected-row
+   invalidation and stable row geometry. Then route the current providers and
+   run the 10k/hostile-provider matrix without changing the ordinary/Flat row
+   model.
 2. Complete path-based interoperability: actionable Open/Reveal failures,
    targeted refresh after a native Shell verb, the prepared `.lnk` resolver,
    and the Explorer clipboard/drag format matrix through symbolic selections.

@@ -29,6 +29,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+use ferail_core::asset_work::{
+    AssetLaneBudget, AssetWorkBudgets, AssetWorkCoordinator, AssetWorkScope,
+};
 use ferail_core::node_store::NodeStore;
 use ferail_fs_native::{NativeFs, VolumeInfo, list_volumes};
 use gpui::{App, Entity, WeakEntity, WindowHandle};
@@ -77,6 +80,17 @@ pub struct ProcessState {
     /// in one tab is warm in another. Populated viewport-only off the
     /// UI thread; read allocation-free at paint time.
     pub thumbnails: Rc<RefCell<crate::thumbnails::ThumbnailCache>>,
+
+    /// One scheduler for every process-visible native/decoded asset. Lanes are
+    /// independent so a hostile Shell provider cannot consume decode, upload
+    /// or foreground-apply capacity. Payloads remain owned by their surface;
+    /// this process object contains compact identities and cancellation state.
+    pub asset_work: Rc<RefCell<AssetWorkCoordinator>>,
+
+    /// Monotonic process-local scope for tables/platform surfaces using the
+    /// shared asset lanes. Kept separate from TabId because archive/tool
+    /// surfaces also own rows and can request assets without being a tab.
+    next_asset_scope: Cell<u64>,
 
     /// Background task registry (enumeration, prefetch, etc.). Already
     /// `Rc<RefCell<>>` so the prefetch worker can register / retire
@@ -249,6 +263,25 @@ impl ProcessState {
             metadata_db: RefCell::new(None),
             icons: Rc::new(RefCell::new(IconCache::new())),
             thumbnails: Rc::new(RefCell::new(crate::thumbnails::ThumbnailCache::new())),
+            asset_work: Rc::new(RefCell::new(AssetWorkCoordinator::new(AssetWorkBudgets {
+                provider: AssetLaneBudget {
+                    concurrency: 4,
+                    pending_capacity: 128,
+                },
+                decode: AssetLaneBudget {
+                    concurrency: 2,
+                    pending_capacity: 64,
+                },
+                upload: AssetLaneBudget {
+                    concurrency: 2,
+                    pending_capacity: 64,
+                },
+                apply: AssetLaneBudget {
+                    concurrency: 8,
+                    pending_capacity: 256,
+                },
+            }))),
+            next_asset_scope: Cell::new(1),
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
             watcher,
             favorites: RefCell::new(Some(favorites)),
@@ -286,6 +319,12 @@ impl ProcessState {
         let id = self.next_tab_id.get();
         self.next_tab_id.set(id.wrapping_add(1));
         crate::shell::TabId(id)
+    }
+
+    pub fn mint_asset_scope(&self) -> AssetWorkScope {
+        let scope = self.next_asset_scope.get();
+        self.next_asset_scope.set(scope.wrapping_add(1).max(1));
+        AssetWorkScope(scope)
     }
 
     /// Snapshot the optional `MetadataDb` handle for a background
