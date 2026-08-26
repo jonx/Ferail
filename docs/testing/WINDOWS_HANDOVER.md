@@ -728,6 +728,48 @@ path exists.
 
 ## Current remaining work
 
+### 2026-08-26 — Windows continuation checkpoint after source completion
+
+```text
+Commits in this uninterrupted Windows pass:
+  dc9fd49 path Open/Reveal + .lnk resolution
+  f3c7212 Explorer cut/copy/drop-effect interop
+  d50b19a approved IPropertyStore/Get Info data
+  4fefc9b explicit-only, tab-cancellable WSL activation
+  199d1de This PC/Recycle Bin/MTP namespace browsing
+  efcf23a bounded streaming namespace broker
+  2e1c298 PIDL-native More… / Shift+right-click menu
+  a435dcc namespace/filesystem command isolation
+  930cdc6 disposable bounded property-handler broker
+
+Source-complete claims:
+  - path-backed Open/Reveal, .lnk navigation/invocation, Explorer clipboard
+    effects and outbound Shell ID-list drag formats;
+  - approved Windows property DTO/cache path with hostile handler containment;
+  - WSL discovery/activation ownership with no implicit distro start;
+  - read-only pathless namespace browsing, filesystem handoff, MTP container
+    traversal and explicit native Shell actions through the broker;
+  - ordinary FileEntry/NodeStore/Flat rows retain no WSL or PIDL state.
+
+Not source-complete and therefore not claimed:
+  - native provider transfer via FILEDESCRIPTOR/FILECONTENTS and direct
+    provider property DTOs. These remain capability-hidden; the official
+    Windows menu supplies provider verbs such as Properties/Restore when the
+    installed provider advertises them;
+  - release qualification WTEST-072, 095, 100–106, 110–115 and 130–139,
+    including a real MTP disconnect, stopped WSL distro, privacy-canary
+    inspection, Flat 1M/4M comparison and hostile extension observation;
+  - Authenticode/signing and publication. Do not tag a successor to 0.6.8
+    until the exact portable artifact passes those real-machine gates.
+
+Validation accumulated during this pass:
+  - 31 ferail-shell-win32 tests pass after namespace/context integration;
+  - focused WSL (4), platform-location (4), property protocol (2) and PIDL
+    validation tests pass;
+  - strict Clippy passes for ferail-shell-win32 and ferail-gpui after each
+    completed slice; git diff --check is clean at every commit boundary.
+```
+
 The original crash report's principal P0 user flows now pass in real Windows
 use. The Mac-first series has prepared the namespace, WSL, shortcut, action,
 transfer-selection, properties/cache, asset-budget and command-consistency
