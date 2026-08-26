@@ -1,3 +1,23 @@
+# Next Windows update — qualification build (unreleased)
+
+This candidate completes the Windows interoperability and containment work
+after 0.6.8: Explorer-compatible cut/copy and drag effects, directory-aware
+`.lnk` opening, actionable Open/Reveal errors, approved Windows metadata in
+Get Info, explicit-only WSL activation, and first-class This PC/Recycle Bin/MTP
+browsing.
+
+Shell namespace and property providers run in disposable, time-bounded
+workers. Pathless items keep copied opaque identities in their tab, expose the
+official Windows menu through **More…** or Shift+right-click, and never fall
+through to filesystem commands aimed at a previously open folder.
+
+This is not a published release yet. The exact portable artifact must still
+pass the WSL, MTP disconnect, privacy-canary, hostile-provider and Flat 1M/4M
+Windows qualification gates recorded in
+[WINDOWS_HANDOVER.md](docs/testing/WINDOWS_HANDOVER.md).
+
+---
+
 # Ferail 0.6.8 — Windows drag responsiveness update
 
 This is a **Windows-only release**. It publishes the portable Windows x64 ZIP
