@@ -168,6 +168,11 @@ pub fn open_with_default(_path: &Path) -> std::io::Result<()> {
 /// worker, never the UI thread.
 #[cfg(target_os = "linux")]
 pub fn reveal_in_finder(path: &Path) {
+    let _ = try_reveal_in_finder(path);
+}
+
+#[cfg(target_os = "linux")]
+pub fn try_reveal_in_finder(path: &Path) -> std::io::Result<()> {
     let uri = file_uri(path);
     let shown = std::process::Command::new("dbus-send")
         .args([
@@ -187,11 +192,17 @@ pub fn reveal_in_finder(path: &Path) {
         .unwrap_or(false);
     if !shown {
         let parent = path.parent().unwrap_or(path);
-        let _ = spawn_detached(std::process::Command::new("xdg-open").arg(parent));
+        spawn_detached(std::process::Command::new("xdg-open").arg(parent))?;
     }
+    Ok(())
 }
 #[cfg(not(target_os = "linux"))]
 pub fn reveal_in_finder(_path: &Path) {}
+
+#[cfg(not(target_os = "linux"))]
+pub fn try_reveal_in_finder(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
 
 /// Open a terminal emulator at `path` with the default spec (auto-detect,
 /// no extra args, standard mode). See [`open_terminal_with`].

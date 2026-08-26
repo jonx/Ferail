@@ -8,6 +8,21 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Windows Open, Reveal and native verbs now report and refresh correctly.**
+  Failed default-app launches and Explorer reveals produce an actionable
+  notification instead of disappearing silently. After the isolated Windows
+  context-menu broker closes, Ferail refreshes only tabs showing the selected
+  items' parent folders, so rename/delete/provider verbs become visible
+  without a process-wide rescan.
+
+- **Opening a Windows shortcut now preserves Shell semantics.** `.lnk`
+  resolution runs in a dedicated COM STA through the process-wide bounded
+  provider lane and a revision-aware memory-only cache. A shortcut to a real
+  directory navigates inside Ferail; files and applications are invoked via
+  the original shortcut so arguments and working-directory behavior are not
+  lost. Broken and missing targets fail visibly, and stale results cannot land
+  in a changed tab or row.
+
 - **Thumbnail work is now bounded across the whole process.** List and grid
   viewports share one priority scheduler instead of starting independent
   batches in every window. Visible and selected images outrank overscan,

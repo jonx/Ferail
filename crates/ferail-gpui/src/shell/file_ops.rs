@@ -1256,23 +1256,42 @@ impl Shell {
             }
             let extended = window.modifiers().shift;
             let win = window.window_handle();
-            cx.spawn(async move |_this, cx| {
+            let refresh_dirs = paths
+                .iter()
+                .filter_map(|path| path.parent().map(Path::to_path_buf))
+                .collect::<Vec<_>>();
+            cx.spawn(async move |this, cx| {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
                         crate::platform_shell::show_windows_context_menu(&paths, extended)
                     })
                     .await;
-                if let Err(error) = result {
-                    let _ = win.update(cx, |_, window, cx| {
-                        window.push_notification(
-                            crate::shell::error_notification(
-                                tr!("Windows context menu unavailable: {detail}", detail = error)
+                match result {
+                    Ok(()) => {
+                        // The broker cannot reliably classify arbitrary
+                        // third-party verbs as mutating. Refresh only tabs
+                        // showing the selected items' parent folders after the
+                        // menu closes; cache/watcher coalescing keeps this
+                        // bounded and avoids a process-wide reload.
+                        let _ = this.update(cx, |this, cx| {
+                            this.reload_tabs_matching_paths(&refresh_dirs, cx);
+                        });
+                    }
+                    Err(error) => {
+                        let _ = win.update(cx, |_, window, cx| {
+                            window.push_notification(
+                                crate::shell::error_notification(
+                                    tr!(
+                                        "Windows context menu unavailable: {detail}",
+                                        detail = error
+                                    )
                                     .to_string(),
-                            ),
-                            cx,
-                        );
-                    });
+                                ),
+                                cx,
+                            );
+                        });
+                    }
                 }
             })
             .detach();
@@ -1464,13 +1483,36 @@ impl Shell {
                 // Reveal is a process spawn on mac/win but a blocking
                 // D-Bus round-trip per path on Linux — run the loop on
                 // the background executor (Prime Directive).
-                cx.background_spawn(async move {
-                    for path in &paths {
-                        crate::platform_shell::reveal_in_finder(path);
-                    }
+                let win = window.window_handle();
+                cx.spawn(async move |_this, cx| {
+                    let result = cx
+                        .background_executor()
+                        .spawn(async move {
+                            let mut failures = 0usize;
+                            for path in &paths {
+                                if crate::platform_shell::try_reveal_in_finder(path).is_err() {
+                                    failures += 1;
+                                }
+                            }
+                            failures
+                        })
+                        .await;
+                    let _ = win.update(cx, |_, window, cx| {
+                        if result == 0 {
+                            window.push_notification(Notification::info(msg), cx);
+                        } else {
+                            window.push_notification(
+                                Notification::error(trn!(
+                                    "Could not reveal {n} item",
+                                    "Could not reveal {n} items",
+                                    result
+                                )),
+                                cx,
+                            );
+                        }
+                    });
                 })
                 .detach();
-                window.push_notification(Notification::info(msg), cx);
             },
         );
     }

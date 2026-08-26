@@ -1349,7 +1349,7 @@ impl Shell {
                             let _ = weak_cell.update(app, |this, cx| {
                                 window.focus(&this.active_tab().grid_focus, cx);
                                 if dbl {
-                                    this.activate_row(i, cx);
+                                    this.activate_row(i, Some(window.window_handle()), cx);
                                 } else {
                                     this.apply_row_click_gesture(i, mods, cx);
                                 }

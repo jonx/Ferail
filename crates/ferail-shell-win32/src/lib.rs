@@ -23,6 +23,11 @@
 #[cfg(windows)]
 mod preview_handler;
 
+#[cfg(windows)]
+mod shortcut;
+#[cfg(windows)]
+pub use shortcut::WindowsShortcutResolver;
+
 // Explicit-demand, out-of-process Explorer context menu (WIN-007).
 #[cfg(windows)]
 mod context_menu;
@@ -609,6 +614,16 @@ pub fn app_bundle_path() -> Option<String> {
 /// opened Documents for some valid names containing spaces / `#` / `!`.
 #[cfg(windows)]
 pub fn reveal_in_finder(path: &std::path::Path) {
+    if let Err(error) = try_reveal_in_finder(path) {
+        eprintln!("reveal in Explorer failed: {error}");
+    }
+}
+
+/// Reveal an item or open its closest existing parent. Unlike the legacy
+/// fire-and-forget wrapper, this preserves a final actionable failure for UI
+/// callers without exposing the path in the error text.
+#[cfg(windows)]
+pub fn try_reveal_in_finder(path: &std::path::Path) -> std::io::Result<()> {
     if let Err(reveal_error) = reveal_in_explorer(path) {
         // A target can disappear between enumeration and the click. Explorer's
         // selection API then fails; open the nearest existing parent so the
@@ -618,24 +633,29 @@ pub fn reveal_in_finder(path: &std::path::Path) {
         while let Some(candidate) = fallback {
             if candidate.exists() {
                 if let Err(open_error) = open_with_default(candidate) {
-                    eprintln!(
-                        "reveal in Explorer failed ({reveal_error}); closest-parent fallback failed ({open_error})"
-                    );
+                    return Err(std::io::Error::other(format!(
+                        "Explorer selection failed ({reveal_error}); parent fallback failed ({open_error})"
+                    )));
                 } else {
-                    eprintln!(
-                        "reveal in Explorer failed ({reveal_error}); opened closest existing parent"
-                    );
+                    return Ok(());
                 }
-                return;
             }
             fallback = candidate.parent();
         }
-        eprintln!("reveal in Explorer failed with no existing parent: {reveal_error}");
+        return Err(std::io::Error::other(format!(
+            "Explorer selection failed and no existing parent was available ({reveal_error})"
+        )));
     }
+    Ok(())
 }
 
 #[cfg(not(windows))]
 pub fn reveal_in_finder(_path: &std::path::Path) {}
+
+#[cfg(not(windows))]
+pub fn try_reveal_in_finder(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
 
 #[cfg(windows)]
 fn reveal_in_explorer(path: &std::path::Path) -> std::io::Result<()> {
@@ -959,14 +979,17 @@ pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
 /// Blocks (walk + RM process enumeration): background only.
 #[cfg(windows)]
 pub fn volume_busy_processes(path: &std::path::Path) -> Vec<ferail_core::BusyApp> {
-    elevation::processes_using_tree(std::slice::from_ref(&path.to_path_buf()), LOCK_SCAN_MAX_FILES)
-        .holders
-        .into_iter()
-        .map(|p| ferail_core::BusyApp {
-            pid: p.pid as i32,
-            name: p.name,
-        })
-        .collect()
+    elevation::processes_using_tree(
+        std::slice::from_ref(&path.to_path_buf()),
+        LOCK_SCAN_MAX_FILES,
+    )
+    .holders
+    .into_iter()
+    .map(|p| ferail_core::BusyApp {
+        pid: p.pid as i32,
+        name: p.name,
+    })
+    .collect()
 }
 
 #[cfg(not(windows))]
@@ -989,8 +1012,8 @@ pub const LOCK_SCAN_MAX_FILES: usize = 4096;
 pub fn activate_app(pid: i32) -> bool {
     use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GW_OWNER, GetWindow, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-        SW_RESTORE, SetForegroundWindow, ShowWindow,
+        EnumWindows, GetWindow, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        SetForegroundWindow, ShowWindow, GW_OWNER, SW_RESTORE,
     };
 
     struct Find {

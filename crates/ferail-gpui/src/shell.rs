@@ -21,6 +21,8 @@ use ferail_core::platform_namespace::{
     LocationTarget, PlatformBatchApply, PlatformCapabilities, PlatformItemId,
     PlatformListingRequest, PlatformLocation, PlatformLocationErrorKind, PlatformNamespaceProvider,
 };
+#[cfg(windows)]
+use ferail_core::platform_shortcuts::{ShortcutFailureKind, ShortcutInfo, ShortcutOpenDisposition};
 use ferail_core::{EntryKind, EnumerationError, FileEntry, NodeId};
 use ferail_fs_native::{NativeFs, home_dir};
 use gpui::*;
@@ -2483,7 +2485,7 @@ impl Shell {
                         this.apply_row_keyboard_gesture(*row_ix, *modifiers, cx);
                     }
                     TableEvent::DoubleClickedRow(row_ix) => {
-                        this.activate_row(*row_ix, cx);
+                        this.activate_row(*row_ix, Some(window.window_handle()), cx);
                     }
                     TableEvent::RightClickedRow(row_ix) => {
                         if let Some(r) = *row_ix {
@@ -2809,7 +2811,7 @@ impl Shell {
             return;
         }
         if entries.len() == 1 {
-            self.activate_row(entries[0].0, cx);
+            self.activate_row(entries[0].0, Some(window.window_handle()), cx);
             return;
         }
         // FanOut: opening N items launches N apps / opens N folder tabs.
@@ -2833,9 +2835,31 @@ impl Shell {
                     }
                 }
                 if !files.is_empty() {
-                    cx.background_spawn(async move {
-                        for path in files {
-                            let _ = crate::platform_shell::open_with_default(&path);
+                    let win = window.window_handle();
+                    cx.spawn(async move |_this, cx| {
+                        let failures = cx
+                            .background_executor()
+                            .spawn(async move {
+                                let mut failures = 0usize;
+                                for path in files {
+                                    failures += usize::from(
+                                        crate::platform_shell::open_with_default(&path).is_err(),
+                                    );
+                                }
+                                failures
+                            })
+                            .await;
+                        if failures > 0 {
+                            let _ = win.update(cx, |_, window, cx| {
+                                window.push_notification(
+                                    gpui_component::notification::Notification::error(trn!(
+                                        "Could not open {n} item",
+                                        "Could not open {n} items",
+                                        failures
+                                    )),
+                                    cx,
+                                );
+                            });
                         }
                     })
                     .detach();
@@ -4318,6 +4342,9 @@ impl Shell {
             cancel.store(true, Ordering::Relaxed);
         }
         if let Some(cancel) = self.tabs[tab_index].wsl_resolve_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = self.tabs[tab_index].shortcut_resolve_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
         // The folder-size and prefetch passes for the previous listing
@@ -6534,7 +6561,12 @@ impl Shell {
 
     /// User activated a row (double-click or Enter). For directories
     /// we navigate into them; for files we hand off to the OS opener.
-    pub fn activate_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+    pub fn activate_row(
+        &mut self,
+        row_ix: usize,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
         // Archive rows are virtual: they have no on-disk path, and the
         // fallback below would otherwise synthesize `current_dir/<name>` and
         // try to open a file that doesn't exist. Activating a folder opens it
@@ -6575,11 +6607,33 @@ impl Shell {
                         p
                     }),
                     e.kind,
+                    e.id,
+                    e.size,
+                    e.mtime_unix,
                 )
             });
-        let Some((path, kind)) = path_and_kind else {
+        let Some((path, kind, node, size, mtime_unix)) = path_and_kind else {
             return;
         };
+        #[cfg(windows)]
+        if matches!(kind, EntryKind::File | EntryKind::Symlink)
+            && path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("lnk"))
+        {
+            self.activate_windows_shortcut(
+                path,
+                node,
+                ferail_core::revision_cache::FileRevision {
+                    byte_len: size,
+                    modified_ns: Some(i128::from(mtime_unix) * 1_000_000_000),
+                },
+                window,
+                cx,
+            );
+            return;
+        }
         match kind {
             EntryKind::Directory => self.navigate(path, cx),
             EntryKind::Symlink if crate::platform_shell::is_wsl_path(&path) => {
@@ -6590,10 +6644,163 @@ impl Shell {
                 // ShellExecuteExW on Windows, and xdg-open on Linux. All can
                 // cross slow association/provider boundaries, so even this
                 // single-file action stays off the UI thread.
-                cx.background_spawn(async move {
-                    let _ = crate::platform_shell::open_with_default(&path);
-                })
-                .detach();
+                Self::spawn_open_with_feedback(path, window, cx);
+            }
+        }
+    }
+
+    fn spawn_open_with_feedback(
+        path: PathBuf,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::platform_shell::open_with_default(&path) })
+                .await;
+            if let Err(error) = result
+                && let Some(window) = window
+            {
+                let _ = window.update(cx, |_, window, cx| {
+                    window.push_notification(
+                        gpui_component::notification::Notification::error(tr!(
+                            "Could not open item: {error}",
+                            error = error
+                        )),
+                        cx,
+                    );
+                });
+            }
+        })
+        .detach();
+    }
+
+    #[cfg(windows)]
+    fn activate_windows_shortcut(
+        &mut self,
+        source: PathBuf,
+        node: NodeId,
+        revision: ferail_core::revision_cache::FileRevision,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let cached = self.process.shortcut_cache.borrow_mut().get(node, revision);
+        if let Some(info) = cached {
+            self.apply_windows_shortcut_disposition(source, (*info).clone(), window, cx);
+            return;
+        }
+        if let Some(previous) = self.active_tab_mut().shortcut_resolve_cancel.take() {
+            previous.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.active_tab_mut().shortcut_resolve_cancel = Some(cancel.clone());
+        let waiter = crate::asset_dispatcher::ShortcutWaiter {
+            shell: cx.weak_entity(),
+            window,
+            tab_id: self.active_tab().id,
+            load_generation: self.active_tab().load_generation,
+            node,
+            source,
+            revision,
+            cancel,
+        };
+        let mut work = self.process.asset_work.borrow_mut();
+        self.process.asset_dispatcher.borrow_mut().submit_shortcut(
+            &mut work,
+            &mut self.process.thumbnails.borrow_mut(),
+            &mut self.process.icons.borrow_mut(),
+            self.process.shortcut_resolver.clone(),
+            waiter,
+        );
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn apply_windows_shortcut_result(
+        &mut self,
+        waiter: crate::asset_dispatcher::ShortcutWaiter,
+        result: Result<ShortcutInfo, ShortcutFailureKind>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab_index) = self.tabs.iter().position(|tab| tab.id == waiter.tab_id) else {
+            return;
+        };
+        let owns_request = self.tabs[tab_index]
+            .shortcut_resolve_cancel
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &waiter.cancel));
+        if owns_request {
+            self.tabs[tab_index].shortcut_resolve_cancel = None;
+        }
+        let row_still_matches = self.tabs[tab_index]
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .any(|entry| {
+                entry.id == waiter.node
+                    && entry.size == waiter.revision.byte_len
+                    && Some(i128::from(entry.mtime_unix) * 1_000_000_000)
+                        == waiter.revision.modified_ns
+            });
+        if !owns_request
+            || tab_index != self.active
+            || self.tabs[tab_index].load_generation != waiter.load_generation
+            || waiter.cancel.load(Ordering::Relaxed)
+            || !row_still_matches
+        {
+            return;
+        }
+        let info = match result {
+            Ok(info) => info,
+            Err(ShortcutFailureKind::Cancelled) => return,
+            Err(error) => ShortcutInfo {
+                target: Err(error),
+                arguments: Vec::new(),
+                working_directory: None,
+                icon_location: None,
+            },
+        };
+        self.process
+            .shortcut_cache
+            .borrow_mut()
+            .insert(waiter.node, waiter.revision, info.clone());
+        self.apply_windows_shortcut_disposition(waiter.source, info, waiter.window, cx);
+    }
+
+    #[cfg(windows)]
+    fn apply_windows_shortcut_disposition(
+        &mut self,
+        source: PathBuf,
+        info: ShortcutInfo,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        match info.open_disposition() {
+            ShortcutOpenDisposition::Navigate(path) => self.navigate(path, cx),
+            ShortcutOpenDisposition::InvokeShortcut => {
+                Self::spawn_open_with_feedback(source, window, cx);
+            }
+            ShortcutOpenDisposition::Unavailable(error) => {
+                if let Some(window) = window {
+                    let message = match error {
+                        ShortcutFailureKind::Broken => tr!("This shortcut is broken"),
+                        ShortcutFailureKind::TargetMissing => tr!("The shortcut target is missing"),
+                        ShortcutFailureKind::PermissionDenied => {
+                            tr!("Permission denied while resolving the shortcut")
+                        }
+                        ShortcutFailureKind::Unsupported => tr!("This shortcut is not supported"),
+                        ShortcutFailureKind::Cancelled => return,
+                        ShortcutFailureKind::Failed => tr!("Could not resolve the shortcut"),
+                    };
+                    let _ = window.update(cx, |_, window, cx| {
+                        window.push_notification(
+                            gpui_component::notification::Notification::error(message),
+                            cx,
+                        );
+                    });
+                }
             }
         }
     }

@@ -15,7 +15,12 @@ use ferail_core::asset_work::{
     AssetWorkCoordinator, AssetWorkRequest, AssetWorkScope, StartedAssetWork, SubmitOutcome,
 };
 use ferail_core::revision_cache::FileRevision;
-use gpui::{App, AsyncApp, RenderImage, WeakEntity};
+use gpui::{AnyWindowHandle, App, AsyncApp, RenderImage, WeakEntity};
+
+#[cfg(windows)]
+use ferail_core::platform_shortcuts::{
+    ShortcutFailureKind, ShortcutInfo, ShortcutResolveRequest, ShortcutResolver as _,
+};
 
 use crate::file_list::FileListDelegate;
 use crate::icons::IconCache;
@@ -78,9 +83,23 @@ impl WorkId {
 }
 
 enum ProviderPayload {
-    Thumbnail { path: PathBuf, size_px: u32 },
-    PathIcon { path: PathBuf, size_px: Option<u32> },
-    TypeIcon { path: PathBuf, cache_key: String },
+    Thumbnail {
+        path: PathBuf,
+        size_px: u32,
+    },
+    PathIcon {
+        path: PathBuf,
+        size_px: Option<u32>,
+    },
+    TypeIcon {
+        path: PathBuf,
+        cache_key: String,
+    },
+    #[cfg(windows)]
+    Shortcut {
+        request: ShortcutResolveRequest,
+        resolver: Arc<crate::platform_shell::WindowsShortcutResolver>,
+    },
 }
 
 struct ProviderJob {
@@ -92,6 +111,8 @@ struct ProviderCompletion {
     started: StartedAssetWork,
     payload: ProviderPayload,
     rgba: Option<(Vec<u8>, u32, u32)>,
+    #[cfg(windows)]
+    shortcut: Option<Result<ShortcutInfo, ShortcutFailureKind>>,
 }
 
 enum UploadedPayload {
@@ -109,6 +130,30 @@ struct UploadedCompletion {
 enum AssetNotification {
     Row(ThumbnailWaiter),
     Shell(WeakEntity<Shell>),
+    #[cfg(windows)]
+    Shortcut {
+        waiter: Box<ShortcutWaiter>,
+        result: Result<ShortcutInfo, ShortcutFailureKind>,
+    },
+}
+
+#[cfg(windows)]
+#[derive(Clone)]
+pub(crate) struct ShortcutWaiter {
+    pub shell: WeakEntity<Shell>,
+    pub window: Option<AnyWindowHandle>,
+    pub tab_id: crate::shell::TabId,
+    pub load_generation: u64,
+    pub node: NodeId,
+    pub source: PathBuf,
+    pub revision: FileRevision,
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[cfg(windows)]
+struct ShortcutApplyCompletion {
+    request: AssetWorkRequest,
+    result: Result<ShortcutInfo, ShortcutFailureKind>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -131,6 +176,12 @@ pub(crate) struct ThumbnailDispatcher {
     icon_waiters: HashMap<IconKey, Vec<WeakEntity<Shell>>>,
     upload_payloads: HashMap<WorkId, ProviderCompletion>,
     apply_payloads: HashMap<WorkId, UploadedCompletion>,
+    #[cfg(windows)]
+    live_shortcuts: HashMap<AssetKey, WorkId>,
+    #[cfg(windows)]
+    shortcut_waiters: HashMap<AssetKey, Vec<ShortcutWaiter>>,
+    #[cfg(windows)]
+    shortcut_apply_payloads: HashMap<WorkId, ShortcutApplyCompletion>,
     wake_tx: async_channel::Sender<()>,
     wake_rx: async_channel::Receiver<()>,
     completion_tx: async_channel::Sender<ProviderCompletion>,
@@ -150,6 +201,12 @@ impl ThumbnailDispatcher {
             icon_waiters: HashMap::new(),
             upload_payloads: HashMap::new(),
             apply_payloads: HashMap::new(),
+            #[cfg(windows)]
+            live_shortcuts: HashMap::new(),
+            #[cfg(windows)]
+            shortcut_waiters: HashMap::new(),
+            #[cfg(windows)]
+            shortcut_apply_payloads: HashMap::new(),
             wake_tx,
             wake_rx,
             completion_tx,
@@ -344,6 +401,60 @@ impl ThumbnailDispatcher {
         let _ = self.wake_tx.try_send(());
     }
 
+    #[cfg(windows)]
+    pub(crate) fn submit_shortcut(
+        &mut self,
+        work: &mut AssetWorkCoordinator,
+        thumbnails: &mut ThumbnailCache,
+        icons: &mut IconCache,
+        resolver: Arc<crate::platform_shell::WindowsShortcutResolver>,
+        waiter: ShortcutWaiter,
+    ) {
+        let key = AssetKey {
+            identity: AssetIdentity::File(waiter.node),
+            revision: AssetRevision::File(waiter.revision),
+            kind: AssetKind::Shortcut,
+        };
+        if self.live_shortcuts.contains_key(&key) {
+            self.shortcut_waiters.entry(key).or_default().push(waiter);
+            return;
+        }
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        let request = AssetWorkRequest {
+            key,
+            scope: DISPATCH_SCOPE,
+            generation: self.next_generation,
+            priority: AssetPriority::Selected,
+        };
+        let submit = work.submit_detailed(AssetLane::Provider, request);
+        if let Some(evicted) = submit.evicted {
+            self.discard_pending(thumbnails, icons, evicted);
+        }
+        if matches!(
+            submit.outcome,
+            SubmitOutcome::QueueFull | SubmitOutcome::AlreadyScheduled
+        ) {
+            return;
+        }
+        let id = WorkId::from_request(request);
+        self.live_shortcuts.insert(key, id);
+        self.shortcut_waiters.insert(key, vec![waiter.clone()]);
+        self.pending_jobs.insert(
+            id,
+            ProviderJob {
+                request,
+                payload: ProviderPayload::Shortcut {
+                    request: ShortcutResolveRequest {
+                        source: waiter.source,
+                        revision: waiter.revision,
+                    },
+                    resolver,
+                },
+            },
+        );
+        let _ = self.wake_tx.try_send(());
+    }
+
     fn new_icon_request(&mut self, size_px: u32) -> AssetWorkRequest {
         self.next_generation = self.next_generation.wrapping_add(1).max(1);
         let generation = self.next_generation;
@@ -434,6 +545,17 @@ impl ThumbnailDispatcher {
                 self.icon_waiters.remove(&key);
                 icons.cancel_type_icon_in_flight(&cache_key);
             }
+            #[cfg(windows)]
+            ProviderPayload::Shortcut { .. } => {
+                self.live_shortcuts.remove(&asset_key);
+                if let Some(waiters) = self.shortcut_waiters.remove(&asset_key) {
+                    for waiter in waiters {
+                        waiter
+                            .cancel
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
         }
     }
 
@@ -465,6 +587,28 @@ impl ThumbnailDispatcher {
             let _ = work.complete(AssetLane::Provider, &request);
             if completion.started.is_cancelled() {
                 self.discard_provider_payload(thumbnails, icons, request.key, completion.payload);
+                continue;
+            }
+            #[cfg(windows)]
+            if let Some(result) = completion.shortcut {
+                let submit = work.submit_detailed(AssetLane::Apply, request);
+                if let Some(evicted) = submit.evicted {
+                    self.discard_apply(thumbnails, icons, evicted);
+                }
+                if matches!(
+                    submit.outcome,
+                    SubmitOutcome::QueueFull | SubmitOutcome::AlreadyScheduled
+                ) {
+                    self.discard_provider_payload(
+                        thumbnails,
+                        icons,
+                        request.key,
+                        completion.payload,
+                    );
+                    continue;
+                }
+                self.shortcut_apply_payloads
+                    .insert(id, ShortcutApplyCompletion { request, result });
                 continue;
             }
             let submit = work.submit_detailed(AssetLane::Upload, request);
@@ -523,6 +667,8 @@ impl ThumbnailDispatcher {
                 ProviderPayload::TypeIcon { cache_key, .. } => {
                     UploadedPayload::TypeIcon { cache_key }
                 }
+                #[cfg(windows)]
+                ProviderPayload::Shortcut { .. } => unreachable!("shortcuts bypass pixel upload"),
             };
             let _ = work.complete(AssetLane::Upload, &request);
             let submit = work.submit_detailed(AssetLane::Apply, request);
@@ -552,6 +698,20 @@ impl ThumbnailDispatcher {
                 break;
             };
             let id = WorkId::from_request(started.request);
+            #[cfg(windows)]
+            if let Some(completion) = self.shortcut_apply_payloads.remove(&id) {
+                self.live_shortcuts.remove(&completion.request.key);
+                if let Some(waiters) = self.shortcut_waiters.remove(&completion.request.key) {
+                    notifications.extend(waiters.into_iter().map(|waiter| {
+                        AssetNotification::Shortcut {
+                            waiter: Box::new(waiter),
+                            result: completion.result.clone(),
+                        }
+                    }));
+                }
+                let _ = work.complete(AssetLane::Apply, &completion.request);
+                continue;
+            }
             let Some(completion) = self.apply_payloads.remove(&id) else {
                 let _ = work.complete(AssetLane::Apply, &started.request);
                 continue;
@@ -595,6 +755,17 @@ impl ThumbnailDispatcher {
         let id = WorkId::from_request(request);
         if let Some(completion) = self.apply_payloads.remove(&id) {
             self.discard_uploaded_payload(thumbnails, icons, request.key, completion.payload);
+        }
+        #[cfg(windows)]
+        if self.shortcut_apply_payloads.remove(&id).is_some() {
+            self.live_shortcuts.remove(&request.key);
+            if let Some(waiters) = self.shortcut_waiters.remove(&request.key) {
+                for waiter in waiters {
+                    waiter
+                        .cancel
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
         }
     }
 
@@ -666,6 +837,14 @@ async fn dispatch_ready_work(cx: &mut AsyncApp) {
         let wake_tx = wake_tx.clone();
         cx.background_executor()
             .spawn(async move {
+                #[cfg(windows)]
+                let shortcut = if started.is_cancelled() {
+                    None
+                } else if let ProviderPayload::Shortcut { request, resolver } = &job.payload {
+                    Some(resolver.resolve(request.clone(), &started.cancellation()))
+                } else {
+                    None
+                };
                 let rgba = if started.is_cancelled() {
                     None
                 } else {
@@ -685,6 +864,8 @@ async fn dispatch_ready_work(cx: &mut AsyncApp) {
                         ProviderPayload::TypeIcon { path, .. } => {
                             ferail_fs_native::fetch_icon_rgba(path, 32)
                         }
+                        #[cfg(windows)]
+                        ProviderPayload::Shortcut { .. } => None,
                     }
                 };
                 let _ = completion_tx
@@ -692,6 +873,8 @@ async fn dispatch_ready_work(cx: &mut AsyncApp) {
                         started,
                         payload: job.payload,
                         rgba,
+                        #[cfg(windows)]
+                        shortcut,
                     })
                     .await;
                 let _ = wake_tx.try_send(());
@@ -740,6 +923,13 @@ async fn dispatch_ready_work(cx: &mut AsyncApp) {
                     }
                     AssetNotification::Shell(shell) => {
                         let _ = shell.update(cx, |_shell, cx| cx.notify());
+                    }
+                    #[cfg(windows)]
+                    AssetNotification::Shortcut { waiter, result } => {
+                        let shell = waiter.shell.clone();
+                        let _ = shell.update(cx, |shell, cx| {
+                            shell.apply_windows_shortcut_result(*waiter, result, cx);
+                        });
                     }
                 }
             }

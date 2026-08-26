@@ -91,6 +91,11 @@ pub struct ProcessState {
     /// pixels and GPUI handles live here, never in ferail-core or row models.
     pub(crate) asset_dispatcher: Rc<RefCell<crate::asset_dispatcher::ThumbnailDispatcher>>,
 
+    #[cfg(windows)]
+    pub shortcut_resolver: Arc<crate::platform_shell::WindowsShortcutResolver>,
+    #[cfg(windows)]
+    pub shortcut_cache: RefCell<ferail_core::platform_shortcuts::ShortcutCache>,
+
     /// Monotonic process-local scope for tables/platform surfaces using the
     /// shared asset lanes. Kept separate from TabId because archive/tool
     /// surfaces also own rows and can request assets without being a tab.
@@ -288,6 +293,10 @@ impl ProcessState {
             asset_dispatcher: Rc::new(RefCell::new(
                 crate::asset_dispatcher::ThumbnailDispatcher::new(),
             )),
+            #[cfg(windows)]
+            shortcut_resolver: Arc::new(crate::platform_shell::WindowsShortcutResolver),
+            #[cfg(windows)]
+            shortcut_cache: RefCell::new(ferail_core::platform_shortcuts::ShortcutCache::new(512)),
             next_asset_scope: Cell::new(1),
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
             watcher,

@@ -306,13 +306,23 @@ pub fn open_with_default(_path: &std::path::Path) -> std::io::Result<()> {
 /// Non-macOS: no-op.
 #[cfg(target_os = "macos")]
 pub fn reveal_in_finder(path: &std::path::Path) {
+    let _ = try_reveal_in_finder(path);
+}
+
+#[cfg(target_os = "macos")]
+pub fn try_reveal_in_finder(path: &std::path::Path) -> std::io::Result<()> {
     let mut cmd = std::process::Command::new("open");
     cmd.arg("-R").arg(path);
-    let _ = spawn_and_reap(&mut cmd);
+    spawn_and_reap(&mut cmd)
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn reveal_in_finder(_path: &std::path::Path) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn try_reveal_in_finder(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
 
 /// Open a terminal at `path` (a directory) with the default spec:
 /// `open -a Terminal <dir>`. See [`open_terminal_with`].

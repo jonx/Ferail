@@ -6,17 +6,18 @@
 
 use std::{
     cell::RefCell,
-    ffi::{OsString, c_void},
+    ffi::{c_void, OsString},
     io::{BufRead as _, BufReader, Write as _},
     os::windows::ffi::OsStrExt,
     os::windows::process::CommandExt as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{OnceLock, mpsc},
+    sync::{mpsc, OnceLock},
     time::{Duration, Instant},
 };
 
 use windows::{
+    core::{Interface, PCSTR, PCWSTR, PSTR},
     Win32::{
         Foundation::{BOOL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM},
         System::{
@@ -26,24 +27,23 @@ use windows::{
         UI::{
             Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SHIFT},
             Shell::{
-                CMF_EXTENDEDVERBS, CMF_NORMAL, CMIC_MASK_CONTROL_DOWN, CMIC_MASK_PTINVOKE,
-                CMIC_MASK_SHIFT_DOWN, CMINVOKECOMMANDINFO, CMINVOKECOMMANDINFOEX, GCS_VERBA,
-                GCS_VERBW, IContextMenu, IContextMenu2, IContextMenu3, IShellFolder,
-                SEE_MASK_NO_CONSOLE, SEE_MASK_NOASYNC, SEE_MASK_UNICODE, SHBindToParent,
-                SHParseDisplayName,
+                IContextMenu, IContextMenu2, IContextMenu3, IShellFolder, SHBindToParent,
+                SHParseDisplayName, CMF_EXTENDEDVERBS, CMF_NORMAL, CMIC_MASK_CONTROL_DOWN,
+                CMIC_MASK_PTINVOKE, CMIC_MASK_SHIFT_DOWN, CMINVOKECOMMANDINFO,
+                CMINVOKECOMMANDINFOEX, GCS_VERBA, GCS_VERBW, SEE_MASK_NOASYNC, SEE_MASK_NO_CONSOLE,
+                SEE_MASK_UNICODE,
             },
             WindowsAndMessaging::{
                 CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-                DispatchMessageW, EnumWindows, GW_OWNER, GetCursorPos, GetWindow, HMENU, IsWindow,
-                MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW,
-                PostMessageW, QS_ALLINPUT, RegisterClassExW, SW_SHOWNORMAL, SetForegroundWindow,
-                ShowWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage,
-                WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_NULL, WM_QUIT,
-                WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
+                DispatchMessageW, EnumWindows, GetCursorPos, GetWindow, IsWindow,
+                MsgWaitForMultipleObjectsEx, PeekMessageW, PostMessageW, RegisterClassExW,
+                SetForegroundWindow, ShowWindow, TrackPopupMenuEx, TranslateMessage, GW_OWNER,
+                HMENU, MSG, MWMO_INPUTAVAILABLE, PM_REMOVE, QS_ALLINPUT, SW_SHOWNORMAL,
+                TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM,
+                WM_MENUCHAR, WM_NULL, WM_QUIT, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
             },
         },
     },
-    core::{Interface, PCSTR, PCWSTR, PSTR},
 };
 
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;

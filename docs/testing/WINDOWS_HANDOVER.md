@@ -268,6 +268,31 @@ Windows implementation still required:
 Windows cases claimed from macOS: none.
 ```
 
+### 2026-08-26 — WIN-008/009/010 path interoperability
+
+```text
+Implemented on Windows:
+  - WindowsShortcutResolver loads .lnk files with IShellLinkW/IPersistFile in
+    a fresh STA, uses non-interactive/no-search resolution flags, and copies
+    path, arguments, working directory and icon location into owned DTOs;
+  - explicit shortcut Open is scheduled through the shared process Provider
+    lane and capped Apply lane, cached by NodeId + FileRevision (512 entries),
+    and accepted only when tab, load generation, row identity and revision
+    still match;
+  - real directory targets navigate in Ferail; files/applications invoke the
+    original .lnk so Windows retains arguments and working-directory rules;
+  - normal Open and Reveal surface final failures to the user; Reveal retains
+    the closest-existing-parent fallback;
+  - after the isolated native context-menu broker closes successfully, only
+    tabs showing the selected paths' parent directories reload.
+Validation:
+  - cargo check -p ferail-gpui --all-targets
+Still required for WIN-010:
+  - PIDL/Shell-namespace-only shortcut targets and the Get Info shortcut
+    section;
+  - the manual WTEST-060–065 and WTEST-080–087 matrices.
+```
+
 ### 2026-08-25 — macOS preparation for WIN-012/013 provider actions
 
 ```text
@@ -621,15 +646,14 @@ use. The Mac-first series has prepared the namespace, WSL, shortcut, action,
 transfer-selection, properties/cache, asset-budget and command-consistency
 contracts. Resume implementation in this order:
 
-1. Complete the process-owned asset coordinator integration. The scoped,
-   independently bounded provider/decode/upload/apply owner is now present;
-   connect its payload dispatcher, per-frame apply limits, affected-row
-   invalidation and stable row geometry. Then route the current providers and
-   run the 10k/hostile-provider matrix without changing the ordinary/Flat row
-   model.
-2. Complete path-based interoperability: actionable Open/Reveal failures,
-   targeted refresh after a native Shell verb, the prepared `.lnk` resolver,
-   and the Explorer clipboard/drag format matrix through symbolic selections.
+1. Qualify the completed process-owned asset integration with the 10k and
+   hostile-provider matrix. Thumbnails, type/path icons and shortcut
+   resolution now share the bounded provider/apply owner with generation and
+   row validation; keep ordinary and Flat row models unchanged.
+2. Complete path-based interoperability: the actionable Open/Reveal path,
+   targeted post-Shell-verb refresh and path-backed `.lnk` resolver are wired;
+   finish namespace-only shortcut identities plus the Explorer clipboard/drag
+   format matrix through symbolic selections.
 3. Qualify the source-complete WSL path-backed location slice through
    WTEST-130–139: cached installed distributions, no implicit start, explicit
    stopped→starting→path activation, then a `NativeFs` handoff. Only after that
