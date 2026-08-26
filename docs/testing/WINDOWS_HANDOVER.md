@@ -1458,6 +1458,15 @@ Release packaging correction:
     one job left at "Starting job"); neither executed a repository step. These
     are recorded as infrastructure retries, not product or packaging failures.
 
+Publication result:
+  - recovery run 32986710633 completed successfully on 2026-08-26;
+  - the build, dependency gate, SHA-256 calculation, artifact upload and
+    GitHub release attachment all passed;
+  - the published v0.6.9 release contains Ferail-0.6.9-win-x64.zip (41.3 MB)
+    and Ferail-0.6.9-x64-symbols.zip (78.2 MB);
+  - v0.6.9 remains pinned to the verified release commit; the temporary
+    retry-v0.6.9* trigger tags are removed after publication.
+
 This publication is not Authenticode-signed and does not close the still-open
 hardware/adversarial acceptance cases listed above. Retain those as post-
 release qualification rather than rewriting them as passed.
