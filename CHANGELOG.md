@@ -19,7 +19,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   snapshots; repeated refreshes reuse identical copied identities. Pathless
   rows expose the real Windows menu through **More…**, while Shift+right-click
   opens that menu directly; its PIDLs travel over a validated broker pipe and
-  selected commands refresh the namespace afterward.
+  selected commands refresh the namespace afterward. Filesystem-only
+  shortcuts, toolbar commands and pane drops are suppressed in virtual
+  locations, so they can never act on the directory that happened to be open
+  before This PC or Recycle Bin.
 
 - **WSL browsing no longer starts a distribution implicitly.** Ferail invokes
   `wsl.exe` only after an explicit distribution or symlink activation; a

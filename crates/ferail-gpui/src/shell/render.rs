@@ -4202,17 +4202,24 @@ impl Render for Shell {
                     .flex_1()
                     .min_h_0()
                     .min_w_0()
-                    .drag_over::<ExternalPaths>(|style, _, _, cx| {
-                        style.bg(cx.theme().accent.opacity(0.06))
+                    .drag_over::<ExternalPaths>(move |style, _, _, cx| {
+                        if platform_mode {
+                            style.cursor_not_allowed()
+                        } else {
+                            style.bg(cx.theme().accent.opacity(0.06))
+                        }
                     })
                     .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                        if this.reject_platform_filesystem_command(window, cx) {
+                            return;
+                        }
                         let dest = this.active_tab().current_dir.clone();
                         this.handle_external_drop(paths.paths().to_vec(), dest, window, cx);
                     }))
                     // Entries dragged out of an archive workbench land in this
                     // tab's folder.
                     .drag_over::<crate::file_list::ArchiveEntryDrag>(move |style, drag, _, cx| {
-                        if open_archive.as_ref() == Some(&drag.archive) {
+                        if platform_mode || open_archive.as_ref() == Some(&drag.archive) {
                             style.cursor_not_allowed()
                         } else {
                             style
@@ -4224,6 +4231,9 @@ impl Render for Shell {
                     })
                     .on_drop(cx.listener(
                         |this, drag: &crate::file_list::ArchiveEntryDrag, window, cx| {
+                            if this.reject_platform_filesystem_command(window, cx) {
+                                return;
+                            }
                             if this.active_archive_view().is_some_and(|view| {
                                 view.read(cx).archive_path() == drag.archive.as_path()
                             }) {
@@ -4261,6 +4271,9 @@ impl Render for Shell {
                             if cx.has_active_drag() {
                                 return;
                             }
+                            if this.reject_platform_filesystem_command(window, cx) {
+                                return;
+                            }
                             let Some(drag) = crate::file_list::take_native_archive_drag() else {
                                 return;
                             };
@@ -4286,7 +4299,7 @@ impl Render for Shell {
                         }),
                     )
                     .when(native_archive_dragging, move |style| {
-                        let reject = open_archive_for_native.is_some();
+                        let reject = platform_mode || open_archive_for_native.is_some();
                         style.hover(move |style| {
                             if reject {
                                 style

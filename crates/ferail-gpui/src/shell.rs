@@ -2862,6 +2862,9 @@ impl Shell {
         context_row: Option<usize>,
         cx: &App,
     ) -> Vec<(usize, FileEntry, PathBuf)> {
+        if self.active_tab().platform_namespace.is_some() {
+            return Vec::new();
+        }
         if let Some(row) = context_row {
             return self.entry_path_for_row(row, cx).into_iter().collect();
         }
@@ -2888,6 +2891,11 @@ impl Shell {
     /// their entries or paths. Used to keep system APIs with inherently
     /// eager payloads away from multi-million-row allocations.
     fn action_target_count(&self, cx: &App) -> usize {
+        if let Some(session) = self.active_tab().platform_namespace.as_ref() {
+            return session
+                .selection()
+                .selected_count(session.store().items().len());
+        }
         if self.context_row.is_some() {
             return 1;
         }
@@ -2899,6 +2907,23 @@ impl Shell {
         } else {
             usize::from(tab.lead.is_some())
         }
+    }
+
+    fn reject_platform_filesystem_command(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.active_tab().platform_namespace.is_none() {
+            return false;
+        }
+        window.push_notification(
+            gpui_component::notification::Notification::info(tr!(
+                "This command is not available for Windows virtual items. Use More… for supported Windows actions."
+            )),
+            cx,
+        );
+        true
     }
 
     fn on_navigate_back(&mut self, _: &NavigateBack, _: &mut Window, cx: &mut Context<Self>) {
@@ -3252,6 +3277,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         crate::trail::command("Toggle Flat View");
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         let tab_id = self.active_tab().id;
         self.toggle_flat_view(tab_id, Some(window.window_handle()), cx);
     }
@@ -3704,9 +3732,12 @@ impl Shell {
     pub fn on_open_disk_usage(
         &mut self,
         _: &OpenDiskUsage,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         let root = self.active_tab().current_dir.clone();
         self.dock_disk_usage_root(root, cx);
     }
@@ -4065,6 +4096,9 @@ impl Shell {
     /// the tab's current folder, matching Finder.
     pub(crate) fn on_get_info(&mut self, _: &GetInfo, window: &mut Window, cx: &mut Context<Self>) {
         use ferail_core::entry_info::InfoTarget;
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         let targets = self.action_entries_visible_order(cx);
         // Nothing targeted → info on the current folder (Finder parity).
         if targets.is_empty() {

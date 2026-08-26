@@ -192,6 +192,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         crate::trail::command("Paste");
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         use gpui_component::notification::Notification;
         let (sources, clipboard_operation) =
             crate::platform_shell::clipboard_read_file_urls_with_operation();
@@ -223,6 +226,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         crate::trail::command("Move Here (Paste)");
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         self.paste_from_clipboard(TransferMode::Move, window, cx);
     }
 
@@ -233,6 +239,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         // Pasteboard read is a semantic event (action handler), same
         // boundary as Quick Look — never from render.
         let sources = crate::platform_shell::clipboard_read_file_urls();
@@ -1359,6 +1368,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         let recursive = window.modifiers().shift;
         let include_hidden = self.show_hidden;
         let row_count = self.active_tab().table.read(cx).delegate().entries.len();
@@ -1592,9 +1604,12 @@ impl Shell {
     pub(super) fn on_open_terminal_here(
         &mut self,
         _: &OpenTerminalHere,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         let Some((_, _, path)) = self.action_entries_visible_order(cx).into_iter().next() else {
             return;
         };
@@ -2123,6 +2138,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         if let Some(target) = self.context_target.take() {
             let saved = self.active_tab().current_dir.clone();
             self.active_tab_mut().current_dir = target;
@@ -3153,6 +3171,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         crate::trail::command("New Folder");
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         let parent = self.active_tab().current_dir.clone();
         // Same focus/select-on-open modal the rename surfaces use. We
         // start with an empty field (the "Untitled folder" placeholder

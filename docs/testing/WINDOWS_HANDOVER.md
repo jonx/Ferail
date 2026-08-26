@@ -261,6 +261,11 @@ Implemented:
     only that namespace session;
   - restore/delete, property DTOs and transfers remain absent rather than
     silently misbehaving until their provider actions are implemented.
+  - audited the shared Shell action surface: filesystem target resolution is
+    empty in namespace mode, and Get Info, paste/move-paste, Copy File List,
+    terminal, New Folder, Flat View, Disk Usage and all three empty-pane drop
+    paths now fail explicitly. None can reuse the tab's display-only
+    `current_dir` snapshot from before the namespace was opened.
 Qualification boundary:
   - this commit delivers namespace discovery/browsing, not the remaining
     action slice. WTEST-100–106 stay unchecked until native actions and real
