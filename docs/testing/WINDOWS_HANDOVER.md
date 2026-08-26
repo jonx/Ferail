@@ -126,8 +126,12 @@ Thumbnail dispatcher completed in the following Windows slice:
     already-running provider is allowed to finish into the shared cache rather
     than being overlapped or throwing away reusable work.
 Still open in asset routing:
-  - route path/type icon warming, shortcut resolution and approved property
-    reads through the provider lane;
+  - path/type icon warming is now routed through the same provider, upload and
+    apply lanes. Type keys and path+size keys coalesce across Shell, grid and
+    tree requesters; negative results cache the normal blank fallback while a
+    canceled reservation remains retryable;
+  - route shortcut resolution and approved property reads through the provider
+    lane;
   - expose aggregate lane counts/cancellations in task diagnostics without a
     repaint and run the real 10k/hostile-provider/DPI matrix.
 Formatting note:

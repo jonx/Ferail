@@ -2087,6 +2087,7 @@ impl FileListDelegate {
         process.asset_dispatcher.borrow_mut().submit(
             &mut process.asset_work.borrow_mut(),
             &mut process.thumbnails.borrow_mut(),
+            &mut process.icons.borrow_mut(),
             crate::asset_dispatcher::ThumbnailSubscription {
                 table: cx.entity().downgrade(),
                 target,

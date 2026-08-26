@@ -38,6 +38,7 @@ pub struct IconCache {
     /// `by_path`, whose borrowed lookups avoid formatting a path string on
     /// every grid/tree repaint.
     by_kind: HashMap<String, Arc<RenderImage>>,
+    type_in_flight: HashSet<String>,
     /// Full path → physical pixel size → icon. The small list/tree icon uses
     /// `ICON_PX`; grid buckets occupy additional entries for the same path.
     by_path: HashMap<PathBuf, HashMap<u32, Arc<RenderImage>>>,
@@ -129,6 +130,22 @@ impl IconCache {
         !cached && !in_flight
     }
 
+    pub(crate) fn type_key(entry: &FileEntry, path: &Path) -> String {
+        cache_key(entry, path)
+    }
+
+    pub(crate) fn needs_type_icon(&self, key: &str) -> bool {
+        !self.by_kind.contains_key(key) && !self.type_in_flight.contains(key)
+    }
+
+    pub(crate) fn mark_type_icon_in_flight(&mut self, key: String) {
+        self.type_in_flight.insert(key);
+    }
+
+    pub(crate) fn cancel_type_icon_in_flight(&mut self, key: &str) {
+        self.type_in_flight.remove(key);
+    }
+
     /// Claim a path icon for a background fetch. Call from the scheduler
     /// before spawning, so the next frame's collector skips it.
     pub fn mark_path_icon_in_flight(&mut self, path: &Path, size_px: Option<u32>) {
@@ -136,6 +153,17 @@ impl IconCache {
             .entry(path.to_path_buf())
             .or_default()
             .insert(Self::path_icon_px(size_px));
+    }
+
+    pub(crate) fn cancel_path_icon_in_flight(&mut self, path: &Path, size_px: Option<u32>) {
+        let size_px = Self::path_icon_px(size_px);
+        let remove_path = self.in_flight.get_mut(path).is_some_and(|sizes| {
+            sizes.remove(&size_px);
+            sizes.is_empty()
+        });
+        if remove_path {
+            self.in_flight.remove(path);
+        }
     }
 
     /// Land a background fetch. `None` (the platform couldn't produce an
@@ -148,6 +176,16 @@ impl IconCache {
         size_px: Option<u32>,
         fetched: Option<(Vec<u8>, u32, u32)>,
     ) {
+        let image = fetched.map(|(rgba, w, h)| Arc::new(build_render_image(rgba, w, h)));
+        self.insert_path_icon_rendered(path, size_px, image);
+    }
+
+    pub(crate) fn insert_path_icon_rendered(
+        &mut self,
+        path: &Path,
+        size_px: Option<u32>,
+        image: Option<Arc<RenderImage>>,
+    ) {
         let size_px = Self::path_icon_px(size_px);
         let remove_path = self.in_flight.get_mut(path).is_some_and(|sizes| {
             sizes.remove(&size_px);
@@ -156,14 +194,21 @@ impl IconCache {
         if remove_path {
             self.in_flight.remove(path);
         }
-        let icon = match fetched {
-            Some((rgba, w, h)) => Arc::new(build_render_image(rgba, w, h)),
-            None => self.blank_icon(),
-        };
+        let icon = image.unwrap_or_else(|| self.blank_icon());
         self.by_path
             .entry(path.to_path_buf())
             .or_default()
             .insert(size_px, icon);
+    }
+
+    pub(crate) fn insert_type_icon_rendered(
+        &mut self,
+        key: String,
+        image: Option<Arc<RenderImage>>,
+    ) {
+        self.type_in_flight.remove(key.as_str());
+        let image = image.unwrap_or_else(|| self.blank_icon());
+        self.by_kind.insert(key, image);
     }
 
     /// Read-only lookup of a path-keyed icon cached at a specific pixel
@@ -435,5 +480,26 @@ mod tests {
         assert!(cache.is_blank(&large));
         assert!(!cache.needs_path_icon(path, Some(128)));
         assert!(cache.needs_path_icon(path, None));
+    }
+
+    #[test]
+    fn canceled_icon_reservations_are_retryable_but_negative_results_are_cached() {
+        let path = Path::new("C:/tmp/folder");
+        let mut cache = IconCache::new();
+        cache.mark_path_icon_in_flight(path, None);
+        cache.cancel_path_icon_in_flight(path, None);
+        assert!(cache.needs_path_icon(path, None));
+
+        let key = ".ttf".to_string();
+        cache.mark_type_icon_in_flight(key.clone());
+        assert!(!cache.needs_type_icon(&key));
+        cache.insert_type_icon_rendered(key.clone(), None);
+        assert!(!cache.needs_type_icon(&key));
+        assert!(
+            cache
+                .by_kind
+                .get(&key)
+                .is_some_and(|image| cache.is_blank(image))
+        );
     }
 }

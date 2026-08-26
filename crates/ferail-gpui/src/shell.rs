@@ -1629,10 +1629,6 @@ fn open_in_app(cx: &mut App, dir: PathBuf, names: Vec<String>) {
     });
 }
 
-/// One of the macOS-standard sidebar destinations shown in the
-const ICON_WARM_CHUNK: usize = 16;
-const ICON_WARM_INTERVAL: Duration = Duration::from_millis(16);
-
 /// How often the splitter's drag callback is allowed to write the
 /// app_state config file. 500 ms means a continuous drag samples ~2
 /// times per second to disk; the final width at drag-end persists
@@ -5060,7 +5056,6 @@ impl Shell {
             drop(icons);
             self.warm_path_icons_async(wanted, cx);
         }
-
     }
 
     /// Warm thumbnails for the active tab's currently-visible rows.
@@ -5128,25 +5123,20 @@ impl Shell {
         if seeds.is_empty() {
             return;
         }
-        cx.spawn(async move |this, cx| {
-            for chunk in seeds.chunks(ICON_WARM_CHUNK) {
-                cx.background_executor().timer(ICON_WARM_INTERVAL).await;
-                let rows = chunk.to_vec();
-                if this
-                    .update(cx, |this, cx| {
-                        let mut icons = this.process.icons.borrow_mut();
-                        for (entry, path) in &rows {
-                            let _ = icons.icon_for(entry, path);
-                        }
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
+        let seeds = seeds
+            .into_iter()
+            .map(|(entry, path)| crate::asset_dispatcher::TypeIconSeed { entry, path })
+            .collect();
+        self.process
+            .asset_dispatcher
+            .borrow_mut()
+            .submit_type_icons(
+                &mut self.process.asset_work.borrow_mut(),
+                &mut self.process.thumbnails.borrow_mut(),
+                &mut self.process.icons.borrow_mut(),
+                cx.entity().downgrade(),
+                seeds,
+            );
     }
 
     /// Warm path-keyed sidebar icons (tree rows, favorites) in the
@@ -5175,61 +5165,16 @@ impl Shell {
         if items.is_empty() {
             return;
         }
-        {
-            let mut icons = self.process.icons.borrow_mut();
-            for (path, size) in &items {
-                icons.mark_path_icon_in_flight(path, *size);
-            }
-        }
-        let task_id = self.process.tasks.borrow_mut().begin(
-            TaskKind::IconPrefetch,
-            trn!(
-                "Loading {n} icon\u{2026}",
-                "Loading {n} icons\u{2026}",
-                items.len()
-            )
-            .to_string(),
-            false,
-        );
-        let icons = self.process.icons.clone();
-        let tasks = self.process.tasks.clone();
-        cx.spawn(async move |this, cx| {
-            // Bounded waves, like the grid's thumbnail warm: a few fetches
-            // in parallel, land the wave, repaint, next wave.
-            for chunk in items.chunks(ICON_WARM_CHUNK) {
-                let handles: Vec<_> = chunk
-                    .iter()
-                    .cloned()
-                    .map(|(path, size)| {
-                        cx.background_executor().spawn(async move {
-                            let px = crate::icons::IconCache::path_icon_px(size);
-                            let fetched = ferail_fs_native::fetch_icon_rgba(&path, px);
-                            (path, size, fetched)
-                        })
-                    })
-                    .collect();
-                let mut landed = Vec::with_capacity(handles.len());
-                for handle in handles {
-                    landed.push(handle.await);
-                }
-                let alive = this
-                    .update(cx, |_, cx| {
-                        {
-                            let mut icons = icons.borrow_mut();
-                            for (path, size, fetched) in landed {
-                                icons.insert_path_icon(&path, size, fetched);
-                            }
-                        }
-                        cx.notify();
-                    })
-                    .is_ok();
-                if !alive {
-                    break;
-                }
-            }
-            tasks.borrow_mut().end(task_id);
-        })
-        .detach();
+        self.process
+            .asset_dispatcher
+            .borrow_mut()
+            .submit_path_icons(
+                &mut self.process.asset_work.borrow_mut(),
+                &mut self.process.thumbnails.borrow_mut(),
+                &mut self.process.icons.borrow_mut(),
+                cx.entity().downgrade(),
+                items,
+            );
     }
 
     fn refresh_active_tab_heats(&mut self, cx: &mut Context<Self>) {

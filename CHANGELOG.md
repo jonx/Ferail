@@ -16,6 +16,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   is spread across frames. A late result is applied only when its original
   surface generation and row identity still match.
 
+- **Windows Shell icon loading shares the same process budget.** Native type
+  icons, custom folder icons, the sidebar and the icon grid no longer create
+  independent worker waves or fetch icons while updating GPUI state. Duplicate
+  type/path requests coalesce, failures converge to the normal fallback icon,
+  and completed images land under the same per-frame upload/apply limits as
+  thumbnails.
+
 - **Tool results can open their location directly in a new tab.** Right-click
   one Disk Usage square, recursive Search result, or Duplicate member and
   choose Open in New Tab. A folder opens directly; a file opens its containing
