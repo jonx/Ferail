@@ -725,13 +725,13 @@ impl Shell {
             PlatformSurfacePhase::Idle | PlatformSurfacePhase::Loading
                 if session.store().items().is_empty() =>
             {
-                return centered(tr!("Loading…").into());
+                return centered(tr!("Loading…"));
             }
             PlatformSurfacePhase::Unavailable(_) => {
-                return centered(tr!("Unavailable").into());
+                return centered(tr!("Unavailable"));
             }
             PlatformSurfacePhase::Ready if session.store().items().is_empty() => {
-                return centered(tr!("This folder is empty.").into());
+                return centered(tr!("This folder is empty."));
             }
             _ => {}
         }

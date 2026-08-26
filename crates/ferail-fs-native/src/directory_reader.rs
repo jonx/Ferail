@@ -77,10 +77,11 @@ impl DirectoryEntry {
 pub(crate) fn for_each(
     path: &Path,
     cancel: &AtomicBool,
-    mut visitor: impl FnMut(DirectoryEntry) -> bool,
+    visitor: impl FnMut(DirectoryEntry) -> bool,
 ) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     {
+        let mut visitor = visitor;
         match macos::for_each_bulk(path, cancel, &mut visitor) {
             Ok(_) => return Ok(()),
             // Unsupported filesystems and an initial kernel rejection use the
@@ -89,8 +90,12 @@ pub(crate) fn for_each(
             Err(error) if error.entries_emitted == 0 => {}
             Err(error) => return Err(error.source),
         }
+        return portable_for_each(path, cancel, visitor);
     }
-    portable_for_each(path, cancel, visitor)
+    #[cfg(not(target_os = "macos"))]
+    {
+        portable_for_each(path, cancel, visitor)
+    }
 }
 
 const RECURSIVE_BATCH_SIZE: usize = 256;
@@ -287,10 +292,10 @@ fn context_path<C: DirectoryContext>(context: &C) -> &Path {
 /// Conservative concurrency for recursive scans. Parallel directory reads
 /// are enabled only for local APFS volumes. Network/removable/unknown media
 /// remain serial to avoid multiplying latency or seeking on spinning disks.
-pub(crate) fn recommended_recursive_workers(path: &Path) -> usize {
+pub(crate) fn recommended_recursive_workers(_path: &Path) -> usize {
     #[cfg(target_os = "macos")]
     {
-        let suitable = crate::volume_info_for_path(path).is_some_and(|volume| {
+        let suitable = crate::volume_info_for_path(_path).is_some_and(|volume| {
             volume.is_local && !volume.is_removable && volume.format.as_deref() == Some("apfs")
         });
         if suitable {

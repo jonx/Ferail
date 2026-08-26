@@ -2214,7 +2214,12 @@ fn short_path(p: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod path_arena_tests {
-    use super::*;
+    use std::path::PathBuf;
+
+    use ferail_core::NodeId;
+    use ferail_disk_usage::{DiskUsageFact, DiskUsageTree, FileCategory};
+
+    use super::DiskUsagePathArena;
 
     #[test]
     fn scan_local_parent_index_reconstructs_paths_without_native_fs() {

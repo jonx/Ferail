@@ -1611,7 +1611,7 @@ fn appearance_page(
 /// persist and update a process global so open windows react without a
 /// relaunch.
 fn performance_page() -> SettingPage {
-    let mut page = SettingPage::new(tr!("Performance"))
+    let page = SettingPage::new(tr!("Performance"))
         .icon(Icon::empty().path("icons/cpu.svg"))
         .group(
             SettingGroup::new()
@@ -1669,13 +1669,11 @@ fn performance_page() -> SettingPage {
         );
 
     #[cfg(target_os = "macos")]
-    {
-        page = page.group(
-            SettingGroup::new()
-                .title(tr!("Disk Usage access"))
-                .item(full_disk_access_setting()),
-        );
-    }
+    let page = page.group(
+        SettingGroup::new()
+            .title(tr!("Disk Usage access"))
+            .item(full_disk_access_setting()),
+    );
 
     page
 }
