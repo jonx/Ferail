@@ -870,15 +870,15 @@ fn ensure_windows_handle_beneath(file: &File, root: &Path) -> Result<(), OpenErr
     use std::os::windows::io::AsRawHandle as _;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{
-        GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED, VOLUME_NAME_DOS,
+        GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED, GETFINALPATHNAMEBYHANDLE_FLAGS,
+        VOLUME_NAME_DOS,
     };
 
-    let handle = HANDLE(file.as_raw_handle() as isize);
+    let handle = HANDLE(file.as_raw_handle());
+    let flags = GETFINALPATHNAMEBYHANDLE_FLAGS(FILE_NAME_NORMALIZED.0 | VOLUME_NAME_DOS.0);
     let mut wide = vec![0u16; 512];
     loop {
-        let length = unsafe {
-            GetFinalPathNameByHandleW(handle, &mut wide, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS)
-        } as usize;
+        let length = unsafe { GetFinalPathNameByHandleW(handle, &mut wide, flags) } as usize;
         if length == 0 {
             return Err(OpenError::Io(io::Error::last_os_error()));
         }
@@ -936,7 +936,7 @@ fn path_still_names_open_file(
     fn identity(file: &File) -> Option<(u32, u64)> {
         let mut info = BY_HANDLE_FILE_INFORMATION::default();
         unsafe {
-            GetFileInformationByHandle(HANDLE(file.as_raw_handle() as isize), &mut info).ok()?;
+            GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info).ok()?;
         }
         Some((
             info.dwVolumeSerialNumber,

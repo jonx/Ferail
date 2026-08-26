@@ -1800,7 +1800,7 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
                         .show_linux_locations
                         .unwrap_or(false)
                 },
-                |value, cx| persist_show_linux_locations(value, cx),
+                persist_show_linux_locations,
             )),
     );
     page.group(terminal_group())
