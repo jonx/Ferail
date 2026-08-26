@@ -938,6 +938,7 @@
     "Show Ant Trail": "Afficher l’Ant Trail",
     "Show Desktop": "Afficher le bureau",
     "Show Hidden Files": "Afficher les fichiers cachés",
+    "Show Linux (WSL)": "Afficher Linux (WSL)",
     "Show Preview Pane": "Afficher le volet d'aperçu",
     "Show Recents": "Afficher les récents",
     "Show file previews": "Afficher les aperçus des fichiers",
@@ -945,6 +946,7 @@
     "Show hidden": "Afficher les éléments masqués",
     "Show hidden files": "Afficher les fichiers cachés",
     "Show in Folder": "Afficher dans le dossier",
+    "Show installed Windows Subsystem for Linux distributions in the sidebar. Disabled by default; when disabled Ferail does not discover or start WSL distributions.": "Afficher dans la barre latérale les distributions installées du Sous-système Windows pour Linux. Désactivé par défaut ; lorsque cette option est désactivée, Ferail ne recherche ni ne démarre aucune distribution WSL.",
     "Show largest-files panel": "Afficher le panneau des fichiers les plus volumineux",
     "Showing info for the first {cap} of {total} items.": "Affichage des informations pour les {cap} premiers éléments sur {total}.",
     "Showing {n} item in {app}": {

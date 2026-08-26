@@ -3008,7 +3008,7 @@ impl Shell {
         // The same explicit gesture also refreshes the small cached platform
         // root list. This remains entirely off-thread and is never triggered
         // by rendering; Safe Mode deliberately suppresses platform probes.
-        if !crate::safe_mode::enabled() {
+        if !crate::safe_mode::enabled() && crate::platform_locations::enabled() {
             crate::platform_locations::refresh(cx);
         }
         if self.active_tab().platform_namespace.is_some() {

@@ -120,11 +120,53 @@ impl PlatformLocations {
         }
         self.store.finish_activation(token, result)
     }
+
+    fn disable(&mut self) {
+        if let Some(cancel) = self.discovery_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        for (_, cancel) in self
+            .activation_cancels
+            .drain()
+            .map(|(_, activation)| activation)
+        {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        // Mint a new generation before clearing the snapshot. Any discovery
+        // or activation completion already in flight is now stale even if its
+        // worker notices cancellation late.
+        let token = self.store.begin_discovery();
+        let _ = self.store.apply_discovery(token, Vec::new());
+    }
+}
+
+pub fn enabled() -> bool {
+    cfg!(windows)
+        && crate::app_state::load()
+            .show_linux_locations
+            .unwrap_or(false)
+}
+
+/// Apply the persisted Linux/WSL visibility preference immediately. Turning
+/// it off is stronger than a render filter: it cancels provider work and
+/// invalidates late results, then repaints every window with an empty root
+/// snapshot. Turning it on starts the ordinary bounded discovery pass.
+pub fn set_enabled(enabled: bool, cx: &mut App) {
+    if enabled {
+        refresh(cx);
+        return;
+    }
+    let process = crate::process_state::process_state(cx);
+    process.platform_locations.borrow_mut().disable();
+    notify_shells(&process, cx);
 }
 
 /// Initial/refresh discovery. Safe to call repeatedly: the previous pass and
 /// any activation it supersedes are cancelled and stale results are rejected.
 pub fn refresh(cx: &mut App) {
+    if !enabled() {
+        return;
+    }
     let process = crate::process_state::process_state(cx);
     let (token, cancel) = process.platform_locations.borrow_mut().begin_discovery();
     cx.spawn(async move |cx| {
@@ -398,6 +440,27 @@ mod tests {
         assert_eq!(
             model.finish_activation(&activation, Ok(PathBuf::from(r"\\wsl.localhost\Ubuntu"))),
             Some(PathBuf::from(r"\\wsl.localhost\Ubuntu"))
+        );
+    }
+
+    #[test]
+    fn disabling_linux_locations_clears_roots_and_rejects_late_activation() {
+        let mut model = PlatformLocations::default();
+        let id = PlatformRootId::new("opaque");
+        let (discovery, _) = model.begin_discovery();
+        model.apply_discovery(
+            discovery,
+            vec![PathBackedPlatformRoot::stopped(id.clone(), "Ubuntu")],
+        );
+        let (activation, cancel) = model.begin_activation(&id).unwrap();
+
+        model.disable();
+
+        assert!(cancel.load(Ordering::Relaxed));
+        assert!(model.roots().is_empty());
+        assert_eq!(
+            model.finish_activation(&activation, Ok(PathBuf::from(r"\\wsl.localhost\Ubuntu"))),
+            None
         );
     }
 }

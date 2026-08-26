@@ -938,6 +938,7 @@
     "Show Ant Trail": "Show Ant Trail",
     "Show Desktop": "Show Desktop",
     "Show Hidden Files": "Show Hidden Files",
+    "Show Linux (WSL)": "Show Linux (WSL)",
     "Show Preview Pane": "Show Preview Pane",
     "Show Recents": "Show Recents",
     "Show file previews": "Show file previews",
@@ -945,6 +946,7 @@
     "Show hidden": "Show hidden",
     "Show hidden files": "Show hidden files",
     "Show in Folder": "Show in Folder",
+    "Show installed Windows Subsystem for Linux distributions in the sidebar. Disabled by default; when disabled Ferail does not discover or start WSL distributions.": "Show installed Windows Subsystem for Linux distributions in the sidebar. Disabled by default; when disabled Ferail does not discover or start WSL distributions.",
     "Show largest-files panel": "Show largest-files panel",
     "Showing info for the first {cap} of {total} items.": "Showing info for the first {cap} of {total} items.",
     "Showing {n} item in {app}": {

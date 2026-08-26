@@ -254,6 +254,10 @@ pub struct AppState {
     /// (`%USERPROFILE%`), or "onedrive". `None` == auto. Windows-only;
     /// ignored elsewhere. See [`ferail_fs_native::paths::SpecialFolderMode`].
     pub special_folder_mode: Option<String>,
+    /// Show the dynamic Linux/WSL section in the Windows sidebar. `None` is
+    /// deliberately off: WSL discovery and activation remain opt-in rather
+    /// than probing a subsystem most users never browse from Ferail.
+    pub show_linux_locations: Option<bool>,
 }
 
 #[cfg(target_os = "macos")]
@@ -502,6 +506,9 @@ fn load_from_disk() -> AppState {
                     out.special_folder_mode = Some(v);
                 }
             }
+            "show_linux_locations" => {
+                out.show_linux_locations = parse_bool(val);
+            }
             _ => {}
         }
     }
@@ -647,6 +654,9 @@ fn serialize(state: &AppState) -> String {
     if let Some(m) = &state.special_folder_mode {
         s.push_str(&format!("special_folder_mode={m}\n"));
     }
+    if let Some(b) = state.show_linux_locations {
+        s.push_str(&format!("show_linux_locations={b}\n"));
+    }
     s
 }
 
@@ -655,5 +665,19 @@ fn parse_bool(s: &str) -> Option<bool> {
         "true" | "1" | "yes" => Some(true),
         "false" | "0" | "no" => Some(false),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_locations_preference_serializes_even_when_disabled() {
+        let state = AppState {
+            show_linux_locations: Some(false),
+            ..AppState::default()
+        };
+        assert_eq!(serialize(&state), "show_linux_locations=false\n");
     }
 }

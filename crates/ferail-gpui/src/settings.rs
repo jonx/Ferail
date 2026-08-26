@@ -1678,6 +1678,16 @@ fn performance_page() -> SettingPage {
     page
 }
 
+#[cfg(target_os = "windows")]
+fn persist_show_linux_locations(value: bool, cx: &mut App) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        show_linux_locations: Some(value),
+        ..existing
+    });
+    crate::platform_locations::set_enabled(value, cx);
+}
+
 #[cfg(target_os = "macos")]
 fn full_disk_access_setting() -> SettingItem {
     let title = tr!("Full Disk Access");
@@ -1779,7 +1789,19 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
     let page = page.group(
         SettingGroup::new()
             .title(tr!("Locations"))
-            .item(locations_mode_setting()),
+            .item(locations_mode_setting())
+            .item(switch_setting(
+                tr!("Show Linux (WSL)"),
+                tr!(
+                    "Show installed Windows Subsystem for Linux distributions in the sidebar. Disabled by default; when disabled Ferail does not discover or start WSL distributions."
+                ),
+                |_cx: &App| {
+                    app_state::load()
+                        .show_linux_locations
+                        .unwrap_or(false)
+                },
+                |value, cx| persist_show_linux_locations(value, cx),
+            )),
     );
     page.group(terminal_group())
 }

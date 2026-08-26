@@ -699,7 +699,9 @@ pub fn start_power_watch(cx: &mut App) {
                     // WSL services/distributions may have stopped or started
                     // while the machine slept. Refresh the small cached root
                     // list off-thread; local filesystem rows are untouched.
-                    crate::platform_locations::refresh(cx);
+                    if crate::platform_locations::enabled() {
+                        crate::platform_locations::refresh(cx);
+                    }
                 });
             }
         }
