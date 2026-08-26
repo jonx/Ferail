@@ -68,6 +68,7 @@ delharc = { version = "0.6", default-features = false, features = ["lh1", "lz"] 
 # Embedded-tag / audio-property reader for the media module. Cross-platform
 # pure Rust, so it lives in the shared dependency table, not a target block.
 lofty.workspace = true
+filetime.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # The `#[implement]` macro (IFileSystemBindData for the simple-parse retry
@@ -93,6 +94,8 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
     # fetch_icon_rgba (icons.rs) needs CoInitializeEx
     "Win32_System_Com",
+    # local wall-clock <-> UTC conversion for editable Get Info timestamps
+    "Win32_System_Time",
     # probe_volume_device (volumes.rs) → CreateFileW (whose signature pulls
     # Win32_Security) + DeviceIoControl + the disk-extents / storage-property
     # IOCTLs behind the eject-all grouping key.

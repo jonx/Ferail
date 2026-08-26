@@ -14,6 +14,8 @@
 
 use std::path::Path;
 
+use ferail_core::entry_info::TimestampKind;
+
 /// POSIX facts for one path. Read with `lstat` (symlinks are not followed),
 /// matching the enumerate path so a symlink reports as itself.
 #[derive(Clone, Debug)]
@@ -166,6 +168,93 @@ pub fn read_stat_info(path: &Path) -> Option<StatInfo> {
 #[cfg(not(any(unix, windows)))]
 pub fn read_stat_info(_path: &Path) -> Option<StatInfo> {
     None
+}
+
+/// Write one filesystem timestamp without disturbing the other two.
+///
+/// Windows uses a `FILE_WRITE_ATTRIBUTES` handle rather than a normal writable
+/// file handle: this works for directories and read-only files, and the null
+/// pointers passed to `SetFileTime` preserve the untouched timestamps.
+#[cfg(windows)]
+pub fn set_timestamp(path: &Path, kind: TimestampKind, unix: i64) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, SetFileTime, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, OPEN_EXISTING,
+    };
+
+    let timestamp = unix_to_filetime(unix)?;
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
+    let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            FILE_WRITE_ATTRIBUTES.0,
+            share,
+            None,
+            OPEN_EXISTING,
+            flags,
+            HANDLE::default(),
+        )
+    }
+    .map_err(|error| format!("open for timestamp update: {error}"))?;
+
+    let result = unsafe {
+        match kind {
+            TimestampKind::Created => SetFileTime(handle, Some(&timestamp), None, None),
+            TimestampKind::Modified => SetFileTime(handle, None, None, Some(&timestamp)),
+            TimestampKind::Accessed => SetFileTime(handle, None, Some(&timestamp), None),
+        }
+    }
+    .map_err(|error| format!("SetFileTime: {error}"));
+    let close_result = unsafe { CloseHandle(handle) }
+        .map_err(|error| format!("CloseHandle after SetFileTime: {error}"));
+    result.and(close_result)
+}
+
+#[cfg(windows)]
+fn unix_to_filetime(unix: i64) -> Result<windows::Win32::Foundation::FILETIME, String> {
+    use windows::Win32::Foundation::FILETIME;
+
+    const EPOCH_DIFF_SECS: i128 = 11_644_473_600;
+    const TICKS_PER_SEC: i128 = 10_000_000;
+    let ticks = (i128::from(unix) + EPOCH_DIFF_SECS)
+        .checked_mul(TICKS_PER_SEC)
+        .filter(|ticks| *ticks >= 0 && *ticks <= i128::from(u64::MAX))
+        .ok_or_else(|| "date is outside the Windows filesystem range".to_string())?
+        as u64;
+    Ok(FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    })
+}
+
+/// Unix can portably update access and modification time. Creation/birth time
+/// is intentionally left read-only: Linux generally cannot set it and macOS
+/// needs a separate `setattrlist` implementation before we expose the control.
+#[cfg(unix)]
+pub fn set_timestamp(path: &Path, kind: TimestampKind, unix: i64) -> Result<(), String> {
+    let value = filetime::FileTime::from_unix_time(unix, 0);
+    let result = match kind {
+        TimestampKind::Modified => filetime::set_file_mtime(path, value),
+        TimestampKind::Accessed => filetime::set_file_atime(path, value),
+        TimestampKind::Created => {
+            return Err("creation-time editing is not supported on this platform".to_string());
+        }
+    };
+    result.map_err(|error| format!("set file timestamp: {error}"))
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn set_timestamp(_path: &Path, _kind: TimestampKind, _unix: i64) -> Result<(), String> {
+    Err("timestamp editing is not supported on this platform".to_string())
 }
 
 /// Resolve a uid to an account name via `getpwuid_r`, falling back to the
@@ -404,45 +493,205 @@ pub fn local_tz_offset_secs() -> i64 {
     0
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LocalDateTime {
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+    second: u32,
+}
+
+impl LocalDateTime {
+    fn parse(input: &str) -> Result<Self, String> {
+        let mut fields = input.split_whitespace();
+        let date = fields.next().ok_or_else(date_format_error)?;
+        let clock = fields.next().ok_or_else(date_format_error)?;
+        if fields.next().is_some() {
+            return Err(date_format_error());
+        }
+        let mut date_fields = date.split('-');
+        let mut clock_fields = clock.split(':');
+        let parsed = Self {
+            year: parse_component(date_fields.next())?,
+            month: parse_component(date_fields.next())?,
+            day: parse_component(date_fields.next())?,
+            hour: parse_component(clock_fields.next())?,
+            minute: parse_component(clock_fields.next())?,
+            second: parse_component(clock_fields.next())?,
+        };
+        if date_fields.next().is_some() || clock_fields.next().is_some() || !parsed.is_valid() {
+            return Err(date_format_error());
+        }
+        Ok(parsed)
+    }
+
+    fn is_valid(self) -> bool {
+        let leap = self.year % 4 == 0 && (self.year % 100 != 0 || self.year % 400 == 0);
+        let max_day = match self.month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 if leap => 29,
+            2 => 28,
+            _ => return false,
+        };
+        (1601..=9999).contains(&self.year)
+            && (1..=max_day).contains(&self.day)
+            && self.hour <= 23
+            && self.minute <= 59
+            && self.second <= 59
+    }
+}
+
+fn parse_component<T: std::str::FromStr>(value: Option<&str>) -> Result<T, String> {
+    value
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(date_format_error)
+}
+
+fn date_format_error() -> String {
+    "enter a valid local date as YYYY-MM-DD HH:MM:SS".to_string()
+}
+
+/// Parse the stable editor format as a local wall-clock and convert it to a
+/// Unix timestamp. OS timezone APIs do the conversion so historical DST rules
+/// are respected; a round trip rejects normalized/nonexistent local times.
+pub fn parse_local_datetime(input: &str) -> Result<i64, String> {
+    let local = LocalDateTime::parse(input)?;
+
+    #[cfg(unix)]
+    {
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        tm.tm_year = local.year - 1900;
+        tm.tm_mon = local.month as i32 - 1;
+        tm.tm_mday = local.day as i32;
+        tm.tm_hour = local.hour as i32;
+        tm.tm_min = local.minute as i32;
+        tm.tm_sec = local.second as i32;
+        tm.tm_isdst = -1;
+        // SAFETY: mktime only mutates the caller-owned `tm` and consults the
+        // process timezone. It also normalizes invalid/nonexistent times;
+        // compare the result below so that normalization never surprises the
+        // user.
+        let unix = unsafe { libc::mktime(&mut tm) };
+        let normalized = LocalDateTime {
+            year: tm.tm_year + 1900,
+            month: (tm.tm_mon + 1) as u32,
+            day: tm.tm_mday as u32,
+            hour: tm.tm_hour as u32,
+            minute: tm.tm_min as u32,
+            second: tm.tm_sec as u32,
+        };
+        if normalized != local {
+            return Err("that local time does not exist in the current timezone".to_string());
+        }
+        return Ok(unix as i64);
+    }
+
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
+        use windows::Win32::System::Time::{
+            SystemTimeToFileTime, TzSpecificLocalTimeToSystemTimeEx,
+        };
+
+        let local_st = SYSTEMTIME {
+            wYear: local.year as u16,
+            wMonth: local.month as u16,
+            wDay: local.day as u16,
+            wHour: local.hour as u16,
+            wMinute: local.minute as u16,
+            wSecond: local.second as u16,
+            ..Default::default()
+        };
+        let mut utc = SYSTEMTIME::default();
+        unsafe { TzSpecificLocalTimeToSystemTimeEx(None, &local_st, &mut utc) }
+            .map_err(|_| date_format_error())?;
+        let mut filetime = FILETIME::default();
+        unsafe { SystemTimeToFileTime(&utc, &mut filetime) }.map_err(|_| date_format_error())?;
+        let ticks = u64::from(filetime.dwHighDateTime) << 32 | u64::from(filetime.dwLowDateTime);
+        const TICKS_PER_SEC: u64 = 10_000_000;
+        const EPOCH_DIFF_SECS: i64 = 11_644_473_600;
+        let unix = (ticks / TICKS_PER_SEC) as i64 - EPOCH_DIFF_SECS;
+        if local_datetime_parts(unix) != Some(local) {
+            return Err("that local time does not exist in the current timezone".to_string());
+        }
+        return Ok(unix);
+    }
+
+    #[allow(unreachable_code)]
+    Err("local date conversion is not supported on this platform".to_string())
+}
+
+/// Stable, locale-independent value used inside the timestamp editor.
+pub fn format_editable_local_datetime(unix: i64) -> String {
+    local_datetime_parts(unix)
+        .map(|date| {
+            format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                date.year, date.month, date.day, date.hour, date.minute, date.second
+            )
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(unix)]
+fn local_datetime_parts(unix: i64) -> Option<LocalDateTime> {
+    let t = unix as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: `localtime_r` fills the caller-owned `tm` and retains nothing.
+    let result = unsafe { libc::localtime_r(&t, &mut tm) };
+    (!result.is_null()).then_some(LocalDateTime {
+        year: tm.tm_year + 1900,
+        month: (tm.tm_mon + 1) as u32,
+        day: tm.tm_mday as u32,
+        hour: tm.tm_hour as u32,
+        minute: tm.tm_min as u32,
+        second: tm.tm_sec as u32,
+    })
+}
+
+#[cfg(windows)]
+fn local_datetime_parts(unix: i64) -> Option<LocalDateTime> {
+    use windows::Win32::Foundation::SYSTEMTIME;
+    use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTimeEx};
+
+    let filetime = unix_to_filetime(unix).ok()?;
+    let mut utc = SYSTEMTIME::default();
+    let mut local = SYSTEMTIME::default();
+    unsafe { FileTimeToSystemTime(&filetime, &mut utc) }.ok()?;
+    unsafe { SystemTimeToTzSpecificLocalTimeEx(None, &utc, &mut local) }.ok()?;
+    Some(LocalDateTime {
+        year: i32::from(local.wYear),
+        month: u32::from(local.wMonth),
+        day: u32::from(local.wDay),
+        hour: u32::from(local.wHour),
+        minute: u32::from(local.wMinute),
+        second: u32::from(local.wSecond),
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn local_datetime_parts(_unix: i64) -> Option<LocalDateTime> {
+    None
+}
+
 /// Format a unix timestamp as a Finder-style local date-time,
-/// e.g. "9 Mar 2024 at 12:11". Uses `localtime_r` for an accurate local
-/// wall-clock (DST-aware); falls back to a UTC render off unix.
+/// e.g. "9 Mar 2024 at 12:11". Both Windows and Unix use their timezone API,
+/// including historical daylight-saving transitions.
 pub fn format_local_datetime(unix: i64) -> String {
     const NAMES: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
-    #[cfg(unix)]
-    {
-        // SAFETY: `localtime_r` fills the caller-provided `tm`; the time_t is
-        // passed by pointer and not retained.
-        let t = unix as libc::time_t;
-        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-        let res = unsafe { libc::localtime_r(&t, &mut tm) };
-        if !res.is_null() {
-            let month = NAMES[(tm.tm_mon.clamp(0, 11)) as usize];
-            return format!(
-                "{} {} {} at {:02}:{:02}",
-                tm.tm_mday,
-                month,
-                tm.tm_year + 1900,
-                tm.tm_hour,
-                tm.tm_min,
-            );
-        }
-    }
-    // Non-unix / failure fallback: UTC civil date with no clock.
-    let days = unix.div_euclid(86_400);
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{} {} {}", d, NAMES[(m as usize - 1).min(11)], y)
+    let Some(date) = local_datetime_parts(unix) else {
+        return unix.to_string();
+    };
+    let month = NAMES[(date.month.saturating_sub(1) as usize).min(11)];
+    format!(
+        "{} {} {} at {:02}:{:02}",
+        date.day, month, date.year, date.hour, date.minute
+    )
 }
 
 #[cfg(test)]
@@ -501,6 +750,62 @@ mod tests {
         // on unix or the date-only fallback elsewhere.
         let s = format_local_datetime(1_710_000_000);
         assert!(s.contains("2024"), "got {s}");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn editable_local_datetime_round_trips() {
+        let input = "2024-05-06 12:34:56";
+        let unix = parse_local_datetime(input).expect("valid local timestamp");
+        assert_eq!(format_editable_local_datetime(unix), input);
+        assert!(parse_local_datetime("2024-02-30 12:00:00").is_err());
+        assert!(parse_local_datetime("2024-05-06").is_err());
+        assert!(parse_local_datetime("2024-05-06 25:00:00").is_err());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn writable_timestamps_round_trip() {
+        let dir = std::env::temp_dir().join(format!(
+            "ferail-timestamps-{}-{}",
+            std::process::id(),
+            ferail_core::now_unix()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("probe.txt");
+        std::fs::write(&file, b"timestamp").unwrap();
+        let original_created = read_stat_info(&file).unwrap().created_unix;
+
+        let modified = 1_700_000_001;
+        let accessed = 1_700_000_002;
+        set_timestamp(&file, TimestampKind::Modified, modified).unwrap();
+        set_timestamp(&file, TimestampKind::Accessed, accessed).unwrap();
+        let info = read_stat_info(&file).unwrap();
+        assert_eq!(info.modified_unix, modified);
+        assert_eq!(info.accessed_unix, Some(accessed));
+        assert_eq!(info.created_unix, original_created);
+
+        #[cfg(windows)]
+        {
+            // FILE_WRITE_ATTRIBUTES must work even when normal writes do not.
+            set_locked(&file, true).unwrap();
+            let created = 1_700_000_003;
+            set_timestamp(&file, TimestampKind::Created, created).unwrap();
+            let info = read_stat_info(&file).unwrap();
+            assert_eq!(info.created_unix, Some(created));
+            assert_eq!(info.modified_unix, modified);
+            assert_eq!(info.accessed_unix, Some(accessed));
+            assert!(info.is_locked);
+            set_locked(&file, false).unwrap();
+        }
+
+        let directory_modified = 1_700_000_004;
+        set_timestamp(&dir, TimestampKind::Modified, directory_modified).unwrap();
+        assert_eq!(
+            read_stat_info(&dir).unwrap().modified_unix,
+            directory_modified
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(target_os = "macos")]

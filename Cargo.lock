@@ -2136,6 +2136,7 @@ dependencies = [
  "ferail-archive",
  "ferail-core",
  "ferail-disk-usage",
+ "filetime",
  "flate2",
  "freedesktop-icons",
  "image",

@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use ferail_core::commands::TagColor;
 use ferail_core::entry_info::{
     Attr, EntryInfo, InfoSection, InfoTarget, InfoValue, PermBits, PermMatrix, SizeValue,
+    TimestampKind,
 };
 use ferail_core::name_hazards::{self, HazardKind};
 #[cfg(windows)]
@@ -31,8 +32,14 @@ use ferail_core::platform_properties::{
 use ferail_core::platform_shortcuts::{ShortcutInfo, ShortcutResolver as _, ShortcutTarget};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Root, Sizable, WindowExt as _, button::Button, checkbox::Checkbox, h_flex,
-    notification::Notification, tooltip::Tooltip, v_flex,
+    ActiveTheme, Root, Sizable, WindowExt as _,
+    button::Button,
+    checkbox::Checkbox,
+    h_flex,
+    input::{Input, InputState},
+    notification::Notification,
+    tooltip::Tooltip,
+    v_flex,
 };
 
 use crate::file_list::tag_color_rgba;
@@ -263,11 +270,37 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     }
     if let Some(s) = &stat {
         if let Some(c) = s.created_unix {
-            general = general.text_if(tr!("Created").to_string(), fmt_date(c));
+            general = general.row(
+                tr!("Created").to_string(),
+                InfoValue::Timestamp {
+                    unix: c,
+                    display: fmt_date(c),
+                    kind: TimestampKind::Created,
+                    editable: cfg!(windows) && !s.is_symlink,
+                },
+            );
         }
-        general = general.text_if(tr!("Modified").to_string(), fmt_date(s.modified_unix));
+        general = general.row(
+            tr!("Modified").to_string(),
+            InfoValue::Timestamp {
+                unix: s.modified_unix,
+                display: fmt_date(s.modified_unix),
+                kind: TimestampKind::Modified,
+                editable: cfg!(any(unix, windows)) && !cfg!(target_os = "aros") && !s.is_symlink,
+            },
+        );
         if let Some(a) = s.accessed_unix {
-            general = general.text_if(tr!("Last opened").to_string(), fmt_date(a));
+            general = general.row(
+                tr!("Last opened").to_string(),
+                InfoValue::Timestamp {
+                    unix: a,
+                    display: fmt_date(a),
+                    kind: TimestampKind::Accessed,
+                    editable: cfg!(any(unix, windows))
+                        && !cfg!(target_os = "aros")
+                        && !s.is_symlink,
+                },
+            );
         }
     }
     if let Some(added) = sh.added_unix {
@@ -930,6 +963,73 @@ impl EntryInfoView {
         );
     }
 
+    /// Open a focused editor for one local filesystem date. The input uses a
+    /// stable, locale-independent shape while the read-only row remains
+    /// friendly/localized. Validation happens before the dialog closes; the
+    /// actual filesystem write still goes through the background worker.
+    fn edit_timestamp(
+        &mut self,
+        kind: TimestampKind,
+        unix: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let initial = ferail_fs_native::stat_info::format_editable_local_datetime(unix);
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(initial)
+                .placeholder("YYYY-MM-DD HH:MM:SS")
+        });
+        let input_for_dialog = input.clone();
+        let view = cx.entity();
+        let field = crate::i18n::tr_static(kind.label()).to_string();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input = input_for_dialog.clone();
+            let view = view.clone();
+            dialog
+                .title(tr!("Edit {field}", field = field.clone()))
+                .child(Input::new(&input).small())
+                .on_ok(move |_, window, cx: &mut App| {
+                    let raw = input.read(cx).value().trim().to_string();
+                    let timestamp = match ferail_fs_native::stat_info::parse_local_datetime(&raw) {
+                        Ok(timestamp) => timestamp,
+                        Err(_) => {
+                            window.push_notification(
+                                Notification::error(tr!(
+                                    "Enter a valid local date and time as YYYY-MM-DD HH:MM:SS."
+                                )),
+                                cx,
+                            );
+                            return false;
+                        }
+                    };
+                    view.update(cx, |this, cx| {
+                        this.apply_timestamp(kind, timestamp, window, cx);
+                    });
+                    true
+                })
+        });
+        window.on_next_frame(move |window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+            window.dispatch_action(Box::new(gpui_component::input::SelectAll), cx);
+        });
+    }
+
+    fn apply_timestamp(
+        &mut self,
+        kind: TimestampKind,
+        unix: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let path = self.path.clone();
+        self.spawn_write(
+            move || ferail_fs_native::stat_info::set_timestamp(&path, kind, unix),
+            window,
+            cx,
+        );
+    }
+
     /// Add or remove a Finder color label, preserving other tags.
     fn toggle_color(&mut self, color: TagColor, window: &mut Window, cx: &mut Context<Self>) {
         let path = self.path.clone();
@@ -1117,6 +1217,30 @@ impl EntryInfoView {
     fn render_value(&self, value: &InfoValue, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         match value {
             InfoValue::Text(s) | InfoValue::Name(s) => div().child(s.clone()).into_any_element(),
+            InfoValue::Timestamp {
+                unix,
+                display,
+                kind,
+                editable,
+            } => {
+                let mut row = h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(div().flex_1().child(display.clone()));
+                if *editable {
+                    let (unix, kind) = (*unix, *kind);
+                    row = row.child(
+                        Button::new(ElementId::Name(format!("entry-info-date-{ix}").into()))
+                            .label(tr!("Edit"))
+                            .xsmall()
+                            .tooltip(tr!("Edit date and time"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.edit_timestamp(kind, unix, window, cx);
+                            })),
+                    );
+                }
+                row.into_any_element()
+            }
             InfoValue::Toggle { on, attr } => {
                 let attr = *attr;
                 Checkbox::new(ElementId::Name(format!("entry-info-tog-{ix}").into()))

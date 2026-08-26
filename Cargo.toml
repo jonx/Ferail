@@ -76,6 +76,9 @@ sysinfo     = { version = "0.31", default-features = false, features = ["system"
 # tags, audio properties, and embedded cover art. Pure Rust, MIT/Apache-2.0.
 # Its MSRV (1.85) is what set this workspace's rust-version.
 lofty       = "0.24"
+# Native filesystem timestamp writes used by Get Info. Patched below to the
+# in-repo AROS-aware copy, so every target resolves the same implementation.
+filetime    = "0.2"
 
 # External — new stack (ferail-gpui).
 #

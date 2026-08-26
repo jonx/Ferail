@@ -131,6 +131,14 @@ pub enum InfoValue {
     Toggle { on: bool, attr: Attr },
     /// The editable display name (rename).
     Name(String),
+    /// A filesystem timestamp. The formatted value is presentation-only;
+    /// edits round-trip the Unix timestamp through the platform writer.
+    Timestamp {
+        unix: i64,
+        display: String,
+        kind: TimestampKind,
+        editable: bool,
+    },
     /// Color labels (the 7 canonical Finder colors) plus any free-form tags.
     Tags {
         colors: Vec<TagColor>,
@@ -140,6 +148,25 @@ pub enum InfoValue {
     Permissions(PermMatrix),
     /// A size that may need an on-demand recursive scan (folder/volume).
     Size(SizeValue),
+}
+
+/// Which native filesystem timestamp an editable row represents.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TimestampKind {
+    Created,
+    Modified,
+    Accessed,
+}
+
+impl TimestampKind {
+    /// Stable label for dialogs and accessibility; translate at the UI edge.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Created => msgid!("Created"),
+            Self::Modified => msgid!("Modified"),
+            Self::Accessed => msgid!("Last opened"),
+        }
+    }
 }
 
 /// A togglable boolean attribute. The host routes each one to the right native
