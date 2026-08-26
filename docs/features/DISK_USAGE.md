@@ -15,7 +15,8 @@ Shipped with follow-ups. The docked Disk Usage result surface, scanner, treemap,
 Top-N panel, package handling, category filtering, allocated/apparent size
 modes, screenshot path, CLI, native batched APFS enumeration, bounded directory
 parallelism and scan-local identity storage all ship. APFS-clone-aware sizing,
-the privileged NTFS fast backend, richer iCloud download-state handling, and
+the privileged NTFS fast backend (specified in
+[WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md)), richer iCloud download-state handling, and
 explicit dock/pop-out state migration remain open — see "Still open" below.
 
 ## Surface

@@ -28,6 +28,8 @@ mod shortcut;
 #[cfg(windows)]
 pub use shortcut::WindowsShortcutResolver;
 #[cfg(windows)]
+mod private_wire;
+#[cfg(windows)]
 mod properties;
 #[cfg(windows)]
 pub use properties::{properties_broker_main, WindowsPropertiesProvider};

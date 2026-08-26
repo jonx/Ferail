@@ -269,52 +269,77 @@ impl From<&FileEntry> for TargetCap {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct MenuCapCounts {
+    quarantined: usize,
+    archives: usize,
+}
+
+impl MenuCapCounts {
+    fn from_entries(entries: &[FileEntry]) -> Self {
+        let mut counts = Self::default();
+        counts.extend(entries);
+        counts
+    }
+
+    fn extend(&mut self, entries: &[FileEntry]) {
+        for entry in entries {
+            let cap = TargetCap::from(entry);
+            self.quarantined = self
+                .quarantined
+                .saturating_add(usize::from(cap.is_quarantined));
+            self.archives = self.archives.saturating_add(usize::from(cap.is_archive));
+        }
+    }
+}
+
 /// Capabilities of the rows a context command will act on, resolved once
 /// at menu-open time with the SAME logic as
 /// `Shell::action_entries_visible_order` so the menu the user sees
 /// matches the set the handler touches (see docs/features/CONTEXT_MENU.md).
 ///
-/// `caps` drives **bulk** commands (Clear Quarantine, Trash, …) through
-/// the `any`/`all` quantifiers. `anchor` drives **anchor** commands (Open
-/// Terminal Here, Slideshow from Here) that act on the single clicked row.
+/// This is deliberately a compact summary, not one `TargetCap` per row. A
+/// symbolic Select All over four million rows therefore stays O(1) in both
+/// time and memory when its menu opens. `anchor` drives commands that act on
+/// the single clicked row.
 #[derive(Clone, Default)]
 pub struct MenuTargets {
-    pub caps: Vec<TargetCap>,
+    count: usize,
+    any_quarantined: bool,
+    any_archive: bool,
     pub anchor: Option<TargetCap>,
 }
 
 impl MenuTargets {
     pub fn len(&self) -> usize {
-        self.caps.len()
+        self.count
     }
 
     pub fn is_empty(&self) -> bool {
-        self.caps.is_empty()
+        self.count == 0
     }
 
     /// Exactly one target — the gate for commands that only make sense
     /// per single file (Copy Path, Rename, Open With).
     pub fn is_single(&self) -> bool {
-        self.caps.len() == 1
+        self.count == 1
     }
 
     /// More than one target.
     pub fn is_multi(&self) -> bool {
-        self.caps.len() > 1
+        self.count > 1
     }
 
-    /// "Any" quantifier: at least one target satisfies `pred`. Show the
-    /// item and let the handler act on the qualifying subset.
-    pub fn any(&self, pred: impl Fn(&TargetCap) -> bool) -> bool {
-        self.caps.iter().any(pred)
+    pub fn any_quarantined(&self) -> bool {
+        self.any_quarantined
     }
 
-    /// "All" quantifier: the set is non-empty and every target satisfies
-    /// `pred`. Show only when the command is valid for the whole set.
-    pub fn all(&self, pred: impl Fn(&TargetCap) -> bool) -> bool {
-        !self.caps.is_empty() && self.caps.iter().all(pred)
+    pub fn any_archive(&self) -> bool {
+        self.any_archive
     }
 }
+
+const MAX_MENU_CAP_SCAN_ROWS: usize = 65_536;
 
 /// Resolve the rows a context command will target, from the row the user
 /// right-clicked plus the selection as it stands *at that instant*.
@@ -340,7 +365,13 @@ pub fn resolve_menu_targets(
     selected: &HashSet<NodeId>,
     row_ix: usize,
 ) -> MenuTargets {
-    resolve_menu_targets_with_mode(entries, selected, false, row_ix)
+    resolve_menu_targets_with_mode(
+        entries,
+        selected,
+        false,
+        row_ix,
+        MenuCapCounts::from_entries(entries),
+    )
 }
 
 fn resolve_menu_targets_with_mode(
@@ -348,6 +379,7 @@ fn resolve_menu_targets_with_mode(
     selected: &HashSet<NodeId>,
     selection_all: bool,
     row_ix: usize,
+    all_caps: MenuCapCounts,
 ) -> MenuTargets {
     let Some(clicked) = entries.get(row_ix) else {
         return MenuTargets::default();
@@ -360,17 +392,53 @@ fn resolve_menu_targets_with_mode(
             selected.contains(&id)
         }
     };
-    let caps = if is_selected(clicked.id) {
-        entries
-            .iter()
-            .filter(|e| is_selected(e.id))
-            .map(TargetCap::from)
-            .collect()
-    } else {
-        vec![anchor]
-    };
+    if !is_selected(clicked.id) {
+        return MenuTargets {
+            count: 1,
+            any_quarantined: anchor.is_quarantined,
+            any_archive: anchor.is_archive,
+            anchor: Some(anchor),
+        };
+    }
+
+    if selection_all {
+        let count = entries.len().saturating_sub(selected.len());
+        // Exceptions are intentionally not resolved back through a huge row
+        // model. If every qualifying row happened to be excluded this may
+        // leave a harmless subset command visible; its handler still filters
+        // the true target set. It can never hide an operation that applies.
+        return MenuTargets {
+            count,
+            any_quarantined: count != 0 && all_caps.quarantined != 0,
+            any_archive: count != 0 && all_caps.archives != 0,
+            anchor: Some(anchor),
+        };
+    }
+
+    let count = selected.len();
+    if entries.len() > MAX_MENU_CAP_SCAN_ROWS && count > 1 {
+        // A large explicit range is opaque on the menu-open path. Subset
+        // commands are conservatively offered; dispatch resolves/filter the
+        // real targets off this rendering path.
+        return MenuTargets {
+            count,
+            any_quarantined: all_caps.quarantined != 0,
+            any_archive: all_caps.archives != 0,
+            anchor: Some(anchor),
+        };
+    }
+
+    let mut any_quarantined = false;
+    let mut any_archive = false;
+    for entry in entries.iter().filter(|entry| selected.contains(&entry.id)) {
+        let cap = TargetCap::from(entry);
+        any_quarantined |= cap.is_quarantined;
+        any_archive |= cap.is_archive;
+    }
     MenuTargets {
-        caps,
+        count,
+        any_quarantined,
+        any_archive,
         anchor: Some(anchor),
     }
 }
@@ -404,14 +472,14 @@ impl Availability {
 /// handler (`Shell::on_clear_quarantine`) strips it from the quarantined
 /// subset, so "any" is the right quantifier.
 fn avail_any_quarantined(t: &MenuTargets) -> bool {
-    t.any(|c| c.is_quarantined)
+    t.any_quarantined()
 }
 
 /// Bulk rule: at least one target is an archive file — offer Extract, which
 /// acts on the archive subset (mixed selections extract only their archives),
 /// mirroring how Clear Quarantine acts on the quarantined subset.
 fn avail_any_archive(t: &MenuTargets) -> bool {
-    t.any(|c| c.is_archive)
+    t.any_archive()
 }
 
 /// Anchor rule: the right-clicked (else lead) row is a folder — for
@@ -527,9 +595,12 @@ pub struct FileListDelegate {
     /// (not row-indexed) so sort/filter/streaming changes can
     /// reorder rows without desyncing the visual.
     pub selected_set: HashSet<NodeId>,
-    /// Compact complement representation used by a Flat-view Cmd+A.
+    /// Compact complement representation used by Cmd/Ctrl+A on every list.
     /// When true, `selected_set` contains the deselected exceptions.
     pub selection_all: bool,
+    /// Aggregate capabilities of the visible row model. Kept incrementally
+    /// so a symbolic whole-list context menu never scans the model.
+    all_menu_caps: MenuCapCounts,
     /// The keyboard-cursor / range-lead, mirrored from the active
     /// tab. At most one. Cosmetic only — the Table primitive's
     /// `selected_row` overlay is the visible focus ring.
@@ -1144,6 +1215,7 @@ impl FileListDelegate {
             is_favorited: Vec::new(),
             selected_set: HashSet::new(),
             selection_all: false,
+            all_menu_caps: MenuCapCounts::default(),
             lead: None,
             open_with_warm: None,
             menu_revision: 0,
@@ -1232,6 +1304,22 @@ impl FileListDelegate {
 
     pub fn selection_is_empty(&self) -> bool {
         self.selected_count() == 0
+    }
+
+    pub(crate) fn note_quarantine_change(&mut self, was_quarantined: bool, is_quarantined: bool) {
+        match (was_quarantined, is_quarantined) {
+            (false, true) => {
+                self.all_menu_caps.quarantined = self.all_menu_caps.quarantined.saturating_add(1);
+            }
+            (true, false) => {
+                self.all_menu_caps.quarantined = self.all_menu_caps.quarantined.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn note_quarantine_cleared(&mut self, count: usize) {
+        self.all_menu_caps.quarantined = self.all_menu_caps.quarantined.saturating_sub(count);
     }
 
     /// Build the shared drag payload for the current selection —
@@ -1474,6 +1562,7 @@ impl FileListDelegate {
         // not merely emptied. This also covers filtered-out Flat rows.
         let leaving_flat = self.flat_paths.take().is_some();
         clear_row_buffer(&mut self.entries, leaving_flat);
+        self.all_menu_caps = MenuCapCounts::default();
         self.paths.clear();
         clear_row_buffer(&mut self.flat_filtered_entries, leaving_flat);
         self.flat_filter_text.clear();
@@ -1522,6 +1611,7 @@ impl FileListDelegate {
         self.columns.retain(|column| column.key.as_ref() != "path");
         self.hidden_columns
             .retain(|column| column.key.as_ref() != "path");
+        self.all_menu_caps = MenuCapCounts::from_entries(&entries);
         self.entries = entries;
         self.paths = paths;
         self.heats = heats;
@@ -1557,6 +1647,7 @@ impl FileListDelegate {
         self.invalidate_drag_snapshot();
         self.paths.extend(paths);
         let n = entries.len();
+        self.all_menu_caps.extend(&entries);
         self.entries.extend(entries);
         self.heats.extend(heats);
         self.tags.extend((0..n).map(|_| Vec::new()));
@@ -1606,6 +1697,7 @@ impl FileListDelegate {
         flat.intern_display_texts(&mut entries);
         flat.append(&entries, &paths);
         if self.flat_filter_text.trim().is_empty() {
+            self.all_menu_caps.extend(&entries);
             self.entries.extend(entries);
         } else {
             let expr = flat_filter_expr(&self.flat_filter_text);
@@ -1613,6 +1705,7 @@ impl FileListDelegate {
             let (visible, filtered): (Vec<_>, Vec<_>) = entries
                 .into_iter()
                 .partition(|entry| flat_entry_matches(flat, entry, &expr));
+            self.all_menu_caps.extend(&visible);
             self.entries.extend(visible);
             self.flat_filtered_entries.extend(filtered);
             self.filtered_out = self.flat_filtered_entries.len();
@@ -1799,6 +1892,7 @@ impl FileListDelegate {
                 .partition(|entry| flat_entry_matches(flat, entry, &expr));
         }
         self.filtered_out = self.flat_filtered_entries.len();
+        self.all_menu_caps = MenuCapCounts::from_entries(&self.entries);
     }
 
     /// Show the contents of an archive instead of a directory listing.
@@ -1830,6 +1924,7 @@ impl FileListDelegate {
         self.slow_load = None;
         self.filtered_out = 0;
         let n = entries.len();
+        self.all_menu_caps = MenuCapCounts::from_entries(&entries);
         self.entries = entries;
         self.archive_rows = rows;
         self.archive_view = Some(view);
@@ -3229,6 +3324,7 @@ impl TableDelegate for FileListDelegate {
             &self.selected_set,
             self.selection_all,
             row_ix,
+            self.all_menu_caps,
         );
         let t = &targets;
         let show_slideshow = Availability::When(avail_anchor_file).allows(t);
@@ -4391,8 +4487,8 @@ mod sort_tests {
 #[cfg(test)]
 mod menu_targets_tests {
     use super::{
-        Availability, MenuTargets, TargetCap, avail_anchor_dir, avail_anchor_file,
-        avail_any_quarantined, resolve_menu_targets,
+        Availability, MenuCapCounts, MenuTargets, TargetCap, avail_anchor_dir, avail_anchor_file,
+        avail_any_quarantined, resolve_menu_targets, resolve_menu_targets_with_mode,
     };
     use ferail_core::{EntryKind, FileEntry, NodeId};
     use std::collections::HashSet;
@@ -4450,12 +4546,19 @@ mod menu_targets_tests {
     }
 
     fn targets(caps: Vec<TargetCap>) -> MenuTargets {
-        MenuTargets { caps, anchor: None }
+        MenuTargets {
+            count: caps.len(),
+            any_quarantined: caps.iter().any(|cap| cap.is_quarantined),
+            any_archive: caps.iter().any(|cap| cap.is_archive),
+            anchor: None,
+        }
     }
 
     fn with_anchor(anchor: TargetCap) -> MenuTargets {
         MenuTargets {
-            caps: vec![anchor],
+            count: 1,
+            any_quarantined: anchor.is_quarantined,
+            any_archive: anchor.is_archive,
             anchor: Some(anchor),
         }
     }
@@ -4470,7 +4573,7 @@ mod menu_targets_tests {
     fn clicked_row_resolves_with_no_selection() {
         let t = resolve_menu_targets(&rows(), &selection(&[]), 1);
         assert!(t.is_single());
-        assert!(t.any(|c| c.is_archive));
+        assert!(t.any_archive());
         assert!(Availability::SingleOnly.allows(&t));
         assert!(Availability::When(avail_anchor_file).allows(&t));
     }
@@ -4482,7 +4585,7 @@ mod menu_targets_tests {
     fn click_outside_selection_targets_only_that_row() {
         let t = resolve_menu_targets(&rows(), &selection(&[1, 3]), 1);
         assert!(t.is_single());
-        assert!(t.any(|c| c.is_archive));
+        assert!(t.any_archive());
     }
 
     /// Right-click INSIDE the selection keeps the whole set, in visible
@@ -4515,26 +4618,16 @@ mod menu_targets_tests {
     fn any_shows_on_mixed_selection_regardless_of_order() {
         let quarantined_first = targets(vec![cap(true), cap(false)]);
         let clean_first = targets(vec![cap(false), cap(true)]);
-        assert!(quarantined_first.any(|c| c.is_quarantined));
-        assert!(clean_first.any(|c| c.is_quarantined));
+        assert!(quarantined_first.any_quarantined());
+        assert!(clean_first.any_quarantined());
     }
 
     /// No quarantined target anywhere in the set → the bulk command is
     /// hidden. A single clean row behaves the same as a clean multi-set.
     #[test]
     fn any_hidden_when_no_target_qualifies() {
-        assert!(!targets(vec![cap(false), cap(false)]).any(|c| c.is_quarantined));
-        assert!(!targets(vec![]).any(|c| c.is_quarantined));
-    }
-
-    /// `all` is the conservative quantifier for commands that should only
-    /// appear when the whole selection qualifies; the empty set is never
-    /// "all" so an empty target list can't surface such a command.
-    #[test]
-    fn all_requires_every_target_and_rejects_empty() {
-        assert!(targets(vec![cap(true), cap(true)]).all(|c| c.is_quarantined));
-        assert!(!targets(vec![cap(true), cap(false)]).all(|c| c.is_quarantined));
-        assert!(!targets(vec![]).all(|c| c.is_quarantined));
+        assert!(!targets(vec![cap(false), cap(false)]).any_quarantined());
+        assert!(!targets(vec![]).any_quarantined());
     }
 
     /// Count helpers back the SingleOnly archetype.
@@ -4545,6 +4638,16 @@ mod menu_targets_tests {
         assert!(!targets(vec![cap(false)]).is_multi());
         assert!(targets(vec![cap(false), cap(false)]).is_multi());
         assert_eq!(targets(vec![cap(false), cap(false)]).len(), 2);
+    }
+
+    #[test]
+    fn symbolic_select_all_uses_constant_size_summary() {
+        let rows = rows();
+        let counts = MenuCapCounts::from_entries(&rows);
+        let targets = resolve_menu_targets_with_mode(&rows, &selection(&[]), true, 0, counts);
+        assert_eq!(targets.len(), rows.len());
+        assert!(targets.any_archive());
+        assert!(std::mem::size_of::<MenuTargets>() <= 64);
     }
 
     /// SingleOnly (Copy Path, Rename, Open With) shows for exactly one

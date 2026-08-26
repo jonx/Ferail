@@ -386,27 +386,18 @@ impl Shell {
     /// (filtered) model. anchor = first visible, lead = last.
     /// Non-range gesture → clears `range_live`.
     pub(super) fn select_all_visible(&mut self, cx: &mut Context<Self>) {
-        let is_flat = self
-            .active_tab()
-            .tool_result
-            .as_ref()
-            .and_then(|surface| surface.flat_mode())
-            .is_some();
-        let (all, first, last): (Option<HashSet<NodeId>>, Option<NodeId>, Option<NodeId>) = {
+        let (first, last): (Option<NodeId>, Option<NodeId>) = {
             let delegate = self.active_tab().table.read(cx).delegate();
             let first = delegate.entries.first().map(|entry| entry.id);
             let last = delegate.entries.last().map(|entry| entry.id);
-            let all = (!is_flat).then(|| delegate.entries.iter().map(|entry| entry.id).collect());
-            (all, first, last)
+            (first, last)
         };
         let tab = self.active_tab_mut();
-        if is_flat {
-            tab.selection.clear();
-            tab.selection_all = first.is_some();
-        } else {
-            tab.selection_all = false;
-            tab.selection = all.unwrap_or_default();
-        }
+        // Whole-list selection is always represented as a complement, not a
+        // NodeId per row. This keeps Cmd/Ctrl+A constant-time for ordinary
+        // folders and search/duplicate results as well as Flat View.
+        tab.selection.clear();
+        tab.selection_all = first.is_some();
         tab.anchor = first;
         tab.lead = last;
         tab.range_live = false;

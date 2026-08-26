@@ -90,7 +90,7 @@ pub(crate) fn for_each(
             Err(error) if error.entries_emitted == 0 => {}
             Err(error) => return Err(error.source),
         }
-        return portable_for_each(path, cancel, visitor);
+        portable_for_each(path, cancel, visitor)
     }
     #[cfg(not(target_os = "macos"))]
     {

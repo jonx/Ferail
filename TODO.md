@@ -417,7 +417,9 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - Platform fast-walk follow-up: macOS `getattrlistbulk` plus bounded APFS
   parallelism now serve ordinary listings, Flat View, recursive search and Disk
   Usage. Add an opt-in elevated NTFS MFT backend on Windows (isolated helper,
-  portable fallback) and evaluate Linux `statx`/`io_uring`; duplicate finding
+  portable fallback) according to
+  [WINDOWS_FAST_NTFS.md](docs/features/WINDOWS_FAST_NTFS.md), and evaluate Linux
+  `statx`/`io_uring`; duplicate finding
   should adopt the shared reader without weakening clone/cloud rules.
 
 ## Settings, Commands & Accessibility

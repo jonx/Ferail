@@ -802,8 +802,12 @@ mod tests {
         std::fs::write(&file, b"timestamp").unwrap();
         let original_created = read_stat_info(&file).unwrap().created_unix;
 
-        let modified = 1_700_000_001;
-        let accessed = 1_700_000_002;
+        // Keep modified/accessed after birthtime. APFS legitimately clamps a
+        // file's birthtime when callers backdate mtime before it, which made
+        // this round-trip test mutate the very field it expected unchanged.
+        let file_time_base = original_created.unwrap_or(1_700_000_000);
+        let modified = file_time_base.saturating_add(10);
+        let accessed = file_time_base.saturating_add(20);
         set_timestamp(&file, TimestampKind::Modified, modified).unwrap();
         set_timestamp(&file, TimestampKind::Accessed, accessed).unwrap();
         let info = read_stat_info(&file).unwrap();
@@ -815,7 +819,7 @@ mod tests {
         {
             // FILE_WRITE_ATTRIBUTES must work even when normal writes do not.
             set_locked(&file, true).unwrap();
-            let created = 1_700_000_003;
+            let created = file_time_base.saturating_add(5);
             set_timestamp(&file, TimestampKind::Created, created).unwrap();
             let info = read_stat_info(&file).unwrap();
             assert_eq!(info.created_unix, Some(created));
@@ -825,9 +829,14 @@ mod tests {
             set_locked(&file, false).unwrap();
         }
 
-        let directory_created = 1_700_000_004;
-        let directory_modified = 1_700_000_006;
-        let directory_accessed = 1_700_000_008;
+        let directory_time_base = read_stat_info(&dir)
+            .unwrap()
+            .created_unix
+            .unwrap_or(1_700_000_000);
+        #[cfg(windows)]
+        let directory_created = directory_time_base.saturating_add(5);
+        let directory_modified = directory_time_base.saturating_add(10);
+        let directory_accessed = directory_time_base.saturating_add(20);
         #[cfg(windows)]
         set_timestamp(&dir, TimestampKind::Created, directory_created).unwrap();
         set_timestamp(&dir, TimestampKind::Modified, directory_modified).unwrap();

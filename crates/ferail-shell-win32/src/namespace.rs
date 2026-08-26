@@ -224,7 +224,8 @@ impl PlatformNamespaceProvider for WindowsNamespaceProvider {
 }
 
 const BROKER_ARG: &str = "--windows-namespace-broker";
-const BROKER_TIMEOUT: Duration = Duration::from_secs(10);
+const BROKER_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(10);
+const BROKER_MAX_LIFETIME: Duration = Duration::from_secs(120);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_OUTPUT: usize = 64 * 1024 * 1024;
 const MAX_RECORD_FIELD: usize = 1024 * 1024;
@@ -288,7 +289,8 @@ fn run_broker(
         .ok_or(PlatformLocationErrorKind::Failed)?;
     let (sender, receiver) = std::sync::mpsc::sync_channel(512);
     let reader = std::thread::spawn(move || read_broker_stream(stdout, sender));
-    let deadline = Instant::now() + BROKER_TIMEOUT;
+    let started = Instant::now();
+    let mut last_progress = started;
     loop {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
@@ -299,6 +301,7 @@ fn run_broker(
         }
         match receiver.recv_timeout(Duration::from_millis(20)) {
             Ok(Ok(Some(event))) => {
+                last_progress = Instant::now();
                 if !consume(event) {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -328,7 +331,10 @@ fn run_broker(
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
-        if Instant::now() >= deadline {
+        let now = Instant::now();
+        if now.duration_since(last_progress) >= BROKER_INACTIVITY_TIMEOUT
+            || now.duration_since(started) >= BROKER_MAX_LIFETIME
+        {
             let _ = child.kill();
             let _ = child.wait();
             drop(receiver);

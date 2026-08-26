@@ -49,6 +49,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [VIDEO-MPV.md](VIDEO-MPV.md) | Planned | Replace the mpv video backend with libmpv (live filters, alpha) and build an N-layer transparent-colour (chroma-key) compositor on top. Phase 0 spike gates it; nothing shipped yet. |
 | [VIEWER.md](VIEWER.md) | Shipped with follow-ups | Viewer window, playlist navigation, images, Quick Look fallback, mpv-backed video, slideshow, zoom, and controls ship; richer playback/playlist polish remains open. |
 | [WINDOWS_COMPATIBILITY_PLAN.md](WINDOWS_COMPATIBILITY_PLAN.md) | Planned | Execution ledger for the 0.6.5 Windows tester report: crash containment, viewport-bounded background work, Explorer/Shell compatibility, virtual locations, native menu on demand, and clean-machine packaging. |
+| [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) | Planned | Implementation-grade contract for the opt-in elevated Disk Usage backend: raw MFT parsing, compact subtree reconstruction, private helper protocol, fallback, memory and Windows qualification. |
 | [ferail-selection-dnd-spec.md](ferail-selection-dnd-spec.md) | Partial | Selection, row drag, external file drops, and many acceptance points ship; edge auto-scroll and favorite-row drops remain open. |
 | [ferail-windows-instances-tabs-spec.md](ferail-windows-instances-tabs-spec.md) | Partial | Process/window state split, tabs, closed-tab undo, and shared caches are in place; full multi-window/tear-off completion remains open. |
 | [linux-port.md](linux-port.md) | Partial port | The Linux shell crate compiles behind stubs; real clipboard/trash/open-with/volume/power/preview integrations remain open. |
@@ -128,6 +129,8 @@ keep the UI off the I/O path.
 - [WINDOWS_COMPATIBILITY_PLAN.md](WINDOWS_COMPATIBILITY_PLAN.md) — the tracked
   Windows reliability and compatibility campaign, including a per-report issue
   ledger and Windows-only acceptance gates.
+- [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) — the detailed Windows-only
+  implementation and validation contract for Fast NTFS Disk Usage.
 - [../testing/WINDOWS_HANDOVER.md](../testing/WINDOWS_HANDOVER.md) — the live
   operational handover: starting revision, completed commits, first Windows
   commands, implementation order, evidence locations, and session handback.

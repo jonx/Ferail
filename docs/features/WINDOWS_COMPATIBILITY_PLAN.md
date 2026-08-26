@@ -386,8 +386,12 @@ only shutdown leak assertions.
 - [ ] Reproduce Shift ranges, Ctrl toggles, right-click on selected and
   unselected rows, Select All, navigation with a live selection, and actions on
   1/100/10,000 entries.
-- [ ] Assert that menu construction and painting use symbolic or bounded
-  selection summaries rather than cloning every selected path.
+- [x] Assert that menu construction and painting use symbolic or bounded
+  selection summaries rather than cloning every selected path. *2026-08-26:
+  Select All uses the complement representation on every list surface and the
+  menu consumes a fixed-size capability summary maintained by streamed
+  batches; explicit operations may still materialize paths when they truly
+  need them.*
 - [ ] Audit all selection snapshots that cross worker or Shell boundaries for
   stale row indices; use stable ids/generations.
 - [ ] Add regression tests for selected-row removal and refresh while a menu,
@@ -505,6 +509,13 @@ pre-popup provider enumeration (eight seconds); after readiness, the wait is
 unbounded and user-modal. No COM object or provider code enters the GPUI
 process. Unit tests and strict Windows clippy pass; the three UI entry paths and
 third-party extension matrix still require the real-window manual gate.
+
+**Hardening (2026-08-26).** Filesystem targets are no longer process arguments.
+The parent sends lossless UTF-16 paths over a versioned, bounded stdin pipe;
+the broker revalidates count, total bytes, NULs and same-parent semantics.
+This removes both the Windows command-line length limit and selected paths from
+ordinary process inspection. Namespace PIDLs keep their existing private stdin
+path.
 
 **Exit gate.** Normal right-click latency and navigation benchmarks are
 unchanged; 7-Zip/Defender/Git-style test extensions appear only on explicit
@@ -752,10 +763,16 @@ Windows user also expects access to the native Properties surface.
   are not available from portable parsing, returning neutral key/value DTOs.
   *The shared grouped DTO, restricted scalar/list value set, cancellable
   provider seam and generic identity/revision cache are complete. All values,
-  display names and paths are redacted from diagnostics. The approved Windows
-  key mapping, `IPropertyStore` worker and Get Info merge remain.*
-- [ ] Add **Windows Properties…** through the native Shell action capability;
+  display names and paths are redacted from diagnostics. *2026-08-26: the
+  approved `IPropertyStore` broker, Get Info merge and process-memory cache are
+  wired; direct Get Info calls are now process-bounded and their selected path
+  travels through private stdin rather than the child command line. The broad
+  malformed/hostile-provider Windows matrix remains.*
+- [~] Add **Windows Properties…** through the native Shell action capability;
   do not try to recreate every installed property page inside Ferail.
+  *Filesystem file/folder Properties is invoked through the isolated native
+  context broker and kept alive until the owned sheet closes; pathless
+  namespace-provider Properties remains capability-gated/open.*
 - [~] Never log metadata values or paths by default. GPS coordinates require a
   deliberate reveal and are not persisted unless the metadata cache policy is
   explicitly approved. *Shared EXIF/property DTOs and both revision caches are

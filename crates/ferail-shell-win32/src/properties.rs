@@ -75,13 +75,22 @@ fn read_via_broker(
     let exe = std::env::current_exe().map_err(|_| PlatformPropertiesErrorKind::Failed)?;
     let mut child = Command::new(exe)
         .arg(BROKER_ARG)
-        .arg(path)
         .creation_flags(CREATE_NO_WINDOW)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| PlatformPropertiesErrorKind::Failed)?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or(PlatformPropertiesErrorKind::Failed)?;
+    if crate::private_wire::write_paths(&mut stdin, &[path], 1).is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(PlatformPropertiesErrorKind::Failed);
+    }
+    drop(stdin);
     let mut stdout = child
         .stdout
         .take()
@@ -130,10 +139,13 @@ fn read_via_broker(
     decode_properties(&bytes).ok_or(PlatformPropertiesErrorKind::Failed)
 }
 
-pub fn properties_broker_main(args: &[std::ffi::OsString]) -> i32 {
-    let Some(path) = args.first() else { return 2 };
+pub fn properties_broker_main() -> i32 {
+    let Ok(mut paths) = crate::private_wire::read_paths(&mut std::io::stdin().lock(), 1) else {
+        return 2;
+    };
+    let Some(path) = paths.pop() else { return 2 };
     let request = PlatformPropertiesRequest {
-        target: LocationTarget::FileSystem(path.into()),
+        target: LocationTarget::FileSystem(path),
     };
     let cancel = AtomicBool::new(false);
     match read_on_sta(request, &cancel).and_then(|properties| {

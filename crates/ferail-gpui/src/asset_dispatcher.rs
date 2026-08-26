@@ -15,7 +15,10 @@ use ferail_core::asset_work::{
     AssetWorkCoordinator, AssetWorkRequest, AssetWorkScope, StartedAssetWork, SubmitOutcome,
 };
 use ferail_core::revision_cache::FileRevision;
-use gpui::{AnyWindowHandle, App, AsyncApp, RenderImage, WeakEntity};
+use gpui::{App, AsyncApp, RenderImage, WeakEntity};
+
+#[cfg(windows)]
+use gpui::AnyWindowHandle;
 
 #[cfg(windows)]
 use ferail_core::platform_shortcuts::{

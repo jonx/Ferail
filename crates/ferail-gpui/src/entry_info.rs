@@ -721,13 +721,21 @@ impl EntryInfoView {
         }
         let cancel = Arc::new(AtomicBool::new(false));
         self.details_cancel = Some(cancel.clone());
+        #[cfg(windows)]
         let worker_cancel = cancel.clone();
         let gather_path = self.path.clone();
         let apply_path = gather_path.clone();
         let known_size = self.known_size;
+        #[cfg(windows)]
         let identity = self.identity;
         #[cfg(windows)]
-        let (properties_provider, cached_properties, shortcut_resolver, cached_shortcut) = {
+        let (
+            properties_provider,
+            cached_properties,
+            shortcut_resolver,
+            cached_shortcut,
+            provider_gate,
+        ) = {
             let process = crate::process_state::process_state(cx);
             (
                 process.properties_provider.clone(),
@@ -744,6 +752,7 @@ impl EntryInfoView {
                         .borrow_mut()
                         .get(identity.node, identity.revision)
                 }),
+                process.info_provider_gate.clone(),
             )
         };
         cx.spawn(async move |this, cx| {
@@ -757,6 +766,9 @@ impl EntryInfoView {
                 .background_executor()
                 .spawn(async move {
                     let mut info = gather(&gather_path, known_size);
+                    let Some(_provider_permit) = provider_gate.acquire(&worker_cancel) else {
+                        return (info, None, None);
+                    };
                     let properties = if let Some(cached) = cached_properties {
                         Some((*cached).clone())
                     } else {

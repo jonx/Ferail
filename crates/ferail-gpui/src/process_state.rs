@@ -29,6 +29,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+#[cfg(windows)]
+use std::sync::{Condvar, atomic::AtomicBool, atomic::Ordering};
+
 use ferail_core::asset_work::{
     AssetLaneBudget, AssetWorkBudgets, AssetWorkCoordinator, AssetWorkScope,
 };
@@ -55,6 +58,69 @@ const CLOSED_TABS_CAP: usize = 16;
 /// keeps. Finder's Recents shows a comparable handful; 12 fills the
 /// section without scrolling the sidebar.
 pub const RECENTS_CAP: usize = 12;
+
+/// Cancellation-aware process gate for Get Info calls that enter Windows
+/// property/shortcut providers outside the normal asset dispatcher. The
+/// dispatcher already bounds its own provider lane; this closes the only
+/// remaining per-window escape hatch so opening many Info panels cannot
+/// create an unbounded set of broker processes or STA threads.
+#[cfg(windows)]
+pub(crate) struct BlockingProviderGate {
+    limit: usize,
+    active: Mutex<usize>,
+    ready: Condvar,
+}
+
+#[cfg(windows)]
+impl BlockingProviderGate {
+    fn new(limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            limit: limit.max(1),
+            active: Mutex::new(0),
+            ready: Condvar::new(),
+        })
+    }
+
+    pub(crate) fn acquire(self: &Arc<Self>, cancel: &AtomicBool) -> Option<BlockingProviderPermit> {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while *active >= self.limit {
+            if cancel.load(Ordering::Relaxed) {
+                return None;
+            }
+            active = self
+                .ready
+                .wait_timeout(active, std::time::Duration::from_millis(25))
+                .unwrap_or_else(|error| error.into_inner())
+                .0;
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        *active += 1;
+        Some(BlockingProviderPermit { gate: self.clone() })
+    }
+}
+
+#[cfg(windows)]
+pub(crate) struct BlockingProviderPermit {
+    gate: Arc<BlockingProviderGate>,
+}
+
+#[cfg(windows)]
+impl Drop for BlockingProviderPermit {
+    fn drop(&mut self) {
+        let mut active = self
+            .gate
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *active = active.saturating_sub(1);
+        self.gate.ready.notify_one();
+    }
+}
 
 pub struct ProcessState {
     /// Shared filesystem backend. Already `Arc` because background
@@ -97,6 +163,8 @@ pub struct ProcessState {
     pub shortcut_cache: RefCell<ferail_core::platform_shortcuts::ShortcutCache>,
     #[cfg(windows)]
     pub properties_provider: Arc<crate::platform_shell::WindowsPropertiesProvider>,
+    #[cfg(windows)]
+    pub(crate) info_provider_gate: Arc<BlockingProviderGate>,
     #[cfg(windows)]
     pub properties_cache: RefCell<
         ferail_core::platform_properties::PlatformPropertiesCache<
@@ -308,6 +376,8 @@ impl ProcessState {
             shortcut_cache: RefCell::new(ferail_core::platform_shortcuts::ShortcutCache::new(512)),
             #[cfg(windows)]
             properties_provider: Arc::new(crate::platform_shell::WindowsPropertiesProvider),
+            #[cfg(windows)]
+            info_provider_gate: BlockingProviderGate::new(2),
             #[cfg(windows)]
             properties_cache: RefCell::new(
                 ferail_core::platform_properties::PlatformPropertiesCache::new(256),

@@ -288,43 +288,48 @@ fn run_worker(
 /// therefore O(batch), not O(the potentially multi-million-row listing).
 pub(crate) fn apply_viewport_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
     for row in batch {
-        let Some(e) = delegate.entries.get_mut(row.row_ix) else {
-            continue;
+        let quarantine_change = {
+            let Some(e) = delegate.entries.get_mut(row.row_ix) else {
+                continue;
+            };
+            // A sort/filter/load may have moved another file into the captured
+            // slot while I/O was running. Never apply across that identity guard;
+            // the delegate's model revision schedules the live viewport again.
+            if e.id != row.node {
+                continue;
+            }
+            // Belt-and-suspenders (mirrors `format_label`'s folder guard):
+            // a directory row never takes a magic label or description, even
+            // if a stale path-keyed cache row arrives carrying one — the
+            // Format column shows the kind ("Folder") and the folder-size
+            // worker owns Description for directories.
+            let is_dir = matches!(e.kind, ferail_core::EntryKind::Directory);
+            if !is_dir && !row.magic_label.is_empty() {
+                e.display_magic = row.magic_label.into();
+            }
+            if !is_dir && !row.description.is_empty() {
+                e.display_description = row.description.into();
+            }
+            let was_quarantined = e.is_quarantined;
+            e.is_quarantined = row.is_quarantined;
+            e.details_loaded = true;
+            // Provenance rides along so the preview pane can show
+            // where a marked file came from without touching xattrs.
+            e.quarantine = if row.is_quarantined {
+                Some(Box::new(ferail_core::QuarantineDetails {
+                    agent: row.quarantine_agent,
+                    downloaded_iso: row.quarantine_iso,
+                    where_from: row
+                        .quarantine_where_from
+                        .map(|s| s.lines().map(str::to_owned).collect())
+                        .unwrap_or_default(),
+                }))
+            } else {
+                None
+            };
+            (was_quarantined, row.is_quarantined)
         };
-        // A sort/filter/load may have moved another file into the captured
-        // slot while I/O was running. Never apply across that identity guard;
-        // the delegate's model revision schedules the live viewport again.
-        if e.id != row.node {
-            continue;
-        }
-        // Belt-and-suspenders (mirrors `format_label`'s folder guard):
-        // a directory row never takes a magic label or description, even
-        // if a stale path-keyed cache row arrives carrying one — the
-        // Format column shows the kind ("Folder") and the folder-size
-        // worker owns Description for directories.
-        let is_dir = matches!(e.kind, ferail_core::EntryKind::Directory);
-        if !is_dir && !row.magic_label.is_empty() {
-            e.display_magic = row.magic_label.into();
-        }
-        if !is_dir && !row.description.is_empty() {
-            e.display_description = row.description.into();
-        }
-        e.is_quarantined = row.is_quarantined;
-        e.details_loaded = true;
-        // Provenance rides along so the preview pane can show
-        // where a marked file came from without touching xattrs.
-        e.quarantine = if row.is_quarantined {
-            Some(Box::new(ferail_core::QuarantineDetails {
-                agent: row.quarantine_agent,
-                downloaded_iso: row.quarantine_iso,
-                where_from: row
-                    .quarantine_where_from
-                    .map(|s| s.lines().map(str::to_owned).collect())
-                    .unwrap_or_default(),
-            }))
-        } else {
-            None
-        };
+        delegate.note_quarantine_change(quarantine_change.0, quarantine_change.1);
     }
 }
 

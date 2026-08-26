@@ -6732,6 +6732,8 @@ impl Shell {
         let Some((path, kind, node, size, mtime_unix)) = path_and_kind else {
             return;
         };
+        #[cfg(not(windows))]
+        let _ = (node, size, mtime_unix);
         #[cfg(windows)]
         if matches!(kind, EntryKind::File | EntryKind::Symlink)
             && path

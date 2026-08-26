@@ -1212,6 +1212,9 @@ Windows behavior in this slice:
     host toolchain boundary; it is not a Windows compile claim for this slice.
 
 Required Windows implementation (next isolated feature):
+  - Source of truth: docs/features/WINDOWS_FAST_NTFS.md. The summary below is
+    only the execution checklist; do not implement the raw reader from this
+    abbreviated section alone.
   1. Keep Ferail itself asInvoker. Add a narrowly scoped helper that is started
      with runas only after the user explicitly chooses Fast NTFS scan; never
      relaunch the whole GUI elevated.
@@ -1470,4 +1473,101 @@ Publication result:
 This publication is not Authenticode-signed and does not close the still-open
 hardware/adversarial acceptance cases listed above. Retain those as post-
 release qualification rather than rewriting them as passed.
+```
+
+### 2026-08-26 — post-0.6.9 scale and broker hardening
+
+```text
+Date / implementation host: 2026-08-26, macOS
+Commit: uncommitted; record the isolated commit before resuming on Windows
+
+Implemented in shared/UI code:
+  - Ctrl/Cmd+A is now a symbolic complement selection in every file-list
+    surface, not only Flat View. It no longer allocates one NodeId per visible
+    row for an ordinary directory, Search or Duplicate Finder result;
+  - the context menu stores a fixed-size capability summary plus its anchor,
+    never one TargetCap per selected row. Whole-list counts and archive /
+    quarantine capabilities are maintained incrementally as streamed batches
+    and viewport details land;
+  - for a huge explicit range whose exact capability subset would require a
+    multi-million-row menu-time scan, harmless subset commands are offered
+    conservatively and their existing handler filters the real target set.
+    No filesystem I/O and no whole-model pass occurs while opening the menu.
+
+Implemented in Windows-only code:
+  - filesystem native-context-menu paths and Get Info property paths no longer
+    appear in child process command lines. Both use a versioned private stdin
+    protocol preserving arbitrary UTF-16 paths;
+  - the protocol rejects NULs, empty/oversized paths, excess target counts and
+    more than 32 MiB total input. The native menu revalidates same-parent after
+    decoding and remains capped at 20,000 items;
+  - Get Info property + shortcut calls which previously bypassed the process
+    scheduler now share a cancellation-aware process gate (two concurrent Info
+    gathers). The existing provider asset lane remains independently capped at
+    four, so no number of windows can create unbounded broker/STA work;
+  - namespace enumeration now uses a 10-second inactivity deadline reset by
+    every streamed label/record, plus a two-minute absolute hostile-provider
+    ceiling. A healthy slow MTP provider can continue making progress without
+    inheriting the old fixed ten-second total deadline;
+  - Shift+right-click remains the intended native extended-menu gesture.
+    The Ferail menu and its explicit More… entry remain unchanged.
+
+Cross-platform cleanup:
+  - all warnings reported by the macOS ferail-gpui build are removed;
+  - the writable timestamp test no longer backdates APFS mtime before birthtime
+    (which correctly caused APFS to clamp birthtime and made the test fail).
+
+Host proof completed:
+  - cargo check -p ferail-gpui (clean, no warnings);
+  - cargo test -p ferail-gpui menu_targets --lib (10 passed, including the
+    symbolic-summary regression);
+  - cargo test -p ferail-gpui --lib (306 passed, 1 network test ignored);
+  - cargo test -p ferail-fs-native writable_timestamps_round_trip --lib
+    (1 passed on APFS);
+  - cargo check -p ferail-shell-win32 --target x86_64-pc-windows-msvc
+    (passes, including the new private wire protocol);
+  - cargo check -p ferail-shell-win32 --tests --target
+    x86_64-pc-windows-msvc (passes);
+  - cargo test -p ferail-fs-native --lib (192 passed);
+  - cargo clippy -p ferail-gpui --lib -- -D warnings (clean);
+  - a full cross-check of ferail-gpui cannot complete on this Mac because ring
+    and aws-lc require the Windows SDK C headers. This is a host toolchain
+    boundary, not a Windows compile claim.
+
+Required real-Windows checks for this slice:
+  1. cargo check -p ferail-gpui and cargo test -p ferail-shell-win32;
+  2. in an ordinary folder, Search result, Duplicate Finder and Flat 4M,
+     Ctrl+A then right-click a selected row. Menu appearance must stay
+     immediate and Task Manager memory must not jump with row count;
+  3. deselect one row from symbolic all and repeat Trash, Clear Mark of the
+     Web and Extract on controlled fixtures; the exception must never be
+     touched and irrelevant subset actions must be harmless;
+  4. use Process Explorer while opening the native menu and Get Info on paths
+     containing spaces, non-BMP Unicode and long components. No selected path
+     may appear in either broker command line;
+  5. native menu: one file, one directory, mixed same-parent selection and a
+     deliberately over-cap selection. Properties must stay alive until its
+     sheet closes; no helper remains afterward;
+  6. open many Get Info windows over .lnk files and media metadata, then close
+     them while queued. Broker/STA concurrency stays bounded, cancellation
+     drains and the GUI remains responsive;
+  7. enumerate a slow MTP/device namespace which emits progress for more than
+     ten seconds, then a deliberately stalled provider. The first continues;
+     the second times out without taking down Ferail.
+
+Still deliberately not claimed — Fast NTFS/MFT Disk Usage:
+  - the refreshed source audit confirms there is still no executable MFT
+    reader, elevated DU helper, private named-pipe protocol or engine selector;
+  - do not expose a Fast NTFS label until
+    docs/features/WINDOWS_FAST_NTFS.md and the seven-step summary above are
+    implemented. This work must start as an isolated Windows feature: raw
+    volume access, UAC cancellation, live-volume consistency, sparse/
+    compressed allocation and hard-link accounting cannot be validated from
+    macOS;
+  - first Windows commit should contain only the neutral MFT-record parser and
+    malformed/fixup fixtures. Follow with the asInvoker parent + narrow runas
+    helper/private pipe, then subtree reconstruction and DU fact adaptation,
+    then the explicit UI engine choice and portable fallback. Keep each step
+    independently revertible and keep Fast DU out of Flat/Search until its DU
+    totals and memory gates pass.
 ```

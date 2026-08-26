@@ -51,7 +51,9 @@ use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 const FIRST_COMMAND_ID: u32 = 1;
 const LAST_COMMAND_ID: u32 = 0x7fff;
 const BROKER_ARG: &str = "--windows-context-menu-broker";
+const PATHS_STDIN_ARG: &str = "--paths-stdin";
 const READY_MARKER: &str = "FERAIL_CONTEXT_MENU_READY";
+const MAX_FILESYSTEM_MENU_TARGETS: usize = 20_000;
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(8);
 const PROPERTY_DIALOG_APPEAR_TIMEOUT: Duration = Duration::from_secs(3);
 const SYNCHRONOUS_PROPERTY_INVOKE_FLOOR: Duration = Duration::from_millis(250);
@@ -329,21 +331,42 @@ pub fn show_windows_context_menu(paths: &[PathBuf], extended: bool) -> Result<()
     if paths.is_empty() {
         return Err("the Windows menu needs at least one filesystem item".into());
     }
+    if paths.len() > MAX_FILESYSTEM_MENU_TARGETS {
+        return Err(format!(
+            "the Windows menu supports at most {MAX_FILESYSTEM_MENU_TARGETS} filesystem items"
+        ));
+    }
     if !same_parent(paths) {
         return Err("Windows can only build one native menu for items in the same folder".into());
     }
 
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let mut command = Command::new(exe);
-    command.arg(BROKER_ARG);
+    command.arg(BROKER_ARG).arg(PATHS_STDIN_ARG);
     if extended {
         command.arg("--extended");
     }
     command
-        .args(paths)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .creation_flags(CREATE_NO_WINDOW);
     let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "context-menu broker did not expose stdin".to_string())?;
+    if let Err(error) =
+        crate::private_wire::write_paths(&mut stdin, paths, MAX_FILESYSTEM_MENU_TARGETS)
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    drop(stdin);
+    wait_for_context_broker(child)
+}
+
+fn wait_for_context_broker(mut child: std::process::Child) -> Result<(), String> {
     let stdout = child
         .stdout
         .take()
@@ -380,11 +403,10 @@ pub fn show_windows_context_menu(paths: &[PathBuf], extended: bool) -> Result<()
     // Once the popup is ready it is deliberately user-modal: do not apply a
     // timeout while the user is reading a submenu or deciding what to invoke.
     let status = child.wait().map_err(|error| error.to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("Windows context-menu broker exited with {status}"))
-    }
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| format!("Windows context-menu broker exited with {status}"))
 }
 
 pub(crate) fn show_windows_namespace_context_menu(
@@ -419,46 +441,7 @@ pub(crate) fn show_windows_namespace_context_menu(
             .map_err(|error| error.to_string())?;
     }
     drop(stdin);
-    wait_for_namespace_context_broker(child)
-}
-
-fn wait_for_namespace_context_broker(mut child: std::process::Child) -> Result<(), String> {
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "context-menu broker did not expose its readiness pipe".to_string())?;
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let ready = BufReader::new(stdout)
-            .lines()
-            .map_while(Result::ok)
-            .any(|line| line.trim() == READY_MARKER);
-        let _ = ready_tx.send(ready);
-    });
-    match ready_rx.recv_timeout(PREPARE_TIMEOUT) {
-        Ok(true) => {}
-        Ok(false) => {
-            let status = child.wait().map_err(|error| error.to_string())?;
-            return Err(format!(
-                "Windows context-menu broker exited before its menu was ready ({status})"
-            ));
-        }
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("a Windows Shell extension took too long to build the menu".into());
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("Windows context-menu broker closed its readiness pipe".into());
-        }
-    }
-    let status = child.wait().map_err(|error| error.to_string())?;
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| format!("Windows context-menu broker exited with {status}"))
+    wait_for_context_broker(child)
 }
 
 fn valid_pidl(bytes: &[u8]) -> bool {
@@ -482,12 +465,30 @@ fn valid_pidl(bytes: &[u8]) -> bool {
 pub fn context_menu_broker_main(args: &[OsString]) -> i32 {
     let extended = args.iter().any(|arg| arg == "--extended");
     let pidl_stdin = args.iter().any(|arg| arg == "--pidl-stdin");
+    let paths_stdin = args.iter().any(|arg| arg == PATHS_STDIN_ARG);
     let path_args = args
         .iter()
-        .filter(|arg| arg != &"--extended" && arg != &"--pidl-stdin")
+        .filter(|arg| arg != &"--extended" && arg != &"--pidl-stdin" && arg != &PATHS_STDIN_ARG)
         .cloned()
         .collect::<Vec<_>>();
-    let paths = path_args.iter().map(PathBuf::from).collect::<Vec<_>>();
+    if pidl_stdin == paths_stdin || !path_args.is_empty() {
+        eprintln!("ferail: Windows context menu requires exactly one private input mode");
+        return 2;
+    }
+    let paths = if paths_stdin {
+        match crate::private_wire::read_paths(
+            &mut std::io::stdin().lock(),
+            MAX_FILESYSTEM_MENU_TARGETS,
+        ) {
+            Ok(paths) => paths,
+            Err(error) => {
+                eprintln!("ferail: invalid private context-menu input: {error}");
+                return 2;
+            }
+        }
+    } else {
+        path_args.iter().map(PathBuf::from).collect::<Vec<_>>()
+    };
     if !pidl_stdin && (paths.is_empty() || !same_parent(&paths)) {
         eprintln!("ferail: Windows context menu requires same-folder paths");
         return 2;

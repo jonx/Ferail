@@ -4806,13 +4806,19 @@ impl Shell {
             for tab in &self.tabs {
                 tab.table.update(cx, |state, cx| {
                     let mut touched = false;
-                    for e in state.delegate_mut().entries.iter_mut() {
+                    let delegate = state.delegate_mut();
+                    let mut quarantine_cleared = 0usize;
+                    for e in delegate.entries.iter_mut() {
                         if cleared.contains(&e.id) {
+                            if e.is_quarantined {
+                                quarantine_cleared += 1;
+                            }
                             e.is_quarantined = false;
                             e.quarantine = None;
                             touched = true;
                         }
                     }
+                    delegate.note_quarantine_cleared(quarantine_cleared);
                     if touched {
                         state.refresh(cx);
                     }

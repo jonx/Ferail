@@ -54,8 +54,14 @@ fn run_windows_properties_broker() -> Option<i32> {
     #[cfg(windows)]
     {
         let mut args = std::env::args_os().skip(1);
-        (args.next().as_deref() == Some(std::ffi::OsStr::new("--windows-properties-broker")))
-            .then(|| ferail_gpui::platform_shell::properties_broker_main(&args.collect::<Vec<_>>()))
+        if args.next().as_deref() != Some(std::ffi::OsStr::new("--windows-properties-broker")) {
+            return None;
+        }
+        Some(if args.next().is_some() {
+            2
+        } else {
+            ferail_gpui::platform_shell::properties_broker_main()
+        })
     }
     #[cfg(not(windows))]
     {
