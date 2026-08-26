@@ -39,6 +39,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   arguments and working directories use the same revision-aware shortcut
   cache. GPS coordinates, arbitrary property blobs, COM interfaces and PIDLs
   never enter the UI model, logs or persistent storage.
+  Property handlers now run in a disposable eight-second broker as well, so a
+  crashing or stalled third-party metadata extension cannot take down Ferail
+  or occupy one of its background workers forever.
 
 - **Windows file clipboard cut/copy semantics now interoperate with
   Explorer.** Ferail publishes and reads the Shell's `Preferred DropEffect`

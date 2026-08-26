@@ -451,6 +451,10 @@ Implemented:
   - WindowsPropertiesProvider opens IPropertyStore in a fresh STA only for an
     explicit Get Info request and copies a fixed allow-list into owned neutral
     property DTOs; arbitrary keys/blobs are never enumerated;
+  - the STA now lives in a disposable `--windows-properties-broker` process,
+    not a joined in-process thread. The host drains a 1 MiB-bounded protocol,
+    cancels or kills/waits after eight seconds, validates section/property/text
+    counts and accepts owned UTF-8 scalar data only;
   - GPS latitude/longitude keys are absent by construction and covered by a
     unit test;
   - filesystem results are cached process-wide by NodeId + FileRevision with

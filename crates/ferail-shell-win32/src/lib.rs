@@ -30,7 +30,7 @@ pub use shortcut::WindowsShortcutResolver;
 #[cfg(windows)]
 mod properties;
 #[cfg(windows)]
-pub use properties::WindowsPropertiesProvider;
+pub use properties::{properties_broker_main, WindowsPropertiesProvider};
 
 #[cfg(windows)]
 mod namespace;

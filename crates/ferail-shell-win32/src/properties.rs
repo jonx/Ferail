@@ -1,6 +1,10 @@
+use std::io::Read as _;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt as _;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use ferail_core::platform_namespace::LocationTarget;
 use ferail_core::platform_properties::{
@@ -52,13 +56,166 @@ impl PlatformPropertiesProvider for WindowsPropertiesProvider {
         if cancel.load(Ordering::Relaxed) {
             return Err(PlatformPropertiesErrorKind::Cancelled);
         }
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| read_on_sta(request, cancel))
-                .join()
-                .unwrap_or(Err(PlatformPropertiesErrorKind::Failed))
-        })
+        read_via_broker(request, cancel)
     }
+}
+
+const BROKER_ARG: &str = "--windows-properties-broker";
+const BROKER_TIMEOUT: Duration = Duration::from_secs(8);
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const MAX_OUTPUT: usize = 1024 * 1024;
+
+fn read_via_broker(
+    request: PlatformPropertiesRequest,
+    cancel: &AtomicBool,
+) -> Result<PlatformProperties, PlatformPropertiesErrorKind> {
+    let LocationTarget::FileSystem(path) = request.target else {
+        return Err(PlatformPropertiesErrorKind::Unsupported);
+    };
+    let exe = std::env::current_exe().map_err(|_| PlatformPropertiesErrorKind::Failed)?;
+    let mut child = Command::new(exe)
+        .arg(BROKER_ARG)
+        .arg(path)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| PlatformPropertiesErrorKind::Failed)?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or(PlatformPropertiesErrorKind::Failed)?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout
+            .by_ref()
+            .take((MAX_OUTPUT + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    });
+    let deadline = Instant::now() + BROKER_TIMEOUT;
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Err(PlatformPropertiesErrorKind::Cancelled);
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(PlatformPropertiesErrorKind::Failed);
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(PlatformPropertiesErrorKind::Failed);
+            }
+        }
+    };
+    let bytes = reader
+        .join()
+        .ok()
+        .and_then(Result::ok)
+        .ok_or(PlatformPropertiesErrorKind::Failed)?;
+    if !status.success() || bytes.len() > MAX_OUTPUT {
+        return Err(PlatformPropertiesErrorKind::Failed);
+    }
+    decode_properties(&bytes).ok_or(PlatformPropertiesErrorKind::Failed)
+}
+
+pub fn properties_broker_main(args: &[std::ffi::OsString]) -> i32 {
+    let Some(path) = args.first() else { return 2 };
+    let request = PlatformPropertiesRequest {
+        target: LocationTarget::FileSystem(path.into()),
+    };
+    let cancel = AtomicBool::new(false);
+    match read_on_sta(request, &cancel).and_then(|properties| {
+        encode_properties(&properties, &mut std::io::stdout().lock())
+            .map_err(|_| PlatformPropertiesErrorKind::Failed)
+    }) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+fn encode_properties(
+    properties: &PlatformProperties,
+    out: &mut impl std::io::Write,
+) -> std::io::Result<()> {
+    out.write_all(&(properties.sections.len() as u32).to_le_bytes())?;
+    for section in &properties.sections {
+        write_text(out, &section.title)?;
+        out.write_all(&(section.properties.len() as u32).to_le_bytes())?;
+        for property in &section.properties {
+            write_text(out, &property.canonical_key)?;
+            write_text(out, &property.display_name)?;
+            let PlatformPropertyValue::Text(value) = &property.value else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unsupported property wire value",
+                ));
+            };
+            write_text(out, value)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_text(out: &mut impl std::io::Write, value: &str) -> std::io::Result<()> {
+    let bytes = value.as_bytes();
+    out.write_all(&(bytes.len() as u32).to_le_bytes())?;
+    out.write_all(bytes)
+}
+
+fn decode_properties(mut bytes: &[u8]) -> Option<PlatformProperties> {
+    let count = read_word(&mut bytes)? as usize;
+    if count > 64 {
+        return None;
+    }
+    let mut sections = Vec::with_capacity(count);
+    for _ in 0..count {
+        let title = read_text(&mut bytes)?;
+        let property_count = read_word(&mut bytes)? as usize;
+        if property_count > 128 {
+            return None;
+        }
+        let mut properties = Vec::with_capacity(property_count);
+        for _ in 0..property_count {
+            properties.push(PlatformProperty {
+                canonical_key: Arc::from(read_text(&mut bytes)?),
+                display_name: Arc::from(read_text(&mut bytes)?),
+                value: PlatformPropertyValue::Text(Arc::from(read_text(&mut bytes)?)),
+            });
+        }
+        sections.push(PlatformPropertySection {
+            title: Arc::from(title),
+            properties,
+        });
+    }
+    bytes.is_empty().then_some(PlatformProperties { sections })
+}
+
+fn read_word(bytes: &mut &[u8]) -> Option<u32> {
+    let head = bytes.get(..4)?;
+    *bytes = &bytes[4..];
+    Some(u32::from_le_bytes(head.try_into().ok()?))
+}
+
+fn read_text(bytes: &mut &[u8]) -> Option<String> {
+    let len = read_word(bytes)? as usize;
+    if len > 64 * 1024 {
+        return None;
+    }
+    let value = std::str::from_utf8(bytes.get(..len)?).ok()?.to_owned();
+    *bytes = &bytes[len..];
+    Some(value)
 }
 
 fn read_on_sta(
@@ -158,5 +315,23 @@ mod tests {
         assert!(APPROVED_PROPERTIES.iter().all(|(key, _, _)| {
             !key.contains("Latitude") && !key.contains("Longitude") && !key.contains("GPS")
         }));
+    }
+
+    #[test]
+    fn broker_wire_roundtrip_is_bounded_and_owned() {
+        let properties = PlatformProperties {
+            sections: vec![PlatformPropertySection {
+                title: Arc::from("Windows"),
+                properties: vec![PlatformProperty {
+                    canonical_key: Arc::from("System.Title"),
+                    display_name: Arc::from("Title"),
+                    value: PlatformPropertyValue::Text(Arc::from("Canary")),
+                }],
+            }],
+        };
+        let mut bytes = Vec::new();
+        encode_properties(&properties, &mut bytes).unwrap();
+        assert_eq!(decode_properties(&bytes), Some(properties));
+        assert!(decode_properties(&bytes[..bytes.len() - 1]).is_none());
     }
 }

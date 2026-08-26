@@ -21,6 +21,9 @@ fn main() -> Result<()> {
     if let Some(code) = run_windows_namespace_broker() {
         std::process::exit(code);
     }
+    if let Some(code) = run_windows_properties_broker() {
+        std::process::exit(code);
+    }
     // Pre-event-loop CLI handlers — run before the window opens.
     if let Some(code) = ferail_gpui::reset_db::handle_reset_db_cli() {
         std::process::exit(code);
@@ -45,6 +48,19 @@ fn main() -> Result<()> {
     run_gui(args);
     ferail_gpui::log_info!(90, "event loop exited");
     Ok(())
+}
+
+fn run_windows_properties_broker() -> Option<i32> {
+    #[cfg(windows)]
+    {
+        let mut args = std::env::args_os().skip(1);
+        (args.next().as_deref() == Some(std::ffi::OsStr::new("--windows-properties-broker")))
+            .then(|| ferail_gpui::platform_shell::properties_broker_main(&args.collect::<Vec<_>>()))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 fn run_windows_namespace_broker() -> Option<i32> {
