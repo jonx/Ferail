@@ -149,6 +149,8 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 ferail-shell-win32.workspace = true
+ferail-ntfs.workspace = true
+ferail-ntfs-win32.workspace = true
 ferail-video-mpv = { workspace = true, optional = true }
 # Freeze diagnostics (src/watchdog.rs): SetConsoleCtrlHandler so Ctrl+Break /
 # Ctrl+C on a frozen console-launched app still writes a hang report. Same

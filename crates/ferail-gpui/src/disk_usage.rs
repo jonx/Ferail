@@ -22,7 +22,12 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
+
+#[cfg(target_os = "windows")]
+use std::ffi::OsString;
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStringExt as _;
 
 /// Key context for the Disk Usage pane — keymap.rs binds the treemap
 /// keys (Enter/Backspace/Escape, Cmd+C/I/Backspace) against it.
@@ -51,7 +56,7 @@ gpui::actions!(
 use ferail_core::{EnumerationError, NodeId};
 use ferail_disk_usage::{
     DiskUsageFact, DiskUsageLayoutNode, DiskUsageStats, DiskUsageTree, FileCategory, SizeMode,
-    TreemapRect, build_layout_node_with_mode, compute_treemap,
+    TreemapRect, build_layout_node_with_mode, classify_extension, compute_treemap,
 };
 use ferail_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
@@ -132,6 +137,19 @@ struct DiskUsagePathArena {
     root: PathBuf,
     id_base: u64,
     parents: Vec<Option<NodeId>>,
+    /// Fast NTFS filenames are opaque UTF-16. Keep them once in a compact
+    /// arena so actions never round-trip through the lossy display label.
+    #[cfg(target_os = "windows")]
+    raw_names: Vec<u16>,
+    #[cfg(target_os = "windows")]
+    raw_ranges: Vec<Option<RawNameRange>>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+struct RawNameRange {
+    start: u32,
+    len: u16,
 }
 
 impl DiskUsagePathArena {
@@ -140,6 +158,10 @@ impl DiskUsagePathArena {
             root,
             id_base,
             parents: vec![None], // id_base + 1 is always the scan root.
+            #[cfg(target_os = "windows")]
+            raw_names: Vec::new(),
+            #[cfg(target_os = "windows")]
+            raw_ranges: vec![None],
         }
     }
 
@@ -156,8 +178,23 @@ impl DiskUsagePathArena {
         let row = self.row_index(id)?;
         if self.parents.len() <= row {
             self.parents.resize(row + 1, None);
+            #[cfg(target_os = "windows")]
+            self.raw_ranges.resize(row + 1, None);
         }
         Some(row)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn set_raw_name(&mut self, id: NodeId, raw_name: &[u16]) {
+        let Ok(start) = u32::try_from(self.raw_names.len()) else {
+            return;
+        };
+        let Ok(len) = u16::try_from(raw_name.len()) else {
+            return;
+        };
+        let Some(row) = self.ensure(id) else { return };
+        self.raw_names.extend_from_slice(raw_name);
+        self.raw_ranges[row] = Some(RawNameRange { start, len });
     }
 
     fn apply_facts(&mut self, facts: &[DiskUsageFact]) {
@@ -193,13 +230,68 @@ impl DiskUsagePathArena {
                 }
                 return Some(path);
             }
-            let node = tree.nodes.get(&current)?;
-            components.push(node.display_name.as_str());
             let row = self.row_index(current)?;
+            #[cfg(target_os = "windows")]
+            let component = self
+                .raw_ranges
+                .get(row)
+                .copied()
+                .flatten()
+                .and_then(|range| {
+                    let start = range.start as usize;
+                    let end = start.checked_add(range.len as usize)?;
+                    Some(OsString::from_wide(self.raw_names.get(start..end)?))
+                });
+            #[cfg(target_os = "windows")]
+            let component = match component {
+                Some(component) => component,
+                None => OsString::from(&tree.nodes.get(&current)?.display_name),
+            };
+            #[cfg(not(target_os = "windows"))]
+            let component = tree.nodes.get(&current)?.display_name.clone();
+            components.push(component);
             current = self.parents.get(row).copied().flatten()?;
         }
         None
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DuEngine {
+    Portable,
+    #[cfg(target_os = "windows")]
+    FastNtfs,
+}
+
+impl DuEngine {
+    #[cfg(target_os = "windows")]
+    fn from_preference() -> Self {
+        match crate::app_state::load().disk_usage_engine.as_deref() {
+            Some("fast-ntfs") => Self::FastNtfs,
+            _ => Self::Portable,
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    const fn from_preference() -> Self {
+        Self::Portable
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FastFallbackReason {
+    ElevationDeclined,
+    HelperMissing,
+    Unsupported,
+    Failed,
+}
+
+#[cfg(target_os = "windows")]
+struct FastBatch {
+    facts: Vec<DiskUsageFact>,
+    raw_names: Vec<(NodeId, Vec<u16>)>,
+    stats: DiskUsageStats,
 }
 
 pub struct DiskUsageView {
@@ -213,6 +305,12 @@ pub struct DiskUsageView {
     scan_complete: bool,
     error: Option<EnumerationError>,
     cancel: Arc<AtomicBool>,
+    engine: DuEngine,
+    active_engine: DuEngine,
+    #[cfg(target_os = "windows")]
+    fast_fallback: Option<FastFallbackReason>,
+    #[cfg(target_os = "windows")]
+    fast_best_effort_live: bool,
 
     /// Queue of messages produced by the BG scanner; drained by the
     /// FG timer task. `Arc<Mutex<_>>` for cross-thread share.
@@ -326,6 +424,7 @@ impl DiskUsageView {
         // the NSURL/statfs lookup can round-trip to a network mount,
         // and this constructor runs on the UI thread.
         let volume = None;
+        let engine = DuEngine::from_preference();
         let mut view = Self {
             root_path: canonical.clone(),
             root_id,
@@ -336,6 +435,12 @@ impl DiskUsageView {
             scan_complete: false,
             error: None,
             cancel: cancel.clone(),
+            engine,
+            active_engine: engine,
+            #[cfg(target_os = "windows")]
+            fast_fallback: None,
+            #[cfg(target_os = "windows")]
+            fast_best_effort_live: false,
             msg_queue: msg_queue.clone(),
             layout_cache: None,
             rects_cache: Vec::new(),
@@ -474,10 +579,16 @@ impl DiskUsageView {
         let cancel = self.cancel.clone();
         let cancel_for_push = self.cancel.clone();
         let descend = self.descend_packages;
+        let size_mode = self.size_mode;
         let id_base = self.path_arena.id_base;
+        let engine = self.engine;
+        self.active_engine = engine;
+        #[cfg(target_os = "windows")]
+        {
+            self.fast_fallback = None;
+            self.fast_best_effort_live = false;
+        }
         let queue_for_scan = self.msg_queue.clone();
-        let queue_for_progress = self.msg_queue.clone();
-        let queue_for_done = self.msg_queue.clone();
 
         // Register the scan with the shared task registry so the
         // owning Shell's status-bar progress strip shows indeterminate
@@ -490,51 +601,84 @@ impl DiskUsageView {
         // BG: run the scan. Synchronous I/O on the executor's pool.
         cx.background_executor()
             .spawn(async move {
-                let err = fs.scan_disk_usage_local(
-                    &root,
-                    ferail_fs_native::DEFAULT_DU_BATCH,
-                    &cancel,
-                    descend,
-                    id_base,
-                    |batch| {
-                        // Backpressure: never let the queue outrun the FG
-                        // drain. When it's full, park this (background pool)
-                        // thread briefly and retry; bail on cancel so a
-                        // cancelled scan / closed window can't hang here.
-                        // The walker checks `cancel` itself right after the
-                        // callback returns, so dropping the batch is safe.
-                        let mut pending = Some(batch);
-                        loop {
-                            if cancel_for_push.load(Ordering::Relaxed) {
-                                return;
+                #[cfg(target_os = "windows")]
+                if engine == DuEngine::FastNtfs {
+                    let request = ferail_ntfs_win32::FastNtfsRequest {
+                        root: root.clone(),
+                        sizing_mode: match size_mode {
+                            SizeMode::Apparent => ferail_ntfs::SizingMode::Apparent,
+                            SizeMode::Allocated => ferail_ntfs::SizingMode::Allocated,
+                        },
+                        descend_packages: descend,
+                        root_id: id_base + 1,
+                        first_child_id: id_base + 2,
+                        request_id: generation.max(1),
+                    };
+                    let mut stats = DiskUsageStats {
+                        dirs_scanned: 1,
+                        ..DiskUsageStats::default()
+                    };
+                    let mut best_effort_live = false;
+                    let result =
+                        ferail_ntfs_win32::run_fast_ntfs(request, &cancel, |event| match event {
+                            ferail_ntfs_win32::FastNtfsEvent::Ready => {
+                                let _ = push_scan_msg(
+                                    &queue_for_scan,
+                                    &cancel_for_push,
+                                    ScanMsg::Batch(ScanBatch::Fast(fast_root_batch(
+                                        &root, id_base,
+                                    ))),
+                                );
                             }
-                            match queue_for_scan.lock() {
-                                Ok(mut q) => {
-                                    if q.len() < DU_QUEUE_CAP {
-                                        if let Some(batch) = pending.take() {
-                                            q.push_back(ScanMsg::Batch(batch));
-                                        }
-                                        return;
-                                    }
-                                }
-                                Err(_) => return,
+                            ferail_ntfs_win32::FastNtfsEvent::Batch(rows) => {
+                                let batch = fast_rows_to_batch(rows, &mut stats);
+                                let _ = push_scan_msg(
+                                    &queue_for_scan,
+                                    &cancel_for_push,
+                                    ScanMsg::Batch(ScanBatch::Fast(batch)),
+                                );
                             }
-                            std::thread::sleep(DU_BACKPRESSURE_NAP);
+                            ferail_ntfs_win32::FastNtfsEvent::Progress(_) => {}
+                            ferail_ntfs_win32::FastNtfsEvent::Complete(complete) => {
+                                best_effort_live = complete.best_effort_live;
+                            }
+                        });
+                    match result {
+                        Ok(()) => {
+                            let _ = push_scan_msg(
+                                &queue_for_scan,
+                                &cancel_for_push,
+                                ScanMsg::FastComplete { best_effort_live },
+                            );
+                            let _ = push_scan_msg(
+                                &queue_for_scan,
+                                &cancel_for_push,
+                                ScanMsg::Done(None),
+                            );
                         }
-                    },
-                    |progress| {
-                        if let Ok(mut q) = queue_for_progress.lock() {
-                            if let Some(ScanMsg::Progress(last)) = q.back_mut() {
-                                *last = progress;
-                            } else {
-                                q.push_back(ScanMsg::Progress(progress));
+                        Err(error) if !cancel.load(Ordering::Acquire) => {
+                            let reason = fast_fallback_reason(&error);
+                            if push_scan_msg(
+                                &queue_for_scan,
+                                &cancel_for_push,
+                                ScanMsg::ResetForFallback(reason),
+                            ) {
+                                run_portable_scan(
+                                    &fs,
+                                    &root,
+                                    &cancel,
+                                    descend,
+                                    id_base,
+                                    &queue_for_scan,
+                                );
                             }
                         }
-                    },
-                );
-                if let Ok(mut q) = queue_for_done.lock() {
-                    q.push_back(ScanMsg::Done(err));
+                        Err(_) => {}
+                    }
+                    return;
                 }
+
+                run_portable_scan(&fs, &root, &cancel, descend, id_base, &queue_for_scan);
             })
             .detach();
 
@@ -584,6 +728,10 @@ impl DiskUsageView {
                     for msg in msgs {
                         match &msg {
                             ScanMsg::Batch(_) => had_batch = true,
+                            #[cfg(target_os = "windows")]
+                            ScanMsg::ResetForFallback(_) | ScanMsg::FastComplete { .. } => {
+                                had_batch = true
+                            }
                             ScanMsg::Done(_) => done = true,
                             _ => {}
                         }
@@ -633,14 +781,53 @@ impl DiskUsageView {
     /// drain loop batches those so they happen once per tick.
     fn apply_scan_msg(&mut self, msg: ScanMsg) {
         match msg {
-            ScanMsg::Batch(facts) => {
+            ScanMsg::Batch(batch) => {
+                let facts = match batch {
+                    ScanBatch::Portable(facts) => facts,
+                    #[cfg(target_os = "windows")]
+                    ScanBatch::Fast(batch) => {
+                        for (node, raw_name) in &batch.raw_names {
+                            self.path_arena.set_raw_name(*node, raw_name);
+                        }
+                        self.stats = batch.stats;
+                        batch.facts
+                    }
+                };
                 self.path_arena.apply_facts(&facts);
                 self.tree.apply_facts(&facts);
             }
             ScanMsg::Progress(p) => self.stats = p,
+            #[cfg(target_os = "windows")]
+            ScanMsg::ResetForFallback(reason) => {
+                let id_base = self.path_arena.id_base;
+                self.path_arena = DiskUsagePathArena::new(self.root_path.clone(), id_base);
+                self.root_id = self.path_arena.root_id();
+                self.tree = DiskUsageTree::new(self.root_id);
+                self.stats = DiskUsageStats::default();
+                self.error = None;
+                self.active_engine = DuEngine::Portable;
+                self.fast_fallback = Some(reason);
+                self.fast_best_effort_live = false;
+                self.zoom_path.clear();
+                self.selected.clear();
+                self.lead = None;
+                self.top_files.clear();
+            }
+            #[cfg(target_os = "windows")]
+            ScanMsg::FastComplete { best_effort_live } => {
+                self.fast_best_effort_live = best_effort_live;
+            }
             ScanMsg::Done(err) => {
                 self.scan_complete = true;
                 self.error = err;
+                self.tree.complete = self.error.is_none();
+                if self.tree.complete {
+                    let containers: Vec<NodeId> = self.tree.containers.keys().copied().collect();
+                    for container in containers {
+                        self.tree
+                            .set_scan_state(container, ferail_disk_usage::ScanState::Complete);
+                    }
+                }
             }
         }
     }
@@ -696,6 +883,12 @@ impl DiskUsageView {
         self.stats = DiskUsageStats::default();
         self.scan_complete = false;
         self.error = None;
+        self.active_engine = self.engine;
+        #[cfg(target_os = "windows")]
+        {
+            self.fast_fallback = None;
+            self.fast_best_effort_live = false;
+        }
         self.cancel = Arc::new(AtomicBool::new(false));
         self.msg_queue = Arc::new(Mutex::new(VecDeque::new()));
         self.zoom_path.clear();
@@ -2075,10 +2268,199 @@ impl Render for DiskUsageView {
     }
 }
 
+enum ScanBatch {
+    Portable(Vec<DiskUsageFact>),
+    #[cfg(target_os = "windows")]
+    Fast(FastBatch),
+}
+
 enum ScanMsg {
-    Batch(Vec<DiskUsageFact>),
+    Batch(ScanBatch),
     Progress(DiskUsageStats),
+    #[cfg(target_os = "windows")]
+    ResetForFallback(FastFallbackReason),
+    #[cfg(target_os = "windows")]
+    FastComplete {
+        best_effort_live: bool,
+    },
     Done(Option<EnumerationError>),
+}
+
+fn push_scan_msg(
+    queue: &Arc<Mutex<VecDeque<ScanMsg>>>,
+    cancel: &AtomicBool,
+    message: ScanMsg,
+) -> bool {
+    let mut pending = Some(message);
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        match queue.lock() {
+            Ok(mut queue) if queue.len() < DU_QUEUE_CAP => {
+                queue.push_back(pending.take().expect("scan message is queued once"));
+                return true;
+            }
+            Ok(_) => std::thread::sleep(DU_BACKPRESSURE_NAP),
+            Err(_) => return false,
+        }
+    }
+}
+
+fn push_scan_progress(queue: &Arc<Mutex<VecDeque<ScanMsg>>>, progress: DiskUsageStats) {
+    let Ok(mut queue) = queue.lock() else { return };
+    if let Some(ScanMsg::Progress(last)) = queue.back_mut() {
+        *last = progress;
+    } else if queue.len() < DU_QUEUE_CAP {
+        queue.push_back(ScanMsg::Progress(progress));
+    }
+}
+
+fn run_portable_scan(
+    fs: &NativeFs,
+    root: &std::path::Path,
+    cancel: &AtomicBool,
+    descend_packages: bool,
+    id_base: u64,
+    queue: &Arc<Mutex<VecDeque<ScanMsg>>>,
+) {
+    let err = fs.scan_disk_usage_local(
+        root,
+        ferail_fs_native::DEFAULT_DU_BATCH,
+        cancel,
+        descend_packages,
+        id_base,
+        |batch| {
+            let _ = push_scan_msg(queue, cancel, ScanMsg::Batch(ScanBatch::Portable(batch)));
+        },
+        |progress| push_scan_progress(queue, progress),
+    );
+    let _ = push_scan_msg(queue, cancel, ScanMsg::Done(err));
+}
+
+#[cfg(target_os = "windows")]
+fn fast_fallback_reason(error: &ferail_ntfs_win32::ClientError) -> FastFallbackReason {
+    match error {
+        ferail_ntfs_win32::ClientError::UacCancelled => FastFallbackReason::ElevationDeclined,
+        ferail_ntfs_win32::ClientError::HelperMissing => FastFallbackReason::HelperMissing,
+        ferail_ntfs_win32::ClientError::Helper(ferail_ntfs::FailureCode::Unsupported)
+        | ferail_ntfs_win32::ClientError::Platform("probe") => FastFallbackReason::Unsupported,
+        _ => FastFallbackReason::Failed,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn fast_root_batch(root: &std::path::Path, id_base: u64) -> FastBatch {
+    let root_id = NodeId::from_raw(id_base + 1).expect("disk-usage root id is nonzero");
+    let name = root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ferail_fs_native::paths::display_path(root));
+    FastBatch {
+        facts: vec![
+            DiskUsageFact::NodeDiscovered {
+                node: root_id,
+                kind: ferail_disk_usage::NodeKind::Container,
+                file_category: FileCategory::Other,
+                mtime: None,
+                name,
+                is_cloud: false,
+            },
+            DiskUsageFact::ContainerScanStarted { container: root_id },
+        ],
+        raw_names: Vec::new(),
+        stats: DiskUsageStats {
+            dirs_scanned: 1,
+            ..DiskUsageStats::default()
+        },
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn fast_rows_to_batch(rows: Vec<ferail_ntfs::NeutralRow>, stats: &mut DiskUsageStats) -> FastBatch {
+    let mut facts = Vec::with_capacity(rows.len().saturating_mul(5));
+    let mut raw_names = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Some(node) = NodeId::from_raw(row.id) else {
+            continue;
+        };
+        let Some(parent) = NodeId::from_raw(row.parent_id) else {
+            continue;
+        };
+        let is_directory = matches!(
+            row.kind,
+            ferail_ntfs::NeutralNodeKind::Directory
+                | ferail_ntfs::NeutralNodeKind::ReparseDirectory
+                | ferail_ntfs::NeutralNodeKind::OpaquePackage
+        );
+        let kind = if row.kind == ferail_ntfs::NeutralNodeKind::Directory {
+            ferail_disk_usage::NodeKind::Container
+        } else {
+            ferail_disk_usage::NodeKind::File
+        };
+        let category = row
+            .display_name
+            .rsplit_once('.')
+            .map_or(FileCategory::Other, |(_, ext)| classify_extension(ext));
+        facts.push(DiskUsageFact::NodeDiscovered {
+            node,
+            kind,
+            file_category: category,
+            mtime: ntfs_ticks_to_system_time(row.modified_ticks),
+            name: row.display_name,
+            is_cloud: false,
+        });
+        facts.push(DiskUsageFact::NodeLinked {
+            container: parent,
+            node,
+        });
+        if kind == ferail_disk_usage::NodeKind::Container {
+            facts.push(DiskUsageFact::ContainerScanStarted { container: node });
+        }
+        if row.logical_bytes != 0 {
+            facts.push(DiskUsageFact::NodeSizeAdded {
+                node,
+                size_bytes: row.logical_bytes,
+            });
+        }
+        if row.allocated_bytes != 0 {
+            facts.push(DiskUsageFact::NodeAllocatedAdded {
+                node,
+                bytes: row.allocated_bytes,
+            });
+        }
+        raw_names.push((node, row.raw_name));
+        if is_directory {
+            stats.dirs_scanned = stats.dirs_scanned.saturating_add(1);
+        } else {
+            stats.files_scanned = stats.files_scanned.saturating_add(1);
+        }
+        stats.bytes_scanned = stats.bytes_scanned.saturating_add(row.logical_bytes);
+    }
+    FastBatch {
+        facts,
+        raw_names,
+        stats: *stats,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ntfs_ticks_to_system_time(ticks: u64) -> Option<SystemTime> {
+    const TICKS_PER_SECOND: u64 = 10_000_000;
+    const WINDOWS_TO_UNIX_SECONDS: u64 = 11_644_473_600;
+    let seconds = ticks / TICKS_PER_SECOND;
+    let nanos = (ticks % TICKS_PER_SECOND).checked_mul(100)?;
+    if seconds >= WINDOWS_TO_UNIX_SECONDS {
+        SystemTime::UNIX_EPOCH.checked_add(Duration::new(
+            seconds - WINDOWS_TO_UNIX_SECONDS,
+            nanos as u32,
+        ))
+    } else {
+        SystemTime::UNIX_EPOCH.checked_sub(Duration::new(
+            WINDOWS_TO_UNIX_SECONDS - seconds,
+            nanos as u32,
+        ))
+    }
 }
 
 /// Category fill, from the canonical palette in `ferail-disk-usage`
@@ -2271,5 +2653,92 @@ mod path_arena_tests {
             Some(PathBuf::from("/scan-root/nested/report.txt"))
         );
         assert_eq!(arena.parents.len(), 3);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn fast_names_round_trip_as_opaque_utf16() {
+        use std::os::windows::ffi::OsStrExt as _;
+
+        let base = 1_u64 << 62;
+        let mut arena = DiskUsagePathArena::new(PathBuf::from(r"C:\scan-root"), base);
+        let root = arena.root_id();
+        let file = NodeId::from_raw(base + 2).unwrap();
+        let raw_name = vec![
+            b'x' as u16,
+            0xD800,
+            b'.' as u16,
+            b't' as u16,
+            b'x' as u16,
+            b't' as u16,
+        ];
+        let facts = vec![
+            DiskUsageFact::NodeDiscovered {
+                node: file,
+                kind: ferail_disk_usage::NodeKind::File,
+                file_category: FileCategory::Document,
+                mtime: None,
+                name: String::from_utf16_lossy(&raw_name),
+                is_cloud: false,
+            },
+            DiskUsageFact::NodeLinked {
+                container: root,
+                node: file,
+            },
+        ];
+        let mut tree = DiskUsageTree::new(root);
+        arena.apply_facts(&facts);
+        arena.set_raw_name(file, &raw_name);
+        tree.apply_facts(&facts);
+
+        let path = arena.path_for(file, &tree).unwrap();
+        assert_eq!(
+            path.file_name().unwrap().encode_wide().collect::<Vec<_>>(),
+            raw_name
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn fast_row_conversion_preserves_sizes_kind_and_stats() {
+        use ferail_ntfs::{FileReference, NeutralNodeKind, NeutralRow};
+
+        let base = 1_u64 << 62;
+        let mut stats = ferail_disk_usage::DiskUsageStats {
+            dirs_scanned: 1,
+            ..Default::default()
+        };
+        let raw_name: Vec<u16> = "photo.jpg".encode_utf16().collect();
+        let batch = super::fast_rows_to_batch(
+            vec![NeutralRow {
+                id: base + 2,
+                parent_id: base + 1,
+                file_record: FileReference {
+                    record: 42,
+                    sequence: 3,
+                },
+                kind: NeutralNodeKind::File,
+                raw_name: raw_name.clone(),
+                display_name: "photo.jpg".into(),
+                logical_bytes: 123,
+                allocated_bytes: 4096,
+                modified_ticks: 116_444_736_000_000_000,
+            }],
+            &mut stats,
+        );
+        assert_eq!(batch.raw_names[0].1, raw_name);
+        assert_eq!(batch.stats.files_scanned, 1);
+        assert_eq!(batch.stats.dirs_scanned, 1);
+        assert_eq!(batch.stats.bytes_scanned, 123);
+
+        let root = NodeId::from_raw(base + 1).unwrap();
+        let file = NodeId::from_raw(base + 2).unwrap();
+        let mut tree = DiskUsageTree::new(root);
+        tree.apply_facts(&batch.facts);
+        let node = tree.nodes.get(&file).unwrap();
+        assert_eq!(node.file_category, FileCategory::Image);
+        assert_eq!(node.size_bytes, 123);
+        assert_eq!(node.allocated_bytes, 4096);
+        assert_eq!(node.mtime, Some(std::time::UNIX_EPOCH));
     }
 }

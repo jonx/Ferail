@@ -2177,6 +2177,8 @@ dependencies = [
  "ferail-disk-usage",
  "ferail-fs-native",
  "ferail-meta",
+ "ferail-ntfs",
+ "ferail-ntfs-win32",
  "ferail-shell-aros",
  "ferail-shell-linux",
  "ferail-shell-mac",

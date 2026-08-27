@@ -112,6 +112,10 @@ pub struct AppState {
     /// Whether per-row magic sniffing + Finder-tag reads run
     /// (Performance). `None` == never set (defaults to `true`, on).
     pub file_detail_scan: Option<bool>,
+    /// Disk Usage scanner preference on Windows: "portable" or
+    /// "fast-ntfs". Fast still starts only when a Disk Usage surface opens;
+    /// this stores the user's prior explicit choice, never an elevation token.
+    pub disk_usage_engine: Option<String>,
     /// File-table column order + widths + visibility, as
     /// `key:width:vis` tuples in display order (e.g.
     /// `name:360:1,size:100:1,format:220:0,...`). `vis` is `1` visible /
@@ -361,6 +365,12 @@ fn load_from_disk() -> AppState {
             "file_detail_scan" => {
                 out.file_detail_scan = parse_bool(val);
             }
+            "disk_usage_engine" => {
+                let value = val.trim().to_lowercase();
+                if matches!(value.as_str(), "portable" | "fast-ntfs") {
+                    out.disk_usage_engine = Some(value);
+                }
+            }
             "list_columns" if !val.trim().is_empty() => {
                 out.list_columns = Some(val.trim().to_string());
             }
@@ -557,6 +567,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(b) = state.file_detail_scan {
         s.push_str(&format!("file_detail_scan={b}\n"));
+    }
+    if let Some(engine) = &state.disk_usage_engine {
+        s.push_str(&format!("disk_usage_engine={engine}\n"));
     }
     if let Some(c) = &state.list_columns {
         s.push_str(&format!("list_columns={c}\n"));
