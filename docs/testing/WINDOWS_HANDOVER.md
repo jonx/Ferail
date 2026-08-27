@@ -19,16 +19,17 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 ## Current resume point
 
 - Branch: `main`
-- Last published Windows baseline: `v0.6.9` (Windows Shell reliability update)
-- Windows Shell implementation and qualification series: `226ec71` through
-  `7bfeefe`, followed by the `0.6.9` release commit. Use `git rev-parse HEAD`
+- Last published Windows baseline: `v0.7.0` (Fast NTFS Disk Usage preview)
+- Fast NTFS implementation and qualification series: `d0c0a0b` through
+  `9c832fc`, followed by release commit `3eda9ce`. Use `git rev-parse HEAD`
   after pulling rather than assuming an abbreviated hash in this document.
-- Current Windows release: `0.6.9`
-- Published artifacts: unsigned portable Windows x64 ZIP plus its matching
-  x64 symbols ZIP
-- Next campaign: post-release qualification of the remaining adversarial and
-  hardware-dependent cases (MTP disconnect, hostile providers, long soaks and
-  multi-DPI comparison); see the
+- Current Windows release: `0.7.0`; macOS and Linux remain on `0.6.5`.
+- Published artifacts: unsigned portable Windows x64 ZIP containing the GUI,
+  CLI and sibling Fast NTFS helper, plus the matching three-PDB symbols ZIP.
+- Next campaign: independent administrator-equipped qualification of the Fast
+  helper/VHDX/large-volume matrix, plus the remaining adversarial and hardware-
+  dependent cases (MTP disconnect, hostile providers, long soaks and multi-DPI
+  comparison); see the
   [acceptance plan](WINDOWS_RELIABILITY_TEST_PLAN.md).
 - Added scope: WSL distributions are implemented in source as cached dynamic
   **Linux** locations, adapted from the pinned Ferail-Win32 reference. Registry,
@@ -105,6 +106,19 @@ following acceptance work delegated to an administrator-equipped tester:
    `scripts/testing/fast-ntfs-vhdx.ps1` later on a Hyper-V-capable Windows host
    for sparse/compressed/ADS/hard-link/junction/ACL/concurrent-mutation and
    long-path evidence; do not rewrite that hardware gate as passed here.
+
+Release evidence:
+
+- `v0.7.0` is the annotated tag on `3eda9ce` and was published on 2026-08-27
+  as **Ferail 0.7.0 — Fast NTFS Disk Usage for Windows**;
+- `Ferail-0.7.0-win-x64.zip`: 43,948,741 bytes,
+  SHA-256 `d7c525d6cd661c3666d8edf62aa9bada49208513af7d29efce04f29b82c1f094`;
+- `Ferail-0.7.0-x64-symbols.zip`: 84,182,912 bytes,
+  SHA-256 `6c3d9d31b696cf051e69b4436d52f7d2aa8f5b7b4c4a6853219eeab2fab42bcb`;
+- the exact local release build passed dependency gates for GUI/CLI/helper,
+  contained the helper beside the GUI, recorded all three CodeView/PDB pairs
+  in a clean manifest, and `ferail doctor` reported 12 OK / 0 WARN / 0 FAIL;
+- normal packaged GUI startup did not start the helper or request elevation.
 
 ### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
 
