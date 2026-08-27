@@ -1468,6 +1468,21 @@
     },
     "…and {overflow} more": "… und {overflow} weitere",
     "−1f": "−1f",
-    "⚠ {warning}": "⚠ {warning}"
+    "⚠ {warning}": "⚠ {warning}",
+    "Disk Usage engine": "Speicherbelegungs-Engine",
+    "Portable": "Portabel",
+    "Fast NTFS": "Schnelles NTFS",
+    "Fast NTFS (administrator)": "Schnelles NTFS (Administrator)",
+    "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through a short-lived administrator helper only when Disk Usage starts; if it cannot finish safely, Ferail discards its partial result and retries with Portable.": "Portabel funktioniert überall ohne erhöhte Rechte. Schnelles NTFS liest lokale NTFS-Metadaten nur beim Start der Speicheranalyse über einen kurzlebigen Administrator-Helfer; kann es nicht sicher abschließen, verwirft Ferail das Teilergebnis und versucht es erneut mit Portabel.",
+    "Checking Fast NTFS availability…": "Verfügbarkeit von Schnellem NTFS wird geprüft…",
+    "Read NTFS metadata with a temporary administrator helper": "NTFS-Metadaten mit einem temporären Administrator-Helfer lesen",
+    "Fast NTFS requires a local fixed NTFS volume": "Schnelles NTFS benötigt ein lokales festes NTFS-Volume",
+    "Portable fallback — administrator access was declined": "Rückfall auf Portabel — Administratorzugriff wurde abgelehnt",
+    "Portable fallback — the Fast NTFS helper is missing": "Rückfall auf Portabel — der Helfer für Schnelles NTFS fehlt",
+    "Portable fallback — Fast NTFS is unavailable here": "Rückfall auf Portabel — Schnelles NTFS ist hier nicht verfügbar",
+    "Portable fallback — Fast NTFS could not finish safely": "Rückfall auf Portabel — Schnelles NTFS konnte nicht sicher abschließen",
+    "Fast NTFS — best effort because files changed during the scan": "Schnelles NTFS — bestmögliches Ergebnis, da sich Dateien während des Scans geändert haben",
+    "Fast NTFS engine": "Engine: Schnelles NTFS",
+    "Portable engine": "Engine: Portabel"
   }
 }

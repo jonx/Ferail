@@ -1468,6 +1468,21 @@
     },
     "…and {overflow} more": "…and {overflow} more",
     "−1f": "−1f",
-    "⚠ {warning}": "⚠ {warning}"
+    "⚠ {warning}": "⚠ {warning}",
+    "Disk Usage engine": "Disk Usage engine",
+    "Portable": "Portable",
+    "Fast NTFS": "Fast NTFS",
+    "Fast NTFS (administrator)": "Fast NTFS (administrator)",
+    "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through a short-lived administrator helper only when Disk Usage starts; if it cannot finish safely, Ferail discards its partial result and retries with Portable.": "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through a short-lived administrator helper only when Disk Usage starts; if it cannot finish safely, Ferail discards its partial result and retries with Portable.",
+    "Checking Fast NTFS availability…": "Checking Fast NTFS availability…",
+    "Read NTFS metadata with a temporary administrator helper": "Read NTFS metadata with a temporary administrator helper",
+    "Fast NTFS requires a local fixed NTFS volume": "Fast NTFS requires a local fixed NTFS volume",
+    "Portable fallback — administrator access was declined": "Portable fallback — administrator access was declined",
+    "Portable fallback — the Fast NTFS helper is missing": "Portable fallback — the Fast NTFS helper is missing",
+    "Portable fallback — Fast NTFS is unavailable here": "Portable fallback — Fast NTFS is unavailable here",
+    "Portable fallback — Fast NTFS could not finish safely": "Portable fallback — Fast NTFS could not finish safely",
+    "Fast NTFS — best effort because files changed during the scan": "Fast NTFS — best effort because files changed during the scan",
+    "Fast NTFS engine": "Fast NTFS engine",
+    "Portable engine": "Portable engine"
   }
 }

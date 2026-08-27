@@ -206,6 +206,22 @@ fn persist_file_detail_scan(value: bool) {
     });
 }
 
+#[cfg(target_os = "windows")]
+fn disk_usage_engine_preference() -> String {
+    app_state::load()
+        .disk_usage_engine
+        .unwrap_or_else(|| "portable".to_owned())
+}
+
+#[cfg(target_os = "windows")]
+fn persist_disk_usage_engine(value: &str) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        disk_usage_engine: Some(value.to_owned()),
+        ..existing
+    });
+}
+
 fn persist_update_check(value: bool) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -1673,6 +1689,25 @@ fn performance_page() -> SettingPage {
         SettingGroup::new()
             .title(tr!("Disk Usage access"))
             .item(full_disk_access_setting()),
+    );
+
+    #[cfg(target_os = "windows")]
+    let page = page.group(
+        SettingGroup::new()
+            .title(tr!("Disk Usage"))
+            .item(dropdown_setting(
+                tr!("Disk Usage engine"),
+                tr!(
+                    "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through a short-lived administrator helper only when Disk Usage starts; if it cannot finish safely, Ferail discards its partial result and retries with Portable."
+                ),
+                &[
+                    ("portable", msgid!("Portable")),
+                    ("fast-ntfs", msgid!("Fast NTFS (administrator)")),
+                ],
+                &[],
+                disk_usage_engine_preference,
+                persist_disk_usage_engine,
+            )),
     );
 
     page

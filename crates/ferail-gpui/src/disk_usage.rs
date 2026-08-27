@@ -259,7 +259,6 @@ impl DiskUsagePathArena {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DuEngine {
     Portable,
-    #[cfg(target_os = "windows")]
     FastNtfs,
 }
 
@@ -276,6 +275,13 @@ impl DuEngine {
     const fn from_preference() -> Self {
         Self::Portable
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FastEligibility {
+    Checking,
+    Eligible,
+    Ineligible,
 }
 
 #[cfg(target_os = "windows")]
@@ -307,6 +313,7 @@ pub struct DiskUsageView {
     cancel: Arc<AtomicBool>,
     engine: DuEngine,
     active_engine: DuEngine,
+    fast_eligibility: FastEligibility,
     #[cfg(target_os = "windows")]
     fast_fallback: Option<FastFallbackReason>,
     #[cfg(target_os = "windows")]
@@ -425,6 +432,10 @@ impl DiskUsageView {
         // and this constructor runs on the UI thread.
         let volume = None;
         let engine = DuEngine::from_preference();
+        #[cfg(target_os = "windows")]
+        let fast_eligibility = FastEligibility::Checking;
+        #[cfg(not(target_os = "windows"))]
+        let fast_eligibility = FastEligibility::Ineligible;
         let mut view = Self {
             root_path: canonical.clone(),
             root_id,
@@ -437,6 +448,7 @@ impl DiskUsageView {
             cancel: cancel.clone(),
             engine,
             active_engine: engine,
+            fast_eligibility,
             #[cfg(target_os = "windows")]
             fast_fallback: None,
             #[cfg(target_os = "windows")]
@@ -466,6 +478,25 @@ impl DiskUsageView {
             focus_handle: cx.focus_handle(),
         };
         view.start_scan(fs, cx);
+        #[cfg(target_os = "windows")]
+        {
+            let probe_path = canonical.clone();
+            cx.spawn(async move |this, cx| {
+                let eligible = cx
+                    .background_executor()
+                    .spawn(async move { ferail_ntfs_win32::probe_fast_ntfs(&probe_path).is_ok() })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    this.fast_eligibility = if eligible {
+                        FastEligibility::Eligible
+                    } else {
+                        FastEligibility::Ineligible
+                    };
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
         // Fetch the header capacity-bar volume info off-thread. The
         // root never changes for a DU view, so no staleness guard is
         // needed beyond the entity being alive.
@@ -1021,6 +1052,63 @@ impl DiskUsageView {
         self.restart_scan(cx);
     }
 
+    fn select_engine(&mut self, engine: DuEngine, cx: &mut Context<Self>) {
+        if engine == DuEngine::FastNtfs && self.fast_eligibility != FastEligibility::Eligible {
+            return;
+        }
+        if self.engine == engine {
+            return;
+        }
+        self.engine = engine;
+        #[cfg(target_os = "windows")]
+        {
+            let existing = crate::app_state::load();
+            crate::app_state::save(&crate::app_state::AppState {
+                disk_usage_engine: Some(
+                    match engine {
+                        DuEngine::Portable => "portable",
+                        DuEngine::FastNtfs => "fast-ntfs",
+                    }
+                    .to_owned(),
+                ),
+                ..existing
+            });
+        }
+        self.restart_scan(cx);
+    }
+
+    fn engine_summary(&self) -> Option<SharedString> {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(reason) = self.fast_fallback {
+                return Some(match reason {
+                    FastFallbackReason::ElevationDeclined => {
+                        tr!("Portable fallback — administrator access was declined")
+                    }
+                    FastFallbackReason::HelperMissing => {
+                        tr!("Portable fallback — the Fast NTFS helper is missing")
+                    }
+                    FastFallbackReason::Unsupported => {
+                        tr!("Portable fallback — Fast NTFS is unavailable here")
+                    }
+                    FastFallbackReason::Failed => {
+                        tr!("Portable fallback — Fast NTFS could not finish safely")
+                    }
+                });
+            }
+            if self.active_engine == DuEngine::FastNtfs {
+                return Some(if self.fast_best_effort_live {
+                    tr!("Fast NTFS — best effort because files changed during the scan")
+                } else {
+                    tr!("Fast NTFS engine")
+                });
+            }
+            Some(tr!("Portable engine"))
+        }
+        #[cfg(not(target_os = "windows"))]
+        None
+    }
+
     fn header(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let title = if self.host == ToolHostContext::Docked {
@@ -1036,7 +1124,7 @@ impl DiskUsageView {
         // A failed scan must say so — it used to store the error and
         // render "0 files, 0 folders, 0 B", indistinguishable from an
         // empty folder (this hid "canonicalize unsupported" on AROS).
-        let summary = if let Some(err) = &self.error {
+        let mut summary = if let Some(err) = &self.error {
             let why = match err {
                 ferail_core::EnumerationError::PermissionDenied => {
                     tr!("permission denied").to_string()
@@ -1071,6 +1159,10 @@ impl DiskUsageView {
             )
             .to_string()
         };
+        if let Some(engine) = self.engine_summary() {
+            summary.push_str(" · ");
+            summary.push_str(&engine);
+        }
         let summary_color = if self.error.is_some() {
             theme.danger
         } else if skipped > 0 {
@@ -1211,6 +1303,47 @@ impl DiskUsageView {
                             )
                         },
                     )
+                    .when(cfg!(target_os = "windows"), |this| {
+                        let fast_tooltip = match self.fast_eligibility {
+                            FastEligibility::Checking => {
+                                tr!("Checking Fast NTFS availability…")
+                            }
+                            FastEligibility::Eligible => tr!(
+                                "Read NTFS metadata with a temporary administrator helper"
+                            ),
+                            FastEligibility::Ineligible => {
+                                tr!("Fast NTFS requires a local fixed NTFS volume")
+                            }
+                        };
+                        this.child(
+                            ButtonGroup::new("du-engine")
+                                .small()
+                                .outline()
+                                .compact()
+                                .child(
+                                    Button::new("du-engine-portable")
+                                        .label(tr!("Portable"))
+                                        .selected(self.engine == DuEngine::Portable),
+                                )
+                                .child(
+                                    Button::new("du-engine-fast-ntfs")
+                                        .label(tr!("Fast NTFS"))
+                                        .tooltip(fast_tooltip)
+                                        .disabled(
+                                            self.fast_eligibility != FastEligibility::Eligible,
+                                        )
+                                        .selected(self.engine == DuEngine::FastNtfs),
+                                )
+                                .on_click(cx.listener(
+                                    |this, clicks: &Vec<usize>, _, cx| match clicks.first().copied()
+                                    {
+                                        Some(0) => this.select_engine(DuEngine::Portable, cx),
+                                        Some(1) => this.select_engine(DuEngine::FastNtfs, cx),
+                                        _ => {}
+                                    },
+                                )),
+                        )
+                    })
                     .child(
                         ButtonGroup::new("du-size-mode")
                             .small()

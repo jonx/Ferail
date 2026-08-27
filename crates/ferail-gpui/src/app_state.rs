@@ -693,4 +693,13 @@ mod tests {
         };
         assert_eq!(serialize(&state), "show_linux_locations=false\n");
     }
+
+    #[test]
+    fn disk_usage_engine_preference_serializes() {
+        let state = AppState {
+            disk_usage_engine: Some("fast-ntfs".into()),
+            ..AppState::default()
+        };
+        assert_eq!(serialize(&state), "disk_usage_engine=fast-ntfs\n");
+    }
 }
