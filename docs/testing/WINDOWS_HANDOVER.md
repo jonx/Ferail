@@ -182,9 +182,12 @@ the initial credential delay, the second complete request took 5.17 seconds.
 The pre-fix Pictures result of three rows and the intermediate result of four
 rows are retained as failure evidence. Unit coverage now proves that real MFT
 children below reparse/cloud directories are traversed while an empty
-junction remains opaque; final comparison against the 2,844-row ordinary
-enumeration still needs one accepted elevated rerun because the last UAC
-validation attempt was not accepted.
+junction remains opaque. A subsequent elevated Ferail run over the Pictures
+root reported 2,842 files, three directories including the root and 617.1 MiB,
+matching ordinary enumeration (2,842 files and two descendant directories);
+the OneDrive traversal regression is therefore closed. The completed Fast
+header now also reports the scan duration measured from the helper's `Ready`
+event, so UAC and credential-entry time are deliberately excluded.
 
 ### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
 

@@ -1477,7 +1477,7 @@
     "Portable": "Portabel",
     "Fast NTFS": "Schnelles NTFS",
     "Fast NTFS (administrator)": "Schnelles NTFS (Administrator)",
-    "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through a short-lived administrator helper only when Disk Usage starts; if it cannot finish safely, Ferail discards its partial result and retries with Portable.": "Portabel funktioniert überall ohne erhöhte Rechte. Schnelles NTFS liest lokale NTFS-Metadaten nur beim Start der Speicheranalyse über einen kurzlebigen Administrator-Helfer; kann es nicht sicher abschließen, verwirft Ferail das Teilergebnis und versucht es erneut mit Portabel.",
+    "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through an administrator helper started on first use and reused until Ferail exits; if it cannot finish safely, Ferail discards its partial result and retries with Portable.": "Portabel funktioniert überall ohne erhöhte Rechte. Schnelles NTFS liest lokale NTFS-Metadaten über einen Administrator-Helfer, der bei der ersten Verwendung gestartet und bis zum Beenden von Ferail wiederverwendet wird; kann er nicht sicher abschließen, verwirft Ferail das Teilergebnis und versucht es erneut mit Portabel.",
     "Checking Fast NTFS availability…": "Verfügbarkeit von Schnellem NTFS wird geprüft…",
     "Read NTFS metadata with a temporary administrator helper": "NTFS-Metadaten mit einem temporären Administrator-Helfer lesen",
     "Fast NTFS requires a local fixed NTFS volume": "Schnelles NTFS benötigt ein lokales festes NTFS-Volume",
@@ -1487,6 +1487,7 @@
     "Portable fallback — Fast NTFS could not finish safely": "Rückfall auf Portabel — Schnelles NTFS konnte nicht sicher abschließen",
     "Fast NTFS — best effort because files changed during the scan": "Schnelles NTFS — bestmögliches Ergebnis, da sich Dateien während des Scans geändert haben",
     "Fast NTFS engine": "Engine: Schnelles NTFS",
-    "Portable engine": "Engine: Portabel"
+    "Portable engine": "Engine: Portabel",
+    "Scan completed in {elapsed}": "Scan abgeschlossen in {elapsed}"
   }
 }

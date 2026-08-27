@@ -12,9 +12,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   every folder in one Ferail session.** The elevated helper stays attached to
   its authenticated private pipe and serves subsequent scans until Ferail
   exits; the GUI now reports MFT reading, index construction and subtree
-  traversal progress. The raw scan reads bounded 8 MiB windows, parses records
-  in parallel without per-record copies or run-list allocations, and builds
-  parent adjacency in linear time instead of sorting every volume link twice.
+  traversal progress, then shows the completed scan duration measured after
+  elevation (UAC and credential-entry time are excluded). The raw scan reads
+  bounded 8 MiB windows, parses records in parallel without per-record copies
+  or run-list allocations, and builds parent adjacency in linear time instead
+  of sorting every volume link twice.
 
 - **Fast NTFS now handles OneDrive Files On-Demand directories as real
   containers.** Reparse directories with actual MFT children are traversed

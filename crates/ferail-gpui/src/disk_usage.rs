@@ -320,6 +320,8 @@ pub struct DiskUsageView {
     fast_best_effort_live: bool,
     #[cfg(target_os = "windows")]
     fast_progress: Option<ferail_ntfs::Progress>,
+    #[cfg(target_os = "windows")]
+    fast_scan_elapsed: Option<Duration>,
 
     /// Queue of messages produced by the BG scanner; drained by the
     /// FG timer task. `Arc<Mutex<_>>` for cross-thread share.
@@ -457,6 +459,8 @@ impl DiskUsageView {
             fast_best_effort_live: false,
             #[cfg(target_os = "windows")]
             fast_progress: None,
+            #[cfg(target_os = "windows")]
+            fast_scan_elapsed: None,
             msg_queue: msg_queue.clone(),
             layout_cache: None,
             rects_cache: Vec::new(),
@@ -617,6 +621,7 @@ impl DiskUsageView {
             self.fast_fallback = None;
             self.fast_best_effort_live = false;
             self.fast_progress = None;
+            self.fast_scan_elapsed = None;
         }
         let request = DuScanRequest {
             root: self.root_path.clone(),
@@ -777,15 +782,20 @@ impl DiskUsageView {
                 self.fast_fallback = Some(reason);
                 self.fast_best_effort_live = false;
                 self.fast_progress = None;
+                self.fast_scan_elapsed = None;
                 self.zoom_path.clear();
                 self.selected.clear();
                 self.lead = None;
                 self.top_files.clear();
             }
             #[cfg(target_os = "windows")]
-            ScanMsg::FastComplete { best_effort_live } => {
+            ScanMsg::FastComplete {
+                best_effort_live,
+                elapsed,
+            } => {
                 self.fast_best_effort_live = best_effort_live;
                 self.fast_progress = None;
+                self.fast_scan_elapsed = Some(elapsed);
             }
             ScanMsg::Done(err) => {
                 self.scan_complete = true;
@@ -859,6 +869,7 @@ impl DiskUsageView {
             self.fast_fallback = None;
             self.fast_best_effort_live = false;
             self.fast_progress = None;
+            self.fast_scan_elapsed = None;
         }
         self.cancel = Arc::new(AtomicBool::new(false));
         self.msg_queue = Arc::new(Mutex::new(VecDeque::new()));
@@ -1149,6 +1160,20 @@ impl DiskUsageView {
         if let Some(engine) = self.engine_summary() {
             summary.push_str(" · ");
             summary.push_str(&engine);
+        }
+        #[cfg(target_os = "windows")]
+        if self.scan_complete
+            && self.active_engine == DuEngine::FastNtfs
+            && let Some(elapsed) = self.fast_scan_elapsed
+        {
+            summary.push_str(" · ");
+            summary.push_str(
+                tr!(
+                    "Scan completed in {elapsed}",
+                    elapsed = humanize_duration(elapsed)
+                )
+                .as_ref(),
+            );
         }
         let summary_color = if self.error.is_some() {
             theme.danger
@@ -2404,6 +2429,7 @@ enum ScanMsg {
     #[cfg(target_os = "windows")]
     FastComplete {
         best_effort_live: bool,
+        elapsed: Duration,
     },
     Done(Option<EnumerationError>),
 }
@@ -2464,9 +2490,15 @@ fn run_fast_scan_worker(
         ..DiskUsageStats::default()
     };
     let mut best_effort_live = false;
+    // Ready is emitted only after ShellExecute/UAC, pipe authentication and
+    // opening the raw volume have completed. Starting here deliberately keeps
+    // the user's credential-entry time out of the reported scan duration.
+    let mut fast_started = None;
+    let mut fast_elapsed = None;
     let result =
         ferail_ntfs_win32::run_fast_ntfs(fast_request, &request.cancel, |event| match event {
             ferail_ntfs_win32::FastNtfsEvent::Ready => {
+                fast_started = Some(Instant::now());
                 let _ = push_scan_msg(
                     queue,
                     &request.cancel,
@@ -2489,14 +2521,21 @@ fn run_fast_scan_worker(
             }
             ferail_ntfs_win32::FastNtfsEvent::Complete(complete) => {
                 best_effort_live = complete.best_effort_live;
+                fast_elapsed = fast_started.map(|started| started.elapsed());
             }
         });
     match result {
         Ok(()) => {
+            // A successful protocol always contains Ready then Complete. Keep
+            // the UI robust if a future helper violates that contract.
+            let elapsed = fast_elapsed.unwrap_or_default();
             let _ = push_scan_msg(
                 queue,
                 &request.cancel,
-                ScanMsg::FastComplete { best_effort_live },
+                ScanMsg::FastComplete {
+                    best_effort_live,
+                    elapsed,
+                },
             );
             let _ = push_scan_msg(queue, &request.cancel, ScanMsg::Done(None));
         }
@@ -2730,6 +2769,18 @@ fn humanize_bytes(b: u64) -> String {
     } else {
         format!("{:.1} {}", s, UNITS[u])
     }
+}
+
+fn humanize_duration(duration: Duration) -> String {
+    if duration < Duration::from_secs(1) {
+        return format!("{} ms", duration.as_millis());
+    }
+    if duration < Duration::from_secs(60) {
+        return format!("{:.1} s", duration.as_secs_f64());
+    }
+    let minutes = duration.as_secs() / 60;
+    let seconds = duration.as_secs() % 60;
+    format!("{minutes} min {seconds} s")
 }
 
 fn size_for_mode(apparent: u64, allocated: u64, mode: SizeMode) -> u64 {
@@ -3021,5 +3072,21 @@ mod path_arena_tests {
         assert_eq!(progress.phase, ScanPhase::BuildingIndex);
         assert_eq!(progress.completed, 100);
         assert_eq!(progress.corrupt_records, 1);
+    }
+
+    #[test]
+    fn scan_duration_format_is_compact() {
+        assert_eq!(
+            super::humanize_duration(std::time::Duration::from_millis(420)),
+            "420 ms"
+        );
+        assert_eq!(
+            super::humanize_duration(std::time::Duration::from_millis(5_240)),
+            "5.2 s"
+        );
+        assert_eq!(
+            super::humanize_duration(std::time::Duration::from_secs(125)),
+            "2 min 5 s"
+        );
     }
 }

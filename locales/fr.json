@@ -1477,7 +1477,7 @@
     "Portable": "Portable",
     "Fast NTFS": "NTFS rapide",
     "Fast NTFS (administrator)": "NTFS rapide (administrateur)",
-    "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through a short-lived administrator helper only when Disk Usage starts; if it cannot finish safely, Ferail discards its partial result and retries with Portable.": "Portable fonctionne partout sans élévation. NTFS rapide lit les métadonnées NTFS locales via un assistant administrateur de courte durée uniquement au lancement de l’analyse ; s’il ne peut pas terminer en toute sécurité, Ferail abandonne son résultat partiel et réessaie avec Portable.",
+    "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through an administrator helper started on first use and reused until Ferail exits; if it cannot finish safely, Ferail discards its partial result and retries with Portable.": "Portable fonctionne partout sans élévation. NTFS rapide lit les métadonnées NTFS locales via un assistant administrateur lancé à la première utilisation et réutilisé jusqu’à la fermeture de Ferail ; s’il ne peut pas terminer en toute sécurité, Ferail abandonne son résultat partiel et réessaie avec Portable.",
     "Checking Fast NTFS availability…": "Vérification de la disponibilité de NTFS rapide…",
     "Read NTFS metadata with a temporary administrator helper": "Lire les métadonnées NTFS avec un assistant administrateur temporaire",
     "Fast NTFS requires a local fixed NTFS volume": "NTFS rapide nécessite un volume NTFS local fixe",
@@ -1487,6 +1487,7 @@
     "Portable fallback — Fast NTFS could not finish safely": "Repli sur Portable — NTFS rapide n’a pas pu terminer en toute sécurité",
     "Fast NTFS — best effort because files changed during the scan": "NTFS rapide — résultat indicatif car des fichiers ont changé pendant l’analyse",
     "Fast NTFS engine": "Moteur NTFS rapide",
-    "Portable engine": "Moteur Portable"
+    "Portable engine": "Moteur Portable",
+    "Scan completed in {elapsed}": "Analyse terminée en {elapsed}"
   }
 }

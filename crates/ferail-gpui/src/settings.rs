@@ -1698,7 +1698,7 @@ fn performance_page() -> SettingPage {
             .item(dropdown_setting(
                 tr!("Disk Usage engine"),
                 tr!(
-                    "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through a short-lived administrator helper only when Disk Usage starts; if it cannot finish safely, Ferail discards its partial result and retries with Portable."
+                    "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through an administrator helper started on first use and reused until Ferail exits; if it cannot finish safely, Ferail discards its partial result and retries with Portable."
                 ),
                 &[
                     ("portable", msgid!("Portable")),
