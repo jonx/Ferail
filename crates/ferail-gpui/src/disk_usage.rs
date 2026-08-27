@@ -22,7 +22,10 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
+
+#[cfg(target_os = "windows")]
+use std::time::SystemTime;
 
 #[cfg(target_os = "windows")]
 use std::ffi::OsString;
@@ -54,9 +57,11 @@ gpui::actions!(
 );
 
 use ferail_core::{EnumerationError, NodeId};
+#[cfg(target_os = "windows")]
+use ferail_disk_usage::classify_extension;
 use ferail_disk_usage::{
     DiskUsageFact, DiskUsageLayoutNode, DiskUsageStats, DiskUsageTree, FileCategory, SizeMode,
-    TreemapRect, build_layout_node_with_mode, classify_extension, compute_treemap,
+    TreemapRect, build_layout_node_with_mode, compute_treemap,
 };
 use ferail_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
@@ -278,6 +283,7 @@ impl DuEngine {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 enum FastEligibility {
     Checking,
     Eligible,
@@ -753,9 +759,11 @@ impl DiskUsageView {
     fn apply_scan_msg(&mut self, msg: ScanMsg) {
         match msg {
             ScanMsg::Batch(batch) => {
+                #[cfg(not(target_os = "windows"))]
+                let ScanBatch::Portable(facts) = batch;
+                #[cfg(target_os = "windows")]
                 let facts = match batch {
                     ScanBatch::Portable(facts) => facts,
-                    #[cfg(target_os = "windows")]
                     ScanBatch::Fast(batch) => {
                         for (node, raw_name) in &batch.raw_names {
                             self.path_arena.set_raw_name(*node, raw_name);
@@ -2771,6 +2779,7 @@ fn humanize_bytes(b: u64) -> String {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn humanize_duration(duration: Duration) -> String {
     if duration < Duration::from_secs(1) {
         return format!("{} ms", duration.as_millis());

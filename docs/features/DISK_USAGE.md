@@ -15,9 +15,9 @@ Shipped with follow-ups. The docked Disk Usage result surface, scanner, treemap,
 Top-N panel, package handling, category filtering, allocated/apparent size
 modes, screenshot path, CLI, native batched APFS enumeration, bounded directory
 parallelism and scan-local identity storage all ship. APFS-clone-aware sizing,
-the privileged NTFS fast backend (specified in
-[WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md)), richer iCloud download-state handling, and
-explicit dock/pop-out state migration remain open — see "Still open" below.
+the privileged Fast NTFS preview on Windows, richer iCloud download-state
+handling, and explicit dock/pop-out state migration are tracked separately —
+see [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) and "Still open" below.
 
 ## Surface
 
@@ -139,7 +139,9 @@ uses process-global identities.
 - The shared coordinator owns a bounded directory queue. On local internal
   APFS it uses up to eight I/O workers; removable, network, unknown and
   non-APFS volumes stay serial. Workers return batches of at most 256 entries
-  and never mutate the tree or invoke UI callbacks.
+  and never mutate the tree or invoke UI callbacks. Each worker reuses one
+  native 256 KiB query buffer across directories instead of allocating and
+  zeroing one buffer for every folder.
 - macOS requests name, kind, sizes, times, flags, file id, link count and mount
   status together via `getattrlistbulk`. A missing attribute or unsupported
   filesystem falls back safely; the normal path does not issue one `stat` per
@@ -152,7 +154,12 @@ uses process-global identities.
   `.plugin`, `.kext`, `.xcodeproj`) are emitted as `NodeKind::File`
   leaves when `descend_packages` is `false`; the scanner walks inside
   them to compute a Finder-style rolled-up total without exposing inner
-  children in the treemap.
+  children in the treemap. That hidden rollup now uses the same native bulk
+  records rather than returning to `read_dir` plus one metadata query per item.
+- The shared recursive folder-size/Description worker uses the same bulk reader
+  and bounded APFS parallelism. Hot per-row policy also caches the iCloud root
+  once per scan and avoids case-folding allocations for ordinary lowercase
+  extensions.
 - Apparent size (`metadata.len()`) and allocated size
   (`MetadataExt::blocks() * 512`) are both stored. APFS-clone-aware
   deduplication remains deferred (see Still open).

@@ -11,7 +11,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::{Instant, SystemTime};
 
 use ferail_core::EnumerationError;
@@ -172,7 +172,8 @@ impl NativeFs {
             .as_ref()
             .and_then(file_identity)
             .map(|(dev, _, _)| dev);
-        let root_is_cloud = is_icloud_path(&canonical_root);
+        let icloud_root = icloud_root();
+        let root_is_cloud = is_icloud_path_with_root(&canonical_root, icloud_root.as_deref());
         buffer.push(DiskUsageFact::NodeDiscovered {
             node: root_id,
             kind: NodeKind::Container,
@@ -263,7 +264,14 @@ impl NativeFs {
                                 let sizes = if is_symlink || boundary_stub || already_counted {
                                     (0, 0)
                                 } else if mac_pkg && !descend_packages && is_dir {
-                                    recursive_sizes(&child_path, cancel)
+                                    // The outer scan already owns the APFS I/O
+                                    // pool. Keep this nested, opaque-package
+                                    // rollup serial while still using native
+                                    // bulk directory records; spawning another
+                                    // pool here would oversubscribe the disk.
+                                    let totals =
+                                        recursive_totals_with_workers(&child_path, cancel, 1);
+                                    (totals.apparent, totals.allocated)
                                 } else {
                                     (entry_size, entry_allocated)
                                 };
@@ -272,7 +280,8 @@ impl NativeFs {
                                 (NodeKind::Container, FileCategory::Other, 0, entry_allocated)
                             };
 
-                            let child_is_cloud = root_is_cloud || is_icloud_path(&child_path);
+                            let child_is_cloud = root_is_cloud
+                                || is_icloud_path_with_root(&child_path, icloud_root.as_deref());
                             buffer.push(DiskUsageFact::NodeDiscovered {
                                 node: child_id,
                                 kind,
@@ -357,16 +366,6 @@ pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
     recursive_totals(root, cancel).apparent
 }
 
-/// [`recursive_size`]'s two-axis twin: returns
-/// `(apparent_bytes, allocated_bytes)` in one walk. Same cancel and
-/// error-absorption contract. Hardlinked files (`st_nlink > 1`) count
-/// once; directories on a different device than `root` (mount points)
-/// are not entered.
-pub fn recursive_sizes(root: &Path, cancel: &AtomicBool) -> (u64, u64) {
-    let t = recursive_totals(root, cancel);
-    (t.apparent, t.allocated)
-}
-
 /// Recursive rollup of a directory subtree in a single walk: byte
 /// totals on both size axes **plus** item counts. `files` and `dirs`
 /// are recursive (the whole subtree) and exclude `root` itself — every
@@ -390,11 +389,19 @@ pub struct SubtreeTotals {
     pub dirs: u64,
 }
 
-/// One-walk rollup behind [`recursive_size`] / [`recursive_sizes`] and
-/// the file list's folder-size worker (which also wants item counts for
-/// the Description column). See [`SubtreeTotals`] for the field
-/// semantics and the cancel contract.
+/// One-walk rollup behind [`recursive_size`] and the file list's folder-size
+/// worker (which also wants item counts for the Description column). See
+/// [`SubtreeTotals`] for the field semantics and the cancel contract.
 pub fn recursive_totals(root: &Path, cancel: &AtomicBool) -> SubtreeTotals {
+    let workers = crate::directory_reader::recommended_recursive_workers(root);
+    recursive_totals_with_workers(root, cancel, workers)
+}
+
+fn recursive_totals_with_workers(
+    root: &Path,
+    cancel: &AtomicBool,
+    workers: usize,
+) -> SubtreeTotals {
     let mut t = SubtreeTotals::default();
     let root_dev = fs::symlink_metadata(root)
         .ok()
@@ -402,63 +409,43 @@ pub fn recursive_totals(root: &Path, cancel: &AtomicBool) -> SubtreeTotals {
         .and_then(file_identity)
         .map(|(dev, _, _)| dev);
     let mut seen_links: HashSet<(u64, u64)> = HashSet::new();
-    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        if cancel.load(Ordering::Relaxed) {
-            return t;
-        }
-        let read_dir = match fs::read_dir(&dir) {
-            Ok(rd) => rd,
-            Err(_) => continue,
+    crate::directory_reader::walk(root.to_path_buf(), cancel, workers, |event| {
+        use crate::directory_reader::DirectoryWalkEvent;
+
+        let DirectoryWalkEvent::Batch(_directory, entries) = event else {
+            return Vec::new();
         };
-        for dirent in read_dir.flatten() {
-            if cancel.load(Ordering::Relaxed) {
-                return t;
-            }
-            // Read the metadata captured during directory enumeration instead of
-            // re-`stat`ing each path. This is not just faster: on Windows
-            // `DirEntry::metadata()` returns the cached `WIN32_FIND_DATA` from the
-            // enumeration with NO file open, whereas `fs::symlink_metadata(path)`
-            // opens a handle per file — which on a OneDrive / cloud folder makes
-            // Windows hydrate (download) every placeholder we touch, exactly the
-            // behavior we must never trigger (see the Prime Directive in
-            // CLAUDE.md). The logical size is already in the find data, so the
-            // folder total is correct without pulling a byte from the cloud.
-            // `DirEntry::metadata()` does not follow symlinks, matching the
-            // previous `symlink_metadata` semantics.
-            let meta = match dirent.metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            let ft = meta.file_type();
-            if ft.is_symlink() {
+        let mut children = Vec::new();
+        for entry in entries {
+            if entry.is_symlink() {
                 continue;
             }
-            if ft.is_dir() {
-                // Don't cross onto another filesystem (a mount point
-                // inside the walk would roll a whole other volume
-                // into this folder's number). Uncounted as well as
-                // unentered, so the count matches the byte total.
-                if let (Some((dev, _, _)), Some(root_dev)) = (file_identity(&meta), root_dev) {
-                    if dev != root_dev {
-                        continue;
-                    }
+            if entry.is_dir() {
+                // Don't cross onto another filesystem (a mount point inside
+                // the walk would roll a whole other volume into this folder's
+                // number). Uncounted as well as unentered, so counts and bytes
+                // describe the same subtree.
+                if entry.mount_point
+                    || matches!((entry.identity, root_dev), (Some((dev, _, _)), Some(root_dev)) if dev != root_dev)
+                {
+                    continue;
                 }
                 t.dirs = t.dirs.saturating_add(1);
-                stack.push(dirent.path());
+                children.push(entry.path);
             } else {
                 // Hardlinks count once (cp -al trees, Homebrew Cellar).
-                if let Some((dev, ino, nlink)) = file_identity(&meta) {
+                if let Some((dev, ino, nlink)) = entry.identity {
                     if nlink > 1 && !seen_links.insert((dev, ino)) {
                         continue;
                     }
                 }
                 t.files = t.files.saturating_add(1);
-                t.apparent = t.apparent.saturating_add(meta.len());
-                t.allocated = t.allocated.saturating_add(allocated_size(&meta));
+                t.apparent = t.apparent.saturating_add(entry.size);
+                t.allocated = t.allocated.saturating_add(entry.allocated);
             }
         }
-    }
+        children
+    });
     t
 }
 
@@ -500,43 +487,26 @@ fn firmlink_targets() -> Vec<PathBuf> {
     }
 }
 
-/// On-disk allocated size for a regular file. macOS / Unix exposes
-/// this via `MetadataExt::blocks() * 512` (block size is fixed at
-/// 512 in the stat man page regardless of the underlying FS block
-/// size). Returns 0 on platforms that don't surface block counts.
-#[cfg(unix)]
-fn allocated_size(meta: &fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    if meta.file_type().is_symlink() {
-        return 0;
-    }
-    meta.blocks().saturating_mul(512)
-}
-#[cfg(not(unix))]
-fn allocated_size(meta: &fs::Metadata) -> u64 {
-    let _ = meta;
-    0
-}
-
 /// Coarse iCloud-detection by path prefix — macOS stores all
 /// ubiquity-managed files under `~/Library/Mobile Documents/`. Cheap
 /// (a string starts_with), no NSURL call per file. Doesn't tell us
 /// whether a given file is a downloaded copy vs a placeholder; the
 /// renderer just paints a cloud glyph either way.
-pub(crate) fn is_icloud_path(path: &Path) -> bool {
+pub(crate) fn icloud_root() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        if let Some(home) = std::env::var_os("HOME") {
-            let home = std::path::PathBuf::from(home);
-            return path.starts_with(home.join("Library/Mobile Documents"));
-        }
-        false
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join("Library/Mobile Documents"))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = path;
-        false
+        None
     }
+}
+
+pub(crate) fn is_icloud_path_with_root(path: &Path, root: Option<&Path>) -> bool {
+    root.is_some_and(|root| path.starts_with(root))
 }
 
 /// macOS package detection by extension. Stays in sync with the
@@ -545,10 +515,9 @@ pub(crate) fn is_mac_package(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
     };
-    matches!(
-        ext.to_ascii_lowercase().as_str(),
-        "app" | "bundle" | "framework" | "plugin" | "kext" | "xcodeproj"
-    )
+    ["app", "bundle", "framework", "plugin", "kext", "xcodeproj"]
+        .iter()
+        .any(|candidate| ext.eq_ignore_ascii_case(candidate))
 }
 
 /// Filter helper for callers that want a single mtime as `SystemTime`

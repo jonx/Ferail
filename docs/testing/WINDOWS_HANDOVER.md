@@ -204,6 +204,42 @@ event, so UAC and credential-entry time are deliberately excluded.
 - GitHub workflow run `33102929540` built the tagged commit, passed the
   packaging dependency/PDB gates and uploaded both public assets successfully.
 
+### 2026-08-27 — Post-0.7.1 Fast NTFS and macOS enumeration audit
+
+The implementation was reread from the privilege boundary through the neutral
+parser and back through the Portable fallback. The current architecture is
+approved: the GUI remains `asInvoker`, only an explicit Fast request launches
+the sibling with `runas`, the pipe is local/private/PID-authenticated, every
+request revalidates the volume and root identities, raw access is read-only,
+frames and allocations are bounded, and partial results are discarded before
+Portable fallback. Microsoft documents that direct disk/volume access requires
+administrative privileges; the medium-integrity experiments above confirm that
+neither access-zero handles nor the current token's privileges can provide the
+MFT bytes Ferail needs. Do not elevate the GUI or replace this boundary with a
+permanent service.
+
+One release-hardening item remains deliberately open: the public portable ZIP
+and its sibling helper are still unsigned. The package script can sign GUI,
+CLI and helper together, but the published 0.7.1 artifact did not use that
+path. Because a portable directory is user-writable, Authenticode (and, before
+launch, same-publisher verification if the product remains portable) is the
+proper way to make a replaced elevated helper distinguishable at UAC. Keep
+Fast NTFS labelled preview and keep `WTEST-006` open until signed artifacts are
+qualified; aggregate hashes in the release notes aid download verification but
+do not replace code signing at the elevation boundary.
+
+The macOS side was also re-audited. Its sanctioned fast path remains
+`getattrlistbulk`: one directory call returns names, kinds, sizes, times,
+flags, identities and mount state, with up to eight bounded I/O workers only on
+local non-removable APFS. The follow-up removes the remaining ordinary-package
+and folder-rollup return to per-entry metadata, reuses one 256 KiB native buffer
+per worker, caches the iCloud prefix once per scan, and avoids extension-folding
+allocations on the common lowercase path. The APFS reader test still reports
+zero per-entry metadata fallbacks on its direct fixture, and strict native
+tests/Clippy pass. Raw APFS catalog parsing is intentionally rejected: mounted
+FileVault volumes expose decrypted names and metadata through the filesystem,
+not through a stable MFT-like raw catalog contract.
+
 ### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
 
 The shared implementation is included in the sidecar feature commit and was

@@ -20,12 +20,15 @@ helper/pipe tests, 26 Disk Usage model tests and 316 GPUI tests; one explicit
 network test ignored). The disposable adversarial VHDX recipe lives at
 `scripts/testing/fast-ntfs-vhdx.ps1`.
 
-Version 0.7.1 keeps this engine as a Windows preview after real elevated tests
+Version 0.7.2 keeps this engine as a Windows preview after real elevated tests
 validated ordinary NTFS and OneDrive-backed directory traversal. Before
 promoting it beyond preview, retain broader evidence from the packaged helper
 and adversarial filesystems. Hyper-V-dependent VHDX and million-entry
 memory/performance gates remain hardware qualification, not claims inferred
-from unit tests.
+from unit tests. Authenticode qualification is also still open: the current
+portable helper is unsigned, so a same-publisher signature check at launch
+cannot yet distinguish it from a replacement in the user-writable package
+directory.
 
 The 0.7.1 integration is for Disk Usage only. Flat View and Search still use
 their portable recursive walker; sharing the fast transport with them requires

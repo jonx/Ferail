@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use ferail_core::{EnumerationError, FileEntry, NodeId};
 
-use crate::disk_usage_scanner::{is_icloud_path, is_mac_package};
+use crate::disk_usage_scanner::{icloud_root, is_icloud_path_with_root, is_mac_package};
 use crate::{map_io_error, NativeFs};
 
 /// Default match-batch size, mirroring `DEFAULT_ENUMERATION_BATCH`.
@@ -175,6 +175,7 @@ impl NativeFs {
         let mut stats = SearchStats::default();
         let mut last_progress = Instant::now();
         let workers = crate::directory_reader::recommended_recursive_workers(&canonical_root);
+        let icloud_root = icloud_root();
 
         crate::directory_reader::walk(canonical_root.clone(), cancel, workers, |event| {
             use crate::directory_reader::DirectoryWalkEvent;
@@ -199,7 +200,9 @@ impl NativeFs {
                     continue;
                 }
                 // Never download an iCloud placeholder just to search it.
-                if is_icloud_path(child_path) && is_dataless_flags(entry.flags) {
+                if is_icloud_path_with_root(child_path, icloud_root.as_deref())
+                    && is_dataless_flags(entry.flags)
+                {
                     continue;
                 }
 

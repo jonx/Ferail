@@ -80,32 +80,61 @@ pub(crate) fn for_each(
     cancel: &AtomicBool,
     visitor: impl FnMut(DirectoryEntry) -> bool,
 ) -> std::io::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut visitor = visitor;
-        match macos::for_each_bulk(path, cancel, &mut visitor) {
-            Ok(_) => return Ok(()),
-            // Unsupported filesystems and an initial kernel rejection use the
-            // portable path. Once entries were emitted, preserve the normal
-            // partial-directory contract rather than emitting duplicates.
-            Err(error) if error.entries_emitted == 0 => {}
-            Err(error) => return Err(error.source),
+    NativeDirectoryReader::new().for_each(path, cancel, visitor)
+}
+
+#[cfg(any(target_os = "macos", windows))]
+const NATIVE_BUFFER_BYTES: usize = 256 * 1024;
+
+/// One reusable native query buffer per enumeration worker. Directory trees
+/// commonly contain far more folders than files-per-folder; allocating and
+/// zeroing 256 KiB for every small directory otherwise dominates a hot scan.
+struct NativeDirectoryReader {
+    #[cfg(any(target_os = "macos", windows))]
+    buffer: Vec<u8>,
+}
+
+impl NativeDirectoryReader {
+    fn new() -> Self {
+        Self {
+            #[cfg(any(target_os = "macos", windows))]
+            buffer: vec![0; NATIVE_BUFFER_BYTES],
         }
-        portable_for_each(path, cancel, visitor)
     }
-    #[cfg(target_os = "windows")]
-    {
-        let mut visitor = visitor;
-        match windows::for_each_bulk(path, cancel, &mut visitor) {
-            Ok(()) => return Ok(()),
-            Err(error) if error.entries_emitted == 0 => {}
-            Err(error) => return Err(error.source),
+
+    fn for_each(
+        &mut self,
+        path: &Path,
+        cancel: &AtomicBool,
+        visitor: impl FnMut(DirectoryEntry) -> bool,
+    ) -> std::io::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            let mut visitor = visitor;
+            match macos::for_each_bulk(path, cancel, &mut self.buffer, &mut visitor) {
+                Ok(_) => return Ok(()),
+                // Unsupported filesystems and an initial kernel rejection use the
+                // portable path. Once entries were emitted, preserve the normal
+                // partial-directory contract rather than emitting duplicates.
+                Err(error) if error.entries_emitted == 0 => {}
+                Err(error) => return Err(error.source),
+            }
+            portable_for_each(path, cancel, visitor)
         }
-        portable_for_each(path, cancel, visitor)
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        portable_for_each(path, cancel, visitor)
+        #[cfg(target_os = "windows")]
+        {
+            let mut visitor = visitor;
+            match windows::for_each_bulk(path, cancel, &mut self.buffer, &mut visitor) {
+                Ok(()) => return Ok(()),
+                Err(error) if error.entries_emitted == 0 => {}
+                Err(error) => return Err(error.source),
+            }
+            portable_for_each(path, cancel, visitor)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            portable_for_each(path, cancel, visitor)
+        }
     }
 }
 
@@ -144,6 +173,7 @@ pub(crate) fn walk<C: DirectoryContext + Send + Sync>(
 ) {
     let workers = workers.max(1);
     if workers == 1 {
+        let mut reader = NativeDirectoryReader::new();
         let mut queue = VecDeque::from([initial]);
         while let Some(context) = queue.pop_front() {
             if cancel.load(Ordering::Relaxed) {
@@ -151,7 +181,7 @@ pub(crate) fn walk<C: DirectoryContext + Send + Sync>(
             }
             let _ = visitor(DirectoryWalkEvent::Started(&context));
             let mut batch = Vec::with_capacity(RECURSIVE_BATCH_SIZE);
-            let result = for_each(context_path(&context), cancel, |entry| {
+            let result = reader.for_each(context_path(&context), cancel, |entry| {
                 batch.push(entry);
                 if batch.len() >= RECURSIVE_BATCH_SIZE {
                     queue.extend(visitor(DirectoryWalkEvent::Batch(
@@ -185,49 +215,52 @@ pub(crate) fn walk<C: DirectoryContext + Send + Sync>(
         for _ in 0..workers {
             let queue = queue.clone();
             let event_tx = event_tx.clone();
-            scope.spawn(move || loop {
-                let context = {
-                    let (lock, wake) = &*queue;
-                    let mut state = lock.lock().unwrap_or_else(|p| p.into_inner());
-                    while state.items.is_empty() && !state.stopped {
-                        state = wake.wait(state).unwrap_or_else(|p| p.into_inner());
-                    }
-                    if state.stopped {
+            scope.spawn(move || {
+                let mut reader = NativeDirectoryReader::new();
+                loop {
+                    let context = {
+                        let (lock, wake) = &*queue;
+                        let mut state = lock.lock().unwrap_or_else(|p| p.into_inner());
+                        while state.items.is_empty() && !state.stopped {
+                            state = wake.wait(state).unwrap_or_else(|p| p.into_inner());
+                        }
+                        if state.stopped {
+                            return;
+                        }
+                        state.items.pop_front().expect("non-empty work queue")
+                    };
+
+                    if event_tx.send(WalkEvent::Started(context.clone())).is_err() {
                         return;
                     }
-                    state.items.pop_front().expect("non-empty work queue")
-                };
-
-                if event_tx.send(WalkEvent::Started(context.clone())).is_err() {
-                    return;
-                }
-                let mut batch = Vec::with_capacity(RECURSIVE_BATCH_SIZE);
-                let result = for_each(context_path(context.as_ref()), cancel, |entry| {
-                    batch.push(entry);
-                    if batch.len() >= RECURSIVE_BATCH_SIZE {
-                        let outgoing = std::mem::take(&mut batch);
-                        batch.reserve(RECURSIVE_BATCH_SIZE);
-                        if event_tx
-                            .send(WalkEvent::Batch(context.clone(), outgoing))
-                            .is_err()
-                        {
-                            return false;
+                    let mut batch = Vec::with_capacity(RECURSIVE_BATCH_SIZE);
+                    let result = reader.for_each(context_path(context.as_ref()), cancel, |entry| {
+                        batch.push(entry);
+                        if batch.len() >= RECURSIVE_BATCH_SIZE {
+                            let outgoing = std::mem::take(&mut batch);
+                            batch.reserve(RECURSIVE_BATCH_SIZE);
+                            if event_tx
+                                .send(WalkEvent::Batch(context.clone(), outgoing))
+                                .is_err()
+                            {
+                                return false;
+                            }
                         }
+                        true
+                    });
+                    if !batch.is_empty()
+                        && event_tx
+                            .send(WalkEvent::Batch(context.clone(), batch))
+                            .is_err()
+                    {
+                        return;
                     }
-                    true
-                });
-                if !batch.is_empty()
-                    && event_tx
-                        .send(WalkEvent::Batch(context.clone(), batch))
+                    if event_tx
+                        .send(WalkEvent::Done(context, result.err()))
                         .is_err()
-                {
-                    return;
-                }
-                if event_tx
-                    .send(WalkEvent::Done(context, result.err()))
-                    .is_err()
-                {
-                    return;
+                    {
+                        return;
+                    }
                 }
             });
         }
@@ -444,7 +477,6 @@ mod windows {
         FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
 
-    const BUFFER_BYTES: usize = 256 * 1024;
     const WINDOWS_TO_UNIX_SECONDS: u64 = 11_644_473_600;
 
     pub(super) struct BulkError {
@@ -465,6 +497,7 @@ mod windows {
     pub(super) fn for_each_bulk(
         parent: &Path,
         cancel: &AtomicBool,
+        buffer: &mut [u8],
         visitor: &mut impl FnMut(DirectoryEntry) -> bool,
     ) -> Result<(), BulkError> {
         let wide = wide_nul(parent).map_err(|source| BulkError {
@@ -510,7 +543,6 @@ mod windows {
 
         let mut entries_emitted = 0usize;
         let mut restart = true;
-        let mut buffer = vec![0u8; BUFFER_BYTES];
         loop {
             if cancel.load(Ordering::Relaxed) {
                 return Ok(());
@@ -669,7 +701,6 @@ mod macos {
     use std::os::fd::AsRawFd;
     use std::time::{Duration, UNIX_EPOCH};
 
-    const BUFFER_SIZE: usize = 256 * 1024;
     const ATTR_CMN_ERROR: u32 = 0x2000_0000;
     const SF_FIRMLINK: u32 = 0x0080_0000;
     const VREG: u32 = 1;
@@ -692,6 +723,7 @@ mod macos {
     pub(super) fn for_each_bulk(
         path: &Path,
         cancel: &AtomicBool,
+        buffer: &mut [u8],
         visitor: &mut impl FnMut(DirectoryEntry) -> bool,
     ) -> Result<BulkStats, BulkError> {
         let directory = File::open(path).map_err(|source| BulkError {
@@ -717,7 +749,6 @@ mod macos {
                 | libc::ATTR_FILE_DATAALLOCSIZE,
             forkattr: 0,
         };
-        let mut buffer = vec![0_u8; BUFFER_SIZE];
         let mut entries_emitted = 0usize;
         let mut metadata_fallbacks = 0usize;
 
@@ -754,7 +785,7 @@ mod macos {
 
             let mut offset = 0usize;
             for _ in 0..count as usize {
-                let Some(record_len) = read_at::<u32>(&buffer, offset).map(|n| n as usize) else {
+                let Some(record_len) = read_at::<u32>(buffer, offset).map(|n| n as usize) else {
                     return Err(invalid_data(entries_emitted, "missing bulk record length"));
                 };
                 if record_len < size_of::<u32>() || offset + record_len > buffer.len() {
@@ -1033,7 +1064,8 @@ mod tests {
 
         let cancel = AtomicBool::new(false);
         let mut names = Vec::new();
-        let stats = macos::for_each_bulk(&root, &cancel, &mut |entry| {
+        let mut native_buffer = vec![0; NATIVE_BUFFER_BYTES];
+        let stats = macos::for_each_bulk(&root, &cancel, &mut native_buffer, &mut |entry| {
             names.push(entry.name);
             true
         })

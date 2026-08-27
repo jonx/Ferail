@@ -28,8 +28,17 @@ pub fn classify_path(path: &Path) -> FileCategory {
 }
 
 pub fn classify_extension(ext: &str) -> FileCategory {
-    let lower = ext.to_ascii_lowercase();
-    match lower.as_str() {
+    // The overwhelmingly common case is already-lowercase. Avoid allocating
+    // one temporary `String` per file while Disk Usage classifies millions of
+    // rows; retain case-insensitive behavior for the uncommon uppercase case.
+    let folded;
+    let lower = if ext.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        folded = ext.to_ascii_lowercase();
+        folded.as_str()
+    } else {
+        ext
+    };
+    match lower {
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "heic" | "heif"
         | "svg" | "ico" => FileCategory::Image,
         "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpg" | "mpeg" => {
