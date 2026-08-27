@@ -47,4 +47,12 @@ Usage do not elevate.
 - Windows x64: portable ZIP plus a separate matching symbols archive.
 - Linux: Ubuntu 22.04-compatible `.deb` packages for amd64 and arm64.
 
+## SHA-256
+
+- `Ferail-0.7.2.dmg` — `1ece0107e0a6d388610b8d46583641a7eae3b097eae4b233866ad2e15d1b25eb`
+- `Ferail-0.7.2-win-x64.zip` — `8dbb5f972d9e1e7ed71bce8a36c35864fc4b80411dcc11251e2b151403d3eac5`
+- `Ferail-0.7.2-x64-symbols.zip` — `b5fa7f16b9cfbe6b36b99e2afb4142346185e753f9ef22c70ee511669afc4adb`
+- `ferail_0.7.2-1_amd64.deb` — `e510371166de0516d69b77452626be4372ae3bd796b333847438c83d183e8c46`
+- `ferail_0.7.2-1_arm64.deb` — `be91d9275120c05148f30986d51d5fb9be0a25c9bf64e77701c1dd3819f3ff5b`
+
 The full technical history is in [CHANGELOG.md](CHANGELOG.md).

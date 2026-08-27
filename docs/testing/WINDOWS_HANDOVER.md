@@ -19,15 +19,18 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 ## Current resume point
 
 - Branch: `main`
-- Last published Windows baseline: `v0.7.1` (Fast NTFS reliability update)
+- Last published baseline: `v0.7.2` (all-platform release)
 - Fast NTFS implementation and qualification series: `d0c0a0b` through
   `9c832fc`, 0.7.0 release commit `3eda9ce`, corrective commits `3cf95e5`
-  through `8dca494`, and 0.7.1 release commit `1e8e64e`. Use
+  through `8dca494`, 0.7.1 release commit `1e8e64e`, native enumeration audit
+  commit `0de72dd`, and 0.7.2 release commit `6a8d50b`. Use
   `git rev-parse HEAD` after pulling rather than assuming an abbreviated hash
   in this document.
-- Current Windows release: `0.7.1`; macOS and Linux remain on `0.6.5`.
-- Published artifacts: unsigned portable Windows x64 ZIP containing the GUI,
-  CLI and sibling Fast NTFS helper, plus the matching three-PDB symbols ZIP.
+- Current release: `0.7.2` on Windows, macOS and Linux.
+- Published artifacts: signed/notarized/stapled macOS DMG; unsigned portable
+  Windows x64 ZIP containing the GUI, CLI and sibling Fast NTFS helper plus the
+  matching three-PDB symbols ZIP; Ubuntu 22.04-compatible amd64 and arm64
+  `.deb` packages.
 - Next campaign: independent administrator-equipped qualification of the Fast
   helper/VHDX/large-volume matrix, plus the remaining adversarial and hardware-
   dependent cases (MTP disconnect, hostile providers, long soaks and multi-DPI
@@ -239,6 +242,34 @@ zero per-entry metadata fallbacks on its direct fixture, and strict native
 tests/Clippy pass. Raw APFS catalog parsing is intentionally rejected: mounted
 FileVault volumes expose decrypted names and metadata through the filesystem,
 not through a stable MFT-like raw catalog contract.
+
+### 2026-08-28 — 0.7.2 all-platform release evidence
+
+`v0.7.2` is the annotated tag on `6a8d50b` and is published as **Ferail
+0.7.2 — Millions of files, on every platform**. The macOS app and DMG were
+accepted independently by Apple's notary service, stapled, mounted again from
+the final image and accepted by Gatekeeper. The packaged `doctor` reported
+version 0.7.2, release mode, compiled-in mpv support and 0 failures.
+
+GitHub workflow `33118911432` built both Linux packages in Ubuntu 22.04,
+installed each package and passed the `doctor` / `magic` smoke tests on amd64
+and arm64. Workflow `33118911454` built the Windows GUI, CLI and sibling Fast
+NTFS helper, passed the dependency/copy/PDB identity gates, and published both
+archives. The five public assets were downloaded again after publication; the
+Windows ZIP contains `Ferail.exe`, `cli/ferail.exe` and
+`ferail-ntfs-helper.exe`, while the symbols ZIP contains all three matching
+PDBs.
+
+- `Ferail-0.7.2.dmg`: 22,304,825 bytes, SHA-256
+  `1ece0107e0a6d388610b8d46583641a7eae3b097eae4b233866ad2e15d1b25eb`;
+- `Ferail-0.7.2-win-x64.zip`: 44,007,068 bytes, SHA-256
+  `8dbb5f972d9e1e7ed71bce8a36c35864fc4b80411dcc11251e2b151403d3eac5`;
+- `Ferail-0.7.2-x64-symbols.zip`: 84,391,343 bytes, SHA-256
+  `b5fa7f16b9cfbe6b36b99e2afb4142346185e753f9ef22c70ee511669afc4adb`;
+- `ferail_0.7.2-1_amd64.deb`: 17,623,280 bytes, SHA-256
+  `e510371166de0516d69b77452626be4372ae3bd796b333847438c83d183e8c46`;
+- `ferail_0.7.2-1_arm64.deb`: 15,588,900 bytes, SHA-256
+  `be91d9275120c05148f30986d51d5fb9be0a25c9bf64e77701c1dd3819f3ff5b`.
 
 ### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
 
