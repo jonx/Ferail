@@ -14,6 +14,7 @@ mod reader;
 mod record;
 mod runlist;
 mod stream;
+mod wire;
 
 pub use boot::{parse_boot_sector, NtfsGeometry};
 pub use error::{ErrorKind, NtfsError, Result};
@@ -28,3 +29,7 @@ pub use record::{
 };
 pub use runlist::{parse_mapping_pairs, DataRun};
 pub use stream::{bootstrap_mft, MappedStream};
+pub use wire::{
+    decode_frame, encode_frame, Completion, DuMessage, FailureCode, FileIdentity, Progress,
+    ScanPhase, SizingMode, StartRequest, FRAME_HEADER_BYTES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
+};

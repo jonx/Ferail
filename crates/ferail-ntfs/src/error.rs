@@ -9,6 +9,7 @@ pub enum ErrorKind {
     Truncated,
     InvalidSignature,
     InvalidGeometry,
+    InvalidProtocol,
     InvalidFixup,
     InvalidAttribute,
     InvalidRunlist,
