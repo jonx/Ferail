@@ -9,12 +9,17 @@
 
 mod boot;
 mod error;
+mod index;
 mod reader;
 mod record;
 mod runlist;
 
 pub use boot::{parse_boot_sector, NtfsGeometry};
 pub use error::{ErrorKind, NtfsError, Result};
+pub use index::{
+    CompactNtfsIndex, FileMeta, IndexBuilder, IndexStats, NameLink, NeutralNodeKind, NeutralRow,
+    TraversalOptions, TraversalSummary,
+};
 pub use reader::{ByteReader, SliceReader};
 pub use record::{
     parse_file_record, AttributeList, AttributeListEntry, DataAttribute, FileName, FileRecord,

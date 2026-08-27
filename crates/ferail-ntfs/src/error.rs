@@ -4,6 +4,7 @@ pub type Result<T> = std::result::Result<T, NtfsError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
+    Cancelled,
     SourceIo,
     Truncated,
     InvalidSignature,
