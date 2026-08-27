@@ -9,6 +9,7 @@ members = [
     "crates/ferail-fs-native",
     "crates/ferail-meta",
     "crates/ferail-ntfs",
+    "crates/ferail-ntfs-win32",
     "crates/ferail-shell-mac",
     "crates/ferail-shell-win32",
     "crates/ferail-shell-linux",
@@ -36,6 +37,7 @@ ferail-disk-usage   = { path = "crates/ferail-disk-usage" }
 ferail-fs-native    = { path = "crates/ferail-fs-native" }
 ferail-meta         = { path = "crates/ferail-meta" }
 ferail-ntfs         = { path = "crates/ferail-ntfs" }
+ferail-ntfs-win32   = { path = "crates/ferail-ntfs-win32" }
 ferail-shell-mac    = { path = "crates/ferail-shell-mac" }
 ferail-shell-win32  = { path = "crates/ferail-shell-win32" }
 ferail-shell-linux  = { path = "crates/ferail-shell-linux" }

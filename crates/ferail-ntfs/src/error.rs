@@ -4,6 +4,7 @@ pub type Result<T> = std::result::Result<T, NtfsError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
+    SourceIo,
     Truncated,
     InvalidSignature,
     InvalidGeometry,
@@ -28,6 +29,12 @@ impl NtfsError {
             offset,
             context,
         }
+    }
+
+    /// Builds a source-reader error without carrying an OS message into the
+    /// neutral parser or its logs.
+    pub const fn source(offset: u64, context: &'static str) -> Self {
+        Self::new(ErrorKind::SourceIo, offset, context)
     }
 }
 
