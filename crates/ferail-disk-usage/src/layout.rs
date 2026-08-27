@@ -121,58 +121,45 @@ fn squarify(
     max_depth: u32,
     out: &mut Vec<TreemapRect>,
 ) {
-    let (x, y, w, h) = bounds;
-    if items.is_empty() || w < 1.0 || h < 1.0 {
-        return;
-    }
-    if items.len() == 1 {
-        let (idx, _) = items[0];
-        add_node_rect(&children[idx], bounds, depth, max_depth, out);
-        return;
-    }
+    // Work over slices and advance the bounds iteratively. The previous
+    // implementation allocated a Vec for the complete remaining suffix on
+    // every row and recursed once per row: a directory with many children was
+    // quadratic and could stall the UI watchdog for seconds. Each item now
+    // enters and leaves one row exactly once, with no suffix copies or deep
+    // call stack.
+    let mut remaining = items;
+    let mut bounds = bounds;
+    while !remaining.is_empty() && bounds.2 >= 1.0 && bounds.3 >= 1.0 {
+        let (x, y, w, h) = bounds;
+        let vertical = w >= h;
+        let edge_length = if vertical { h } else { w };
+        let row_len = best_row_len(remaining, edge_length);
+        let row = &remaining[..row_len];
+        let row_area: f32 = row.iter().map(|(_, area)| area).sum();
+        let row_thickness = row_area / edge_length.max(f32::MIN_POSITIVE);
 
-    let vertical = w >= h;
-    let edge_length = if vertical { h } else { w };
+        let mut offset = 0.0;
+        for &(idx, area) in row {
+            let item_length = if row_thickness > 0.0 {
+                area / row_thickness
+            } else {
+                0.0
+            };
+            let item_bounds = if vertical {
+                (x, y + offset, row_thickness, item_length)
+            } else {
+                (x + offset, y, item_length, row_thickness)
+            };
+            add_node_rect(&children[idx], item_bounds, depth, max_depth, out);
+            offset += item_length;
+        }
 
-    let (row, remaining) = find_best_row(items, edge_length);
-
-    let row_area: f32 = row.iter().map(|(_, a)| a).sum();
-    let row_thickness = if edge_length > 0.0 {
-        row_area / edge_length
-    } else {
-        0.0
-    };
-
-    let mut offset = 0.0;
-    for &(idx, area) in &row {
-        let item_length = if row_thickness > 0.0 {
-            area / row_thickness
-        } else {
-            0.0
-        };
-        let item_bounds = if vertical {
-            (x, y + offset, row_thickness, item_length)
-        } else {
-            (x + offset, y, item_length, row_thickness)
-        };
-        add_node_rect(&children[idx], item_bounds, depth, max_depth, out);
-        offset += item_length;
-    }
-
-    if !remaining.is_empty() {
-        let remaining_bounds = if vertical {
+        remaining = &remaining[row_len..];
+        bounds = if vertical {
             (x + row_thickness, y, w - row_thickness, h)
         } else {
             (x, y + row_thickness, w, h - row_thickness)
         };
-        squarify(
-            &remaining,
-            children,
-            remaining_bounds,
-            depth,
-            max_depth,
-            out,
-        );
     }
 }
 
@@ -180,52 +167,38 @@ fn squarify(
 /// row-packing loop.
 type AreaItem = (usize, f32);
 
-fn find_best_row(items: &[AreaItem], edge_length: f32) -> (Vec<AreaItem>, Vec<AreaItem>) {
-    if items.is_empty() {
-        return (Vec::new(), Vec::new());
+fn best_row_len(items: &[AreaItem], edge_length: f32) -> usize {
+    if items.len() <= 1 {
+        return items.len();
     }
-    let mut row: Vec<(usize, f32)> = Vec::new();
+    let edge_sq = edge_length.max(f32::MIN_POSITIVE).powi(2);
+    let mut sum = 0.0f32;
+    let mut min_area = f32::MAX;
+    let mut max_area = 0.0f32;
     let mut best_ratio = f32::MAX;
 
-    for (i, &item) in items.iter().enumerate() {
-        row.push(item);
-        let row_area: f32 = row.iter().map(|(_, a)| a).sum();
-        let row_thickness = if edge_length > 0.0 {
-            row_area / edge_length
-        } else {
-            0.0
-        };
-        let worst = row
-            .iter()
-            .map(|(_, a)| {
-                let item_length = if row_thickness > 0.0 {
-                    a / row_thickness
-                } else {
-                    1.0
-                };
-                aspect_ratio(row_thickness, item_length)
-            })
-            .fold(0.0f32, f32::max);
-
-        if worst > best_ratio && i > 0 {
-            row.pop();
-            return (row, items[i..].to_vec());
+    for (ix, &(_, area)) in items.iter().enumerate() {
+        sum += area;
+        min_area = min_area.min(area);
+        max_area = max_area.max(area);
+        let sum_sq = sum * sum;
+        let worst =
+            (edge_sq * max_area / sum_sq).max(sum_sq / (edge_sq * min_area.max(f32::MIN_POSITIVE)));
+        if worst > best_ratio && ix > 0 {
+            return ix;
         }
         best_ratio = worst;
     }
-    (row, Vec::new())
+    items.len()
 }
 
+#[cfg(test)]
 fn aspect_ratio(a: f32, b: f32) -> f32 {
     if a <= 0.0 || b <= 0.0 {
         return f32::MAX;
     }
     let r = a / b;
-    if r >= 1.0 {
-        r
-    } else {
-        1.0 / r
-    }
+    if r >= 1.0 { r } else { 1.0 / r }
 }
 
 fn add_node_rect(
@@ -341,6 +314,23 @@ mod tests {
             // worst-case for 12 uniform items in a square.
             assert!(ar < 4.0, "got aspect ratio {ar}");
         }
+    }
+
+    #[test]
+    fn a_very_wide_directory_lays_out_without_suffix_copies_or_recursion() {
+        // Regression: the former squarifier cloned the complete remaining
+        // suffix and recursed once per row. Real Windows roots with broad
+        // generated/cache directories could stall Ferail's UI watchdog.
+        let kids: Vec<_> = (2..50_002u64).map(|id| file(id, 50_003 - id)).collect();
+        let root = dir(1, kids);
+        let rects = compute_treemap(&root, (0.0, 0.0, 1920.0, 1080.0), 1);
+        assert!(!rects.is_empty());
+        assert!(rects.len() <= 50_001);
+        assert!(
+            rects
+                .iter()
+                .all(|rect| rect.x.is_finite() && rect.y.is_finite())
+        );
     }
 
     #[test]

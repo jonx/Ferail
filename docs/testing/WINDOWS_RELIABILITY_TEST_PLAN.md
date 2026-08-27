@@ -591,6 +591,12 @@ checkboxes deliberately remain manual real-machine evidence gates.
   `ferail-ntfs-client-diag.exe <path> 2`. Retain aggregate phase timings and
   counts. The UI changes visibly through MFT reading, index construction and
   subtree traversal instead of remaining at zero.
+- [ ] `WTEST-118A` Run Portable Disk Usage on a volume with at least one
+  million entries while continuing to resize, zoom, change category and
+  switch Apparent/Allocated. Leave it streaming for at least 15 minutes. The
+  watchdog must not fire and the console must not report a layout or Top-N
+  refresh above 250 ms. If it does, retain the hang report: its breadcrumbs
+  identify `du/layout` versus `du/top-n` without recording the scanned path.
 - [ ] `WTEST-119` Cancel during MFT parsing and subtree streaming, inject a
   helper exit, then retry. Partial Fast rows are discarded, Portable fallback
   follows policy, and a later explicit Fast attempt creates one fresh session.

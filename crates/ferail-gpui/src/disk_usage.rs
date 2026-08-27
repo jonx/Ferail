@@ -108,6 +108,28 @@ const DU_TOPN_REBUILD_INTERVAL: Duration = Duration::from_millis(500);
 /// the last frame is exact. User-driven invalidations (zoom, filter,
 /// size-mode, resize) bypass this and stay immediate.
 const DU_LAYOUT_REBUILD_INTERVAL: Duration = Duration::from_millis(250);
+const DU_LARGE_TREE_NODES: usize = 100_000;
+const DU_HUGE_TREE_NODES: usize = 500_000;
+
+fn layout_rebuild_interval(nodes: usize) -> Duration {
+    if nodes >= DU_HUGE_TREE_NODES {
+        Duration::from_secs(2)
+    } else if nodes >= DU_LARGE_TREE_NODES {
+        Duration::from_secs(1)
+    } else {
+        DU_LAYOUT_REBUILD_INTERVAL
+    }
+}
+
+fn topn_rebuild_interval(nodes: usize) -> Duration {
+    if nodes >= DU_HUGE_TREE_NODES {
+        Duration::from_secs(3)
+    } else if nodes >= DU_LARGE_TREE_NODES {
+        Duration::from_secs(1)
+    } else {
+        DU_TOPN_REBUILD_INTERVAL
+    }
+}
 /// Backpressure cap on the BG→FG queue. The drain applies at most
 /// `DU_MAX_MSGS_PER_TICK` per busy tick, so a warm-cache scan of a huge
 /// volume can outrun it indefinitely — without a cap the backlog grows
@@ -563,6 +585,15 @@ impl DiskUsageView {
     /// Recompute the Top-N largest-files list from the current tree.
     /// Single pass + partial sort, capped at `TOPN_CAP`.
     fn rebuild_top_files(&mut self) {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        let node_count = self.tree.nodes.len();
+        let started = Instant::now();
+        if node_count >= DU_LARGE_TREE_NODES {
+            crate::obs::breadcrumb(format_args!("du/top-n begin nodes={node_count}"));
+        }
+
         #[derive(Clone, Copy)]
         struct TopFileCandidate {
             node_id: NodeId,
@@ -570,35 +601,53 @@ impl DiskUsageView {
             size_bytes: u64,
         }
 
-        let mut all: Vec<TopFileCandidate> = self
-            .tree
-            .nodes
-            .iter()
-            .filter_map(|(id, n)| {
-                if n.kind != ferail_disk_usage::NodeKind::File {
-                    return None;
-                }
-                if self
-                    .category_filter
-                    .is_some_and(|cat| cat != n.file_category)
-                {
-                    return None;
-                }
-                let size_bytes = size_for_mode(n.size_bytes, n.allocated_bytes, self.size_mode);
-                if size_bytes == 0 {
-                    return None;
-                }
-                Some(TopFileCandidate {
-                    node_id: *id,
-                    category: n.file_category,
-                    size_bytes,
-                })
-            })
-            .collect();
-        if all.len() > TOPN_CAP {
-            all.select_nth_unstable_by(TOPN_CAP - 1, |a, b| b.size_bytes.cmp(&a.size_bytes));
-            all.truncate(TOPN_CAP);
+        impl PartialEq for TopFileCandidate {
+            fn eq(&self, other: &Self) -> bool {
+                (self.size_bytes, self.node_id) == (other.size_bytes, other.node_id)
+            }
         }
+        impl Eq for TopFileCandidate {}
+        impl PartialOrd for TopFileCandidate {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+        impl Ord for TopFileCandidate {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                (self.size_bytes, self.node_id).cmp(&(other.size_bytes, other.node_id))
+            }
+        }
+
+        // Keep only fifty candidates while scanning the tree. The old path
+        // allocated one candidate per file and then partitioned the million-
+        // item Vec on the UI thread every 500 ms.
+        let mut top: BinaryHeap<Reverse<TopFileCandidate>> =
+            BinaryHeap::with_capacity(TOPN_CAP + 1);
+        for (id, node) in &self.tree.nodes {
+            if node.kind != ferail_disk_usage::NodeKind::File
+                || self
+                    .category_filter
+                    .is_some_and(|cat| cat != node.file_category)
+            {
+                continue;
+            }
+            let size_bytes = size_for_mode(node.size_bytes, node.allocated_bytes, self.size_mode);
+            if size_bytes == 0 {
+                continue;
+            }
+            let candidate = TopFileCandidate {
+                node_id: *id,
+                category: node.file_category,
+                size_bytes,
+            };
+            if top.len() < TOPN_CAP {
+                top.push(Reverse(candidate));
+            } else if top.peek().is_some_and(|smallest| candidate > smallest.0) {
+                top.pop();
+                top.push(Reverse(candidate));
+            }
+        }
+        let mut all: Vec<_> = top.into_iter().map(|entry| entry.0).collect();
         all.sort_unstable_by_key(|e| std::cmp::Reverse(e.size_bytes));
         self.top_files = all
             .into_iter()
@@ -614,6 +663,20 @@ impl DiskUsageView {
                 size_bytes: e.size_bytes,
             })
             .collect();
+        let elapsed = started.elapsed();
+        if node_count >= DU_LARGE_TREE_NODES {
+            crate::obs::breadcrumb(format_args!(
+                "du/top-n end nodes={node_count} elapsed_ms={}",
+                elapsed.as_millis()
+            ));
+        }
+        if elapsed >= Duration::from_millis(250) {
+            crate::log_warn!(
+                90,
+                "disk-usage: top-n refresh took {} ms for {node_count} nodes",
+                elapsed.as_millis()
+            );
+        }
     }
 
     /// Spawn the disk-usage scan on the background executor + start
@@ -721,15 +784,17 @@ impl DiskUsageView {
                         // the final frame is exact; ticks in between still
                         // notify so the header counters stay live against
                         // the last-built treemap.
-                        let rebuild_layout =
-                            done || last_layout_rebuild.elapsed() >= DU_LAYOUT_REBUILD_INTERVAL;
+                        let rebuild_layout = done
+                            || last_layout_rebuild.elapsed()
+                                >= layout_rebuild_interval(v.tree.nodes.len());
                         if rebuild_layout {
                             v.invalidate_layout();
                             v.rebuild_layout_if_ready();
                             last_layout_rebuild = Instant::now();
                         }
-                        let rebuild_topn =
-                            done || last_topn_rebuild.elapsed() >= DU_TOPN_REBUILD_INTERVAL;
+                        let rebuild_topn = done
+                            || last_topn_rebuild.elapsed()
+                                >= topn_rebuild_interval(v.tree.nodes.len());
                         if rebuild_topn {
                             v.rebuild_top_files();
                             last_topn_rebuild = Instant::now();
@@ -810,13 +875,6 @@ impl DiskUsageView {
                 self.scan_complete = true;
                 self.error = err;
                 self.tree.complete = self.error.is_none();
-                if self.tree.complete {
-                    let containers: Vec<NodeId> = self.tree.containers.keys().copied().collect();
-                    for container in containers {
-                        self.tree
-                            .set_scan_state(container, ferail_disk_usage::ScanState::Complete);
-                    }
-                }
             }
         }
     }
@@ -830,6 +888,11 @@ impl DiskUsageView {
         let Some((w, h)) = self.treemap_size else {
             return;
         };
+        let node_count = self.tree.nodes.len();
+        let started = Instant::now();
+        if node_count >= DU_LARGE_TREE_NODES {
+            crate::obs::breadcrumb(format_args!("du/layout begin nodes={node_count}"));
+        }
         self.layout_cache = Some(build_layout_node_with_mode(
             &self.tree,
             self.focus_id(),
@@ -838,6 +901,22 @@ impl DiskUsageView {
         ));
         if let Some(layout) = &self.layout_cache {
             self.rects_cache = compute_treemap(layout, (0.0, 0.0, w, h), DU_LAYOUT_DEPTH);
+        }
+        let elapsed = started.elapsed();
+        if node_count >= DU_LARGE_TREE_NODES {
+            crate::obs::breadcrumb(format_args!(
+                "du/layout end nodes={node_count} rects={} elapsed_ms={}",
+                self.rects_cache.len(),
+                elapsed.as_millis()
+            ));
+        }
+        if elapsed >= Duration::from_millis(250) {
+            crate::log_warn!(
+                90,
+                "disk-usage: layout refresh took {} ms for {node_count} nodes and {} rects",
+                elapsed.as_millis(),
+                self.rects_cache.len()
+            );
         }
     }
 
@@ -2924,11 +3003,19 @@ fn short_path(p: &std::path::Path) -> String {
 #[cfg(test)]
 mod path_arena_tests {
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use ferail_core::NodeId;
     use ferail_disk_usage::{DiskUsageFact, DiskUsageTree, FileCategory};
 
-    use super::DiskUsagePathArena;
+    use super::{DiskUsagePathArena, layout_rebuild_interval, topn_rebuild_interval};
+
+    #[test]
+    fn million_node_refreshes_are_human_scale_not_frame_scale() {
+        assert_eq!(layout_rebuild_interval(1_000_000), Duration::from_secs(2));
+        assert_eq!(topn_rebuild_interval(1_000_000), Duration::from_secs(3));
+        assert!(layout_rebuild_interval(10_000) < Duration::from_secs(1));
+    }
 
     #[test]
     fn scan_local_parent_index_reconstructs_paths_without_native_fs() {

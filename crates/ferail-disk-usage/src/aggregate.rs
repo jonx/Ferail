@@ -41,7 +41,7 @@ fn build_inner(
     mode: SizeMode,
     visited: &mut HashSet<NodeId>,
 ) -> DiskUsageLayoutNode {
-    let (intrinsic, scan_state, kind, file_category, mtime) = match tree.nodes.get(&id) {
+    let (intrinsic, mut scan_state, kind, file_category, mtime) = match tree.nodes.get(&id) {
         Some(n) => {
             let size = match mode {
                 SizeMode::Apparent => n.size_bytes,
@@ -65,6 +65,13 @@ fn build_inner(
             None,
         ),
     };
+    // Fast NTFS streams directory starts but deliberately avoids a completion
+    // fact for every directory. Once the whole snapshot is complete, rendering
+    // can derive that state here instead of mutating millions of nodes on the
+    // UI thread in one terminal scan tick.
+    if tree.complete && kind == NodeKind::Container {
+        scan_state = crate::model::ScanState::Complete;
+    }
 
     if !visited.insert(id) {
         // Already visited via another container — record as a leaf so the
@@ -80,23 +87,30 @@ fn build_inner(
         );
     }
 
+    if remaining_depth == 0 {
+        let descendants = tree.nodes.get(&id).map_or(0, |node| match mode {
+            SizeMode::Apparent => node.descendant_size_bytes,
+            SizeMode::Allocated => node.descendant_effective_allocated_bytes,
+        });
+        return DiskUsageLayoutNode::with_mtime(
+            id,
+            intrinsic.saturating_add(descendants),
+            scan_state,
+            kind,
+            file_category,
+            mtime,
+            vec![],
+        );
+    }
+
     let mut children = Vec::new();
     let mut children_sum: u64 = 0;
-    if remaining_depth > 0 {
-        if let Some(member_ids) = tree.containers.get(&id) {
-            children.reserve(member_ids.len());
-            for &child_id in member_ids {
-                let child = build_inner(tree, child_id, remaining_depth - 1, mode, visited);
-                children_sum = children_sum.saturating_add(child.size_bytes);
-                children.push(child);
-            }
-        }
-    } else if let Some(member_ids) = tree.containers.get(&id) {
-        // We're at the depth limit but still need an honest aggregate —
-        // descend with depth=0 just to gather sums (no rects).
+    if let Some(member_ids) = tree.containers.get(&id) {
+        children.reserve(member_ids.len());
         for &child_id in member_ids {
-            let child = build_inner(tree, child_id, 0, mode, visited);
+            let child = build_inner(tree, child_id, remaining_depth - 1, mode, visited);
             children_sum = children_sum.saturating_add(child.size_bytes);
+            children.push(child);
         }
     }
 
@@ -185,5 +199,24 @@ mod tests {
         let layout = build_layout_node(&t, nid(1), 0);
         assert_eq!(layout.size_bytes, 18);
         assert!(layout.children.is_empty());
+    }
+
+    #[test]
+    fn completed_tree_derives_container_state_without_rewriting_nodes() {
+        let mut tree = DiskUsageTree::new(nid(1));
+        seed(&mut tree, nid(2), NodeKind::Container, 0);
+        link(&mut tree, nid(1), nid(2));
+        tree.complete = true;
+
+        let layout = build_layout_node(&tree, nid(1), 2);
+        assert_eq!(layout.scan_state, crate::model::ScanState::Complete);
+        assert_eq!(
+            layout.children[0].scan_state,
+            crate::model::ScanState::Complete
+        );
+        assert_eq!(
+            tree.nodes[&nid(2)].scan_state,
+            crate::model::ScanState::Unknown
+        );
     }
 }

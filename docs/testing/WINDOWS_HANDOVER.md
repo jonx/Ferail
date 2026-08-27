@@ -180,6 +180,27 @@ target\release\ferail-ntfs-helper.exe --diagnose "C:\path"
 target\release\ferail-ntfs-client-diag.exe "C:\path" 2
 ```
 
+`ferail-ntfs-helper.exe` is part of the public portable ZIP, so the first
+command works against the exact helper shipped with Ferail; `--help` prints
+the diagnostic syntax. `ferail-ntfs-client-diag.exe` is a developer binary
+and must be built with
+`cargo build --release -p ferail-ntfs-win32 --bin ferail-ntfs-client-diag`.
+Redirect either command with `> fast-ntfs-diagnostic.txt 2>&1` to retain a
+shareable report. Both outputs deliberately omit the requested path and every
+file name.
+
+The 2026-08-28 million-entry Portable report exposed three UI-thread scaling
+hazards independent of the scanner: depth-limited aggregation still walked
+all hidden descendants, squarification copied each remaining sibling suffix
+recursively, and Top-N allocated one candidate per file every 500 ms. The
+fix maintains subtree totals as facts arrive, uses an iterative linear
+squarifier, keeps only 50 Top-N candidates, removes the completion-time
+whole-tree rewrite, and slows presentation refreshes adaptively above
+100,000/500,000 nodes. Large refreshes now leave privacy-safe begin/end timing
+breadcrumbs in hang reports. Re-run `WTEST-118A` on the same C: corpus; any
+remaining watchdog report should say whether `du/layout` or `du/top-n` began
+without completing.
+
 The reports contain aggregate geometry, record/link/row counts and timings,
 never names or the requested path. On the 2,345,216-record C: volume, the
 pre-fix run spent about four minutes CPU-bound. The optimized release scanner

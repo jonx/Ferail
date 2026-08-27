@@ -25,8 +25,10 @@ pub enum ScanState {
     Complete,
 }
 
-/// A node in the graph. Carries intrinsic size only — the layout
-/// step aggregates container totals separately.
+/// A node in the graph. Carries intrinsic size plus incrementally maintained
+/// descendant totals.  The latter let a depth-limited layout stop at its
+/// boundary instead of walking millions of hidden descendants on the UI
+/// thread merely to recover their sum.
 ///
 /// `size_bytes` is the **apparent** size (what `ls -l` shows).
 /// `allocated_bytes` is the on-disk block-aligned size, populated
@@ -37,6 +39,14 @@ pub struct DiskUsageNode {
     pub id: NodeId,
     pub size_bytes: u64,
     pub allocated_bytes: u64,
+    pub descendant_size_bytes: u64,
+    pub descendant_allocated_bytes: u64,
+    /// Descendant allocated bytes with the same per-node apparent-size
+    /// fallback used by the UI when a scanner cannot report allocation.
+    pub descendant_effective_allocated_bytes: u64,
+    /// Canonical scan parent used only for incremental aggregate propagation.
+    /// Kept inline to avoid a second million-entry hash table.
+    parent: Option<NodeId>,
     pub scan_state: ScanState,
     pub kind: NodeKind,
     pub file_category: FileCategory,
@@ -56,6 +66,10 @@ impl DiskUsageNode {
             id,
             size_bytes: 0,
             allocated_bytes: 0,
+            descendant_size_bytes: 0,
+            descendant_allocated_bytes: 0,
+            descendant_effective_allocated_bytes: 0,
+            parent: None,
             scan_state: ScanState::Unknown,
             kind: NodeKind::Container,
             file_category: FileCategory::Other,
@@ -137,6 +151,7 @@ impl DiskUsageTree {
         let members = self.containers.entry(container).or_default();
         if !members.contains(&node) {
             members.push(node);
+            self.register_parent(container, node);
         }
     }
 
@@ -144,22 +159,140 @@ impl DiskUsageTree {
     /// uniqueness. Avoids the O(n) sibling scan in `add_link`.
     pub fn add_link_unchecked(&mut self, container: NodeId, node: NodeId) {
         self.containers.entry(container).or_default().push(node);
+        self.register_parent(container, node);
     }
 
     pub fn add_size(&mut self, id: NodeId, size_bytes: u64) {
-        let entry = self
-            .nodes
-            .entry(id)
-            .or_insert_with(|| DiskUsageNode::new(id));
-        entry.size_bytes = entry.size_bytes.saturating_add(size_bytes);
+        let (apparent_delta, effective_allocated_delta) = {
+            let entry = self
+                .nodes
+                .entry(id)
+                .or_insert_with(|| DiskUsageNode::new(id));
+            let old_size = entry.size_bytes;
+            entry.size_bytes = entry.size_bytes.saturating_add(size_bytes);
+            let delta = entry.size_bytes - old_size;
+            (delta, if entry.allocated_bytes == 0 { delta } else { 0 })
+        };
+        self.propagate_descendant_add(id, apparent_delta, 0, effective_allocated_delta);
     }
 
     pub fn add_allocated(&mut self, id: NodeId, bytes: u64) {
-        let entry = self
+        let (allocated_delta, old_effective, new_effective) = {
+            let entry = self
+                .nodes
+                .entry(id)
+                .or_insert_with(|| DiskUsageNode::new(id));
+            let old_allocated = entry.allocated_bytes;
+            let old_effective = if old_allocated > 0 {
+                old_allocated
+            } else {
+                entry.size_bytes
+            };
+            entry.allocated_bytes = entry.allocated_bytes.saturating_add(bytes);
+            let new_effective = if entry.allocated_bytes > 0 {
+                entry.allocated_bytes
+            } else {
+                entry.size_bytes
+            };
+            (
+                entry.allocated_bytes - old_allocated,
+                old_effective,
+                new_effective,
+            )
+        };
+        if new_effective >= old_effective {
+            self.propagate_descendant_add(id, 0, allocated_delta, new_effective - old_effective);
+        } else {
+            self.propagate_descendant_add(id, 0, allocated_delta, 0);
+            self.propagate_effective_allocated_sub(id, old_effective - new_effective);
+        }
+    }
+
+    fn register_parent(&mut self, container: NodeId, node: NodeId) {
+        // Container/member is a DAG by contract, but a malformed helper or a
+        // future synthetic scope must not turn incremental propagation into a
+        // million-iteration UI-thread loop. Only containers can become an
+        // ancestor later, so keep the common file link at O(1).
+        if self
             .nodes
-            .entry(id)
-            .or_insert_with(|| DiskUsageNode::new(id));
-        entry.allocated_bytes = entry.allocated_bytes.saturating_add(bytes);
+            .get(&node)
+            .is_some_and(|entry| entry.kind == NodeKind::Container)
+            && self.parent_chain_contains(container, node)
+        {
+            return;
+        }
+        if self
+            .nodes
+            .get(&node)
+            .and_then(|entry| entry.parent)
+            .is_some()
+        {
+            return;
+        }
+        self.ensure_node(node).parent = Some(container);
+        let (apparent, allocated, effective_allocated) =
+            self.nodes.get(&node).map_or((0, 0, 0), |entry| {
+                (
+                    entry.size_bytes.saturating_add(entry.descendant_size_bytes),
+                    entry
+                        .allocated_bytes
+                        .saturating_add(entry.descendant_allocated_bytes),
+                    (if entry.allocated_bytes > 0 {
+                        entry.allocated_bytes
+                    } else {
+                        entry.size_bytes
+                    })
+                    .saturating_add(entry.descendant_effective_allocated_bytes),
+                )
+            });
+        self.propagate_descendant_add(node, apparent, allocated, effective_allocated);
+    }
+
+    fn parent_chain_contains(&self, mut current: NodeId, needle: NodeId) -> bool {
+        loop {
+            if current == needle {
+                return true;
+            }
+            let Some(parent) = self.nodes.get(&current).and_then(|entry| entry.parent) else {
+                return false;
+            };
+            current = parent;
+        }
+    }
+
+    fn propagate_descendant_add(
+        &mut self,
+        node: NodeId,
+        apparent: u64,
+        allocated: u64,
+        effective_allocated: u64,
+    ) {
+        let mut current = node;
+        while let Some(parent) = self.nodes.get(&current).and_then(|entry| entry.parent) {
+            let entry = self
+                .nodes
+                .entry(parent)
+                .or_insert_with(|| DiskUsageNode::new(parent));
+            entry.descendant_size_bytes = entry.descendant_size_bytes.saturating_add(apparent);
+            entry.descendant_allocated_bytes =
+                entry.descendant_allocated_bytes.saturating_add(allocated);
+            entry.descendant_effective_allocated_bytes = entry
+                .descendant_effective_allocated_bytes
+                .saturating_add(effective_allocated);
+            current = parent;
+        }
+    }
+
+    fn propagate_effective_allocated_sub(&mut self, node: NodeId, bytes: u64) {
+        let mut current = node;
+        while let Some(parent) = self.nodes.get(&current).and_then(|entry| entry.parent) {
+            if let Some(entry) = self.nodes.get_mut(&parent) {
+                entry.descendant_effective_allocated_bytes = entry
+                    .descendant_effective_allocated_bytes
+                    .saturating_sub(bytes);
+            }
+            current = parent;
+        }
     }
 
     pub fn set_scan_state(&mut self, id: NodeId, state: ScanState) {
@@ -173,6 +306,32 @@ impl DiskUsageTree {
     /// Drop a node and every container/member edge that mentions it.
     /// Used by Move-to-Trash live-update so we don't have to re-scan.
     pub fn remove_subtree(&mut self, id: NodeId) {
+        if let Some(entry) = self.nodes.get(&id) {
+            let apparent = entry.size_bytes.saturating_add(entry.descendant_size_bytes);
+            let allocated = entry
+                .allocated_bytes
+                .saturating_add(entry.descendant_allocated_bytes);
+            let effective_allocated = (if entry.allocated_bytes > 0 {
+                entry.allocated_bytes
+            } else {
+                entry.size_bytes
+            })
+            .saturating_add(entry.descendant_effective_allocated_bytes);
+            let mut current = id;
+            while let Some(parent) = self.nodes.get(&current).and_then(|entry| entry.parent) {
+                if let Some(parent_entry) = self.nodes.get_mut(&parent) {
+                    parent_entry.descendant_size_bytes =
+                        parent_entry.descendant_size_bytes.saturating_sub(apparent);
+                    parent_entry.descendant_allocated_bytes = parent_entry
+                        .descendant_allocated_bytes
+                        .saturating_sub(allocated);
+                    parent_entry.descendant_effective_allocated_bytes = parent_entry
+                        .descendant_effective_allocated_bytes
+                        .saturating_sub(effective_allocated);
+                }
+                current = parent;
+            }
+        }
         let mut stack = vec![id];
         while let Some(n) = stack.pop() {
             self.nodes.remove(&n);
@@ -294,6 +453,63 @@ mod tests {
         t.add_size(nid(2), u64::MAX - 1);
         t.add_size(nid(2), 100);
         assert_eq!(t.nodes.get(&nid(2)).unwrap().size_bytes, u64::MAX);
+    }
+
+    #[test]
+    fn descendant_totals_follow_late_parent_links_and_removal() {
+        let mut tree = DiskUsageTree::new(nid(1));
+        tree.add_size(nid(3), 100);
+        tree.add_allocated(nid(3), 80);
+        tree.add_link(nid(2), nid(3));
+        assert_eq!(tree.nodes[&nid(2)].descendant_size_bytes, 100);
+        tree.add_link(nid(1), nid(2));
+        assert_eq!(tree.nodes[&nid(1)].descendant_size_bytes, 100);
+        assert_eq!(tree.nodes[&nid(1)].descendant_allocated_bytes, 80);
+        assert_eq!(tree.nodes[&nid(1)].descendant_effective_allocated_bytes, 80);
+
+        tree.remove_subtree(nid(2));
+        assert_eq!(tree.nodes[&nid(1)].descendant_size_bytes, 0);
+        assert_eq!(tree.nodes[&nid(1)].descendant_allocated_bytes, 0);
+        assert_eq!(tree.nodes[&nid(1)].descendant_effective_allocated_bytes, 0);
+    }
+
+    #[test]
+    fn effective_allocated_totals_fall_back_per_file() {
+        let mut tree = DiskUsageTree::new(nid(1));
+        tree.add_size(nid(2), 100);
+        tree.add_link(nid(1), nid(2));
+        assert_eq!(
+            tree.nodes[&nid(1)].descendant_effective_allocated_bytes,
+            100
+        );
+
+        // Once allocation arrives, it replaces rather than adds to the
+        // apparent fallback contribution.
+        tree.add_allocated(nid(2), 80);
+        assert_eq!(tree.nodes[&nid(1)].descendant_allocated_bytes, 80);
+        assert_eq!(tree.nodes[&nid(1)].descendant_effective_allocated_bytes, 80);
+
+        // A sibling without allocation keeps its own apparent fallback.
+        tree.add_size(nid(3), 25);
+        tree.add_link(nid(1), nid(3));
+        assert_eq!(
+            tree.nodes[&nid(1)].descendant_effective_allocated_bytes,
+            105
+        );
+    }
+
+    #[test]
+    fn malformed_container_cycle_does_not_enter_parent_totals() {
+        let mut tree = DiskUsageTree::new(nid(1));
+        tree.ensure_node(nid(2)).kind = NodeKind::Container;
+        tree.add_link(nid(1), nid(2));
+        tree.add_link(nid(2), nid(1));
+        tree.add_size(nid(3), 9);
+        tree.add_link(nid(2), nid(3));
+
+        assert_eq!(tree.nodes[&nid(1)].parent, None);
+        assert_eq!(tree.nodes[&nid(2)].descendant_size_bytes, 9);
+        assert_eq!(tree.nodes[&nid(1)].descendant_size_bytes, 9);
     }
 
     #[test]

@@ -8,6 +8,16 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Disk Usage remains responsive while Portable scans millions of files.**
+  The depth-limited treemap now uses incrementally maintained subtree totals
+  instead of revisiting every hidden descendant, broad directories use a
+  linear iterative squarifier instead of recursively copying sibling tails,
+  and the largest-files panel retains only its 50 candidates instead of a
+  temporary row per file. Presentation refreshes back off on very large trees,
+  scan completion derives visual state without rewriting every node, and
+  privacy-safe timing breadcrumbs make any remaining slow layout or Top-N pass
+  identifiable in a hang report.
+
 - **Private Mode makes Ferail screenshots safe by default.** A new toolbar
   shield and `Cmd/Ctrl+Shift+K` command replace every Ferail-owned window with
   an opaque, non-interactive private presentation. Names use process-session
