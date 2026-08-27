@@ -606,12 +606,6 @@ impl DiskUsageView {
     fn start_scan(&mut self, fs: Arc<NativeFs>, cx: &mut Context<Self>) {
         self.scan_generation = self.scan_generation.wrapping_add(1);
         let generation = self.scan_generation;
-        let root = self.root_path.clone();
-        let cancel = self.cancel.clone();
-        let cancel_for_push = self.cancel.clone();
-        let descend = self.descend_packages;
-        let size_mode = self.size_mode;
-        let id_base = self.path_arena.id_base;
         let engine = self.engine;
         self.active_engine = engine;
         #[cfg(target_os = "windows")]
@@ -619,6 +613,16 @@ impl DiskUsageView {
             self.fast_fallback = None;
             self.fast_best_effort_live = false;
         }
+        let request = DuScanRequest {
+            root: self.root_path.clone(),
+            cancel: self.cancel.clone(),
+            descend_packages: self.descend_packages,
+            #[cfg(target_os = "windows")]
+            size_mode: self.size_mode,
+            id_base: self.path_arena.id_base,
+            #[cfg(target_os = "windows")]
+            request_id: generation.max(1),
+        };
         let queue_for_scan = self.msg_queue.clone();
 
         // Register the scan with the shared task registry so the
@@ -631,86 +635,7 @@ impl DiskUsageView {
 
         // BG: run the scan. Synchronous I/O on the executor's pool.
         cx.background_executor()
-            .spawn(async move {
-                #[cfg(target_os = "windows")]
-                if engine == DuEngine::FastNtfs {
-                    let request = ferail_ntfs_win32::FastNtfsRequest {
-                        root: root.clone(),
-                        sizing_mode: match size_mode {
-                            SizeMode::Apparent => ferail_ntfs::SizingMode::Apparent,
-                            SizeMode::Allocated => ferail_ntfs::SizingMode::Allocated,
-                        },
-                        descend_packages: descend,
-                        root_id: id_base + 1,
-                        first_child_id: id_base + 2,
-                        request_id: generation.max(1),
-                    };
-                    let mut stats = DiskUsageStats {
-                        dirs_scanned: 1,
-                        ..DiskUsageStats::default()
-                    };
-                    let mut best_effort_live = false;
-                    let result =
-                        ferail_ntfs_win32::run_fast_ntfs(request, &cancel, |event| match event {
-                            ferail_ntfs_win32::FastNtfsEvent::Ready => {
-                                let _ = push_scan_msg(
-                                    &queue_for_scan,
-                                    &cancel_for_push,
-                                    ScanMsg::Batch(ScanBatch::Fast(fast_root_batch(
-                                        &root, id_base,
-                                    ))),
-                                );
-                            }
-                            ferail_ntfs_win32::FastNtfsEvent::Batch(rows) => {
-                                let batch = fast_rows_to_batch(rows, &mut stats);
-                                let _ = push_scan_msg(
-                                    &queue_for_scan,
-                                    &cancel_for_push,
-                                    ScanMsg::Batch(ScanBatch::Fast(batch)),
-                                );
-                            }
-                            ferail_ntfs_win32::FastNtfsEvent::Progress(_) => {}
-                            ferail_ntfs_win32::FastNtfsEvent::Complete(complete) => {
-                                best_effort_live = complete.best_effort_live;
-                            }
-                        });
-                    match result {
-                        Ok(()) => {
-                            let _ = push_scan_msg(
-                                &queue_for_scan,
-                                &cancel_for_push,
-                                ScanMsg::FastComplete { best_effort_live },
-                            );
-                            let _ = push_scan_msg(
-                                &queue_for_scan,
-                                &cancel_for_push,
-                                ScanMsg::Done(None),
-                            );
-                        }
-                        Err(error) if !cancel.load(Ordering::Acquire) => {
-                            let reason = fast_fallback_reason(&error);
-                            if push_scan_msg(
-                                &queue_for_scan,
-                                &cancel_for_push,
-                                ScanMsg::ResetForFallback(reason),
-                            ) {
-                                run_portable_scan(
-                                    &fs,
-                                    &root,
-                                    &cancel,
-                                    descend,
-                                    id_base,
-                                    &queue_for_scan,
-                                );
-                            }
-                        }
-                        Err(_) => {}
-                    }
-                    return;
-                }
-
-                run_portable_scan(&fs, &root, &cancel, descend, id_base, &queue_for_scan);
-            })
+            .spawn(async move { run_scan_worker(engine, fs, request, queue_for_scan) })
             .detach();
 
         // FG: drain the queue periodically + apply on the view.
@@ -2417,6 +2342,113 @@ enum ScanMsg {
         best_effort_live: bool,
     },
     Done(Option<EnumerationError>),
+}
+
+struct DuScanRequest {
+    root: PathBuf,
+    cancel: Arc<AtomicBool>,
+    descend_packages: bool,
+    #[cfg(target_os = "windows")]
+    size_mode: SizeMode,
+    id_base: u64,
+    #[cfg(target_os = "windows")]
+    request_id: u64,
+}
+
+fn run_scan_worker(
+    engine: DuEngine,
+    fs: Arc<NativeFs>,
+    request: DuScanRequest,
+    queue: Arc<Mutex<VecDeque<ScanMsg>>>,
+) {
+    #[cfg(not(target_os = "windows"))]
+    let _ = engine;
+    #[cfg(target_os = "windows")]
+    if engine == DuEngine::FastNtfs {
+        run_fast_scan_worker(&fs, &request, &queue);
+        return;
+    }
+    run_portable_scan(
+        &fs,
+        &request.root,
+        &request.cancel,
+        request.descend_packages,
+        request.id_base,
+        &queue,
+    );
+}
+
+#[cfg(target_os = "windows")]
+fn run_fast_scan_worker(
+    fs: &NativeFs,
+    request: &DuScanRequest,
+    queue: &Arc<Mutex<VecDeque<ScanMsg>>>,
+) {
+    let fast_request = ferail_ntfs_win32::FastNtfsRequest {
+        root: request.root.clone(),
+        sizing_mode: match request.size_mode {
+            SizeMode::Apparent => ferail_ntfs::SizingMode::Apparent,
+            SizeMode::Allocated => ferail_ntfs::SizingMode::Allocated,
+        },
+        descend_packages: request.descend_packages,
+        root_id: request.id_base + 1,
+        first_child_id: request.id_base + 2,
+        request_id: request.request_id,
+    };
+    let mut stats = DiskUsageStats {
+        dirs_scanned: 1,
+        ..DiskUsageStats::default()
+    };
+    let mut best_effort_live = false;
+    let result =
+        ferail_ntfs_win32::run_fast_ntfs(fast_request, &request.cancel, |event| match event {
+            ferail_ntfs_win32::FastNtfsEvent::Ready => {
+                let _ = push_scan_msg(
+                    queue,
+                    &request.cancel,
+                    ScanMsg::Batch(ScanBatch::Fast(fast_root_batch(
+                        &request.root,
+                        request.id_base,
+                    ))),
+                );
+            }
+            ferail_ntfs_win32::FastNtfsEvent::Batch(rows) => {
+                let batch = fast_rows_to_batch(rows, &mut stats);
+                let _ = push_scan_msg(
+                    queue,
+                    &request.cancel,
+                    ScanMsg::Batch(ScanBatch::Fast(batch)),
+                );
+            }
+            ferail_ntfs_win32::FastNtfsEvent::Progress(_) => {}
+            ferail_ntfs_win32::FastNtfsEvent::Complete(complete) => {
+                best_effort_live = complete.best_effort_live;
+            }
+        });
+    match result {
+        Ok(()) => {
+            let _ = push_scan_msg(
+                queue,
+                &request.cancel,
+                ScanMsg::FastComplete { best_effort_live },
+            );
+            let _ = push_scan_msg(queue, &request.cancel, ScanMsg::Done(None));
+        }
+        Err(error) if !request.cancel.load(Ordering::Acquire) => {
+            let reason = fast_fallback_reason(&error);
+            if push_scan_msg(queue, &request.cancel, ScanMsg::ResetForFallback(reason)) {
+                run_portable_scan(
+                    fs,
+                    &request.root,
+                    &request.cancel,
+                    request.descend_packages,
+                    request.id_base,
+                    queue,
+                );
+            }
+        }
+        Err(_) => {}
+    }
 }
 
 fn push_scan_msg(
