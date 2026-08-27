@@ -118,7 +118,10 @@ Release evidence:
 - the exact local release build passed dependency gates for GUI/CLI/helper,
   contained the helper beside the GUI, recorded all three CodeView/PDB pairs
   in a clean manifest, and `ferail doctor` reported 12 OK / 0 WARN / 0 FAIL;
-- normal packaged GUI startup did not start the helper or request elevation.
+- GitHub workflow run `33030047651` completed successfully. Re-downloading its
+  public GUI ZIP reproduced the published digest and helper layout; its CLI
+  also reported 12 OK / 0 WARN / 0 FAIL, while normal packaged GUI startup
+  did not start the helper or request elevation.
 
 ### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
 
