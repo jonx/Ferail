@@ -318,6 +318,8 @@ pub struct DiskUsageView {
     fast_fallback: Option<FastFallbackReason>,
     #[cfg(target_os = "windows")]
     fast_best_effort_live: bool,
+    #[cfg(target_os = "windows")]
+    fast_progress: Option<ferail_ntfs::Progress>,
 
     /// Queue of messages produced by the BG scanner; drained by the
     /// FG timer task. `Arc<Mutex<_>>` for cross-thread share.
@@ -453,6 +455,8 @@ impl DiskUsageView {
             fast_fallback: None,
             #[cfg(target_os = "windows")]
             fast_best_effort_live: false,
+            #[cfg(target_os = "windows")]
+            fast_progress: None,
             msg_queue: msg_queue.clone(),
             layout_cache: None,
             rects_cache: Vec::new(),
@@ -612,6 +616,7 @@ impl DiskUsageView {
         {
             self.fast_fallback = None;
             self.fast_best_effort_live = false;
+            self.fast_progress = None;
         }
         let request = DuScanRequest {
             root: self.root_path.clone(),
@@ -675,6 +680,7 @@ impl DiskUsageView {
                 };
                 let mut done = false;
                 let mut had_batch = false;
+                let mut had_progress = false;
                 let mut stale = false;
                 let update_result = this.update(cx, |v, cx| {
                     if v.scan_generation != generation {
@@ -689,7 +695,9 @@ impl DiskUsageView {
                                 had_batch = true
                             }
                             ScanMsg::Done(_) => done = true,
-                            _ => {}
+                            ScanMsg::Progress(_) => had_progress = true,
+                            #[cfg(target_os = "windows")]
+                            ScanMsg::FastProgress(_) => had_progress = true,
                         }
                         v.apply_scan_msg(msg);
                     }
@@ -714,6 +722,8 @@ impl DiskUsageView {
                             v.rebuild_top_files();
                             last_topn_rebuild = Instant::now();
                         }
+                    }
+                    if had_batch || had_progress || done {
                         cx.notify();
                     }
                     if done {
@@ -754,6 +764,8 @@ impl DiskUsageView {
             }
             ScanMsg::Progress(p) => self.stats = p,
             #[cfg(target_os = "windows")]
+            ScanMsg::FastProgress(progress) => self.fast_progress = Some(progress),
+            #[cfg(target_os = "windows")]
             ScanMsg::ResetForFallback(reason) => {
                 let id_base = self.path_arena.id_base;
                 self.path_arena = DiskUsagePathArena::new(self.root_path.clone(), id_base);
@@ -764,6 +776,7 @@ impl DiskUsageView {
                 self.active_engine = DuEngine::Portable;
                 self.fast_fallback = Some(reason);
                 self.fast_best_effort_live = false;
+                self.fast_progress = None;
                 self.zoom_path.clear();
                 self.selected.clear();
                 self.lead = None;
@@ -772,6 +785,7 @@ impl DiskUsageView {
             #[cfg(target_os = "windows")]
             ScanMsg::FastComplete { best_effort_live } => {
                 self.fast_best_effort_live = best_effort_live;
+                self.fast_progress = None;
             }
             ScanMsg::Done(err) => {
                 self.scan_complete = true;
@@ -844,6 +858,7 @@ impl DiskUsageView {
         {
             self.fast_fallback = None;
             self.fast_best_effort_live = false;
+            self.fast_progress = None;
         }
         self.cancel = Arc::new(AtomicBool::new(false));
         self.msg_queue = Arc::new(Mutex::new(VecDeque::new()));
@@ -1034,6 +1049,39 @@ impl DiskUsageView {
         None
     }
 
+    #[cfg(target_os = "windows")]
+    fn fast_scan_summary(&self) -> Option<String> {
+        if self.scan_complete || self.active_engine != DuEngine::FastNtfs {
+            return None;
+        }
+        let progress = self.fast_progress?;
+        Some(match progress.phase {
+            ferail_ntfs::ScanPhase::Opening | ferail_ntfs::ScanPhase::MappingMft => {
+                tr!("Preparing NTFS metadata…").to_string()
+            }
+            ferail_ntfs::ScanPhase::ReadingRecords => {
+                let percent = progress
+                    .completed
+                    .saturating_mul(100)
+                    .checked_div(progress.total)
+                    .unwrap_or(0);
+                tr!(
+                    "Reading NTFS metadata… {percent}% · {completed} / {total} records",
+                    percent = percent,
+                    completed = progress.completed,
+                    total = progress.total
+                )
+                .to_string()
+            }
+            ferail_ntfs::ScanPhase::BuildingIndex => tr!(
+                "Building NTFS index… {live} live records",
+                live = progress.live_records
+            )
+            .to_string(),
+            ferail_ntfs::ScanPhase::Traversing => tr!("Reading the selected folder…").to_string(),
+        })
+    }
+
     fn header(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let title = if self.host == ToolHostContext::Docked {
@@ -1076,6 +1124,20 @@ impl DiskUsageView {
                 scanned = scanned
             )
             .to_string()
+        } else if cfg!(target_os = "windows") {
+            #[cfg(target_os = "windows")]
+            {
+                self.fast_scan_summary().unwrap_or_else(|| {
+                    tr!(
+                        "Scanning… {files} files, {scanned}",
+                        files = files,
+                        scanned = scanned
+                    )
+                    .to_string()
+                })
+            }
+            #[cfg(not(target_os = "windows"))]
+            unreachable!()
         } else {
             tr!(
                 "Scanning\u{2026} {files} files, {scanned}",
@@ -2336,6 +2398,8 @@ enum ScanMsg {
     Batch(ScanBatch),
     Progress(DiskUsageStats),
     #[cfg(target_os = "windows")]
+    FastProgress(ferail_ntfs::Progress),
+    #[cfg(target_os = "windows")]
     ResetForFallback(FastFallbackReason),
     #[cfg(target_os = "windows")]
     FastComplete {
@@ -2420,7 +2484,9 @@ fn run_fast_scan_worker(
                     ScanMsg::Batch(ScanBatch::Fast(batch)),
                 );
             }
-            ferail_ntfs_win32::FastNtfsEvent::Progress(_) => {}
+            ferail_ntfs_win32::FastNtfsEvent::Progress(progress) => {
+                push_fast_progress(queue, progress);
+            }
             ferail_ntfs_win32::FastNtfsEvent::Complete(complete) => {
                 best_effort_live = complete.best_effort_live;
             }
@@ -2478,6 +2544,16 @@ fn push_scan_progress(queue: &Arc<Mutex<VecDeque<ScanMsg>>>, progress: DiskUsage
         *last = progress;
     } else if queue.len() < DU_QUEUE_CAP {
         queue.push_back(ScanMsg::Progress(progress));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn push_fast_progress(queue: &Arc<Mutex<VecDeque<ScanMsg>>>, progress: ferail_ntfs::Progress) {
+    let Ok(mut queue) = queue.lock() else { return };
+    if let Some(ScanMsg::FastProgress(last)) = queue.back_mut() {
+        *last = progress;
+    } else if queue.len() < DU_QUEUE_CAP {
+        queue.push_back(ScanMsg::FastProgress(progress));
     }
 }
 
@@ -2905,5 +2981,45 @@ mod path_arena_tests {
         assert_eq!(node.size_bytes, 123);
         assert_eq!(node.allocated_bytes, 4096);
         assert_eq!(node.mtime, Some(std::time::UNIX_EPOCH));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn fast_progress_is_coalesced_at_the_worker_queue_tail() {
+        use std::collections::VecDeque;
+        use std::sync::{Arc, Mutex};
+
+        use ferail_ntfs::{Progress, ScanPhase};
+
+        let queue = Arc::new(Mutex::new(VecDeque::new()));
+        super::push_fast_progress(
+            &queue,
+            Progress {
+                phase: ScanPhase::ReadingRecords,
+                completed: 10,
+                total: 100,
+                live_records: 8,
+                corrupt_records: 0,
+            },
+        );
+        super::push_fast_progress(
+            &queue,
+            Progress {
+                phase: ScanPhase::BuildingIndex,
+                completed: 100,
+                total: 100,
+                live_records: 80,
+                corrupt_records: 1,
+            },
+        );
+
+        let queue = queue.lock().unwrap();
+        assert_eq!(queue.len(), 1);
+        let Some(super::ScanMsg::FastProgress(progress)) = queue.front() else {
+            panic!("expected one coalesced Fast progress message")
+        };
+        assert_eq!(progress.phase, ScanPhase::BuildingIndex);
+        assert_eq!(progress.completed, 100);
+        assert_eq!(progress.corrupt_records, 1);
     }
 }

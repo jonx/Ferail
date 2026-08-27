@@ -1,20 +1,20 @@
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt as _;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use ferail_ntfs::{
-    decode_frame, encode_frame, Completion, DuMessage, ErrorKind, FailureCode, Progress, ScanPhase,
-    StartRequest, TraversalOptions, PROTOCOL_VERSION,
+    Completion, DuMessage, ErrorKind, FailureCode, PROTOCOL_VERSION, Progress, ScanPhase,
+    StartRequest, TraversalOptions, decode_frame, encode_frame,
 };
 use windows::Win32::System::Threading::GetCurrentProcessId;
 
-use crate::pipe::{connect_client, never_cancelled, Pipe};
-use crate::{file_identity, probe_fast_ntfs, scan_mft, RawVolumeError, RawVolumeReader};
+use crate::pipe::{Pipe, connect_client, never_cancelled};
+use crate::{RawVolumeError, RawVolumeReader, file_identity, probe_fast_ntfs, scan_mft};
 
-const START_TIMEOUT: Duration = Duration::from_secs(120);
+const START_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const CANCEL_READ_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -48,35 +48,44 @@ fn run() -> Result<(), FailureCode> {
     pipe.write_frame(&hello, Instant::now() + WRITE_TIMEOUT, &no_cancel)
         .map_err(|_| FailureCode::Protocol)?;
 
-    let start_frame = pipe
-        .read_frame(Instant::now() + START_TIMEOUT, &no_cancel)
-        .map_err(|_| FailureCode::Protocol)?;
-    let (request_id, message) =
-        decode_frame(&start_frame, None).map_err(|_| FailureCode::Protocol)?;
-    if request_id == 0 {
-        return Err(FailureCode::Protocol);
-    }
-    let DuMessage::Start(start) = message else {
-        return Err(FailureCode::Protocol);
-    };
+    loop {
+        let start_frame = pipe
+            .read_frame(Instant::now() + START_TIMEOUT, &no_cancel)
+            .map_err(|_| FailureCode::Protocol)?;
+        let (request_id, message) =
+            decode_frame(&start_frame, None).map_err(|_| FailureCode::Protocol)?;
+        if request_id == 0 {
+            return Err(FailureCode::Protocol);
+        }
+        let DuMessage::Start(start) = message else {
+            return Err(FailureCode::Protocol);
+        };
 
-    let cancel = Arc::new(AtomicBool::new(false));
-    let stop_reader = Arc::new(AtomicBool::new(false));
-    let reader = spawn_cancel_reader(
-        pipe.clone(),
-        request_id,
-        cancel.clone(),
-        stop_reader.clone(),
-    );
-    let result = execute_scan(&pipe, request_id, &start, &cancel);
-    stop_reader.store(true, Ordering::Release);
-    pipe.cancel_all();
-    let _ = reader.join();
-    if let Err(code) = result {
-        send_failed(&pipe, request_id, code);
-        return Err(code);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop_reader = Arc::new(AtomicBool::new(false));
+        let reader = spawn_cancel_reader(
+            pipe.clone(),
+            request_id,
+            cancel.clone(),
+            stop_reader.clone(),
+        );
+        let result = execute_scan(&pipe, request_id, &start, &cancel);
+        // No subsequent Start may race with the cancellation reader. Stop it
+        // before emitting the terminal frame that releases the client-side
+        // session lock.
+        stop_reader.store(true, Ordering::Release);
+        pipe.cancel_all();
+        let _ = reader.join();
+        match result {
+            Ok(complete) => send(
+                &pipe,
+                request_id,
+                &DuMessage::Complete(complete),
+                &no_cancel,
+            )?,
+            Err(code) => send_failed(&pipe, request_id, code),
+        }
     }
-    Ok(())
 }
 
 fn execute_scan(
@@ -84,7 +93,7 @@ fn execute_scan(
     request_id: u64,
     start: &StartRequest,
     cancel: &AtomicBool,
-) -> Result<(), FailureCode> {
+) -> Result<Completion, FailureCode> {
     let root = PathBuf::from(OsString::from_wide(&start.root));
     let probe = probe_fast_ntfs(&root).map_err(map_raw_failure)?;
     if !utf16_ascii_eq(&probe.volume_guid, &start.volume_guid) {
@@ -114,20 +123,7 @@ fn execute_scan(
         &reader,
         || cancel.load(Ordering::Acquire) || write_failed.load(Ordering::Acquire),
         |progress| {
-            if send(
-                pipe,
-                request_id,
-                &DuMessage::Progress(Progress {
-                    phase: ScanPhase::ReadingRecords,
-                    completed: progress.records_seen,
-                    total: progress.total_records,
-                    live_records: progress.live_records,
-                    corrupt_records: progress.corrupt_records,
-                }),
-                cancel,
-            )
-            .is_err()
-            {
+            if send(pipe, request_id, &DuMessage::Progress(progress), cancel).is_err() {
                 write_failed.store(true, Ordering::Release);
             }
         },
@@ -140,6 +136,18 @@ fn execute_scan(
         .file_by_record_number(root_record)
         .ok_or(FailureCode::Validation)?;
     let root_reference = root_meta.reference();
+    send(
+        pipe,
+        request_id,
+        &DuMessage::Progress(Progress {
+            phase: ScanPhase::Traversing,
+            completed: 0,
+            total: index.links().len() as u64,
+            live_records: raw_summary.live_records,
+            corrupt_records: raw_summary.corrupt_records,
+        }),
+        cancel,
+    )?;
     let traversal = index
         .walk_subtree(
             root_reference,
@@ -173,26 +181,21 @@ fn execute_scan(
     let (start_journal_id, start_next_usn) = start_journal.unwrap_or_default();
     let (end_journal_id, end_next_usn) = end_journal.unwrap_or_default();
     let index_stats = index.stats();
-    send(
-        pipe,
-        request_id,
-        &DuMessage::Complete(Completion {
-            rows: traversal.rows,
-            logical_bytes: traversal.logical_bytes,
-            allocated_bytes: traversal.allocated_bytes,
-            corrupt_records: raw_summary.corrupt_records,
-            skipped_records: index_stats
-                .skipped_deleted
-                .saturating_add(index_stats.skipped_unlisted_extensions)
-                .saturating_add(index_stats.stale_or_missing_parent_links),
-            start_journal_id,
-            start_next_usn,
-            end_journal_id,
-            end_next_usn,
-            best_effort_live,
-        }),
-        cancel,
-    )
+    Ok(Completion {
+        rows: traversal.rows,
+        logical_bytes: traversal.logical_bytes,
+        allocated_bytes: traversal.allocated_bytes,
+        corrupt_records: raw_summary.corrupt_records,
+        skipped_records: index_stats
+            .skipped_deleted
+            .saturating_add(index_stats.skipped_unlisted_extensions)
+            .saturating_add(index_stats.stale_or_missing_parent_links),
+        start_journal_id,
+        start_next_usn,
+        end_journal_id,
+        end_next_usn,
+        best_effort_live,
+    })
 }
 
 fn spawn_cancel_reader(

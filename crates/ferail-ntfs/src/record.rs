@@ -1,4 +1,4 @@
-use crate::{parse_mapping_pairs, DataRun, ErrorKind, NtfsError, Result};
+use crate::{DataRun, ErrorKind, NtfsError, Result, parse_mapping_pairs};
 
 const FILE_SIGNATURE: &[u8; 4] = b"FILE";
 const ATTRIBUTE_END: u32 = 0xffff_ffff;
@@ -7,6 +7,8 @@ const ATTRIBUTE_LIST: u32 = 0x20;
 const ATTRIBUTE_FILE_NAME: u32 = 0x30;
 const ATTRIBUTE_DATA: u32 = 0x80;
 const ATTRIBUTE_REPARSE_POINT: u32 = 0xc0;
+const IO_REPARSE_TAG_CLOUD: u32 = 0x9000_001a;
+const IO_REPARSE_TAG_CLOUD_MASK: u32 = 0xffff_0fff;
 const RECORD_IN_USE: u16 = 0x0001;
 const RECORD_DIRECTORY: u16 = 0x0002;
 const RECORD_REPARSE: u16 = 0x0400;
@@ -111,6 +113,10 @@ pub struct FileRecord {
     pub in_use: bool,
     pub directory: bool,
     pub reparse_point: bool,
+    /// The tag at the start of a resident `$REPARSE_POINT` value. Keeping the
+    /// tag lets traversal distinguish cloud placeholders from link-like
+    /// reparse points without retaining provider-private payload bytes.
+    pub reparse_tag: Option<u32>,
     pub base_reference: Option<FileReference>,
     /// Raw NTFS ticks (100 ns intervals since 1601), intentionally not
     /// converted in this parser layer.
@@ -122,6 +128,11 @@ pub struct FileRecord {
 }
 
 impl FileRecord {
+    pub fn is_cloud_reparse(&self) -> bool {
+        self.reparse_tag
+            .is_some_and(|tag| tag & IO_REPARSE_TAG_CLOUD_MASK == IO_REPARSE_TAG_CLOUD)
+    }
+
     /// Real links presented to users. A DOS 8.3 alias is suppressed when the
     /// same parent has a Win32/POSIX name, but retained when it is the only
     /// recoverable link.
@@ -140,6 +151,10 @@ impl FileRecord {
 pub struct RecordParseOptions {
     pub bytes_per_sector: usize,
     pub expected_record_number: Option<u64>,
+    /// Retain and validate non-resident mapping pairs. Stream bootstrapping
+    /// needs them; a metadata-only MFT pass needs only header sizes and flags
+    /// and can avoid millions of tiny run-list allocations.
+    pub include_data_runs: bool,
 }
 
 impl RecordParseOptions {
@@ -147,15 +162,27 @@ impl RecordParseOptions {
         Self {
             bytes_per_sector,
             expected_record_number: None,
+            include_data_runs: true,
         }
     }
 }
 
 pub fn parse_file_record(bytes: &[u8], options: RecordParseOptions) -> Result<FileRecord> {
-    if bytes.len() < 48 {
+    let mut fixed = bytes.to_vec();
+    parse_file_record_in_place(&mut fixed, options)
+}
+
+/// Parse a FILE record after applying USA fixups directly to the supplied
+/// buffer. Raw MFT scanners own their read window and use this to avoid one
+/// allocation and copy per record. Other callers retain the copying wrapper.
+pub fn parse_file_record_in_place(
+    fixed: &mut [u8],
+    options: RecordParseOptions,
+) -> Result<FileRecord> {
+    if fixed.len() < 48 {
         return Err(error(ErrorKind::Truncated, 0, "FILE record header"));
     }
-    if bytes.len() > MAX_RECORD_BYTES {
+    if fixed.len() > MAX_RECORD_BYTES {
         return Err(error(
             ErrorKind::LimitExceeded,
             0,
@@ -164,7 +191,7 @@ pub fn parse_file_record(bytes: &[u8], options: RecordParseOptions) -> Result<Fi
     }
     if options.bytes_per_sector < 512
         || !options.bytes_per_sector.is_power_of_two()
-        || bytes.len() % options.bytes_per_sector != 0
+        || fixed.len() % options.bytes_per_sector != 0
     {
         return Err(error(
             ErrorKind::InvalidGeometry,
@@ -172,16 +199,15 @@ pub fn parse_file_record(bytes: &[u8], options: RecordParseOptions) -> Result<Fi
             "record/sector size mismatch",
         ));
     }
-    if &bytes[..4] != FILE_SIGNATURE {
+    if &fixed[..4] != FILE_SIGNATURE {
         return Err(error(ErrorKind::InvalidSignature, 0, "FILE signature"));
     }
 
-    let mut fixed = bytes.to_vec();
-    apply_update_sequence_fixups(&mut fixed, options.bytes_per_sector)?;
+    apply_update_sequence_fixups(fixed, options.bytes_per_sector)?;
 
-    let first_attribute = usize::from(u16_at(&fixed, 20)?);
-    let flags = u16_at(&fixed, 22)?;
-    let used_bytes = usize::try_from(u32_at(&fixed, 24)?).map_err(|_| {
+    let first_attribute = usize::from(u16_at(fixed, 20)?);
+    let flags = u16_at(fixed, 22)?;
+    let used_bytes = usize::try_from(u32_at(fixed, 24)?).map_err(|_| {
         error(
             ErrorKind::Overflow,
             24,
@@ -196,7 +222,7 @@ pub fn parse_file_record(bytes: &[u8], options: RecordParseOptions) -> Result<Fi
         ));
     }
 
-    let record_number = u64::from(u32_at(&fixed, 44)?);
+    let record_number = u64::from(u32_at(fixed, 44)?);
     if let Some(expected) = options.expected_record_number {
         if record_number != expected {
             return Err(error(
@@ -206,14 +232,15 @@ pub fn parse_file_record(bytes: &[u8], options: RecordParseOptions) -> Result<Fi
             ));
         }
     }
-    let base = FileReference::from_raw(u64_at(&fixed, 32)?);
+    let base = FileReference::from_raw(u64_at(fixed, 32)?);
     let mut record = FileRecord {
         record_number,
-        sequence: u16_at(&fixed, 16)?,
-        hard_link_count: u16_at(&fixed, 18)?,
+        sequence: u16_at(fixed, 16)?,
+        hard_link_count: u16_at(fixed, 18)?,
         in_use: flags & RECORD_IN_USE != 0,
         directory: flags & RECORD_DIRECTORY != 0,
         reparse_point: flags & RECORD_REPARSE != 0,
+        reparse_tag: None,
         base_reference: (!base.is_zero()).then_some(base),
         modified_ticks: None,
         names: Vec::new(),
@@ -221,12 +248,19 @@ pub fn parse_file_record(bytes: &[u8], options: RecordParseOptions) -> Result<Fi
         attribute_lists: Vec::new(),
         named_data_attributes: 0,
     };
+    // Deleted records do not contribute to the snapshot. Their stale
+    // attribute area may still be large and complicated, so stop after the
+    // validated header/fixups instead of parsing and allocating data that the
+    // index immediately discards.
+    if !record.in_use {
+        return Ok(record);
+    }
 
     let mut cursor = first_attribute;
     let mut attributes = 0usize;
     let mut found_end = false;
     while cursor < used_bytes {
-        let attribute_type = u32_at(&fixed, cursor)?;
+        let attribute_type = u32_at(fixed, cursor)?;
         if attribute_type == ATTRIBUTE_END {
             found_end = true;
             break;
@@ -239,7 +273,7 @@ pub fn parse_file_record(bytes: &[u8], options: RecordParseOptions) -> Result<Fi
                 "too many attributes in one record",
             ));
         }
-        let attribute_length = usize::try_from(u32_at(&fixed, cursor + 4)?).map_err(|_| {
+        let attribute_length = usize::try_from(u32_at(fixed, cursor + 4)?).map_err(|_| {
             error(
                 ErrorKind::Overflow,
                 cursor + 4,
@@ -263,7 +297,13 @@ pub fn parse_file_record(bytes: &[u8], options: RecordParseOptions) -> Result<Fi
                 "attribute extends beyond used record bytes",
             ));
         }
-        parse_attribute(&fixed[cursor..end], attribute_type, &mut record, cursor)?;
+        parse_attribute(
+            &fixed[cursor..end],
+            attribute_type,
+            &mut record,
+            cursor,
+            options.include_data_runs,
+        )?;
         cursor = end;
     }
     if !found_end {
@@ -330,6 +370,7 @@ fn parse_attribute(
     attribute_type: u32,
     record: &mut FileRecord,
     absolute_offset: usize,
+    include_data_runs: bool,
 ) -> Result<()> {
     let non_resident = byte_at(bytes, 8)? != 0;
     let name_length = usize::from(byte_at(bytes, 9)?);
@@ -375,9 +416,12 @@ fn parse_attribute(
             });
         }
         (ATTRIBUTE_DATA, true) => {
-            record
-                .data
-                .push(parse_non_resident(bytes, flags, absolute_offset)?);
+            record.data.push(parse_non_resident(
+                bytes,
+                flags,
+                absolute_offset,
+                include_data_runs,
+            )?);
         }
         (ATTRIBUTE_LIST, false) => {
             let value = resident_value(bytes, absolute_offset)?;
@@ -389,7 +433,7 @@ fn parse_attribute(
                 )?));
         }
         (ATTRIBUTE_LIST, true) => {
-            let data = parse_non_resident(bytes, flags, absolute_offset)?;
+            let data = parse_non_resident(bytes, flags, absolute_offset, include_data_runs)?;
             record.attribute_lists.push(AttributeList::NonResident {
                 lowest_vcn: data.lowest_vcn,
                 highest_vcn: data.highest_vcn,
@@ -397,7 +441,12 @@ fn parse_attribute(
                 runs: data.runs,
             });
         }
-        (ATTRIBUTE_REPARSE_POINT, _) => record.reparse_point = true,
+        (ATTRIBUTE_REPARSE_POINT, false) => {
+            let value = resident_value(bytes, absolute_offset)?;
+            record.reparse_point = true;
+            record.reparse_tag = Some(u32_at(value, 0)?);
+        }
+        (ATTRIBUTE_REPARSE_POINT, true) => record.reparse_point = true,
         _ => {}
     }
     Ok(())
@@ -421,7 +470,12 @@ fn resident_value(bytes: &[u8], absolute_offset: usize) -> Result<&[u8]> {
     )
 }
 
-fn parse_non_resident(bytes: &[u8], flags: u16, absolute_offset: usize) -> Result<DataAttribute> {
+fn parse_non_resident(
+    bytes: &[u8],
+    flags: u16,
+    absolute_offset: usize,
+    include_data_runs: bool,
+) -> Result<DataAttribute> {
     if bytes.len() < 64 {
         return Err(error(
             ErrorKind::Truncated,
@@ -439,32 +493,38 @@ fn parse_non_resident(bytes: &[u8], flags: u16, absolute_offset: usize) -> Resul
             "mapping pairs outside attribute",
         ));
     }
-    let runs = parse_mapping_pairs(&bytes[mapping_offset..], lowest_vcn).map_err(|mut err| {
-        err.offset = err
-            .offset
-            .saturating_add((absolute_offset + mapping_offset) as u64);
-        err
-    })?;
-    if let Some(last) = runs.last() {
-        let last_vcn = last
-            .vcn
-            .checked_add(last.cluster_count)
-            .and_then(|value| value.checked_sub(1))
-            .ok_or_else(|| {
-                error(
-                    ErrorKind::Overflow,
-                    absolute_offset + mapping_offset,
-                    "run VCN range overflow",
-                )
+    let runs = if include_data_runs {
+        let runs =
+            parse_mapping_pairs(&bytes[mapping_offset..], lowest_vcn).map_err(|mut err| {
+                err.offset = err
+                    .offset
+                    .saturating_add((absolute_offset + mapping_offset) as u64);
+                err
             })?;
-        if last_vcn != highest_vcn {
-            return Err(error(
-                ErrorKind::InvalidRunlist,
-                absolute_offset + 24,
-                "highest VCN does not match mapping pairs",
-            ));
+        if let Some(last) = runs.last() {
+            let last_vcn = last
+                .vcn
+                .checked_add(last.cluster_count)
+                .and_then(|value| value.checked_sub(1))
+                .ok_or_else(|| {
+                    error(
+                        ErrorKind::Overflow,
+                        absolute_offset + mapping_offset,
+                        "run VCN range overflow",
+                    )
+                })?;
+            if last_vcn != highest_vcn {
+                return Err(error(
+                    ErrorKind::InvalidRunlist,
+                    absolute_offset + 24,
+                    "highest VCN does not match mapping pairs",
+                ));
+            }
         }
-    }
+        runs
+    } else {
+        Vec::new()
+    };
     Ok(DataAttribute {
         lowest_vcn,
         highest_vcn,
@@ -767,6 +827,45 @@ mod tests {
     }
 
     #[test]
+    fn metadata_only_parse_keeps_sizes_without_materializing_runs() {
+        let mut fixture = RecordFixture::new(9, RECORD_IN_USE);
+        fixture.non_resident_data(&[0x11, 3, 100, 0x01, 2, 0x11, 1, 4, 0], 5, ATTRIBUTE_SPARSE);
+        let record = parse_file_record(
+            &fixture.finish(),
+            RecordParseOptions {
+                bytes_per_sector: SECTOR_SIZE,
+                expected_record_number: None,
+                include_data_runs: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(record.data[0].logical_bytes, 20_000);
+        assert_eq!(record.data[0].allocated_bytes, 24_576);
+        assert!(record.data[0].sparse);
+        assert!(record.data[0].runs.is_empty());
+    }
+
+    #[test]
+    fn in_place_parser_matches_wrapper_and_applies_fixups_to_owned_buffer() {
+        let mut fixture = RecordFixture::new(42, RECORD_IN_USE);
+        fixture.resident(ATTRIBUTE_FILE_NAME, &file_name(5, 1, &[b'x' as u16]), 1);
+        let original = fixture.finish();
+        let expected = parse_file_record(&original, RecordParseOptions::new(SECTOR_SIZE)).unwrap();
+        let mut owned = original.clone();
+        let actual =
+            parse_file_record_in_place(&mut owned, RecordParseOptions::new(SECTOR_SIZE)).unwrap();
+
+        assert_eq!(actual, expected);
+        assert_eq!(
+            &owned[SECTOR_SIZE - 2..SECTOR_SIZE],
+            &0x1111u16.to_le_bytes()
+        );
+        assert_eq!(&owned[RECORD_SIZE - 2..], &0x2222u16.to_le_bytes());
+        assert_ne!(owned, original);
+    }
+
+    #[test]
     fn parses_attribute_list_extension_reference() {
         let mut list = vec![0u8; 32];
         put_u32(&mut list, 0, ATTRIBUTE_DATA);
@@ -784,6 +883,20 @@ mod tests {
         assert_eq!(entries[0].record.record, 77);
         assert_eq!(entries[0].record.sequence, 11);
         assert_eq!(entries[0].lowest_vcn, 4);
+    }
+
+    #[test]
+    fn recognizes_onedrive_cloud_reparse_tag() {
+        let mut value = vec![0u8; 8];
+        put_u32(&mut value, 0, 0x9000_601a);
+        let mut fixture = RecordFixture::new(17, RECORD_IN_USE | RECORD_DIRECTORY);
+        fixture.resident(ATTRIBUTE_REPARSE_POINT, &value, 1);
+
+        let record =
+            parse_file_record(&fixture.finish(), RecordParseOptions::new(SECTOR_SIZE)).unwrap();
+        assert!(record.reparse_point);
+        assert_eq!(record.reparse_tag, Some(0x9000_601a));
+        assert!(record.is_cloud_reparse());
     }
 
     #[test]

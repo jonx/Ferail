@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::{
-    parse_attribute_list_entries, parse_file_record, AttributeList, ByteReader, DataRun, ErrorKind,
-    FileRecord, FileReference, NtfsError, NtfsGeometry, RecordParseOptions, Result,
+    AttributeList, ByteReader, DataRun, ErrorKind, FileRecord, FileReference, NtfsError,
+    NtfsGeometry, RecordParseOptions, Result, parse_attribute_list_entries, parse_file_record,
 };
 
 const ATTRIBUTE_DATA: u32 = 0x80;
@@ -204,6 +204,7 @@ pub fn bootstrap_mft<'a, R: ByteReader>(
     let options = RecordParseOptions {
         bytes_per_sector: geometry.bytes_per_sector as usize,
         expected_record_number: Some(0),
+        include_data_runs: true,
     };
     let record_zero = parse_file_record(&buffer, options)?;
     if !record_zero.in_use || record_zero.base_reference.is_some() {
@@ -273,6 +274,7 @@ pub fn bootstrap_mft<'a, R: ByteReader>(
             RecordParseOptions {
                 bytes_per_sector: geometry.bytes_per_sector as usize,
                 expected_record_number: Some(reference.record),
+                include_data_runs: true,
             },
         )?;
         if extension.sequence != reference.sequence

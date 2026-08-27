@@ -51,6 +51,7 @@ ferail-video-mpv    = { path = "crates/ferail-video-mpv" }
 # surface is pruned.
 winit       = "0.30"
 anyhow      = "1"
+rayon       = "1"
 
 # UUIDs for favorite identity (stable across sessions, separate from NodeId).
 uuid        = { version = "1", features = ["v4"] }

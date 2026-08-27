@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 
 use crate::{
@@ -8,6 +8,7 @@ use crate::{
 
 const FILE_DIRECTORY: u16 = 0x0001;
 const FILE_REPARSE: u16 = 0x0002;
+const FILE_CLOUD_REPARSE: u16 = 0x0004;
 const MAX_BATCH_ROWS: usize = 256;
 
 /// Packed base-record metadata. The single UTF-16 arena and adjacency arrays
@@ -38,6 +39,10 @@ impl FileMeta {
 
     pub fn is_reparse_point(self) -> bool {
         self.flags & FILE_REPARSE != 0
+    }
+
+    pub fn is_cloud_reparse(self) -> bool {
+        self.flags & FILE_CLOUD_REPARSE != 0
     }
 }
 
@@ -188,9 +193,17 @@ impl CompactNtfsIndex {
                     let opaque_package = file.is_directory()
                         && !options.descend_packages
                         && is_package_name(raw_name);
+                    // Raw traversal never resolves the target of a reparse
+                    // point: it follows only FILE_NAME parent references
+                    // already present in this MFT. Cloud directories have
+                    // real indexed children; junction targets do not.
+                    let has_indexed_children = !self.children_of(link.file_index).is_empty();
                     let kind = if opaque_package {
                         NeutralNodeKind::OpaquePackage
-                    } else if file.is_directory() && file.is_reparse_point() {
+                    } else if file.is_directory()
+                        && file.is_reparse_point()
+                        && !has_indexed_children
+                    {
                         NeutralNodeKind::ReparseDirectory
                     } else if file.is_directory() {
                         NeutralNodeKind::Directory
@@ -285,9 +298,6 @@ impl CompactNtfsIndex {
                 *cycles = cycles.saturating_add(1);
                 continue;
             }
-            if file.is_reparse_point() {
-                continue;
-            }
             ancestors[file_index as usize] = true;
             stack.push((file_index, true));
             for link in self.children_of(file_index).iter().rev() {
@@ -360,6 +370,7 @@ pub struct IndexBuilder {
     record_to_file: Vec<u32>,
     expected_extensions: HashMap<FileReference, u32>,
     pending_extensions: HashMap<FileReference, PendingExtension>,
+    pending_by_base: HashMap<FileReference, Vec<FileReference>>,
     stats: IndexStats,
 }
 
@@ -383,97 +394,94 @@ impl IndexBuilder {
             .skipped_unlisted_extensions
             .saturating_add(self.pending_extensions.len() as u64);
 
-        let mut by_file_and_parent: Vec<u32> = (0..self.links.len())
-            .map(|index| {
-                u32::try_from(index).map_err(|_| {
-                    NtfsError::new(
-                        ErrorKind::LimitExceeded,
-                        index as u64,
-                        "more than u32::MAX filename links",
-                    )
-                })
-            })
-            .collect::<Result<_>>()?;
-        by_file_and_parent.sort_unstable_by_key(|index| {
-            let link = self.links[*index as usize];
-            (
-                link.file_index,
-                link.parent_record,
-                link.parent_sequence,
-                link.namespace,
-            )
-        });
+        // DOS aliases can be suppressed in linear time. The old code sorted
+        // every link on the volume just to group `(file, parent)` pairs; a
+        // real-name key set expresses the same rule without an O(n log n)
+        // whole-volume sort.
+        let real_link_keys: HashSet<(u32, FileReference)> = self
+            .links
+            .iter()
+            .filter(|link| !link.is_dos_only())
+            .map(|link| (link.file_index, link.parent()))
+            .collect();
         let mut suppressed_dos = vec![false; self.links.len()];
-        let mut group_start = 0usize;
-        while group_start < by_file_and_parent.len() {
-            let first = self.links[by_file_and_parent[group_start] as usize];
-            let mut group_end = group_start + 1;
-            while group_end < by_file_and_parent.len() {
-                let candidate = self.links[by_file_and_parent[group_end] as usize];
-                if candidate.file_index != first.file_index || candidate.parent() != first.parent()
-                {
-                    break;
-                }
-                group_end += 1;
+        for (index, link) in self.links.iter().copied().enumerate() {
+            if link.is_dos_only() && real_link_keys.contains(&(link.file_index, link.parent())) {
+                suppressed_dos[index] = true;
+                self.stats.suppressed_dos_aliases =
+                    self.stats.suppressed_dos_aliases.saturating_add(1);
             }
-            let has_real_name = by_file_and_parent[group_start..group_end]
-                .iter()
-                .any(|index| !self.links[*index as usize].is_dos_only());
-            if has_real_name {
-                for index in &by_file_and_parent[group_start..group_end] {
-                    if self.links[*index as usize].is_dos_only() {
-                        suppressed_dos[*index as usize] = true;
-                        self.stats.suppressed_dos_aliases =
-                            self.stats.suppressed_dos_aliases.saturating_add(1);
-                    }
-                }
-            }
-            group_start = group_end;
         }
-        drop(by_file_and_parent);
+        drop(real_link_keys);
 
-        let mut valid_links = Vec::with_capacity(self.links.len());
+        // Counting-sort links by parent in O(files + links), then sort only
+        // each directory's own child slice by name. This preserves the exact
+        // deterministic traversal order without globally sorting millions of
+        // unrelated paths together.
+        let mut link_parents = vec![u32::MAX; self.links.len()];
+        let mut child_counts = vec![0u32; self.files.len()];
         for (link_index, link) in self.links.iter().copied().enumerate() {
+            if suppressed_dos[link_index] {
+                continue;
+            }
             let Some((parent_index, _)) = self.file(link.parent()) else {
                 self.stats.stale_or_missing_parent_links =
                     self.stats.stale_or_missing_parent_links.saturating_add(1);
                 continue;
             };
-            if suppressed_dos[link_index] {
-                continue;
-            }
-            valid_links.push((
-                parent_index,
-                u32::try_from(link_index).map_err(|_| {
+            link_parents[link_index] = parent_index;
+            child_counts[parent_index as usize] = child_counts[parent_index as usize]
+                .checked_add(1)
+                .ok_or_else(|| {
                     NtfsError::new(
                         ErrorKind::LimitExceeded,
-                        link_index as u64,
-                        "more than u32::MAX valid links",
+                        parent_index as u64,
+                        "directory has more than u32::MAX links",
                     )
-                })?,
-            ));
+                })?;
         }
-        valid_links.sort_unstable_by(|(left_parent, left_link), (right_parent, right_link)| {
-            left_parent
-                .cmp(right_parent)
-                .then_with(|| {
-                    let left = self.links[*left_link as usize];
-                    let right = self.links[*right_link as usize];
-                    self.raw_name_for_sort(left)
-                        .cmp(self.raw_name_for_sort(right))
-                })
-                .then_with(|| left_link.cmp(right_link))
-        });
 
-        let mut child_ranges = vec![ChildRange::default(); self.files.len()];
-        let mut children = Vec::with_capacity(valid_links.len());
-        for (parent, link) in valid_links {
-            let range = &mut child_ranges[parent as usize];
-            if range.length == 0 {
-                range.start = children.len() as u32;
+        let mut child_ranges = Vec::with_capacity(self.files.len());
+        let mut valid_count = 0u32;
+        for count in child_counts {
+            child_ranges.push(ChildRange {
+                start: valid_count,
+                length: count,
+            });
+            valid_count = valid_count.checked_add(count).ok_or_else(|| {
+                NtfsError::new(
+                    ErrorKind::LimitExceeded,
+                    u64::from(valid_count),
+                    "more than u32::MAX valid filename links",
+                )
+            })?;
+        }
+        let mut children = vec![0u32; valid_count as usize];
+        let mut cursors: Vec<u32> = child_ranges.iter().map(|range| range.start).collect();
+        for (link_index, parent) in link_parents.into_iter().enumerate() {
+            if parent == u32::MAX {
+                continue;
             }
-            range.length = range.length.saturating_add(1);
-            children.push(link);
+            let cursor = &mut cursors[parent as usize];
+            children[*cursor as usize] = u32::try_from(link_index).map_err(|_| {
+                NtfsError::new(
+                    ErrorKind::LimitExceeded,
+                    link_index as u64,
+                    "more than u32::MAX filename links",
+                )
+            })?;
+            *cursor += 1;
+        }
+        for range in &child_ranges {
+            let start = range.start as usize;
+            let end = start + range.length as usize;
+            children[start..end].sort_unstable_by(|left_link, right_link| {
+                let left = self.links[*left_link as usize];
+                let right = self.links[*right_link as usize];
+                self.raw_name_for_sort(left)
+                    .cmp(self.raw_name_for_sort(right))
+                    .then_with(|| left_link.cmp(right_link))
+            });
         }
         Ok(CompactNtfsIndex {
             files: self.files,
@@ -528,13 +536,15 @@ impl IndexBuilder {
             modified_ticks: record.modified_ticks.unwrap_or(0),
             sequence: record.sequence,
             flags: (u16::from(record.directory) * FILE_DIRECTORY)
-                | (u16::from(record.reparse_point) * FILE_REPARSE),
+                | (u16::from(record.reparse_point) * FILE_REPARSE)
+                | (u16::from(record.is_cloud_reparse()) * FILE_CLOUD_REPARSE),
             _reserved: 0,
         });
         self.record_to_file[record_slot] = file_index.saturating_add(1);
         self.append_names(file_index, &record.names)?;
         self.stats.base_records = self.stats.base_records.saturating_add(1);
 
+        let mut expected_for_file = Vec::new();
         for list in &record.attribute_lists {
             if let AttributeList::Resident(entries) = list {
                 for entry in entries {
@@ -542,18 +552,25 @@ impl IndexBuilder {
                         || entry.record.sequence != record.sequence
                     {
                         self.expected_extensions.insert(entry.record, file_index);
+                        expected_for_file.push(entry.record);
                     }
                 }
             }
         }
-        let expected: Vec<_> = self
-            .expected_extensions
-            .iter()
-            .filter_map(|(reference, owner)| (*owner == file_index).then_some(*reference))
-            .collect();
-        for reference in expected {
+        for reference in expected_for_file {
             if let Some(pending) = self.pending_extensions.remove(&reference) {
                 self.merge_extension(file_index, pending)?;
+            }
+        }
+        let base_reference = FileReference {
+            record: record.record_number,
+            sequence: record.sequence,
+        };
+        if let Some(references) = self.pending_by_base.remove(&base_reference) {
+            for reference in references {
+                if let Some(pending) = self.pending_extensions.remove(&reference) {
+                    self.merge_extension(file_index, pending)?;
+                }
             }
         }
         Ok(())
@@ -564,17 +581,27 @@ impl IndexBuilder {
             record: record.record_number,
             sequence: record.sequence,
         };
+        let cloud_reparse = record.is_cloud_reparse();
         let pending = PendingExtension {
             base,
             data: record.data,
             names: record.names,
+            reparse_point: record.reparse_point,
+            cloud_reparse,
         };
+        if let Some((owner, _)) = self.file(base) {
+            return self.merge_extension(owner, pending);
+        }
         if let Some(owner) = self.expected_extensions.get(&own_reference).copied() {
             let meta = self.files[owner as usize];
             if meta.reference() == base {
                 return self.merge_extension(owner, pending);
             }
         }
+        self.pending_by_base
+            .entry(base)
+            .or_default()
+            .push(own_reference);
         self.pending_extensions.insert(own_reference, pending);
         Ok(())
     }
@@ -589,6 +616,13 @@ impl IndexBuilder {
             let meta = &mut self.files[file_index as usize];
             meta.logical_bytes = primary.logical_bytes;
             meta.allocated_bytes = primary.allocated_bytes;
+        }
+        let meta = &mut self.files[file_index as usize];
+        if extension.reparse_point {
+            meta.flags |= FILE_REPARSE;
+        }
+        if extension.cloud_reparse {
+            meta.flags |= FILE_CLOUD_REPARSE;
         }
         self.append_names(file_index, &extension.names)
     }
@@ -649,6 +683,8 @@ struct PendingExtension {
     base: FileReference,
     data: Vec<DataAttribute>,
     names: Vec<FileName>,
+    reparse_point: bool,
+    cloud_reparse: bool,
 }
 
 fn primary_sizes(data: &[DataAttribute], names: &[FileName]) -> (u64, u64) {
@@ -740,6 +776,7 @@ mod tests {
             in_use: true,
             directory,
             reparse_point: reparse,
+            reparse_tag: reparse.then_some(0xa000_0003),
             base_reference: None,
             modified_ticks: Some(number * 10),
             names,
@@ -765,7 +802,6 @@ mod tests {
     fn fixture_index() -> CompactNtfsIndex {
         let root = reference(5, 1);
         let folder = reference(10, 2);
-        let reparse = reference(30, 1);
         let package = reference(60, 1);
         let mut builder = IndexBuilder::default();
         builder
@@ -786,16 +822,6 @@ mod tests {
             .unwrap();
         builder
             .push(record(30, 1, true, true, vec![name(root, "junction")], 0))
-            .unwrap();
-        builder
-            .push(record(
-                40,
-                1,
-                false,
-                false,
-                vec![name(reparse, "hidden")],
-                999,
-            ))
             .unwrap();
         builder
             .push(record(
@@ -862,7 +888,6 @@ mod tests {
                 .sum::<u64>(),
             100
         );
-        assert!(!rows.iter().any(|row| row.display_name == "hidden"));
         assert!(!rows.iter().any(|row| row.display_name == "stale"));
         let package = rows
             .iter()
@@ -890,5 +915,86 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(error.kind, ErrorKind::Cancelled);
+    }
+
+    #[test]
+    fn traversal_descends_reparse_directories_with_real_mft_children() {
+        let root = reference(5, 1);
+        let cloud = reference(10, 1);
+        let mut builder = IndexBuilder::default();
+        builder
+            .push(record(5, 1, true, false, Vec::new(), 0))
+            .unwrap();
+        let mut cloud_record = record(10, 1, true, true, vec![name(root, "cloud")], 0);
+        cloud_record.reparse_tag = Some(0x9000_601a);
+        builder.push(cloud_record).unwrap();
+        builder
+            .push(record(
+                11,
+                1,
+                false,
+                false,
+                vec![name(cloud, "online.bin")],
+                123,
+            ))
+            .unwrap();
+        builder
+            .push(record(20, 1, true, true, vec![name(root, "junction")], 0))
+            .unwrap();
+        let index = builder.finish().unwrap();
+        let mut rows = Vec::new();
+        let summary = index
+            .walk_subtree(
+                root,
+                TraversalOptions::default(),
+                || false,
+                |batch| rows.extend(batch),
+            )
+            .unwrap();
+
+        assert!(rows.iter().any(|row| row.display_name == "online.bin"));
+        assert!(rows.iter().any(|row| {
+            row.display_name == "junction" && row.kind == NeutralNodeKind::ReparseDirectory
+        }));
+        assert_eq!(summary.logical_bytes, 123);
+    }
+
+    #[test]
+    fn cloud_tag_from_extension_record_is_merged_into_base() {
+        let root = reference(5, 1);
+        let cloud = reference(10, 1);
+        let mut builder = IndexBuilder::default();
+        builder
+            .push(record(5, 1, true, false, Vec::new(), 0))
+            .unwrap();
+        builder
+            .push(record(10, 1, true, false, vec![name(root, "cloud")], 0))
+            .unwrap();
+        let mut extension = record(100, 2, false, true, Vec::new(), 0);
+        extension.base_reference = Some(cloud);
+        extension.reparse_tag = Some(0x9000_601a);
+        builder.push(extension).unwrap();
+        builder
+            .push(record(
+                11,
+                1,
+                false,
+                false,
+                vec![name(cloud, "online.bin")],
+                123,
+            ))
+            .unwrap();
+        let index = builder.finish().unwrap();
+        let mut rows = Vec::new();
+        index
+            .walk_subtree(
+                root,
+                TraversalOptions::default(),
+                || false,
+                |batch| rows.extend(batch),
+            )
+            .unwrap();
+
+        assert!(rows.iter().any(|row| row.display_name == "online.bin"));
     }
 }

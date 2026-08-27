@@ -16,7 +16,7 @@ mod runlist;
 mod stream;
 mod wire;
 
-pub use boot::{parse_boot_sector, NtfsGeometry};
+pub use boot::{NtfsGeometry, parse_boot_sector};
 pub use error::{ErrorKind, NtfsError, Result};
 pub use index::{
     CompactNtfsIndex, FileMeta, IndexBuilder, IndexStats, NameLink, NeutralNodeKind, NeutralRow,
@@ -24,12 +24,13 @@ pub use index::{
 };
 pub use reader::{ByteReader, SliceReader};
 pub use record::{
-    parse_attribute_list_entries, parse_file_record, AttributeList, AttributeListEntry,
-    DataAttribute, FileName, FileRecord, FileReference, NameNamespace, RecordParseOptions,
+    AttributeList, AttributeListEntry, DataAttribute, FileName, FileRecord, FileReference,
+    NameNamespace, RecordParseOptions, parse_attribute_list_entries, parse_file_record,
+    parse_file_record_in_place,
 };
-pub use runlist::{parse_mapping_pairs, DataRun};
-pub use stream::{bootstrap_mft, MappedStream};
+pub use runlist::{DataRun, parse_mapping_pairs};
+pub use stream::{MappedStream, bootstrap_mft};
 pub use wire::{
-    decode_frame, encode_frame, Completion, DuMessage, FailureCode, FileIdentity, Progress,
-    ScanPhase, SizingMode, StartRequest, FRAME_HEADER_BYTES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    Completion, DuMessage, FRAME_HEADER_BYTES, FailureCode, FileIdentity, MAX_FRAME_BYTES,
+    PROTOCOL_VERSION, Progress, ScanPhase, SizingMode, StartRequest, decode_frame, encode_frame,
 };

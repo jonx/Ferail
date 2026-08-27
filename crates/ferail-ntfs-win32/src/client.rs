@@ -1,32 +1,33 @@
-use std::cell::Cell;
 use std::fmt;
 use std::os::windows::ffi::OsStrExt as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use ferail_ntfs::{
-    decode_frame, encode_frame, Completion, DuMessage, FailureCode, NeutralRow, Progress,
-    SizingMode, StartRequest, PROTOCOL_VERSION,
+    Completion, DuMessage, FailureCode, NeutralRow, PROTOCOL_VERSION, Progress, SizingMode,
+    StartRequest, decode_frame, encode_frame,
 };
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
 use windows::Win32::System::Threading::{GetProcessId, TerminateProcess, WaitForSingleObject};
 use windows::Win32::UI::Shell::{
-    ShellExecuteExW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SEE_MASK_NO_CONSOLE,
-    SHELLEXECUTEINFOW,
+    SEE_MASK_NO_CONSOLE, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    ShellExecuteExW,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+use windows::core::PCWSTR;
 
-use crate::pipe::{never_cancelled, PipeError, PipeServer};
+use crate::pipe::{PipeError, PipeServer, never_cancelled};
 use crate::{file_identity, probe_fast_ntfs};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(120);
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30);
 const ABSOLUTE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
-const EXIT_GRACE: Duration = Duration::from_secs(10);
+
+static HELPER_SESSION: OnceLock<Mutex<Option<HelperSession>>> = OnceLock::new();
 
 #[derive(Clone, Debug)]
 pub struct FastNtfsRequest {
@@ -87,7 +88,6 @@ pub fn run_fast_ntfs(
     {
         return Err(ClientError::Protocol("request identity namespace"));
     }
-    let mut stream = StreamValidator::new(request.root_id, request.first_child_id);
     let probe = probe_fast_ntfs(&request.root).map_err(|_| ClientError::Platform("probe"))?;
     let (root_identity, _) =
         file_identity(&request.root).map_err(|_| ClientError::Platform("root identity"))?;
@@ -101,91 +101,127 @@ pub fn run_fast_ntfs(
         first_child_id: request.first_child_id,
     };
 
-    let server = PipeServer::create().map_err(map_pipe_start)?;
-    let child = ChildProcess::launch(&server.name)?;
-    server
-        .connect(Instant::now() + CONNECT_TIMEOUT, cancel)
-        .map_err(map_pipe_connect)?;
-    let mut pipe_pid = 0u32;
-    unsafe { GetNamedPipeClientProcessId(server.pipe.handle(), &mut pipe_pid) }
-        .map_err(|_| ClientError::Platform("pipe client identity"))?;
-    if pipe_pid == 0 || pipe_pid != child.pid {
-        child.terminate();
-        return Err(ClientError::Protocol("pipe PID authentication"));
+    let sessions = HELPER_SESSION.get_or_init(|| Mutex::new(None));
+    let mut session = sessions
+        .lock()
+        .map_err(|_| ClientError::Platform("helper session lock"))?;
+    if cancel.load(Ordering::Acquire) {
+        return Err(ClientError::Cancelled);
     }
-
-    let hello_frame = server
-        .pipe
-        .read_frame(Instant::now() + INACTIVITY_TIMEOUT, cancel)
-        .map_err(map_pipe_io)?;
-    let (hello_request, hello) =
-        decode_frame(&hello_frame, None).map_err(|_| ClientError::Protocol("Hello"))?;
-    if hello_request != 0
-        || hello
-            != (DuMessage::Hello {
-                helper_pid: child.pid,
-            })
-    {
-        child.terminate();
-        return Err(ClientError::Protocol("Hello identity"));
+    if session.is_none() {
+        *session = Some(HelperSession::connect(cancel)?);
     }
+    let result = session.as_mut().expect("session inserted").scan(
+        request.request_id,
+        start,
+        cancel,
+        &mut on_event,
+    );
+    if result.is_err() {
+        // A terminal error may leave unread protocol bytes or an unknown
+        // helper state. Drop this connection; a later explicit attempt may
+        // establish a fresh elevated session.
+        session.take();
+    }
+    result
+}
 
-    let start_frame = encode_frame(request.request_id, &DuMessage::Start(start))
-        .map_err(|_| ClientError::Protocol("Start encode"))?;
-    server
-        .pipe
-        .write_frame(&start_frame, Instant::now() + INACTIVITY_TIMEOUT, cancel)
-        .map_err(map_pipe_io)?;
+struct HelperSession {
+    server: PipeServer,
+    child: ChildProcess,
+}
 
-    let absolute_deadline = Instant::now() + ABSOLUTE_TIMEOUT;
-    let mut ready = false;
-    loop {
-        if Instant::now() >= absolute_deadline {
-            cancel_helper(&server, &child, request.request_id);
-            return Err(ClientError::Timeout("absolute scan deadline"));
+impl HelperSession {
+    fn connect(cancel: &AtomicBool) -> Result<Self, ClientError> {
+        let server = PipeServer::create().map_err(map_pipe_start)?;
+        let mut child = ChildProcess::launch(&server.name)?;
+        server
+            .connect(Instant::now() + CONNECT_TIMEOUT, cancel)
+            .map_err(map_pipe_connect)?;
+        let mut pipe_pid = 0u32;
+        unsafe { GetNamedPipeClientProcessId(server.pipe.handle(), &mut pipe_pid) }
+            .map_err(|_| ClientError::Platform("pipe client identity"))?;
+        if pipe_pid == 0 || pipe_pid != child.pid {
+            child.terminate();
+            return Err(ClientError::Protocol("pipe PID authentication"));
         }
-        let deadline = (Instant::now() + INACTIVITY_TIMEOUT).min(absolute_deadline);
-        let frame = match server.pipe.read_frame(deadline, cancel) {
-            Ok(frame) => frame,
-            Err(PipeError::Cancelled) => {
-                cancel_helper(&server, &child, request.request_id);
-                return Err(ClientError::Cancelled);
+
+        let hello_frame = server
+            .pipe
+            .read_frame(Instant::now() + INACTIVITY_TIMEOUT, cancel)
+            .map_err(map_pipe_io)?;
+        let (hello_request, hello) =
+            decode_frame(&hello_frame, None).map_err(|_| ClientError::Protocol("Hello"))?;
+        if hello_request != 0
+            || hello
+                != (DuMessage::Hello {
+                    helper_pid: child.pid,
+                })
+        {
+            child.terminate();
+            return Err(ClientError::Protocol("Hello identity"));
+        }
+        Ok(Self { server, child })
+    }
+
+    fn scan(
+        &mut self,
+        request_id: u64,
+        start: StartRequest,
+        cancel: &AtomicBool,
+        on_event: &mut impl FnMut(FastNtfsEvent),
+    ) -> Result<(), ClientError> {
+        let mut stream = StreamValidator::new(start.root_id, start.first_child_id);
+        let start_frame = encode_frame(request_id, &DuMessage::Start(start))
+            .map_err(|_| ClientError::Protocol("Start encode"))?;
+        self.server
+            .pipe
+            .write_frame(&start_frame, Instant::now() + INACTIVITY_TIMEOUT, cancel)
+            .map_err(map_pipe_io)?;
+
+        let absolute_deadline = Instant::now() + ABSOLUTE_TIMEOUT;
+        let mut ready = false;
+        loop {
+            if Instant::now() >= absolute_deadline {
+                cancel_helper(&self.server, &mut self.child, request_id);
+                return Err(ClientError::Timeout("absolute scan deadline"));
             }
-            Err(error) => {
-                child.terminate();
-                return Err(map_pipe_io(error));
-            }
-        };
-        let (_, message) = decode_frame(&frame, Some(request.request_id))
-            .map_err(|_| ClientError::Protocol("event decode"))?;
-        match message {
-            DuMessage::Ready if !ready => {
-                ready = true;
-                on_event(FastNtfsEvent::Ready);
-            }
-            DuMessage::Batch(rows) if ready => {
-                stream.accept_batch(&rows)?;
-                on_event(FastNtfsEvent::Batch(rows));
-            }
-            DuMessage::Progress(progress) if ready => {
-                on_event(FastNtfsEvent::Progress(progress));
-            }
-            DuMessage::Complete(complete) if ready => {
-                stream.accept_complete(complete)?;
-                on_event(FastNtfsEvent::Complete(complete));
-                if !child.wait(EXIT_GRACE) {
-                    child.terminate();
-                    return Err(ClientError::Timeout("helper exit"));
+            let deadline = (Instant::now() + INACTIVITY_TIMEOUT).min(absolute_deadline);
+            let frame = match self.server.pipe.read_frame(deadline, cancel) {
+                Ok(frame) => frame,
+                Err(PipeError::Cancelled) => {
+                    cancel_helper(&self.server, &mut self.child, request_id);
+                    return Err(ClientError::Cancelled);
                 }
-                return Ok(());
-            }
-            DuMessage::Failed(code) => {
-                let _ = child.wait(EXIT_GRACE);
-                return Err(ClientError::Helper(code));
-            }
-            _ => {
-                child.terminate();
-                return Err(ClientError::Protocol("message order"));
+                Err(error) => {
+                    self.child.terminate();
+                    return Err(map_pipe_io(error));
+                }
+            };
+            let (_, message) = decode_frame(&frame, Some(request_id))
+                .map_err(|_| ClientError::Protocol("event decode"))?;
+            match message {
+                DuMessage::Ready if !ready => {
+                    ready = true;
+                    on_event(FastNtfsEvent::Ready);
+                }
+                DuMessage::Batch(rows) if ready => {
+                    stream.accept_batch(&rows)?;
+                    on_event(FastNtfsEvent::Batch(rows));
+                }
+                DuMessage::Progress(progress) if ready => {
+                    on_event(FastNtfsEvent::Progress(progress));
+                }
+                DuMessage::Complete(complete) if ready => {
+                    stream.accept_complete(complete)?;
+                    on_event(FastNtfsEvent::Complete(complete));
+                    return Ok(());
+                }
+                DuMessage::Failed(code) => return Err(ClientError::Helper(code)),
+                _ => {
+                    self.child.terminate();
+                    return Err(ClientError::Protocol("message order"));
+                }
             }
         }
     }
@@ -265,8 +301,12 @@ impl StreamValidator {
 struct ChildProcess {
     handle: HANDLE,
     pid: u32,
-    terminate_on_drop: Cell<bool>,
+    terminate_on_drop: bool,
 }
+
+// SAFETY: process handles may be waited on or terminated from any thread, and
+// every access to a cached ChildProcess is serialized by HELPER_SESSION.
+unsafe impl Send for ChildProcess {}
 
 impl ChildProcess {
     fn launch(pipe_name: &str) -> Result<Self, ClientError> {
@@ -308,32 +348,32 @@ impl ChildProcess {
         Ok(Self {
             handle: info.hProcess,
             pid,
-            terminate_on_drop: Cell::new(true),
+            terminate_on_drop: true,
         })
     }
 
-    fn wait(&self, timeout: Duration) -> bool {
+    fn wait(&mut self, timeout: Duration) -> bool {
         let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
         let exited = (unsafe { WaitForSingleObject(self.handle, milliseconds) }) == WAIT_OBJECT_0;
         if exited {
-            self.terminate_on_drop.set(false);
+            self.terminate_on_drop = false;
         }
         exited
     }
 
-    fn terminate(&self) {
+    fn terminate(&mut self) {
         unsafe {
             let _ = TerminateProcess(self.handle, 1);
             let _ = WaitForSingleObject(self.handle, CANCEL_GRACE.as_millis() as u32);
         }
-        self.terminate_on_drop.set(false);
+        self.terminate_on_drop = false;
     }
 }
 
 impl Drop for ChildProcess {
     fn drop(&mut self) {
         unsafe {
-            if self.terminate_on_drop.get() {
+            if self.terminate_on_drop {
                 let _ = TerminateProcess(self.handle, 1);
                 let _ = WaitForSingleObject(self.handle, CANCEL_GRACE.as_millis() as u32);
             }
@@ -342,7 +382,7 @@ impl Drop for ChildProcess {
     }
 }
 
-fn cancel_helper(server: &PipeServer, child: &ChildProcess, request_id: u64) {
+fn cancel_helper(server: &PipeServer, child: &mut ChildProcess, request_id: u64) {
     let cancel = never_cancelled();
     if let Ok(frame) = encode_frame(request_id, &DuMessage::Cancel) {
         let _ = server
@@ -441,8 +481,10 @@ mod tests {
             best_effort_live: false,
         };
         assert!(validator.accept_complete(valid).is_ok());
-        assert!(validator
-            .accept_complete(Completion { rows: 3, ..valid })
-            .is_err());
+        assert!(
+            validator
+                .accept_complete(Completion { rows: 3, ..valid })
+                .is_err()
+        );
     }
 }
