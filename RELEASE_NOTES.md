@@ -1,55 +1,55 @@
-# Ferail 0.6.9 — Windows Shell reliability update
+# Ferail 0.7.0 — Fast NTFS Disk Usage for Windows
 
 This is a **Windows-only release**. It publishes the portable Windows x64 ZIP
 and its matching symbols archive; macOS and Linux remain on 0.6.5.
 
-## Highlights
+## Fast NTFS Disk Usage
 
-- **This PC, Recycle Bin, and connected provider/MTP containers can now be
-  browsed safely.** Pathless Windows Shell items remain in a dedicated,
-  virtualized browse-only surface and expose the official Windows menu through
-  **More…** or Shift+right-click. Normal drive and folder paths return to
-  Ferail's full filesystem engine immediately.
-- **Explorer transfer semantics are preserved.** Clipboard cut/copy and native
-  outbound drag-and-drop now negotiate Copy, Move, and Create Shortcut using
-  the same Shell formats and modifier behavior as Explorer.
-- **Windows shortcuts and launch failures behave predictably.** Directory
-  `.lnk` files navigate inside Ferail; file/application shortcuts retain their
-  arguments and working directory. Failed Open, Reveal, and Shell verbs now
-  produce actionable errors and refresh the affected folder when appropriate.
-- **Get Info is more useful.** It includes an approved, privacy-preserving
-  allow-list of Windows Shell metadata and shortcut details. Creation,
-  modification, and access dates can be edited in place; directory writes are
-  verified after Windows closes the handle so ignored changes are not reported
-  as successful.
-- **Linux/WSL locations are opt-in and disabled by default.** Ferail does not
-  discover or start WSL distributions until enabled in Settings › Files ›
-  Locations. Activation is explicit, cancellable, and no longer causes a
-  nested GPUI update crash.
-- **Shell providers are contained and background work is bounded.** Namespace
-  enumeration, property handlers, thumbnails, and icons use process-wide
-  budgets or disposable time-bounded workers, preventing one slow or faulty
-  provider from blocking Ferail's UI or taking down the process.
+- Disk Usage now offers **Fast NTFS (administrator)** for eligible local,
+  fixed NTFS volumes. It reads the MFT through a dedicated one-shot helper and
+  streams a bounded tree to the normal Disk Usage UI, avoiding a per-file walk.
+- Elevation is explicit. Ferail itself remains `asInvoker`; normal startup,
+  browsing and Portable scans never show UAC. Denying UAC, a missing helper or
+  any validation/protocol failure discards partial Fast state and starts a
+  fresh Portable scan automatically.
+- The helper authenticates its private pipe peer, independently revalidates
+  the volume and selected root, opens the volume read-only, performs one scan
+  and exits. Names, requested paths, MFT records and protocol payloads are not
+  persisted or logged.
+- Exact raw UTF-16 path components are retained for actions. Hard links are
+  charged once, reparse-point directories remain leaves, and apparent versus
+  allocated size is preserved. Results made while a volume changes are marked
+  as a best-effort snapshot.
+- Engine eligibility, active/fallback state and the remembered engine
+  preference are available in Disk Usage and Settings.
 
-## Reliability and diagnostics
+Fast NTFS is a **Windows preview in 0.7.0**. Parser, pipe, fallback, UI and
+packaging tests have passed on Windows, but the elevated disposable-VHDX and
+million-entry performance matrix is deliberately left open for an independent
+administrator-equipped tester. Portable remains available at all times.
 
-- Development builds now retire the complete GPUI window-owned graph in
-  dependency order. Closing after preview/filter use or with a popup menu open
-  no longer triggers the upstream leaked-handle assertion.
-- Virtual Shell locations never fall through to filesystem-only commands aimed
-  at the folder previously shown in the tab.
-- GPS coordinates and arbitrary Windows property blobs are never retained,
-  logged, or persisted.
+## Other improvements
+
+- Portable Windows Disk Usage now uses bounded native directory batches from
+  one handle per folder. NTFS file identities prevent hard-linked names from
+  inflating totals without opening every file.
+- NFO, SFV and common checksum sidecars receive content-aware previews and
+  cancellable, bounded verification. SFV/SHA256SUMS generation is atomic and
+  never overwrites an existing manifest.
+- Text files can be opened directly in Notepad from their context menu, and
+  long Preview/Get Info paths elide cleanly with a full-path tooltip.
 
 ## Packaging
 
 The release contains:
 
-- `Ferail-0.6.9-win-x64.zip` — unsigned portable application and CLI;
-- `Ferail-0.6.9-x64-symbols.zip` — matching PDBs and identity manifest.
+- `Ferail-0.7.0-win-x64.zip` — unsigned portable GUI, CLI and the dedicated
+  `ferail-ntfs-helper.exe`;
+- `Ferail-0.7.0-x64-symbols.zip` — matching GUI, CLI and helper PDBs plus the
+  build-identity manifest.
 
 Windows SmartScreen may warn because the build is not Authenticode-signed. The
-symbols archive is for diagnosing crash dumps and is not needed to run Ferail.
+symbols archive is only needed for diagnosing crash dumps.
 
 The full technical list is in
-[CHANGELOG.md](CHANGELOG.md#069--2026-08-26-windows-only-release).
+[CHANGELOG.md](CHANGELOG.md#070--2026-08-27-windows-only-release).

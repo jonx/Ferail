@@ -8,6 +8,35 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.0 — 2026-08-27 (Windows-only release)
+
+- **Disk Usage gains an explicit Fast NTFS engine on Windows.** Eligible local
+  fixed NTFS volumes can be scanned through a dedicated, one-shot elevated
+  helper that reads the MFT sequentially and streams bounded parent-before-
+  child batches back to the unelevated GUI. Ferail itself remains
+  `asInvoker`: startup, browsing and Portable scans never request elevation,
+  and cancelling UAC or any helper/protocol failure atomically restarts a
+  clean Portable scan. The private pipe authenticates the elevated process,
+  revalidates the volume and root identity, preserves raw UTF-16 names for
+  actions, never writes the volume, and never persists or logs names, paths or
+  raw records. Fast results account for hard links once, treat reparse
+  directories as leaves, expose apparent/allocated sizes and clearly label a
+  concurrently changing volume as a best-effort snapshot. The engine choice,
+  eligibility and active/fallback state are visible in Disk Usage and the
+  remembered preference lives in Settings. This first release is a Windows
+  preview pending the documented elevated VHDX and large-volume field matrix.
+
+- **Portable Disk Usage is faster and more accurate on Windows.** Directory
+  walks now use bounded `FileIdBothDirectoryInfo` batches from one handle per
+  folder instead of opening every child. Exact NTFS file identities prevent
+  hard-linked names from inflating totals while Unicode paths, allocation
+  sizes and the Portable fallback contract remain intact.
+
+- **Windows packaging now treats the Fast NTFS helper as part of the release
+  identity.** The portable ZIP stages the exact sibling helper; the dependency,
+  signing and byte-for-byte gates cover it, and the symbols archive contains
+  its matching PDB and manifest entry.
+
 - **Ferail now understands NFO, SFV and checksum sidecars.** Content sniffing
   distinguishes scene/Kodi/MsInfo NFO and common checksum lists; the preview
   pane decodes CP437 and UTF-16, safely reconstructs ANSI layout and colours

@@ -90,14 +90,17 @@ Windows automated evidence from this machine:
   NTFS eligibility state, Portable/Fast header controls and active-engine
   wording; normal screenshot startup showed no UAC.
 
-Still required before the 0.7.0 tag:
+The maintainer declined to repair the local administrator account policy
+(`password must be changed before first logon`) solely to exercise this path.
+Version 0.7.0 therefore ships Fast NTFS explicitly as a preview, with the
+following acceptance work delegated to an administrator-equipped tester:
 
 1. accept the explicit UAC prompt and retain aggregate output from
    `ferail-ntfs-client-diag` for a deep local subtree;
 2. compare its visible row count and apparent/allocated totals with Portable;
-3. package the exact release commit and verify the staged sibling helper, PDB
-   identity/dependencies, normal no-UAC launch, Fast UAC scan and clean helper
-   exit from the portable ZIP;
+3. verify normal no-UAC launch, a Fast UAC scan and clean helper exit from the
+   published portable ZIP (the build itself verifies the staged sibling
+   helper, PDB identity and dependencies);
 4. Hyper-V is absent on this machine, so run
    `scripts/testing/fast-ntfs-vhdx.ps1` later on a Hyper-V-capable Windows host
    for sparse/compressed/ADS/hard-link/junction/ACL/concurrent-mutation and

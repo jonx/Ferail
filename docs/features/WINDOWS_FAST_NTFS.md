@@ -19,10 +19,11 @@ helper/pipe tests, 26 Disk Usage model tests and 313 GPUI tests; one explicit
 network test ignored). The disposable adversarial VHDX recipe lives at
 `scripts/testing/fast-ntfs-vhdx.ps1`.
 
-Before publishing a build, retain evidence from the explicit UAC/helper scan
-and packaged-helper smoke test on the release artifact. Hyper-V-dependent VHDX
-and million-entry memory/performance gates remain hardware qualification, not
-claims inferred from unit tests.
+Version 0.7.0 ships this engine as a Windows preview. Before promoting it
+beyond preview, retain independent evidence from an explicit UAC/helper scan
+and packaged-helper smoke test on the release artifact. Hyper-V-dependent
+VHDX and million-entry memory/performance gates remain hardware qualification,
+not claims inferred from unit tests.
 
 V1 is for Disk Usage only. Do not route Flat View, Search, duplicate finding,
 ordinary listings or background indexing through it. Do not persist an MFT
