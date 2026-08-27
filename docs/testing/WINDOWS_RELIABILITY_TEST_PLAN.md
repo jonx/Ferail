@@ -575,7 +575,28 @@ checkboxes deliberately remain manual real-machine evidence gates.
   display name, path, PROPVARIANT or raw provider identity appears in logs or
   reports. Repaint and ordinary directory/Flat listing trigger no property I/O.
 
-### M. Privacy and failure recovery
+### M. Fast NTFS Disk Usage
+
+- [ ] `WTEST-116` Start Ferail unelevated, run Portable without UAC, then start
+  Fast. Exactly one explicit UAC prompt appears on the first Fast request;
+  scanning two more folders in the same Ferail process reuses the authenticated
+  helper without another prompt. Closing/crashing Ferail leaves no helper.
+- [ ] `WTEST-117` Compare Fast and Portable rows plus apparent/allocated totals
+  on the same local NTFS roots: ordinary folders, hard links, sparse and
+  compressed files, an ADS, a leaf junction and OneDrive Files On-Demand. The
+  current real-machine regression root has 2,844 ordinary-enumeration rows;
+  Fast must not regress to the recorded three/four-row failures.
+- [ ] `WTEST-118` Run the standalone elevated
+  `ferail-ntfs-helper.exe --diagnose <path>` and the private-pipe
+  `ferail-ntfs-client-diag.exe <path> 2`. Retain aggregate phase timings and
+  counts. The UI changes visibly through MFT reading, index construction and
+  subtree traversal instead of remaining at zero.
+- [ ] `WTEST-119` Cancel during MFT parsing and subtree streaming, inject a
+  helper exit, then retry. Partial Fast rows are discarded, Portable fallback
+  follows policy, and a later explicit Fast attempt creates one fresh session.
+  No requested path/name appears in ordinary logs or the aggregate diagnostic.
+
+### N. Privacy and failure recovery
 
 - [ ] `WTEST-120` Search logs, crash reports, helper logs, cache/database, and
   temporary directories after the media/metadata suite. No preview pixels,
@@ -648,6 +669,7 @@ Clipboard / drag:         PASS / FAIL
 Namespace / Recycle Bin:  PASS / FAIL
 WSL Linux locations:      PASS / FAIL
 Metadata / Properties:    PASS / FAIL
+Fast NTFS Disk Usage:     PASS / FAIL
 Privacy / recovery:       PASS / FAIL
 macOS/Linux regression:   PASS / FAIL
 

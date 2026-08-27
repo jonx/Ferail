@@ -8,6 +8,28 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Fast NTFS no longer appears frozen and no longer requests elevation for
+  every folder in one Ferail session.** The elevated helper stays attached to
+  its authenticated private pipe and serves subsequent scans until Ferail
+  exits; the GUI now reports MFT reading, index construction and subtree
+  traversal progress. The raw scan reads bounded 8 MiB windows, parses records
+  in parallel without per-record copies or run-list allocations, and builds
+  parent adjacency in linear time instead of sorting every volume link twice.
+
+- **Fast NTFS now handles OneDrive Files On-Demand directories as real
+  containers.** Reparse directories with actual MFT children are traversed
+  without resolving their external target, while leaf junctions remain
+  opaque and ancestor tracking still prevents corrupt cycles. Reparse tags
+  carried by NTFS extension records are retained when those records are
+  merged into their base file.
+
+- **The Fast NTFS helper has a standalone diagnostic mode.** From an elevated
+  terminal, `ferail-ntfs-helper.exe --diagnose <path>` prints aggregate volume,
+  parser, index, subtree and phase timing data without printing names or the
+  requested path. `ferail-ntfs-client-diag <path> [repeat-count]` exercises the
+  real UAC/private-pipe path and verifies that one helper serves repeated
+  requests.
+
 ## 0.7.0 — 2026-08-27 (Windows-only release)
 
 - **Disk Usage gains an explicit Fast NTFS engine on Windows.** Eligible local

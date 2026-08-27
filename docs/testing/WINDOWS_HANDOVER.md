@@ -123,6 +123,69 @@ Release evidence:
   also reported 12 OK / 0 WARN / 0 FAIL, while normal packaged GUI startup
   did not start the helper or request elevation.
 
+### 2026-08-27 — Fast NTFS live diagnosis and corrective pass
+
+The first real elevated run exposed three separate defects in the 0.7.0
+preview rather than a disk bottleneck:
+
+1. the GUI discarded every Fast progress frame, so it remained at zero while
+   the helper worked;
+2. the raw parser read and copied one 1 KiB FILE record at a time, decoded
+   unused runlists and globally sorted millions of links;
+3. Disk Usage treated every reparse directory as opaque. The tested Pictures
+   root therefore returned its two OneDrive directories and `desktop.ini`,
+   but not the 2,841 real MFT children below the cloud directories.
+
+The scanner now reads bounded 8 MiB MFT windows, parses their records in
+parallel in place, omits runlists during metadata-only scans, stops parsing
+deleted records after the validated header, and constructs DOS suppression
+and parent adjacency without whole-volume sorts. The GUI surfaces the
+ReadingRecords, BuildingIndex and Traversing phases. Reparse tags are retained
+through base/extension merging, and raw traversal descends a reparse directory
+when it has real FILE_NAME children in the MFT. It never resolves a link
+target, so ordinary junction targets remain outside the graph; ancestor
+tracking remains the cycle guard.
+
+The helper is now session-scoped rather than one-shot. The first Fast use in a
+Ferail process still requires UAC, but subsequent scans reuse the same
+authenticated pipe and elevated process. A disconnect or Ferail exit closes
+the pipe and causes the helper to exit; any terminal protocol error discards
+the cached client session. This removes the unacceptable prompt-per-folder
+behavior without elevating the GUI or installing a permanent service.
+
+Privilege was verified rather than assumed. In a medium-integrity process on
+this machine, opening the volume with `GENERIC_READ` returns access denied.
+An access-zero or attributes-only volume handle can be opened, but raw
+`ReadFile`, `FSCTL_GET_NTFS_VOLUME_DATA`, `FSCTL_ENUM_USN_DATA` and
+`FSCTL_QUERY_USN_JOURNAL` cannot be used through it. The current user token
+also has no `SeBackupPrivilege`. The raw MFT implementation therefore really
+does require an elevated boundary on supported Windows; read-only prevents
+Ferail from modifying the volume but does not waive Windows' DASD access
+check.
+
+Diagnostic commands:
+
+```powershell
+# Direct engine, from an already elevated PowerShell. Accepts the path itself.
+target\release\ferail-ntfs-helper.exe --diagnose "C:\path"
+
+# Exact GUI/helper launch path; repeat twice to confirm a single UAC/session.
+target\release\ferail-ntfs-client-diag.exe "C:\path" 2
+```
+
+The reports contain aggregate geometry, record/link/row counts and timings,
+never names or the requested path. On the 2,345,216-record C: volume, the
+pre-fix run spent about four minutes CPU-bound. The optimized release scanner
+completed MFT parsing and index construction in about 4.6 seconds and subtree
+delivery in about 0.03 seconds. A two-pass session showed one UAC only: after
+the initial credential delay, the second complete request took 5.17 seconds.
+The pre-fix Pictures result of three rows and the intermediate result of four
+rows are retained as failure evidence. Unit coverage now proves that real MFT
+children below reparse/cloud directories are traversed while an empty
+junction remains opaque; final comparison against the 2,844-row ordinary
+enumeration still needs one accepted elevated rerun because the last UAC
+validation attempt was not accepted.
+
 ### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
 
 The shared implementation is included in the sidecar feature commit and was
