@@ -569,8 +569,8 @@ pub fn import_file(window: &mut Window, cx: &mut App) {
                     let headline = tr!(
                         "Imported {language}: {translated} of {total} strings translated",
                         language = info.name,
-                        translated = report.translated,
-                        total = report.total
+                        translated = ferail_core::counts::format_count(report.translated as u64),
+                        total = ferail_core::counts::format_count(report.total as u64)
                     );
                     let details = report.has_warnings().then(|| report.details());
                     notify(Outcome::Ok { headline, details }, window, cx);

@@ -42,9 +42,11 @@ fn build_file_list_text(
         }
     }
     let count = paths.len();
+    // Pasteable spellings, not the canonicalized `\\?\` verbatim form the
+    // file list navigates with: `cd \\?\C:\x` is not a valid command.
     let text = paths
         .iter()
-        .map(|p| p.to_string_lossy())
+        .map(|p| ferail_fs_native::paths::display_path(p))
         .collect::<Vec<_>>()
         .join("\n");
     (text, count)
@@ -1063,8 +1065,8 @@ impl Shell {
                 Ok(r) => {
                     let mut msg = tr!(
                         "As administrator: {done} done \u{00b7} {failed} still failed",
-                        done = r.ok,
-                        failed = r.failures.len()
+                        done = ferail_core::counts::format_count(r.ok as u64),
+                        failed = ferail_core::counts::format_count(r.failures.len() as u64)
                     )
                     .to_string();
                     for (kind, path) in r.failures.iter().take(4) {
@@ -1246,7 +1248,7 @@ impl Shell {
         cx.write_to_clipboard(ClipboardItem::new_string(
             paths
                 .iter()
-                .map(|p| p.to_string_lossy())
+                .map(|p| ferail_fs_native::paths::display_path(p))
                 .collect::<Vec<_>>()
                 .join("\n"),
         ));
@@ -1593,7 +1595,7 @@ impl Shell {
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(
-            path.to_string_lossy().into_owned(),
+            ferail_fs_native::paths::display_path(&path),
         ));
     }
 
@@ -2708,8 +2710,8 @@ impl Shell {
                         super::error_notification(
                             tr!(
                                 "As administrator: {done} done \u{00b7} {failed} still failed",
-                                done = done,
-                                failed = r.failed.len()
+                                done = ferail_core::counts::format_count(done as u64),
+                                failed = ferail_core::counts::format_count(r.failed.len() as u64)
                             )
                             .to_string(),
                         ),

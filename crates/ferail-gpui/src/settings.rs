@@ -1340,8 +1340,8 @@ fn language_group() -> SettingGroup {
                             tr!(
                                 "{name} \u{2014} {translated} of {total} strings, {origin}",
                                 name = p.name,
-                                translated = p.translated,
-                                total = p.total,
+                                translated = ferail_core::counts::format_count(p.translated as u64),
+                                total = ferail_core::counts::format_count(p.total as u64),
                                 origin = origin
                             )
                             .to_string()

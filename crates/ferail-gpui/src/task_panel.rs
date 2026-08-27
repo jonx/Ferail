@@ -345,7 +345,7 @@ fn transfer_detail(s: &crate::tasks::TransferStats) -> String {
                 "{done} of {n} item",
                 "{done} of {n} items",
                 s.items_total,
-                done = s.items_done
+                done = ferail_core::counts::format_count(s.items_done)
             )
             .to_string(),
         );

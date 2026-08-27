@@ -268,7 +268,7 @@ pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String
                 Density::Minimal => format!("0/{filtered} \u{00B7} {size}"),
             }
         };
-        return (group_large_numbers(&label), None);
+        return (ferail_core::counts::group_digits(&label), None);
     }
     let count_label = if metrics.sizes_unavailable {
         if entries != 1 && metrics.selected_count > 0 {
@@ -322,39 +322,9 @@ pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String
         }
     });
     (
-        group_large_numbers(&count_label),
-        filtered_label.map(|label| group_large_numbers(&label)),
+        ferail_core::counts::group_digits(&count_label),
+        filtered_label.map(|label| ferail_core::counts::group_digits(&label)),
     )
-}
-
-/// Group long decimal runs using the compact separator requested by the UI
-/// (`4.138.016`). Applied after translation so plural selection and word
-/// order remain entirely locale-driven.
-fn group_large_numbers(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + text.len() / 3);
-    let mut cursor = 0;
-    while cursor < text.len() {
-        let Some(ch) = text[cursor..].chars().next() else {
-            break;
-        };
-        if !ch.is_ascii_digit() {
-            out.push(ch);
-            cursor += ch.len_utf8();
-            continue;
-        }
-        let start = cursor;
-        while cursor < text.len() && text.as_bytes()[cursor].is_ascii_digit() {
-            cursor += 1;
-        }
-        let digits = &text[start..cursor];
-        for (index, digit) in digits.bytes().enumerate() {
-            if index > 0 && (digits.len() - index) % 3 == 0 {
-                out.push('.');
-            }
-            out.push(char::from(digit));
-        }
-    }
-    out
 }
 
 /// Free-space (or read-only) wording for a density.
@@ -897,7 +867,7 @@ mod count_label_tests {
     // Deliberately *not* `use super::*`: that re-imports `gpui::*`,
     // whose glob shadows the built-in `#[test]` with gpui's own test
     // macro, and expanding that here blows the crate's recursion limit.
-    use super::{Density, StatusMetrics, count_labels, group_large_numbers};
+    use super::{Density, StatusMetrics, count_labels};
 
     fn metrics(entries: usize, total: u64, filtered: usize, filtered_bytes: u64) -> StatusMetrics {
         StatusMetrics {
@@ -918,8 +888,11 @@ mod count_label_tests {
 
     #[test]
     fn large_counts_use_grouping_dots() {
-        assert_eq!(group_large_numbers("4138016 items"), "4.138.016 items");
-        assert_eq!(group_large_numbers("999 items"), "999 items");
+        assert_eq!(
+            ferail_core::counts::group_digits("4138016 items"),
+            "4.138.016 items"
+        );
+        assert_eq!(ferail_core::counts::group_digits("999 items"), "999 items");
         let (count, _) = count_labels(&metrics(4_138_016, 0, 0, 0), Density::Full);
         assert_eq!(count, "4.138.016 items · 0 B");
     }

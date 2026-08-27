@@ -56,13 +56,13 @@ impl Shell {
             Some(match dm.progress.phase {
                 ferail_fs_native::DupePhase::Enumerating => tr!(
                     "Enumerating folders\u{2026} {folders} folders scanned \u{00B7} {images} candidate images found",
-                    folders = dm.progress.folders_scanned,
-                    images = dm.progress.images_discovered
+                    folders = ferail_core::counts::format_count(dm.progress.folders_scanned),
+                    images = ferail_core::counts::format_count(dm.progress.images_discovered)
                 ),
                 ferail_fs_native::DupePhase::Analyzing => tr!(
                     "Analyzing images\u{2026} {done} of {total}",
-                    done = dm.progress.images_analyzed,
-                    total = dm.progress.images_total
+                    done = ferail_core::counts::format_count(dm.progress.images_analyzed),
+                    total = ferail_core::counts::format_count(dm.progress.images_total)
                 ),
                 ferail_fs_native::DupePhase::Grouping => {
                     tr!("Grouping similar images\u{2026}")

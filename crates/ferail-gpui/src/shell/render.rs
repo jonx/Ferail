@@ -181,7 +181,7 @@ impl Shell {
                         "Scanning: {n} file in {dirs} folders",
                         "Scanning: {n} files in {dirs} folders",
                         flat.progress.matches as usize,
-                        dirs = flat.progress.dirs_scanned
+                        dirs = ferail_core::counts::format_count(flat.progress.dirs_scanned)
                     )
                 }
                 .to_string(),
@@ -2398,8 +2398,11 @@ impl Shell {
         // Measured, not guessed: at 990 px the "…" lost its last dot off the
         // right edge and at 1000 px it cleared, so the full grid-mode bar
         // needs ~1005. This term appears in every tier, so correcting it here
-        // shifts all the fold points together.
-        const W_BASE: f32 = 528.0; // sidebar + brand + back/fwd + filter + (?) + "…" + padding
+        // shifts all the fold points together. The version suffix beside the
+        // wordmark then widened the brand by a measured 32 logical px (ink
+        // plus its gap, read off a column profile at ui_scale 1); rounded to
+        // 34 to keep this estimate on the generous side it wants to be on.
+        const W_BASE: f32 = 562.0; // sidebar + brand + version + back/fwd + filter + (?) + "…" + padding
         const W_VIEW: f32 = 102.0; // list / grid / flat switcher — never folds
         const W_SORT: f32 = 34.0;
         const W_DESKTOP: f32 = 34.0;
@@ -2508,13 +2511,32 @@ impl Shell {
                             }),
                         )),
                 )
+                // Wordmark + build version. The version rides here and not in
+                // the OS caption because the custom TitleBar replaces the
+                // native one (see `Shell::sync_window_title`) — that caption
+                // only reaches Alt+Tab and the macOS Window menu, so it never
+                // appears in a screenshot. This wordmark does, which is the
+                // whole point: a screenshot sent in a bug report says which
+                // build it came from. Muted and a tier smaller so it reads as
+                // metadata beside the brand, not as part of it.
                 .child(
-                    div()
+                    h_flex()
                         .flex_shrink_0()
-                        .text_scale_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
-                        .child("Ferail"),
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_scale_sm()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().foreground)
+                                .child("Ferail"),
+                        )
+                        .child(
+                            div()
+                                .text_scale_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(env!("CARGO_PKG_VERSION")),
+                        ),
                 )
                 .child(
                     Button::new("nav-back")

@@ -438,20 +438,29 @@ macro_rules! trc {
 
 /// Translate a plural pair: `trn!("{n} file", "{n} files", count)`. `{n}`
 /// is filled from the count; extra `name = value` placeholders are allowed.
+///
+/// The plural category is chosen from the raw count, but `{n}` is
+/// *displayed* through [`crate::counts::format_count`] — a plural `{n}`
+/// is always a count of something, and Ferail counts run to the millions,
+/// so it reads "1.104.619 files" without every call site asking. Counts
+/// that ride in a named placeholder are not covered: format those with
+/// `format_count` yourself.
 #[macro_export]
 macro_rules! trn {
     ($one:literal, $other:literal, $n:expr $(,)?) => {{
         let __n: u64 = ($n) as u64;
+        let __shown = $crate::counts::format_count(__n);
         $crate::i18n::Text::from($crate::i18n::fill(
             &$crate::i18n::trn_raw($one, $other, __n),
-            &[("n", &__n as &dyn ::std::fmt::Display)],
+            &[("n", &__shown as &dyn ::std::fmt::Display)],
         ))
     }};
     ($one:literal, $other:literal, $n:expr, $($name:ident = $val:expr),+ $(,)?) => {{
         let __n: u64 = ($n) as u64;
+        let __shown = $crate::counts::format_count(__n);
         $crate::i18n::Text::from($crate::i18n::fill(
             &$crate::i18n::trn_raw($one, $other, __n),
-            &[("n", &__n as &dyn ::std::fmt::Display), $((stringify!($name), &$val as &dyn ::std::fmt::Display)),+],
+            &[("n", &__shown as &dyn ::std::fmt::Display), $((stringify!($name), &$val as &dyn ::std::fmt::Display)),+],
         ))
     }};
 }
@@ -468,6 +477,7 @@ macro_rules! msgid {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::counts::format_count;
     use std::collections::BTreeMap;
 
     fn pack(code: &str, pairs: &[(&str, PackValue)]) -> LanguagePack {
@@ -504,6 +514,30 @@ mod tests {
         assert_eq!(fill("{missing} stays", &[]), "{missing} stays");
         assert_eq!(fill("{{literal}} {n}", &[("n", &1)]), "{literal} 1");
         assert_eq!(fill("dangling { brace", &[]), "dangling { brace");
+    }
+
+    /// A plural count is displayed grouped, but the plural *category*
+    /// is still chosen from the raw number — "1.000 files", not
+    /// "1.000 file" and not "1000 files".
+    #[test]
+    fn plural_counts_are_displayed_grouped() {
+        assert_eq!(
+            trn!("{n} file", "{n} files", 1_204u64).to_string(),
+            "1.204 files"
+        );
+        assert_eq!(trn!("{n} file", "{n} files", 1u64).to_string(), "1 file");
+        // Named placeholders are the call site's job to format; `{n}`
+        // is not. (Real msgid — the extractor reads this file too.)
+        assert_eq!(
+            trn!(
+                "Scanning: {n} file in {dirs} folders",
+                "Scanning: {n} files in {dirs} folders",
+                12_345u64,
+                dirs = format_count(88_000)
+            )
+            .to_string(),
+            "Scanning: 12.345 files in 88.000 folders"
+        );
     }
 
     #[test]

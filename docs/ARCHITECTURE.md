@@ -341,6 +341,20 @@ translate at display time with `tr_raw` / `tr_static`.
 Full design, conventions and the translation workflow:
 [docs/features/LOCALIZATION.md](features/LOCALIZATION.md).
 
+### Counts
+
+`ferail_core::counts` is the single place that decides how a count is
+spelled: grouped with `.` every three digits (`1.104.619`), because the
+figures here reach the millions. `trn!` runs its implicit `{n}` through
+`counts::format_count`, so every plural count is grouped by construction
+and the plural category still comes from the raw number; counts in named
+placeholders (`{files}`, `{done}`, `{total}`) call `format_count` at the
+call site. `counts::group_digits` is the post-translation pass for a label assembled
+from pieces outside `tr!`, as `status_bar::count_labels` does; it groups
+every run of four or more digits, so it is only ever given short count
+phrases. Sizes stay with
+`humanize_bytes`.
+
 ## Context Menus And Native Actions
 
 Context menus use gpui-component menus where possible. Menu handlers set

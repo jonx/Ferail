@@ -139,7 +139,11 @@ impl Render for IconPickerView {
         let count_label: SharedString = if query.is_empty() {
             trn!("{n} glyph", "{n} glyphs", total)
         } else {
-            tr!("{shown} of {total}", shown = shown, total = total)
+            tr!(
+                "{shown} of {total}",
+                shown = ferail_core::counts::format_count(shown as u64),
+                total = ferail_core::counts::format_count(total as u64)
+            )
         };
         v_flex()
             .size_full()

@@ -354,8 +354,8 @@ impl Render for VerifyView {
                     } else {
                         tr!(
                             "Verifying file {current} of {total}",
-                            current = current,
-                            total = count
+                            current = ferail_core::counts::format_count(current),
+                            total = ferail_core::counts::format_count(count)
                         )
                     }))
                     .child(
@@ -515,18 +515,22 @@ impl Render for VerifyView {
                             .text_scale_xs()
                             .border_b_1()
                             .border_color(cx.theme().border)
-                            .child(div().text_color(success).child(tr!("{n} OK", n = ok)))
-                            .child(
-                                div()
-                                    .text_color(danger)
-                                    .child(tr!("{n} mismatches", n = failed)),
-                            )
-                            .child(
-                                div()
-                                    .text_color(warning)
-                                    .child(tr!("{n} missing", n = missing)),
-                            )
-                            .child(div().text_color(muted).child(tr!("{n} other", n = other)))
+                            .child(div().text_color(success).child(tr!(
+                                "{n} OK",
+                                n = ferail_core::counts::format_count(ok as u64)
+                            )))
+                            .child(div().text_color(danger).child(tr!(
+                                "{n} mismatches",
+                                n = ferail_core::counts::format_count(failed as u64)
+                            )))
+                            .child(div().text_color(warning).child(tr!(
+                                "{n} missing",
+                                n = ferail_core::counts::format_count(missing as u64)
+                            )))
+                            .child(div().text_color(muted).child(tr!(
+                                "{n} other",
+                                n = ferail_core::counts::format_count(other as u64)
+                            )))
                             .child(div().flex_1())
                             .child(
                                 Button::new("verify-filter")

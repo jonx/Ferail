@@ -581,7 +581,10 @@ impl MagicInfo {
                     parts.push("encrypted".into());
                 }
                 if let Some(n) = self.file_count {
-                    parts.push(format!("{n} files"));
+                    parts.push(format!(
+                        "{} files",
+                        ferail_core::counts::format_count(u64::from(n))
+                    ));
                 }
                 if let Some(root) = self.zip_root.as_deref() {
                     parts.push(format!("root: {root}"));
@@ -594,7 +597,10 @@ impl MagicInfo {
                     parts.push("encrypted".into());
                 }
                 if let Some(n) = self.file_count {
-                    parts.push(format!("{n} files"));
+                    parts.push(format!(
+                        "{} files",
+                        ferail_core::counts::format_count(u64::from(n))
+                    ));
                 }
                 if let Some(root) = self.zip_root.as_deref() {
                     parts.push(format!("root: {root}"));
@@ -708,13 +714,19 @@ impl MagicInfo {
             MagicType::AppJar => {
                 parts.push("Java JAR".into());
                 if let Some(n) = self.file_count {
-                    parts.push(format!("{n} files"));
+                    parts.push(format!(
+                        "{} files",
+                        ferail_core::counts::format_count(u64::from(n))
+                    ));
                 }
             }
             MagicType::AppApk => {
                 parts.push("Android APK".into());
                 if let Some(n) = self.file_count {
-                    parts.push(format!("{n} files"));
+                    parts.push(format!(
+                        "{} files",
+                        ferail_core::counts::format_count(u64::from(n))
+                    ));
                 }
             }
 

@@ -850,8 +850,8 @@ impl Render for BulkRenameView {
                     .mt_1()
                     .child(div().text_scale_xs().text_color(muted).child(tr!(
                         "{renamed} of {total} will be renamed",
-                        renamed = renamed,
-                        total = total
+                        renamed = ferail_core::counts::format_count(renamed as u64),
+                        total = ferail_core::counts::format_count(total as u64)
                     )))
                     .when(conflicts > 0, |el| {
                         el.child(div().text_scale_xs().text_color(danger).child(trn!(
@@ -1022,8 +1022,8 @@ fn apply(
                     crate::shell::error_notification(
                         tr!(
                             "Renamed {renamed} items, {failed} failed \u{2014} {detail}",
-                            renamed = renamed_count,
-                            failed = failed,
+                            renamed = ferail_core::counts::format_count(renamed_count as u64),
+                            failed = ferail_core::counts::format_count(failed as u64),
                             detail = first_error.unwrap_or_default()
                         )
                         .to_string(),

@@ -146,6 +146,34 @@ full picture. The rules:
   code-block preview font, grid thumbnails + their badges (own size axis), and
   the drag-ghost chip. Everything else is rem-relative so `ui_scale` scales it.
 
+## Counts
+
+Every count the app shows a user — files, folders, items, entries, matches,
+duplicate groups, archive members, records — is grouped with `.` every three
+digits: **1.104.619**, never `1104619`. A file manager routinely reports
+millions, and an ungrouped run of digits is unreadable at a glance.
+
+`ferail_core::counts` owns this, and there are only two things to remember:
+
+- A plural `trn!` needs nothing. Its implicit `{n}` is displayed through
+  `counts::format_count` by the macro itself, so
+  `trn!("{n} file", "{n} files", n)` is already grouped. Never pass
+  `n = …` to override it — `fill` takes the first binding, and yours is
+  second.
+- A count in a **named** placeholder or a raw `format!` is yours to
+  format: `tr!("{files} files", files = counts::format_count(n))`. This
+  is the preferred form whenever you have the choice, because it groups
+  exactly the number you meant.
+
+`counts::group_digits` is the escape hatch for a finished label assembled
+from pieces outside `tr!` — what `status_bar::count_labels` does with its
+`"3/12 · 1.0 KB"` compositions. It groups *every* run of four or more
+digits in the text, so never hand it a string carrying a path, file name,
+hash, year, or version.
+
+Sizes, durations, percentages, coordinates and version numbers are not
+counts — leave them to `humanize_bytes` and friends.
+
 ## Where To Document Work
 
 - Current architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -231,5 +259,7 @@ Before finishing code changes:
 - If the change adds or rewrites user-visible text, regenerate the English
   catalog, translate the new entries in both bundled language packs, and run
   the i18n tests (see [Localization](#localization)).
+- If the change displays a count of anything, group it (see
+  [Counts](#counts)).
 - If a user could notice the change, add a [CHANGELOG.md](CHANGELOG.md) entry
   under `## Unreleased` in the same commit (see [Changelog](#changelog)).

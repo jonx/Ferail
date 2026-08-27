@@ -39,6 +39,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [OPEN_WITH.md](OPEN_WITH.md) | Partial + study | System handler enumeration (LaunchServices / `SHAssocEnumHandlers` / freedesktop MIME) ships behind a warm off-thread cache; user-defined custom tools, an "Other…" app chooser, "Always Open With", and multi-selection support are designed but unbuilt. |
 | [POWER.md](POWER.md) | Shipped with follow-ups | macOS sleep/wake handling, transfer idle-sleep prevention, and Windows/Linux shell surfaces exist; Windows display events and Power Request API are still deferred. |
 | [PREVIEW.md](PREVIEW.md) | Shipped with follow-ups | Info pane, Quick Look thumbnails, inline text/Markdown/code preview, caches, scroll chaining, and viewer handoff ship; audio/archive providers and true cancellation remain open. |
+| [PRIVATE_MODE.md](PRIVATE_MODE.md) | Planned | Session-only, process-global capture lock: deterministic private presentation, content/metadata masking, default-deny interaction gate, and privacy-on-by-default screenshot harness. |
 | [SCREENSHOTS.md](SCREENSHOTS.md) | Shipped with follow-ups | Headless screenshot CLI and simulated UI states ship; deterministic fixture coverage and a few deferred flags remain open. |
 | [SEARCH.md](SEARCH.md) | Shipped with follow-ups | In-folder filter, recursive walker, Spotlight/global search, streaming results, cancellation, and task integration ship; filters/operators and Linux/Windows indexers remain open. |
 | [SIDECARS.md](SIDECARS.md) | Shipped with follow-ups | Content-first NFO/DIZ recognition, CP437/ANSI/Kodi preview, safe SFV/checksum verification and generation, and a memory-only folder sidecar card ship; compact million-entry parsing/results and richer report actions remain. |
@@ -131,6 +132,8 @@ keep the UI off the I/O path.
 - [ICONS.md](ICONS.md) — every icon's source, attribution, and command mapping,
   plus the process for adding new ones. **Update it whenever you add, move, or
   repurpose an icon.**
+- [PRIVATE_MODE.md](PRIVATE_MODE.md) — capture-safe presentation and a
+  process-global interaction lock for screenshots of real sessions.
 
 ## Porting & verification
 

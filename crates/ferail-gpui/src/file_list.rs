@@ -158,7 +158,7 @@ impl Render for DragBadge {
                     .text_color(gpui::white())
                     .text_scale_xs()
                     .font_weight(FontWeight::BOLD)
-                    .child(format!("{}", self.count)),
+                    .child(ferail_core::counts::format_count(self.count as u64)),
             );
             // Name list: the first GHOST_NAME_CAP, then a "+N more" line.
             let shown = self.names.len().min(GHOST_NAME_CAP);

@@ -56,6 +56,7 @@ gpui::actions!(
     ]
 );
 
+use ferail_core::counts::format_count;
 use ferail_core::{EnumerationError, NodeId};
 #[cfg(target_os = "windows")]
 use ferail_disk_usage::classify_extension;
@@ -1087,14 +1088,14 @@ impl DiskUsageView {
                 tr!(
                     "Reading NTFS metadata… {percent}% · {completed} / {total} records",
                     percent = percent,
-                    completed = progress.completed,
-                    total = progress.total
+                    completed = format_count(progress.completed),
+                    total = format_count(progress.total)
                 )
                 .to_string()
             }
             ferail_ntfs::ScanPhase::BuildingIndex => tr!(
                 "Building NTFS index… {live} live records",
-                live = progress.live_records
+                live = format_count(progress.live_records)
             )
             .to_string(),
             ferail_ntfs::ScanPhase::Traversing => tr!("Reading the selected folder…").to_string(),
@@ -1109,8 +1110,10 @@ impl DiskUsageView {
             ferail_fs_native::paths::display_path(&self.root_path)
         };
         let scanned = humanize_bytes(self.stats.bytes_scanned);
-        let files = self.stats.files_scanned;
-        let folders = self.stats.dirs_scanned;
+        // Counts a scan reports run into the millions; group every one of
+        // them the way the status bar does (`ferail_core::counts`).
+        let files = format_count(self.stats.files_scanned);
+        let folders = format_count(self.stats.dirs_scanned);
         let skipped = self.stats.dirs_skipped;
         let scanning = !self.scan_complete;
         // A failed scan must say so — it used to store the error and
@@ -1623,7 +1626,14 @@ impl DiskUsageView {
                         size_for_mode(node.size_bytes, node.allocated_bytes, self.size_mode)
                     })
                     .sum();
-                Some(tr!("{n} selected  {size}", n = n, size = humanize_bytes(total)).to_string())
+                Some(
+                    tr!(
+                        "{n} selected  {size}",
+                        n = format_count(n as u64),
+                        size = humanize_bytes(total)
+                    )
+                    .to_string(),
+                )
             }
         }
         .or_else(|| {
@@ -1999,7 +2009,7 @@ impl DiskUsageView {
                 Notification::info(tr!(
                     "Showing info for the first {cap} of {total} items.",
                     cap = GET_INFO_CAP,
-                    total = paths.len()
+                    total = format_count(paths.len() as u64)
                 )),
                 cx,
             );
@@ -2052,7 +2062,7 @@ impl DiskUsageView {
         }
         let text = items
             .iter()
-            .map(|(p, _, _)| p.display().to_string())
+            .map(|(p, _, _)| ferail_fs_native::paths::display_path(p))
             .collect::<Vec<_>>()
             .join("\n");
         crate::platform_shell::copy_to_clipboard(&text);
@@ -2118,8 +2128,8 @@ impl DiskUsageView {
                         crate::shell::error_notification(
                             tr!(
                                 "Trashed {ok}, {failed} failed \u{2014} {detail}",
-                                ok = ok,
-                                failed = failed.len(),
+                                ok = format_count(ok as u64),
+                                failed = format_count(failed.len() as u64),
                                 detail = failed.first().cloned().unwrap_or_default()
                             )
                             .to_string(),

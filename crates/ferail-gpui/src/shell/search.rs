@@ -597,7 +597,7 @@ impl Shell {
                             "Scanning: {n} file in {dirs} folders",
                             "Scanning: {n} files in {dirs} folders",
                             stats.matches as usize,
-                            dirs = stats.dirs_scanned
+                            dirs = ferail_core::counts::format_count(stats.dirs_scanned)
                         )
                         .to_string(),
                     );

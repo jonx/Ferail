@@ -1113,21 +1113,21 @@ pub fn humanize_bytes(bytes: u64) -> String {
 }
 
 /// One-line summary of a folder's recursive contents for the file
-/// list's Description column, e.g. `"1,204 files · 88 folders"`. Both
+/// list's Description column, e.g. `"1.204 files · 88 folders"`. Both
 /// counts come from the same walk that computed the folder's recursive
 /// size, so they describe exactly the entries that total covers. Counts
-/// are grouped with thousands separators and singularised ("1 file");
-/// a folder with only files or only sub-folders drops the empty half,
-/// and a truly empty folder returns `"Empty"`.
+/// are grouped with the app-wide `.` separator and singularised
+/// ("1 file"); a folder with only files or only sub-folders drops the
+/// empty half, and a truly empty folder returns `"Empty"`.
 pub fn folder_contents_summary(file_count: u64, dir_count: u64) -> String {
-    // `{count}` (not the implicit `{n}`) so the number keeps its thousands
+    // `{count}` (not the implicit `{n}`) so the number keeps its digit
     // grouping; the plural category is still chosen from the raw count.
     fn files(n: u64) -> ferail_core::i18n::Text {
         trn!(
             "{count} file",
             "{count} files",
             n,
-            count = group_thousands(n)
+            count = ferail_core::counts::format_count(n)
         )
     }
     fn folders(n: u64) -> ferail_core::i18n::Text {
@@ -1135,7 +1135,7 @@ pub fn folder_contents_summary(file_count: u64, dir_count: u64) -> String {
             "{count} folder",
             "{count} folders",
             n,
-            count = group_thousands(n)
+            count = ferail_core::counts::format_count(n)
         )
     }
     match (file_count, dir_count) {
@@ -1144,20 +1144,6 @@ pub fn folder_contents_summary(file_count: u64, dir_count: u64) -> String {
         (0, d) => folders(d).into_string(),
         (f, d) => format!("{} \u{b7} {}", files(f), folders(d)),
     }
-}
-
-/// Render `n` with `,` thousands separators (`12345` → `"12,345"`).
-fn group_thousands(n: u64) -> String {
-    let digits = n.to_string();
-    let len = digits.len();
-    let mut out = String::with_capacity(len + len / 3);
-    for (i, ch) in digits.char_indices() {
-        if i > 0 && (len - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
 }
 
 #[cfg(test)]
@@ -1214,21 +1200,11 @@ mod tests {
             folder_contents_summary(128, 12),
             "128 files \u{b7} 12 folders"
         );
-        // Thousands grouping on large trees.
+        // Digit grouping on large trees, app-wide `.` separator.
         assert_eq!(
             folder_contents_summary(1_204, 88),
-            "1,204 files \u{b7} 88 folders"
+            "1.204 files \u{b7} 88 folders"
         );
-    }
-
-    #[test]
-    fn group_thousands_boundaries() {
-        assert_eq!(group_thousands(0), "0");
-        assert_eq!(group_thousands(7), "7");
-        assert_eq!(group_thousands(999), "999");
-        assert_eq!(group_thousands(1_000), "1,000");
-        assert_eq!(group_thousands(12_345), "12,345");
-        assert_eq!(group_thousands(1_234_567), "1,234,567");
     }
 
     #[test]

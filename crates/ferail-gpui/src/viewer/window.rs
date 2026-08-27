@@ -2450,7 +2450,11 @@ impl ViewerWindow {
 
     fn toolbar(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
         let count = self.playlist.len();
-        let counter = format!("{} / {}", (self.index + 1).min(count), count);
+        let counter = format!(
+            "{} / {}",
+            ferail_core::counts::format_count((self.index + 1).min(count) as u64),
+            ferail_core::counts::format_count(count as u64)
+        );
         let zoom_label = self
             .content_dims()
             .map(|img| {

@@ -518,8 +518,8 @@ pub(crate) fn file_op_failure_report(
         "{operation}: {done} of {total} done \u{00b7} {n} failed",
         failed.len(),
         operation = operation,
-        done = done,
-        total = total
+        done = ferail_core::counts::format_count(done as u64),
+        total = ferail_core::counts::format_count(total as u64)
     )
     .to_string();
     for e in failed.iter().take(SHOW) {

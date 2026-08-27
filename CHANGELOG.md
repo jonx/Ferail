@@ -8,6 +8,34 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Large counts are readable everywhere, not just in the footer.** The
+  status bar already grouped its figures — "1.104.619 items" — but
+  everywhere else a big number arrived as one unbroken run of digits:
+  Disk Usage's header ("1104619 files, 743.4 GB"), the Flat View and
+  duplicate-scan tab subtitles, background-task labels, copy/move/trash
+  notifications, the checksum verifier's OK/mismatch tallies, the
+  image viewer's position counter, the similar-images scan progress,
+  and an archive's member count. Every count Ferail shows is now
+  grouped the same way, in every language.
+
+- **Folder contents use the same separator as everything else.** The
+  Description column's recursive rollup grouped with commas —
+  "1,204 files · 88 folders" — the one place that disagreed with the
+  status bar. It now reads "1.204 files · 88 folders".
+
+- **Windows: copied paths no longer start with `\\?\`.** Copy File List,
+  Copy Path and Disk Usage's Copy Paths pasted the extended-length spelling
+  Windows returns when Ferail resolves a folder — `\\?\C:\opg\scene\…`
+  instead of `C:\opg\scene\…` — which most shells and apps reject
+  (`cd '\\?\C:\opg\scene'` is not a valid command). They now copy the
+  ordinary drive-letter form, and network locations paste as `\\server\share\…`.
+
+- **The app version now sits next to the Ferail name in the toolbar.** Ferail
+  draws its own title bar, so the window caption the OS knows about never
+  appears on screen — a screenshot could not say which build it came from.
+  The version is now shown, muted, beside the wordmark, so a screenshot sent
+  in a bug report carries it.
+
 ## 0.7.2 — 2026-08-27
 
 This is the first all-platform release since 0.6.5. It brings the accumulated
