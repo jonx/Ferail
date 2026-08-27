@@ -4,15 +4,21 @@ use std::os::windows::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use ferail_ntfs::{parse_boot_sector, ByteReader, NtfsError, NtfsGeometry, Result as NtfsResult};
+use ferail_ntfs::{
+    parse_boot_sector, ByteReader, FileIdentity, NtfsError, NtfsGeometry, Result as NtfsResult,
+};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, GetDriveTypeW, GetVolumeInformationW, GetVolumeNameForVolumeMountPointW,
-    GetVolumePathNameW, ReadFile, SetFilePointerEx, FILE_BEGIN, FILE_FLAG_SEQUENTIAL_SCAN,
+    CreateFileW, FileIdInfo, GetDriveTypeW, GetFileInformationByHandleEx, GetVolumeInformationW,
+    GetVolumeNameForVolumeMountPointW, GetVolumePathNameW, ReadFile, SetFilePointerEx, FILE_BEGIN,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_SEQUENTIAL_SCAN, FILE_ID_INFO, FILE_READ_ATTRIBUTES,
     FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
-use windows::Win32::System::Ioctl::{FSCTL_GET_NTFS_VOLUME_DATA, NTFS_VOLUME_DATA_BUFFER};
+use windows::Win32::System::Ioctl::{
+    FSCTL_GET_NTFS_VOLUME_DATA, FSCTL_QUERY_USN_JOURNAL, NTFS_VOLUME_DATA_BUFFER,
+    USN_JOURNAL_DATA_V0,
+};
 use windows::Win32::System::WindowsProgramming::DRIVE_FIXED;
 use windows::Win32::System::IO::DeviceIoControl;
 
@@ -212,6 +218,68 @@ impl RawVolumeReader {
     pub const fn geometry(&self) -> RawNtfsGeometry {
         self.geometry
     }
+
+    /// Returns journal identity/cursor when the volume has a USN journal.
+    /// Absence is a supported state and is represented as `None`.
+    pub fn journal_position(&self) -> Option<(u64, i64)> {
+        let mut data = USN_JOURNAL_DATA_V0::default();
+        let mut returned = 0u32;
+        unsafe {
+            DeviceIoControl(
+                self.handle.0,
+                FSCTL_QUERY_USN_JOURNAL,
+                None,
+                0,
+                Some((&mut data as *mut USN_JOURNAL_DATA_V0).cast()),
+                std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32,
+                Some(&mut returned),
+                None,
+            )
+        }
+        .ok()?;
+        (returned >= std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32)
+            .then_some((data.UsnJournalID, data.NextUsn))
+    }
+}
+
+/// Opens a directory/file without reading its contents and returns the stable
+/// volume/file identity used in the authenticated Start frame, plus the NTFS
+/// record number encoded by the filesystem in the low 48 bits.
+pub fn file_identity(path: &Path) -> Result<(FileIdentity, u64)> {
+    let wide = wide_nul(path.as_os_str())?;
+    let share = FILE_SHARE_MODE(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0);
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            FILE_READ_ATTRIBUTES.0,
+            share,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    }
+    .map_err(|error| RawVolumeError::Win32("open root identity", error))?;
+    let handle = OwnedHandle(handle);
+    let mut info = FILE_ID_INFO::default();
+    unsafe {
+        GetFileInformationByHandleEx(
+            handle.0,
+            FileIdInfo,
+            (&mut info as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    }
+    .map_err(|error| RawVolumeError::Win32("read root identity", error))?;
+    let file_id = info.FileId.Identifier;
+    let reference = u64::from_le_bytes(file_id[..8].try_into().expect("FILE_ID prefix"));
+    Ok((
+        FileIdentity {
+            volume_serial: info.VolumeSerialNumber,
+            file_id,
+        },
+        reference & 0x0000_ffff_ffff_ffff,
+    ))
 }
 
 impl ByteReader for RawVolumeReader {

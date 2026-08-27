@@ -2225,6 +2225,7 @@ name = "ferail-ntfs-win32"
 version = "0.6.9"
 dependencies = [
  "ferail-ntfs",
+ "uuid",
  "windows 0.58.0",
 ]
 

@@ -1,0 +1,318 @@
+use std::cell::Cell;
+use std::fmt;
+use std::os::windows::ffi::OsStrExt as _;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use ferail_ntfs::{
+    decode_frame, encode_frame, Completion, DuMessage, FailureCode, NeutralRow, Progress,
+    SizingMode, StartRequest, PROTOCOL_VERSION,
+};
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
+use windows::Win32::System::Threading::{GetProcessId, TerminateProcess, WaitForSingleObject};
+use windows::Win32::UI::Shell::{
+    ShellExecuteExW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SEE_MASK_NO_CONSOLE,
+    SHELLEXECUTEINFOW,
+};
+use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+use crate::pipe::{never_cancelled, PipeError, PipeServer};
+use crate::{file_identity, probe_fast_ntfs};
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(120);
+const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30);
+const ABSOLUTE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const CANCEL_GRACE: Duration = Duration::from_secs(5);
+const EXIT_GRACE: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Debug)]
+pub struct FastNtfsRequest {
+    pub root: PathBuf,
+    pub sizing_mode: SizingMode,
+    pub descend_packages: bool,
+    pub root_id: u64,
+    pub first_child_id: u64,
+    pub request_id: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FastNtfsEvent {
+    Ready,
+    Batch(Vec<NeutralRow>),
+    Progress(Progress),
+    Complete(Completion),
+}
+
+#[derive(Debug)]
+pub enum ClientError {
+    Cancelled,
+    UacCancelled,
+    HelperMissing,
+    Timeout(&'static str),
+    Protocol(&'static str),
+    Helper(FailureCode),
+    Platform(&'static str),
+}
+
+impl fmt::Display for ClientError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cancelled => f.write_str("Fast NTFS cancelled"),
+            Self::UacCancelled => f.write_str("Fast NTFS elevation was declined"),
+            Self::HelperMissing => f.write_str("Fast NTFS helper is missing"),
+            Self::Timeout(phase) => write!(f, "Fast NTFS timed out during {phase}"),
+            Self::Protocol(phase) => write!(f, "Fast NTFS protocol error during {phase}"),
+            Self::Helper(code) => write!(f, "Fast NTFS helper failed: {code:?}"),
+            Self::Platform(phase) => write!(f, "Fast NTFS platform failure during {phase}"),
+        }
+    }
+}
+
+impl std::error::Error for ClientError {}
+
+pub fn run_fast_ntfs(
+    request: FastNtfsRequest,
+    cancel: &AtomicBool,
+    mut on_event: impl FnMut(FastNtfsEvent),
+) -> Result<(), ClientError> {
+    if cancel.load(Ordering::Acquire) {
+        return Err(ClientError::Cancelled);
+    }
+    let probe = probe_fast_ntfs(&request.root).map_err(|_| ClientError::Platform("probe"))?;
+    let (root_identity, _) =
+        file_identity(&request.root).map_err(|_| ClientError::Platform("root identity"))?;
+    let start = StartRequest {
+        volume_guid: probe.volume_guid,
+        root: request.root.as_os_str().encode_wide().collect(),
+        root_identity,
+        sizing_mode: request.sizing_mode,
+        descend_packages: request.descend_packages,
+        root_id: request.root_id,
+        first_child_id: request.first_child_id,
+    };
+
+    let server = PipeServer::create().map_err(map_pipe_start)?;
+    let child = ChildProcess::launch(&server.name)?;
+    server
+        .connect(Instant::now() + CONNECT_TIMEOUT, cancel)
+        .map_err(map_pipe_connect)?;
+    let mut pipe_pid = 0u32;
+    unsafe { GetNamedPipeClientProcessId(server.pipe.handle(), &mut pipe_pid) }
+        .map_err(|_| ClientError::Platform("pipe client identity"))?;
+    if pipe_pid == 0 || pipe_pid != child.pid {
+        child.terminate();
+        return Err(ClientError::Protocol("pipe PID authentication"));
+    }
+
+    let hello_frame = server
+        .pipe
+        .read_frame(Instant::now() + INACTIVITY_TIMEOUT, cancel)
+        .map_err(map_pipe_io)?;
+    let (hello_request, hello) =
+        decode_frame(&hello_frame, None).map_err(|_| ClientError::Protocol("Hello"))?;
+    if hello_request != 0
+        || hello
+            != (DuMessage::Hello {
+                helper_pid: child.pid,
+            })
+    {
+        child.terminate();
+        return Err(ClientError::Protocol("Hello identity"));
+    }
+
+    let start_frame = encode_frame(request.request_id, &DuMessage::Start(start))
+        .map_err(|_| ClientError::Protocol("Start encode"))?;
+    server
+        .pipe
+        .write_frame(&start_frame, Instant::now() + INACTIVITY_TIMEOUT, cancel)
+        .map_err(map_pipe_io)?;
+
+    let absolute_deadline = Instant::now() + ABSOLUTE_TIMEOUT;
+    let mut ready = false;
+    loop {
+        if Instant::now() >= absolute_deadline {
+            cancel_helper(&server, &child, request.request_id);
+            return Err(ClientError::Timeout("absolute scan deadline"));
+        }
+        let deadline = (Instant::now() + INACTIVITY_TIMEOUT).min(absolute_deadline);
+        let frame = match server.pipe.read_frame(deadline, cancel) {
+            Ok(frame) => frame,
+            Err(PipeError::Cancelled) => {
+                cancel_helper(&server, &child, request.request_id);
+                return Err(ClientError::Cancelled);
+            }
+            Err(error) => {
+                child.terminate();
+                return Err(map_pipe_io(error));
+            }
+        };
+        let (_, message) = decode_frame(&frame, Some(request.request_id))
+            .map_err(|_| ClientError::Protocol("event decode"))?;
+        match message {
+            DuMessage::Ready if !ready => {
+                ready = true;
+                on_event(FastNtfsEvent::Ready);
+            }
+            DuMessage::Batch(rows) if ready => on_event(FastNtfsEvent::Batch(rows)),
+            DuMessage::Progress(progress) if ready => {
+                on_event(FastNtfsEvent::Progress(progress));
+            }
+            DuMessage::Complete(complete) if ready => {
+                on_event(FastNtfsEvent::Complete(complete));
+                if !child.wait(EXIT_GRACE) {
+                    child.terminate();
+                    return Err(ClientError::Timeout("helper exit"));
+                }
+                return Ok(());
+            }
+            DuMessage::Failed(code) => {
+                let _ = child.wait(EXIT_GRACE);
+                return Err(ClientError::Helper(code));
+            }
+            _ => {
+                child.terminate();
+                return Err(ClientError::Protocol("message order"));
+            }
+        }
+    }
+}
+
+struct ChildProcess {
+    handle: HANDLE,
+    pid: u32,
+    terminate_on_drop: Cell<bool>,
+}
+
+impl ChildProcess {
+    fn launch(pipe_name: &str) -> Result<Self, ClientError> {
+        let mut helper = std::env::current_exe().map_err(|_| ClientError::HelperMissing)?;
+        helper.set_file_name("ferail-ntfs-helper.exe");
+        if !helper.is_file() {
+            return Err(ClientError::HelperMissing);
+        }
+        let parameters = format!("{} {}", PROTOCOL_VERSION, pipe_name);
+        let helper_w: Vec<u16> = helper.as_os_str().encode_wide().chain(Some(0)).collect();
+        let parameters_w: Vec<u16> = parameters.encode_utf16().chain(Some(0)).collect();
+        let verb_w: Vec<u16> = "runas".encode_utf16().chain(Some(0)).collect();
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NO_CONSOLE | SEE_MASK_NOASYNC,
+            lpVerb: PCWSTR(verb_w.as_ptr()),
+            lpFile: PCWSTR(helper_w.as_ptr()),
+            lpParameters: PCWSTR(parameters_w.as_ptr()),
+            nShow: SW_HIDE.0,
+            ..Default::default()
+        };
+        unsafe { ShellExecuteExW(&mut info) }.map_err(|error| {
+            if error.code() == ERROR_CANCELLED.to_hresult() {
+                ClientError::UacCancelled
+            } else {
+                ClientError::Platform("launch helper")
+            }
+        })?;
+        if info.hProcess.is_invalid() {
+            return Err(ClientError::Platform("missing helper process handle"));
+        }
+        let pid = unsafe { GetProcessId(info.hProcess) };
+        if pid == 0 {
+            unsafe {
+                let _ = CloseHandle(info.hProcess);
+            }
+            return Err(ClientError::Platform("helper PID"));
+        }
+        Ok(Self {
+            handle: info.hProcess,
+            pid,
+            terminate_on_drop: Cell::new(true),
+        })
+    }
+
+    fn wait(&self, timeout: Duration) -> bool {
+        let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+        let exited = (unsafe { WaitForSingleObject(self.handle, milliseconds) }) == WAIT_OBJECT_0;
+        if exited {
+            self.terminate_on_drop.set(false);
+        }
+        exited
+    }
+
+    fn terminate(&self) {
+        unsafe {
+            let _ = TerminateProcess(self.handle, 1);
+            let _ = WaitForSingleObject(self.handle, CANCEL_GRACE.as_millis() as u32);
+        }
+        self.terminate_on_drop.set(false);
+    }
+}
+
+impl Drop for ChildProcess {
+    fn drop(&mut self) {
+        unsafe {
+            if self.terminate_on_drop.get() {
+                let _ = TerminateProcess(self.handle, 1);
+                let _ = WaitForSingleObject(self.handle, CANCEL_GRACE.as_millis() as u32);
+            }
+            let _ = CloseHandle(self.handle);
+        }
+    }
+}
+
+fn cancel_helper(server: &PipeServer, child: &ChildProcess, request_id: u64) {
+    let cancel = never_cancelled();
+    if let Ok(frame) = encode_frame(request_id, &DuMessage::Cancel) {
+        let _ = server
+            .pipe
+            .write_frame(&frame, Instant::now() + Duration::from_secs(2), &cancel);
+    }
+    if !child.wait(CANCEL_GRACE) {
+        child.terminate();
+    }
+}
+
+fn map_pipe_start(error: PipeError) -> ClientError {
+    match error {
+        PipeError::Timeout => ClientError::Timeout("pipe creation"),
+        PipeError::Cancelled => ClientError::Cancelled,
+        _ => ClientError::Platform("pipe creation"),
+    }
+}
+
+fn map_pipe_connect(error: PipeError) -> ClientError {
+    match error {
+        PipeError::Timeout => ClientError::Timeout("helper connection"),
+        PipeError::Cancelled => ClientError::Cancelled,
+        _ => ClientError::Platform("helper connection"),
+    }
+}
+
+fn map_pipe_io(error: PipeError) -> ClientError {
+    match error {
+        PipeError::Timeout => ClientError::Timeout("pipe inactivity"),
+        PipeError::Cancelled => ClientError::Cancelled,
+        PipeError::InvalidFrame => ClientError::Protocol("frame bounds"),
+        PipeError::Disconnected | PipeError::Win32(_, _) => {
+            ClientError::Platform("private pipe I/O")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helper_parameters_contain_no_requested_path() {
+        let pipe = r"\\.\pipe\Ferail.FastNtfs.0123456789abcdef";
+        let parameters = format!("{} {}", PROTOCOL_VERSION, pipe);
+        assert_eq!(parameters, format!("1 {pipe}"));
+        assert!(!parameters.contains(":"));
+    }
+
+    #[test]
+    fn timeout_wait_result_is_not_success() {
+        assert_ne!(windows::Win32::Foundation::WAIT_TIMEOUT, WAIT_OBJECT_0);
+    }
+}

@@ -122,6 +122,12 @@ impl CompactNtfsIndex {
         (meta.sequence == reference.sequence).then_some((index, meta))
     }
 
+    pub fn file_by_record_number(&self, record: u64) -> Option<(u32, &FileMeta)> {
+        let slot = usize::try_from(record).ok()?;
+        let index = self.record_to_file.get(slot)?.checked_sub(1)?;
+        Some((index, self.files.get(index as usize)?))
+    }
+
     pub fn raw_name(&self, link: NameLink) -> &[u16] {
         let start = link.name_offset as usize;
         let end = start.saturating_add(link.name_length as usize);
