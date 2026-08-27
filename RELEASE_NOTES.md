@@ -23,10 +23,8 @@ and its matching symbols archive; macOS and Linux remain on 0.6.5.
 - Engine eligibility, active/fallback state and the remembered engine
   preference are available in Disk Usage and Settings.
 
-Fast NTFS is a **Windows preview in 0.7.0**. Parser, pipe, fallback, UI and
-packaging tests have passed on Windows, but the elevated disposable-VHDX and
-million-entry performance matrix is deliberately left open for an independent
-administrator-equipped tester. Portable remains available at all times.
+Fast NTFS is new in 0.7.0 and needs more real-world testing. Portable remains
+available at all times.
 
 ## Other improvements
 

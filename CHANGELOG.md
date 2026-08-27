@@ -23,8 +23,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   directories as leaves, expose apparent/allocated sizes and clearly label a
   concurrently changing volume as a best-effort snapshot. The engine choice,
   eligibility and active/fallback state are visible in Disk Usage and the
-  remembered preference lives in Settings. This first release is a Windows
-  preview pending the documented elevated VHDX and large-volume field matrix.
+  remembered preference lives in Settings. Fast NTFS is new in 0.7.0 and will
+  receive more real-world testing.
 
 - **Portable Disk Usage is faster and more accurate on Windows.** Directory
   walks now use bounded `FileIdBothDirectoryInfo` batches from one handle per
