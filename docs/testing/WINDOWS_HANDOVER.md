@@ -19,11 +19,11 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 ## Current resume point
 
 - Branch: `main`
-- Last published Windows baseline: `v0.7.0` (Fast NTFS Disk Usage preview)
+- Last published Windows baseline: `v0.7.1` (Fast NTFS reliability update)
 - Fast NTFS implementation and qualification series: `d0c0a0b` through
   `9c832fc`, followed by release commit `3eda9ce`. Use `git rev-parse HEAD`
   after pulling rather than assuming an abbreviated hash in this document.
-- Current Windows release: `0.7.0`; macOS and Linux remain on `0.6.5`.
+- Current Windows release: `0.7.1`; macOS and Linux remain on `0.6.5`.
 - Published artifacts: unsigned portable Windows x64 ZIP containing the GUI,
   CLI and sibling Fast NTFS helper, plus the matching three-PDB symbols ZIP.
 - Next campaign: independent administrator-equipped qualification of the Fast
@@ -72,7 +72,9 @@ elevate. Fast is enabled only after an off-thread local/fixed/NTFS probe and an
 explicit remembered choice. The sibling helper receives no requested path in
 its command line, connects through a current-user/Admin/SYSTEM DACL pipe,
 authenticates against the `ShellExecuteExW` PID, revalidates volume GUID and
-root file identity, opens the volume read-only, performs one scan and exits.
+root file identity and opens the volume read-only. The original 0.7.0 helper
+performed one scan and exited; the corrective pass below makes it session-
+scoped while retaining per-request validation and cleanup.
 Any failure or invalid identity/order/total after partial batches resets the
 whole Fast tree and starts a fresh Portable scan; user cancellation never
 starts fallback. Raw filename components remain opaque UTF-16 for actions.

@@ -2,8 +2,9 @@
 
 Implementation specification for the optional elevated NTFS backend used by
 Disk Usage. This is deliberately narrower than a general filesystem indexer:
-v1 produces one ephemeral Disk Usage snapshot, then exits and releases every
-byte of raw-volume state.
+v1 produces ephemeral Disk Usage snapshots and releases every byte of per-scan
+raw-volume state. The narrow elevated process may serve more than one request
+during a Ferail session so repeated scans do not repeatedly prompt for UAC.
 
 ← Back to [feature notes](README.md) · [Disk Usage](DISK_USAGE.md) ·
 [Windows handover](../testing/WINDOWS_HANDOVER.md)
@@ -11,24 +12,27 @@ byte of raw-volume state.
 ## Status and non-goals
 
 Implemented on Windows as the isolated commit series `d0c0a0b` through
-`d4620eb`. The neutral parser, fragmented MFT stream, compact index, private
+`8dca494`. The neutral parser, fragmented MFT stream, compact index, private
 protocol, authenticated elevated helper, Disk Usage adapter, exact UTF-16 path
 arena, atomic Portable fallback, settings and UI are present. Automated gates
-on a real Windows NTFS machine pass (19 neutral parser/protocol tests, 9 Win32
-helper/pipe tests, 26 Disk Usage model tests and 313 GPUI tests; one explicit
+on a real Windows NTFS machine pass (24 neutral parser/protocol tests, 9 Win32
+helper/pipe tests, 26 Disk Usage model tests and 316 GPUI tests; one explicit
 network test ignored). The disposable adversarial VHDX recipe lives at
 `scripts/testing/fast-ntfs-vhdx.ps1`.
 
-Version 0.7.0 ships this engine as a Windows preview. Before promoting it
-beyond preview, retain independent evidence from an explicit UAC/helper scan
-and packaged-helper smoke test on the release artifact. Hyper-V-dependent
-VHDX and million-entry memory/performance gates remain hardware qualification,
-not claims inferred from unit tests.
+Version 0.7.1 keeps this engine as a Windows preview after real elevated tests
+validated ordinary NTFS and OneDrive-backed directory traversal. Before
+promoting it beyond preview, retain broader evidence from the packaged helper
+and adversarial filesystems. Hyper-V-dependent VHDX and million-entry
+memory/performance gates remain hardware qualification, not claims inferred
+from unit tests.
 
-V1 is for Disk Usage only. Do not route Flat View, Search, duplicate finding,
-ordinary listings or background indexing through it. Do not persist an MFT
-index or requested paths. USN-journal incremental refresh is a later feature,
-not part of v1.
+The 0.7.1 integration is for Disk Usage only. Flat View and Search still use
+their portable recursive walker; sharing the fast transport with them requires
+a separate adapter that preserves their `FileEntry`, filtering and fallback
+semantics. Duplicate finding, ordinary listings and background indexing are
+also outside v1. Do not persist an MFT index or requested paths. USN-journal
+incremental refresh is a later feature, not part of v1.
 
 ## User contract
 
@@ -39,15 +43,17 @@ not part of v1.
 - Ferail may suggest Fast NTFS when a portable volume-sized scan is expected
   to be slow. It never opens UAC at application startup and never elevates
   merely because the user navigated to a directory.
-- Choosing Fast NTFS is the explicit consent point. Remember the preferred
-  engine, not an elevated token. UAC may therefore appear again for a later
-  scan.
+- Choosing Fast NTFS is the explicit consent point. The first Fast scan in a
+  Ferail process may show UAC; later scans reuse the authenticated helper until
+  Ferail exits. Nothing is installed and the GUI never receives an elevated
+  token.
 - Denying or cancelling UAC, a missing helper, a protocol error, unsupported
   media or a helper failure leaves the GUI usable and visibly starts Portable.
 - The result states which engine produced it and whether concurrent volume
   changes made it a best-effort snapshot.
-- Closing, cancelling or refreshing Disk Usage terminates the helper and drops
-  its raw reader, compact index, queued batches and the GUI's result arena.
+- Closing, cancelling or refreshing Disk Usage drops that request's raw
+  reader, compact index, queued batches and GUI result arena. The idle helper
+  remains connected for later requests and exits when Ferail disconnects.
 
 ## Architecture boundary
 
@@ -62,9 +68,10 @@ Use three layers; do not put NTFS parsing or Win32 calls in GPUI rendering code.
    type crosses the crate boundary.
 2. A Windows-only helper binary, shipped beside and signed with Ferail. Its
    entry point performs protocol dispatch before logging, databases, GPUI or
-   shell-provider initialization. It opens exactly one volume read-only,
-   performs exactly one scan, writes bounded result frames and exits. Keep a
-   separate binary rather than elevating the complete GUI process.
+   shell-provider initialization. It handles one request at a time, opens that
+   volume read-only, writes bounded result frames, releases all request state,
+   then waits for another request until the GUI disconnects. Keep a separate
+   binary rather than elevating the complete GUI process.
 3. The existing GPUI Disk Usage coordinator selects an engine and consumes a
    common event stream. Both engines keep the existing generation,
    cancellation, queue-cap and foreground-drain rules. Render code never knows
@@ -94,8 +101,9 @@ The unelevated parent performs the cheap eligibility probe off the UI thread:
 2. Use `GetDriveTypeW` and `GetVolumeInformationW` to require a local NTFS
    volume. Reject UNC/network, WSL, removable policy exclusions and every
    unrecognised result without elevation.
-3. Create a random per-request named-pipe name. The unelevated process owns the
-   server with `FILE_FLAG_FIRST_PIPE_INSTANCE`, `PIPE_REJECT_REMOTE_CLIENTS`,
+3. On first use, create a random session-private named-pipe name. The
+   unelevated process owns the server with `FILE_FLAG_FIRST_PIPE_INSTANCE`,
+   `PIPE_REJECT_REMOTE_CLIENTS`,
    overlapped I/O and a DACL limited to the invoking user, Administrators and
    SYSTEM. Cap every wait and make it cancellation-aware.
 4. Start the exact sibling helper path with `ShellExecuteExW(..., "runas")`.
@@ -105,9 +113,9 @@ The unelevated parent performs the cheap eligibility probe off the UI thread:
    PID returned by `ShellExecuteExW`. A nonce visible in the command line is
    not authentication. Only after the PID check does the parent send the root
    and volume identity inside the private pipe.
-6. The helper independently resolves the root and confirms the same volume
-   GUID, NTFS type and root file identity before opening the raw volume. A
-   mismatch is a hard protocol failure.
+6. For every request, the helper independently resolves the root and confirms
+   the same volume GUID, NTFS type and root file identity before opening the
+   raw volume. A mismatch is a hard protocol failure.
 
 The helper opens the volume GUID without a trailing slash using `CreateFileW`
 with `GENERIC_READ`, `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`,
@@ -178,8 +186,10 @@ Win32 call per file.
    allocated sizes. Exclude DOS-only aliases when a Win32/POSIX name exists;
    retain distinct real hard-link names. Named alternate data streams are not
    counted in v1 so Fast and Portable use the same user-visible size contract.
-7. Treat reparse-point directories as leaf stubs and do not graft the target's
-   children below them. Filter unused/deleted records and stale parent
+7. Descend a reparse directory only when the MFT contains real children whose
+   parent is that directory (as with OneDrive Files On-Demand). Never resolve
+   or graft the external reparse target; an empty junction therefore remains
+   an opaque leaf. Filter unused/deleted records and stale parent
    references whose sequence does not match. Individual bad live records are
    counted and skipped; corrupt volume geometry, MFT mapping or an error rate
    above the documented threshold fails the engine.
@@ -230,8 +240,9 @@ Memory gates are structural rather than a misleading fixed file-count cap:
 - at most two encoded result batches pending in the helper and the existing
   bounded GUI queue;
 - helper private bytes, GUI private bytes and handle counts recorded at 1M and
-  4M entries; helper memory disappears when its process exits and GUI result
-  memory becomes reusable after the DU surface closes.
+  4M entries; per-request helper memory disappears when a scan ends, the idle
+  helper disappears when Ferail exits, and GUI result memory becomes reusable
+  after the DU surface closes.
 
 ## Failure and fallback rules
 

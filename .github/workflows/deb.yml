@@ -24,7 +24,7 @@ name: Linux .deb
 
 on:
   push:
-    # 0.6.6 through 0.7.0 tags are explicitly Windows-only releases. Keep the
+    # 0.6.6 through 0.7.1 tags are explicitly Windows-only releases. Keep the
     # normal semver tags so the in-app updater can compare them, but do not
     # build or attach Linux packages for these tags. Later v* tags run
     # normally.
@@ -35,6 +35,7 @@ on:
       - "!v0.6.8"
       - "!v0.6.9"
       - "!v0.7.0"
+      - "!v0.7.1"
   workflow_dispatch:
 
 concurrency:

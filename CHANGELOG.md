@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.1 — 2026-08-27 (Windows-only release)
+
 - **Fast NTFS no longer appears frozen and no longer requests elevation for
   every folder in one Ferail session.** The elevated helper stays attached to
   its authenticated private pipe and serves subsequent scans until Ferail
