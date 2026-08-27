@@ -21,8 +21,10 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 - Branch: `main`
 - Last published Windows baseline: `v0.7.1` (Fast NTFS reliability update)
 - Fast NTFS implementation and qualification series: `d0c0a0b` through
-  `9c832fc`, followed by release commit `3eda9ce`. Use `git rev-parse HEAD`
-  after pulling rather than assuming an abbreviated hash in this document.
+  `9c832fc`, 0.7.0 release commit `3eda9ce`, corrective commits `3cf95e5`
+  through `8dca494`, and 0.7.1 release commit `1e8e64e`. Use
+  `git rev-parse HEAD` after pulling rather than assuming an abbreviated hash
+  in this document.
 - Current Windows release: `0.7.1`; macOS and Linux remain on `0.6.5`.
 - Published artifacts: unsigned portable Windows x64 ZIP containing the GUI,
   CLI and sibling Fast NTFS helper, plus the matching three-PDB symbols ZIP.
@@ -190,6 +192,17 @@ matching ordinary enumeration (2,842 files and two descendant directories);
 the OneDrive traversal regression is therefore closed. The completed Fast
 header now also reports the scan duration measured from the helper's `Ready`
 event, so UAC and credential-entry time are deliberately excluded.
+
+0.7.1 release evidence:
+
+- `v0.7.1` is the annotated tag on `1e8e64e` and was published on 2026-08-27
+  as **Ferail 0.7.1 — Fast NTFS Reliability for Windows**;
+- `Ferail-0.7.1-win-x64.zip`: 44,011,078 bytes,
+  SHA-256 `bbc41dd46d4eb6285fdef255f4a86c536f04519af2edecd2ef44a05fa28cdf6d`;
+- `Ferail-0.7.1-x64-symbols.zip`: 84,366,751 bytes,
+  SHA-256 `824701113084d3b5b6d38f6faa234687b21cc36255a1bf06c8e8ae31bda4ecb1`;
+- GitHub workflow run `33102929540` built the tagged commit, passed the
+  packaging dependency/PDB gates and uploaded both public assets successfully.
 
 ### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
 
