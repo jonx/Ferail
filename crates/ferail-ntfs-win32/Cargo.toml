@@ -34,3 +34,7 @@ path = "src/bin/diag.rs"
 [[bin]]
 name = "ferail-ntfs-helper"
 path = "src/bin/helper.rs"
+
+[[bin]]
+name = "ferail-ntfs-client-diag"
+path = "src/bin/client_diag.rs"

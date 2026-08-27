@@ -5,7 +5,8 @@
 
 .DESCRIPTION
     Pipeline:
-      1. Build the release binaries (Ferail GUI + the `ferail` CLI).
+      1. Build the release binaries (Ferail GUI, `ferail` CLI and the narrow
+         elevated Fast NTFS helper).
       2. Stage them into target/package/Ferail alongside the licence files.
          Licences travel with the binary: MIT/Apache-2.0, the MIT tree-sitter
          grammars and the ISC/MIT icon artwork all require their notices to
@@ -116,8 +117,9 @@ if (-not $SkipBuild) {
     # --screenshot keeps working in the packaged exe via PrintWindow.
     # -p is load-bearing: from the virtual workspace root, cargo silently
     # ignores --no-default-features unless the package is selected explicitly.
-    $cargoArgs = @('build', '--release', '-p', 'ferail-gpui',
-        '--bin', 'ferail-gpui', '--bin', 'ferail', '--no-default-features')
+    $cargoArgs = @('build', '--release', '-p', 'ferail-gpui', '-p', 'ferail-ntfs-win32',
+        '--bin', 'ferail-gpui', '--bin', 'ferail', '--bin', 'ferail-ntfs-helper',
+        '--no-default-features')
     if ($Features) { $cargoArgs += @('--features', $Features) }
     Write-Step "cargo $($cargoArgs -join ' ') (static MSVC runtime)"
 
@@ -149,12 +151,14 @@ if (-not $SkipBuild) {
 
 $GuiSrc = Join-Path $RepoRoot 'target\release\ferail-gpui.exe'
 $CliSrc = Join-Path $RepoRoot 'target\release\ferail.exe'
-foreach ($p in @($GuiSrc, $CliSrc)) {
+$HelperSrc = Join-Path $RepoRoot 'target\release\ferail-ntfs-helper.exe'
+foreach ($p in @($GuiSrc, $CliSrc, $HelperSrc)) {
     if (-not (Test-Path $p)) { throw "missing build output: $p" }
 }
 $GuiPdbSrc = Join-Path $RepoRoot 'target\release\ferail_gpui.pdb'
 $CliPdbSrc = Join-Path $RepoRoot 'target\release\ferail.pdb'
-foreach ($p in @($GuiPdbSrc, $CliPdbSrc)) {
+$HelperPdbSrc = Join-Path $RepoRoot 'target\release\ferail_ntfs_helper.pdb'
+foreach ($p in @($GuiPdbSrc, $CliPdbSrc, $HelperPdbSrc)) {
     if (-not (Test-Path $p)) { throw "missing matching symbols: $p" }
 }
 
@@ -206,7 +210,7 @@ $AllowedSystemDlls = [System.Collections.Generic.HashSet[string]]::new(
 
 $DumpBin = Resolve-DumpBin
 $DependencySets = [ordered]@{}
-foreach ($file in @($GuiSrc, $CliSrc)) {
+foreach ($file in @($GuiSrc, $CliSrc, $HelperSrc)) {
     $deps = @(Get-PeDependencies -File $file -DumpBin $DumpBin)
     $DependencySets[(Split-Path $file -Leaf)] = $deps
     $undeclared = @($deps | Where-Object {
@@ -238,6 +242,7 @@ New-Item -ItemType Directory -Path $StageDir -Force | Out-Null
 # because winresource applies one block per crate, not per binary — setting it
 # to `Ferail.exe` would just move the inaccuracy onto the CLI.
 $GuiDst = Join-Path $StageDir 'Ferail.exe'
+$HelperDst = Join-Path $StageDir 'ferail-ntfs-helper.exe'
 # The CLI keeps its own name (every doc says `ferail magic` / `ferail du`) but
 # CANNOT sit next to the GUI: Windows filesystems are case-insensitive, so
 # `ferail.exe` and `Ferail.exe` are one path and the second copy silently wins.
@@ -249,6 +254,7 @@ $CliDst = Join-Path $CliDir 'ferail.exe'
 
 Copy-Item $GuiSrc $GuiDst
 Copy-Item $CliSrc $CliDst
+Copy-Item $HelperSrc $HelperDst
 
 # Guard the invariant rather than trusting it: if these ever land on the same
 # path again (a rename, a flattened layout), fail loudly here instead of
@@ -258,6 +264,9 @@ if ((Get-FileHash $GuiDst -Algorithm SHA256).Hash -eq (Get-FileHash $CliDst -Alg
 }
 if ((Get-FileHash $GuiDst -Algorithm SHA256).Hash -ne (Get-FileHash $GuiSrc -Algorithm SHA256).Hash) {
     throw "staged Ferail.exe does not match target\release\ferail-gpui.exe"
+}
+if ((Get-FileHash $HelperDst -Algorithm SHA256).Hash -ne (Get-FileHash $HelperSrc -Algorithm SHA256).Hash) {
+    throw "staged Fast NTFS helper does not match target\release\ferail-ntfs-helper.exe"
 }
 
 $LicDir = Join-Path $StageDir 'licenses'
@@ -316,7 +325,7 @@ function Invoke-Sign {
     return $true
 }
 
-$signed = Invoke-Sign -Files @($GuiDst, $CliDst)
+$signed = Invoke-Sign -Files @($GuiDst, $CliDst, $HelperDst)
 
 # ---------------------------------------------------------------------------
 # 5. Portable + symbol ZIPs
@@ -345,6 +354,7 @@ if (Test-Path $SymbolsDir) { Remove-Item $SymbolsDir -Recurse -Force }
 New-Item -ItemType Directory -Path $SymbolsDir -Force | Out-Null
 Copy-Item $GuiPdbSrc (Join-Path $SymbolsDir 'ferail_gpui.pdb')
 Copy-Item $CliPdbSrc (Join-Path $SymbolsDir 'ferail.pdb')
+Copy-Item $HelperPdbSrc (Join-Path $SymbolsDir 'ferail_ntfs_helper.pdb')
 
 $commit = (& git -C $RepoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'could not determine Git revision for symbol manifest' }
@@ -371,6 +381,13 @@ $symbolManifest = [ordered]@{
             dependencies = $DependencySets['ferail.exe']
             codeview = Get-CodeViewIdentity -File $CliDst -DumpBin $DumpBin
             pdb_sha256 = (Get-FileHash $CliPdbSrc -Algorithm SHA256).Hash
+        },
+        [ordered]@{
+            package_path = 'ferail-ntfs-helper.exe'
+            sha256 = (Get-FileHash $HelperDst -Algorithm SHA256).Hash
+            dependencies = $DependencySets['ferail-ntfs-helper.exe']
+            codeview = Get-CodeViewIdentity -File $HelperDst -DumpBin $DumpBin
+            pdb_sha256 = (Get-FileHash $HelperPdbSrc -Algorithm SHA256).Hash
         }
     )
 }
@@ -436,7 +453,7 @@ foreach ($a in @($ZipPath, $SymbolsZipPath, $InstallerPath) | Where-Object { $_ 
 }
 
 Write-Step 'Signature status'
-foreach ($a in @($GuiDst, $CliDst, $InstallerPath) | Where-Object { $_ -and (Test-Path $_) }) {
+foreach ($a in @($GuiDst, $CliDst, $HelperDst, $InstallerPath) | Where-Object { $_ -and (Test-Path $_) }) {
     $sig = Get-AuthenticodeSignature $a
     Write-Host ("  {0}: {1}" -f (Split-Path $a -Leaf), $sig.Status)
 }

@@ -81,6 +81,13 @@ pub fn run_fast_ntfs(
     if cancel.load(Ordering::Acquire) {
         return Err(ClientError::Cancelled);
     }
+    if request.request_id == 0
+        || request.root_id == 0
+        || request.first_child_id != request.root_id.checked_add(1).unwrap_or(0)
+    {
+        return Err(ClientError::Protocol("request identity namespace"));
+    }
+    let mut stream = StreamValidator::new(request.root_id, request.first_child_id);
     let probe = probe_fast_ntfs(&request.root).map_err(|_| ClientError::Platform("probe"))?;
     let (root_identity, _) =
         file_identity(&request.root).map_err(|_| ClientError::Platform("root identity"))?;
@@ -156,11 +163,15 @@ pub fn run_fast_ntfs(
                 ready = true;
                 on_event(FastNtfsEvent::Ready);
             }
-            DuMessage::Batch(rows) if ready => on_event(FastNtfsEvent::Batch(rows)),
+            DuMessage::Batch(rows) if ready => {
+                stream.accept_batch(&rows)?;
+                on_event(FastNtfsEvent::Batch(rows));
+            }
             DuMessage::Progress(progress) if ready => {
                 on_event(FastNtfsEvent::Progress(progress));
             }
             DuMessage::Complete(complete) if ready => {
+                stream.accept_complete(complete)?;
                 on_event(FastNtfsEvent::Complete(complete));
                 if !child.wait(EXIT_GRACE) {
                     child.terminate();
@@ -177,6 +188,77 @@ pub fn run_fast_ntfs(
                 return Err(ClientError::Protocol("message order"));
             }
         }
+    }
+}
+
+struct StreamValidator {
+    root_id: u64,
+    next_id: u64,
+    rows: u64,
+    logical_bytes: u64,
+    allocated_bytes: u64,
+    containers: Vec<bool>,
+}
+
+impl StreamValidator {
+    fn new(root_id: u64, first_child_id: u64) -> Self {
+        Self {
+            root_id,
+            next_id: first_child_id,
+            rows: 0,
+            logical_bytes: 0,
+            allocated_bytes: 0,
+            containers: vec![true],
+        }
+    }
+
+    fn accept_batch(&mut self, rows: &[NeutralRow]) -> Result<(), ClientError> {
+        if rows.is_empty() || rows.len() > 256 {
+            return Err(ClientError::Protocol("batch row count"));
+        }
+        for row in rows {
+            let parent_index = row.parent_id.checked_sub(self.root_id).and_then(|offset| {
+                usize::try_from(offset)
+                    .ok()
+                    .filter(|index| self.containers.get(*index) == Some(&true))
+            });
+            if row.id != self.next_id
+                || row.parent_id < self.root_id
+                || row.parent_id >= row.id
+                || parent_index.is_none()
+            {
+                return Err(ClientError::Protocol("batch identity ordering"));
+            }
+            self.next_id = self
+                .next_id
+                .checked_add(1)
+                .ok_or(ClientError::Protocol("batch identity overflow"))?;
+            self.rows = self
+                .rows
+                .checked_add(1)
+                .ok_or(ClientError::Protocol("row count overflow"))?;
+            self.logical_bytes = self
+                .logical_bytes
+                .checked_add(row.logical_bytes)
+                .ok_or(ClientError::Protocol("logical byte total overflow"))?;
+            self.allocated_bytes = self
+                .allocated_bytes
+                .checked_add(row.allocated_bytes)
+                .ok_or(ClientError::Protocol("allocated byte total overflow"))?;
+            self.containers
+                .push(row.kind == ferail_ntfs::NeutralNodeKind::Directory);
+        }
+        Ok(())
+    }
+
+    fn accept_complete(&self, complete: Completion) -> Result<(), ClientError> {
+        if complete.rows != self.rows
+            || complete.logical_bytes != self.logical_bytes
+            || complete.allocated_bytes != self.allocated_bytes
+        {
+            return Err(ClientError::Protocol("completion totals"));
+        }
+        Ok(())
     }
 }
 
@@ -314,5 +396,53 @@ mod tests {
     #[test]
     fn timeout_wait_result_is_not_success() {
         assert_ne!(windows::Win32::Foundation::WAIT_TIMEOUT, WAIT_OBJECT_0);
+    }
+
+    fn row(id: u64, parent_id: u64) -> NeutralRow {
+        NeutralRow {
+            id,
+            parent_id,
+            file_record: ferail_ntfs::FileReference {
+                record: id,
+                sequence: 1,
+            },
+            kind: ferail_ntfs::NeutralNodeKind::File,
+            raw_name: vec![b'x' as u16],
+            display_name: "x".into(),
+            logical_bytes: 3,
+            allocated_bytes: 4,
+            modified_ticks: 0,
+        }
+    }
+
+    #[test]
+    fn stream_validator_rejects_sparse_or_forward_ids() {
+        let mut validator = StreamValidator::new(10, 11);
+        assert!(validator.accept_batch(&[row(12, 10)]).is_err());
+
+        let mut validator = StreamValidator::new(10, 11);
+        assert!(validator.accept_batch(&[row(11, 12)]).is_err());
+    }
+
+    #[test]
+    fn stream_validator_checks_terminal_totals() {
+        let mut validator = StreamValidator::new(10, 11);
+        validator.accept_batch(&[row(11, 10), row(12, 10)]).unwrap();
+        let valid = Completion {
+            rows: 2,
+            logical_bytes: 6,
+            allocated_bytes: 8,
+            corrupt_records: 0,
+            skipped_records: 0,
+            start_journal_id: 0,
+            start_next_usn: 0,
+            end_journal_id: 0,
+            end_next_usn: 0,
+            best_effort_live: false,
+        };
+        assert!(validator.accept_complete(valid).is_ok());
+        assert!(validator
+            .accept_complete(Completion { rows: 3, ..valid })
+            .is_err());
     }
 }
