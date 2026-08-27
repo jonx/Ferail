@@ -2538,6 +2538,25 @@ impl Shell {
                                 .child(env!("CARGO_PKG_VERSION")),
                         ),
                 )
+                // Session-only screenshot protection.  This is deliberately
+                // visible in the primary toolbar: entering it replaces every
+                // Ferail-owned window with an opaque, non-interactive private
+                // presentation until the badge, shortcut, or Escape exits.
+                .child(
+                    Button::new("toolbar-private-mode")
+                        .small()
+                        .ghost()
+                        .icon(gpui_component::Icon::empty().path("icons/privacy.svg"))
+                        .tooltip_with_action(
+                            tr!("Private Mode"),
+                            &crate::private_mode::TogglePrivateMode,
+                            None,
+                        )
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(|_, _window, cx| crate::private_mode::enter(cx)),
+                )
                 .child(
                     Button::new("nav-back")
                         .small()
@@ -3650,6 +3669,17 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _path_guard = ferail_core::path_guard::enter_render();
+        if crate::private_mode::enabled() {
+            let private_title = tr!("Private — Ferail").to_string();
+            window.set_window_title(&private_title);
+            self.last_window_title = private_title;
+            return crate::private_mode::surface(
+                crate::private_mode::SurfaceKind::Browser,
+                window,
+                cx,
+            )
+            .into_any_element();
+        }
         // Phase 10: drain any pending system-appearance change the
         // native observer pushed since the last paint, then flip the
         // gpui Theme. The observer can only set an AtomicBool; the
@@ -4549,5 +4579,6 @@ impl Render for Shell {
             // only when `shortcuts_help_filter` is Some(_); the
             // module reads `self` for the filter + input state.
             .children(crate::keyboard_help::render(self, cx))
+            .into_any_element()
     }
 }

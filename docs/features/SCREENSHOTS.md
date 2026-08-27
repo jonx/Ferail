@@ -23,8 +23,10 @@ The harness lives in [`screenshot.rs`](../../crates/ferail-gpui/src/screenshot.r
    exercised exactly as it is for a real user.
 4. A **2500 ms settle timer** runs so async prefetch (magic sniffing, quarantine
    checks, Quick Look thumbnails) can land before the frame is sampled.
-5. `Window::render_to_image` captures the framebuffer; the PNG is written and the
-   process quits.
+5. Private Mode is armed and reaches its protected frame. Every Ferail root is
+   replaced by an opaque, non-interactive presentation with session aliases.
+6. `Window::render_to_image` captures the framebuffer; the PNG is written and
+   the process quits.
 
 Because step 3 runs real code, a screenshot run doubles as a smoke test of the
 keybinding and async-scheduling paths — if a keystroke routes to the wrong
@@ -42,6 +44,13 @@ scratch). If a committed doc needs to reference an image, copy it into
 
 `--help` prints the full, authoritative flag list — the source of truth is
 `print_help()` in `screenshot.rs`, not this doc.
+
+`--screenshot` is private by default. Use `--unsafe-real-data` only when a
+feature-development capture intentionally needs the underlying prepared view,
+and only with repository-owned fixtures or data you have checked for sharing.
+That explicit opt-out may expose real names, paths, previews, metadata and
+window titles; it must never be added merely to make a personal-folder capture
+look more interesting.
 
 ## The flag families
 

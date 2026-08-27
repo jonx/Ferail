@@ -3773,6 +3773,24 @@ impl Drop for ViewerWindow {
 
 impl Render for ViewerWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::private_mode::enabled() {
+            let private_title = tr!("Private — Ferail").to_string();
+            window.set_window_title(&private_title);
+            self.last_title = private_title;
+            if let Some(handle) = content_ns_view(window) {
+                crate::platform_shell::set_window_opacity(handle, 1.0);
+            }
+            self.teardown_video();
+            return crate::private_mode::surface(
+                crate::private_mode::SurfaceKind::Viewer,
+                window,
+                cx,
+            )
+            .into_any_element();
+        }
+        if let Some(handle) = content_ns_view(window) {
+            crate::platform_shell::set_window_opacity(handle, self.window_opacity);
+        }
         self.sync_title(window);
         let fullscreen = window.is_fullscreen();
         if !fullscreen
@@ -3902,6 +3920,7 @@ impl Render for ViewerWindow {
                 // success/failure toasts appear (same as the Get Info
                 // window).
                 .children(gpui_component::Root::render_notification_layer(window, cx))
+                .into_any_element()
         } else {
             let toolbar = self.toolbar(window, cx);
             let status = self.status_strip(cx);
@@ -3910,6 +3929,7 @@ impl Render for ViewerWindow {
                 .child(status)
                 .when_some(panel, Div::child)
                 .children(gpui_component::Root::render_notification_layer(window, cx))
+                .into_any_element()
         }
     }
 }

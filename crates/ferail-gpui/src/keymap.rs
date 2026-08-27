@@ -17,6 +17,7 @@ use ferail_core::commands::{CommandId, Shortcut, all_commands};
 use gpui::{App, KeyBinding};
 
 use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
+use crate::private_mode::TogglePrivateMode;
 #[cfg(windows)]
 use crate::shell::ShowWindowsContextMenu;
 use crate::shell::{
@@ -191,6 +192,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
         // -- View -------------------------------------------------
         "view.search" => bind!(FocusFilter, ctx),
         "view.toggle_hidden" => bind!(ToggleHidden, ctx),
+        "view.toggle_private" => bind!(TogglePrivateMode, None),
         "view.edit_breadcrumb" => bind!(EditBreadcrumb, ctx),
         "view.toggle_preview" => bind!(TogglePreview, ctx),
         "view.toggle_flat" => bind!(ToggleFlatView, ctx),

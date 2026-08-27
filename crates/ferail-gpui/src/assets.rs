@@ -181,6 +181,7 @@ mod tests {
             "icons/triangle-alert.svg",
             "icons/inbox.svg",
             "icons/lock.svg",
+            "icons/privacy.svg",
             // Settings pages
             "icons/activity.svg",
             "icons/search.svg",

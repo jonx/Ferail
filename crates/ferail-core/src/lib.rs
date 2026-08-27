@@ -6,6 +6,7 @@
 pub mod asset_work;
 pub mod commands;
 pub mod counts;
+pub mod private_presentation;
 pub mod entry_info;
 pub mod favorites;
 pub mod filter_expr;

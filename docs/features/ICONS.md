@@ -218,6 +218,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | List view | `icons/view-list.svg` | Lucide `list` | render.rs:1604 |
 | Icon view | `icons/view-grid.svg` | Lucide `layout-grid` | render.rs:1618 |
 | Flat view / include subfolders | `icons/folder-tree.svg` | In-house (folder feeding a two-branch tree, stroke 1.75) | render.rs `title_bar` |
+| Private Mode | `icons/privacy.svg` | **In-house** shield-and-eye (house style, stroke 1.75), distinct from the lock-holder and show/hide glyphs | render.rs toolbar + every protected root's exit badge |
 | Verify checksum manifest | `icons/check.svg` ↑ | Lucide `check` | `VerifyView` report header |
 | Smaller / larger icons | `icons/minus.svg` / `plus.svg` ↑ | Lucide | render.rs `title_bar` |
 | Reset icon size | `icons/undo-2.svg` | Lucide `undo-2` (from the spare upstream pool, stroke 2 — it sits in the all-upstream ±/ellipsis cluster, so the heavier weight is the consistent one here). A revert arrow, not a refresh circle: `nav/refresh.svg` is the Refresh *command* two buttons away and the two must not read alike. Grid view only, beside the −/＋ stepper it undoes. | render.rs `title_bar` |

@@ -1093,6 +1093,18 @@ impl Drop for EntryInfoView {
 
 impl Render for EntryInfoView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::private_mode::enabled() {
+            window.set_window_title(&tr!("Private — Ferail"));
+            return crate::private_mode::surface(
+                crate::private_mode::SurfaceKind::Information,
+                window,
+                cx,
+            )
+            .into_any_element();
+        }
+        if !self.embedded {
+            window.set_window_title(&tr!("Information"));
+        }
         let muted = cx.theme().muted_foreground;
 
         let sections = match &self.state {

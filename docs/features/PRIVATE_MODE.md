@@ -3,7 +3,7 @@
 ← [Feature notes](README.md) · [Screenshot harness](SCREENSHOTS.md) ·
 [Diagnostics privacy](DIAGNOSTICS.md) · [Architecture](../ARCHITECTURE.md)
 
-**Status: planned — implementation contract.** Private Mode is a process-wide,
+**Status: implemented — fail-closed presentation, August 2026.** Private Mode is a process-wide,
 session-only presentation lock for making screenshots of a real Ferail session
 without displaying personal names, paths, content or identifying metadata. It
 is not a second file-browser mode and it never changes the filesystem model.
@@ -23,6 +23,15 @@ future feature should do while the user is looking at disguised data.
 
 `--screenshot` enables Private Mode by default. Capturing real data requires an
 explicitly alarming `--unsafe-real-data` override.
+
+The shipped first implementation uses the contract's fail-closed projection:
+each Ferail window root renders an opaque, generic private representation with
+session-keyed plausible file aliases instead of evaluating its ordinary view.
+That provides complete pixel and interaction coverage today, independent of
+surface complexity and row count. The pure presenter is already separated in
+`ferail_core::private_presentation`; individual surfaces may later preserve
+more of their prepared layout by adopting its structured values, but must
+remain fail-closed until their complete render boundary has been audited.
 
 ---
 

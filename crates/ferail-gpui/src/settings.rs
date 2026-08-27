@@ -492,7 +492,17 @@ fn persist_recents_enabled(value: bool) {
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::private_mode::enabled() {
+            window.set_window_title(&tr!("Private — Ferail"));
+            return crate::private_mode::surface(
+                crate::private_mode::SurfaceKind::Settings,
+                window,
+                cx,
+            )
+            .into_any_element();
+        }
+        window.set_window_title(&tr!("Settings"));
         Settings::new("ferail-settings")
             .pages(build_pages(
                 self.home_hidden_count,
@@ -504,6 +514,7 @@ impl Render for SettingsView {
                 page_ix: self.category.page_index(),
                 group_ix: None,
             })
+            .into_any_element()
     }
 }
 

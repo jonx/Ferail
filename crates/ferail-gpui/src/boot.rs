@@ -22,6 +22,7 @@ use crate::{
 use ferail_core::commands::{CommandId, find};
 use gpui::*;
 use gpui_component::Theme;
+use crate::private_mode::{ExitPrivateMode, TogglePrivateMode};
 
 #[cfg(feature = "screenshot-harness")]
 static DEV_QUIT_CLEANUP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -193,6 +194,16 @@ pub fn run_gui(args: screenshot::Args) {
         // the menu item below can advertise the shortcut hint).
         cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| quit_after_dev_cleanup(cx));
+        // Private Mode is process-global and must remain reachable from every
+        // Ferail window. Escape is a global fallback; context-specific Escape
+        // bindings still win while the mode is off.
+        cx.bind_keys([KeyBinding::new("escape", ExitPrivateMode, None)]);
+        cx.on_action(|_: &TogglePrivateMode, cx| crate::private_mode::toggle(cx));
+        cx.on_action(|_: &ExitPrivateMode, cx| {
+            if crate::private_mode::enabled() {
+                crate::private_mode::exit(cx);
+            }
+        });
         // Phase C: process stays resident at zero windows (Finder /
         // Safari model). Quit only via Cmd+Q or the app menu. A future
         // preference may toggle this back to "quit on last window."
@@ -204,6 +215,9 @@ pub fn run_gui(args: screenshot::Args) {
         // when present (lower precedence first); this is the
         // fallback that fires from the app menu / About dialog.
         cx.on_action(|_: &OpenSettings, cx| {
+            if crate::private_mode::blocks_normal_actions() {
+                return;
+            }
             crate::settings::open_settings_window(cx);
         });
         // OpenAbout opens our custom About dialog as a modal overlay
@@ -216,12 +230,18 @@ pub fn run_gui(args: screenshot::Args) {
         // existing window has none of that interaction with the
         // menu.
         cx.on_action(|_: &OpenAbout, cx| {
+            if crate::private_mode::blocks_normal_actions() {
+                return;
+            }
             crate::about::open_about_dialog(cx);
         });
         // Software Update dialog + a fresh check (docs/features/UPDATES.md).
         // Manual by definition — works whether or not the automatic daily
         // check is enabled in Settings.
         cx.on_action(|_: &CheckForUpdates, cx| {
+            if crate::private_mode::blocks_normal_actions() {
+                return;
+            }
             crate::log_info!(90, "manual update check requested from app menu");
             crate::update_check::manual_check(cx);
         });
@@ -286,6 +306,9 @@ pub fn run_gui(args: screenshot::Args) {
         // process stays resident, Cmd+N reopens).
         cx.bind_keys([KeyBinding::new("secondary-n", NewWindow, None)]);
         cx.on_action(|_: &NewWindow, cx| {
+            if crate::private_mode::blocks_normal_actions() {
+                return;
+            }
             open_shell_window(cx);
         });
 
@@ -300,6 +323,9 @@ pub fn run_gui(args: screenshot::Args) {
         // than stacking a second one on a folder the user never asked
         // for.
         cx.on_action(|_: &GoToFolder, cx| {
+            if crate::private_mode::blocks_normal_actions() {
+                return;
+            }
             if !cx.windows().is_empty() {
                 return;
             }
@@ -311,6 +337,9 @@ pub fn run_gui(args: screenshot::Args) {
         // Window ▸ Bring All to Front. App-level like NewWindow: the
         // menu item must fire no matter which window (or none) is key.
         cx.on_action(|_: &BringAllToFront, cx| {
+            if crate::private_mode::blocks_normal_actions() {
+                return;
+            }
             bring_all_to_front(cx);
         });
 
@@ -641,6 +670,10 @@ pub(crate) fn install_app_menus(cx: &mut App) {
         ));
     }
     view_items.push(MenuItem::separator());
+    view_items.push(MenuItem::action(
+        title("view.toggle_private", "Private Mode"),
+        TogglePrivateMode,
+    ));
     view_items.push(MenuItem::action(
         title("view.toggle_preview", "Show Preview Pane"),
         TogglePreview,

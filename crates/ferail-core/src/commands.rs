@@ -403,6 +403,12 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift(".")],
     },
+    CommandSpec {
+        id: CommandId("view.toggle_private"),
+        title: msgid!("Private Mode"),
+        category: Category::View,
+        shortcuts: &[Shortcut::primary_shift("K")],
+    },
     // Toolbar Sort menu. No shortcuts — they live in the sort
     // dropdown + command palette. Re-selecting the active column
     // flips direction.

@@ -29,6 +29,9 @@ use crate::shell::Shell;
 pub struct Args {
     /// Path to write the PNG. None ⇒ run the GUI normally.
     pub screenshot: Option<PathBuf>,
+    /// Explicit screenshot-only opt-out from the secure Private Mode default.
+    /// The caller accepts that the PNG may contain real personal data.
+    pub unsafe_real_data: bool,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub scale: Option<f32>,
@@ -234,6 +237,7 @@ pub fn parse_args() -> Args {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--screenshot" => args.screenshot = iter.next().map(PathBuf::from),
+            "--unsafe-real-data" => args.unsafe_real_data = true,
             "--width" => args.width = iter.next().and_then(|s| s.parse().ok()),
             "--height" => args.height = iter.next().and_then(|s| s.parse().ok()),
             "--scale" => args.scale = iter.next().and_then(|s| s.parse().ok()),
@@ -380,6 +384,9 @@ one frame off-screen, writes the PNG, and exits.
 
 OPTIONS
   --screenshot <path>      Write a PNG to <path> and exit (no visible window).
+                           Private Mode is enabled by default.
+  --unsafe-real-data       Disable screenshot privacy. The PNG may contain real
+                           names, paths, content, and identifying metadata.
   --width <N>              Logical width in DIPs (default 1180).
   --height <N>             Logical height in DIPs (default 760).
   --scale <factor>         Display scale factor (default 2.0).
@@ -720,6 +727,26 @@ pub fn run(args: Args) -> Result<()> {
             } else {
                 handle.into()
             };
+            // Secure default: prepare the requested real UI first, then arm
+            // the process-wide fail-closed presentation before capture.  The
+            // unsafe opt-out is intentionally verbose and screenshot-only.
+            if !args.unsafe_real_data {
+                cx.update(crate::private_mode::enter);
+                for _ in 0..20 {
+                    let state = cx.update(|_| crate::private_mode::state());
+                    if matches!(state, crate::private_mode::State::Active { .. }) {
+                        break;
+                    }
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(5))
+                        .await;
+                }
+                let state = cx.update(|_| crate::private_mode::state());
+                assert!(
+                    matches!(state, crate::private_mode::State::Active { .. }),
+                    "Private Mode did not reach its protected active frame; screenshot aborted"
+                );
+            }
             #[cfg(windows)]
             let img = if capture_newest_window {
                 capture_window_printwindow(&capture_handle, cx)
@@ -1608,7 +1635,15 @@ struct DragGhostPreview {
 }
 
 impl Render for DragGhostPreview {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::private_mode::enabled() {
+            return crate::private_mode::surface(
+                crate::private_mode::SurfaceKind::Other,
+                window,
+                cx,
+            )
+            .into_any_element();
+        }
         div()
             .size_full()
             .flex()
@@ -1616,6 +1651,7 @@ impl Render for DragGhostPreview {
             .justify_center()
             .bg(rgb(0x2b2b30))
             .child(self.badge.clone())
+            .into_any_element()
     }
 }
 

@@ -8,6 +8,15 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Private Mode makes Ferail screenshots safe by default.** A new toolbar
+  shield and `Cmd/Ctrl+Shift+K` command replace every Ferail-owned window with
+  an opaque, non-interactive private presentation. Names use process-session
+  aliases, content and identifying metadata never paint, Viewer transparency
+  is forced off, and only the visible Private badge, the shortcut, Escape,
+  window close, and app quit remain available. The mode is never persisted.
+  The screenshot harness now enables it automatically; the deliberately
+  alarming `--unsafe-real-data` flag is the only opt-out.
+
 - **Large counts are readable everywhere, not just in the footer.** The
   status bar already grouped its figures — "1.104.619 items" — but
   everywhere else a big number arrived as one unbroken run of digits:

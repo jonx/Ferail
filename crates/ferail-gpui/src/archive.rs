@@ -1923,7 +1923,26 @@ pub(crate) fn archive_addition_root(addition: &ferail_fs_native::ArchiveAddition
 }
 
 impl Render for ArchiveView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::private_mode::enabled() {
+            window.set_window_title(&tr!("Private — Ferail"));
+            return crate::private_mode::surface(
+                crate::private_mode::SurfaceKind::Archive,
+                window,
+                cx,
+            )
+            .into_any_element();
+        }
+        if self.host == ToolHostContext::Windowed {
+            window.set_window_title(&tr!(
+                "Archive — {name}",
+                name = self
+                    .archive_path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ));
+        }
         let bg = cx.theme().background;
         let border = cx.theme().border;
         let accent = cx.theme().accent;
@@ -2156,6 +2175,7 @@ impl Render for ArchiveView {
                     .text_color(color)
                     .child(message)
             }))
+            .into_any_element()
     }
 }
 

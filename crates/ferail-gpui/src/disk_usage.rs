@@ -2369,6 +2369,21 @@ impl Drop for DiskUsageView {
 
 impl Render for DiskUsageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::private_mode::enabled() {
+            window.set_window_title(&tr!("Private — Ferail"));
+            return crate::private_mode::surface(
+                crate::private_mode::SurfaceKind::DiskUsage,
+                window,
+                cx,
+            )
+            .into_any_element();
+        }
+        if self.host == ToolHostContext::Windowed {
+            window.set_window_title(&tr!(
+                "Disk Usage — {path}",
+                path = ferail_fs_native::paths::display_path(&self.root_path)
+            ));
+        }
         let topn_visible = self.topn_visible;
         let viewport = window.viewport_size();
         let (host_w, host_h) = self
@@ -2428,6 +2443,7 @@ impl Render for DiskUsageView {
                     .when_some(topn, |this, panel| this.child(panel)),
             )
             .child(legend)
+            .into_any_element()
     }
 }
 
