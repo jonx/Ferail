@@ -8,6 +8,38 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.2 — 2026-08-27
+
+This is the first all-platform release since 0.6.5. It brings the accumulated
+Flat View, similar-image search, checksum/sidecar, viewer and Windows
+reliability work to the platform-specific downloads together.
+
+- **Recursive work is faster across the normal filesystem path.** macOS keeps
+  names, types, sizes, dates, flags and identities on `getattrlistbulk`, reuses
+  one native query buffer per worker, and now uses the same bulk records for
+  opaque package totals and Description-column folder rollups. Disk Usage and
+  recursive search cache their iCloud prefix once per scan, while common
+  lowercase file extensions no longer allocate a temporary folded string per
+  row. Local APFS remains bounded to at most eight directory readers; network,
+  removable and unknown media remain deliberately serial.
+
+- **macOS and Linux catch up with the shared features released on Windows
+  since 0.6.5.** This includes uncapped compact Flat View, similar-image search
+  with adjustable criteria and large-image viewing, SHA-256 generation and
+  clipboard comparison, NFO/ANSI preview, SFV/checksum verification and
+  generation, improved large-selection behavior, and the accumulated viewer,
+  navigation and sidecar polish described in the intervening sections below.
+
+- **Fast NTFS remains an explicit Windows preview.** Version 0.7.2 carries the
+  0.7.1 session helper, live phases, bounded parallel parser and OneDrive MFT
+  traversal unchanged. A code audit confirms that direct volume reads really
+  require the isolated elevated helper; broader VHDX qualification and
+  Authenticode signing remain open before promotion beyond preview.
+
+- **Cross-platform Disk Usage no longer emits Windows-only warnings on macOS.**
+  Fast-engine imports, states and duration formatting are now gated to the
+  platforms/builds that use them, and strict Clippy is clean again.
+
 ## 0.7.1 — 2026-08-27 (Windows-only release)
 
 - **Fast NTFS no longer appears frozen and no longer requests elevation for

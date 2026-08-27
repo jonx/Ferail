@@ -1,49 +1,50 @@
-# Ferail 0.7.1 — Fast NTFS Reliability for Windows
+# Ferail 0.7.2 — Millions of files, on every platform
 
-This is a **Windows-only release**. It publishes the portable Windows x64 ZIP
-and its matching symbols archive; macOS and Linux remain on 0.6.5.
+This is the first Ferail release for macOS, Windows and Linux together since
+0.6.5. It brings the large-volume work and the shared features accumulated in
+the Windows-first releases to every supported download.
 
-## Fast NTFS fixes
+## Faster large trees
 
-- Fast NTFS now shows live MFT-reading, index-building and subtree-traversal
-  progress instead of appearing frozen. The completed result also reports the
-  actual scan duration, measured after UAC so credential-entry time is not
-  included.
-- Large-volume scans read bounded 8 MiB MFT windows, parse records in parallel
-  without per-record buffer copies or unnecessary run-list allocations, and
-  build parent adjacency in linear time. On the development machine, a volume
-  with about 2.3 million MFT records reached subtree delivery in roughly five
-  seconds after elevation instead of several minutes.
-- OneDrive Files On-Demand folders containing real MFT children are traversed
-  correctly. Ferail never resolves an external reparse target, so ordinary
-  leaf junctions remain opaque and cannot escape the selected subtree.
-- The elevated helper is reused for subsequent Fast scans in the same Ferail
-  process. The first use may show UAC; later scans do not prompt again. The
-  helper remains isolated, read-only and authenticated, releases every scan's
-  raw-volume state, and exits when Ferail disconnects.
-- The helper has a privacy-preserving standalone diagnostic mode for Windows
-  qualification. It reports aggregate parser, index and phase timings without
-  printing names or the requested path.
+- Flat View remains uncapped and responsive across millions of files, with its
+  compact scan-local path arena, symbolic Select All and viewport-only detail
+  work.
+- macOS enumerates APFS directory metadata in native `getattrlistbulk` batches
+  with bounded parallel readers. Version 0.7.2 reuses each worker's native
+  buffer, extends the bulk path to package and folder-size rollups, and removes
+  avoidable per-file iCloud/extension allocations.
+- Disk Usage releases its scan index when the surface closes, reports skipped
+  folders honestly, and offers Full Disk Access guidance only when protected
+  macOS folders actually limit coverage.
 
-A real elevated scan of a OneDrive-backed Pictures folder returned 2,842
-files, three directories including the root and 617.1 MiB, matching ordinary
-filesystem enumeration. Fast NTFS still needs broader real-world testing, and
-Portable remains available at all times.
+## New shared tools since 0.6.5
 
-Fast NTFS currently accelerates **Disk Usage only**. Search and Flat View
-continue to use their portable recursive walker in this release.
+- Find Similar Images reuses the duplicate-finder surface with adjustable
+  structure/detail criteria, best-copy selection, thumbnails and full-size
+  keyboard navigation. Perceptual hashes and thumbnails remain memory-only.
+- Generate SHA-256 for a file and compare it with a whitespace-trimmed digest
+  from the clipboard without persisting either value.
+- Preview CP437/ANSI and Kodi NFO files, verify SFV and common checksum lists,
+  generate SFV/SHA256SUMS atomically, and jump directly to a problematic file.
+- The image/video viewer gains the accumulated navigation, opacity and
+  always-on-top controls; tool results can open their location in a new tab.
 
-## Packaging
+## Windows Fast NTFS preview
 
-The release contains:
+Fast NTFS keeps the unelevated Ferail GUI separate from a temporary read-only
+administrator helper. One explicit UAC approval serves subsequent scans in the
+same Ferail session; live MFT/index/traversal phases are visible, and failures
+discard partial rows before Portable fallback. A real 2.3-million-record volume
+reached subtree delivery in about five seconds after elevation.
 
-- `Ferail-0.7.1-win-x64.zip` — unsigned portable GUI, CLI and the dedicated
-  `ferail-ntfs-helper.exe`;
-- `Ferail-0.7.1-x64-symbols.zip` — matching GUI, CLI and helper PDBs plus the
-  build-identity manifest.
+Fast NTFS remains a preview while the adversarial VHDX matrix and Authenticode
+qualification stay open. Normal launch, browsing, Flat View and Portable Disk
+Usage do not elevate.
 
-Windows SmartScreen may warn because the build is not Authenticode-signed. The
-symbols archive is only needed for diagnosing crash dumps.
+## Downloads
 
-The full technical list is in
-[CHANGELOG.md](CHANGELOG.md#071--2026-08-27-windows-only-release).
+- macOS: signed, notarized and stapled DMG.
+- Windows x64: portable ZIP plus a separate matching symbols archive.
+- Linux: Ubuntu 22.04-compatible `.deb` packages for amd64 and arm64.
+
+The full technical history is in [CHANGELOG.md](CHANGELOG.md).
