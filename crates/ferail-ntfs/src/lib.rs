@@ -13,6 +13,7 @@ mod index;
 mod reader;
 mod record;
 mod runlist;
+mod stream;
 
 pub use boot::{parse_boot_sector, NtfsGeometry};
 pub use error::{ErrorKind, NtfsError, Result};
@@ -22,7 +23,8 @@ pub use index::{
 };
 pub use reader::{ByteReader, SliceReader};
 pub use record::{
-    parse_file_record, AttributeList, AttributeListEntry, DataAttribute, FileName, FileRecord,
-    FileReference, NameNamespace, RecordParseOptions,
+    parse_attribute_list_entries, parse_file_record, AttributeList, AttributeListEntry,
+    DataAttribute, FileName, FileRecord, FileReference, NameNamespace, RecordParseOptions,
 };
 pub use runlist::{parse_mapping_pairs, DataRun};
+pub use stream::{bootstrap_mft, MappedStream};

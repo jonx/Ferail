@@ -555,6 +555,13 @@ fn parse_attribute_list(bytes: &[u8], absolute_offset: usize) -> Result<Vec<Attr
     Ok(entries)
 }
 
+/// Parses the logical contents of a non-resident `$ATTRIBUTE_LIST` stream.
+/// The caller remains responsible for mapping its runs and enforcing a byte
+/// cap before materializing the small metadata stream.
+pub fn parse_attribute_list_entries(bytes: &[u8]) -> Result<Vec<AttributeListEntry>> {
+    parse_attribute_list(bytes, 0)
+}
+
 fn attribute_name(
     bytes: &[u8],
     length: usize,

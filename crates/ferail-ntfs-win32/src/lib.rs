@@ -6,6 +6,12 @@
 
 #[cfg(windows)]
 mod raw;
+#[cfg(windows)]
+mod scan;
 
 #[cfg(windows)]
-pub use raw::{probe_fast_ntfs, FastNtfsProbe, RawNtfsGeometry, RawVolumeReader};
+pub use raw::{
+    probe_fast_ntfs, FastNtfsProbe, RawNtfsGeometry, RawVolumeError, RawVolumeReader, Result,
+};
+#[cfg(windows)]
+pub use scan::{scan_mft, RawScanSummary};

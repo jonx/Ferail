@@ -3,7 +3,7 @@ fn main() {
     use std::path::Path;
 
     use ferail_ntfs::{parse_file_record, ByteReader as _, RecordParseOptions};
-    use ferail_ntfs_win32::{probe_fast_ntfs, RawVolumeReader};
+    use ferail_ntfs_win32::{probe_fast_ntfs, scan_mft, RawVolumeReader};
 
     let Some(path) = std::env::args_os().nth(1) else {
         eprintln!("usage: ferail-ntfs-diag <local-ntfs-path>");
@@ -51,6 +51,15 @@ fn main() {
         "record_zero_attribute_lists={}",
         record.attribute_lists.len()
     );
+    let (index, scan) = match scan_mft(&reader, || false, |_| {}) {
+        Ok(result) => result,
+        Err(error) => fail(&format!("MFT scan failed: {error}")),
+    };
+    println!("records_seen={}", scan.records_seen);
+    println!("live_records={}", scan.live_records);
+    println!("corrupt_records={}", scan.corrupt_records);
+    println!("indexed_base_records={}", index.files().len());
+    println!("indexed_name_links={}", index.links().len());
 }
 
 #[cfg(windows)]

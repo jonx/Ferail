@@ -37,6 +37,10 @@ impl NtfsError {
     pub const fn source(offset: u64, context: &'static str) -> Self {
         Self::new(ErrorKind::SourceIo, offset, context)
     }
+
+    pub const fn cancelled(context: &'static str) -> Self {
+        Self::new(ErrorKind::Cancelled, 0, context)
+    }
 }
 
 impl fmt::Display for NtfsError {
