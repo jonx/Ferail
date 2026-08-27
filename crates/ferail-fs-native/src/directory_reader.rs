@@ -1,8 +1,9 @@
 //! Native batched directory enumeration shared by recursive tools.
 //!
 //! The portable implementation uses `read_dir` plus its cached `DirEntry`
-//! metadata. macOS uses `getattrlistbulk`, which returns a directory batch and
-//! its stat-like attributes in one syscall. Callers supply policy (descent,
+//! metadata. macOS uses `getattrlistbulk`; Windows uses
+//! `FileIdBothDirectoryInfo`. Both return directory batches and stat-like
+//! attributes without opening every child. Callers supply policy (descent,
 //! package handling, filtering, aggregation); this module only enumerates.
 
 use std::collections::VecDeque;
@@ -92,7 +93,17 @@ pub(crate) fn for_each(
         }
         portable_for_each(path, cancel, visitor)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let mut visitor = visitor;
+        match windows::for_each_bulk(path, cancel, &mut visitor) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.entries_emitted == 0 => {}
+            Err(error) => return Err(error.source),
+        }
+        portable_for_each(path, cancel, visitor)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         portable_for_each(path, cancel, visitor)
     }
@@ -414,6 +425,242 @@ fn locked_from_flags(_flags: u32) -> bool {
     false
 }
 
+#[cfg(windows)]
+mod windows {
+    use super::*;
+    use std::ffi::OsString;
+    use std::mem::{offset_of, size_of};
+    use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use ::windows::core::PCWSTR;
+    use ::windows::Win32::Foundation::{
+        CloseHandle, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
+    };
+    use ::windows::Win32::Storage::FileSystem::{
+        CreateFileW, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, FileIdInfo,
+        GetFileInformationByHandleEx, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_BOTH_DIR_INFO, FILE_ID_INFO, FILE_LIST_DIRECTORY,
+        FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    const BUFFER_BYTES: usize = 256 * 1024;
+    const WINDOWS_TO_UNIX_SECONDS: u64 = 11_644_473_600;
+
+    pub(super) struct BulkError {
+        pub source: std::io::Error,
+        pub entries_emitted: usize,
+    }
+
+    struct OwnedHandle(HANDLE);
+
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+
+    pub(super) fn for_each_bulk(
+        parent: &Path,
+        cancel: &AtomicBool,
+        visitor: &mut impl FnMut(DirectoryEntry) -> bool,
+    ) -> Result<(), BulkError> {
+        let wide = wide_nul(parent).map_err(|source| BulkError {
+            source,
+            entries_emitted: 0,
+        })?;
+        let share = FILE_SHARE_MODE(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0);
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                FILE_LIST_DIRECTORY.0,
+                share,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                None,
+            )
+        }
+        .map_err(|error| BulkError {
+            source: io_error(error),
+            entries_emitted: 0,
+        })?;
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(BulkError {
+                source: std::io::Error::last_os_error(),
+                entries_emitted: 0,
+            });
+        }
+        let handle = OwnedHandle(handle);
+        let mut volume = FILE_ID_INFO::default();
+        unsafe {
+            GetFileInformationByHandleEx(
+                handle.0,
+                FileIdInfo,
+                (&mut volume as *mut FILE_ID_INFO).cast(),
+                size_of::<FILE_ID_INFO>() as u32,
+            )
+        }
+        .map_err(|error| BulkError {
+            source: io_error(error),
+            entries_emitted: 0,
+        })?;
+
+        let mut entries_emitted = 0usize;
+        let mut restart = true;
+        let mut buffer = vec![0u8; BUFFER_BYTES];
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let class = if restart {
+                FileIdBothDirectoryRestartInfo
+            } else {
+                FileIdBothDirectoryInfo
+            };
+            restart = false;
+            match unsafe {
+                GetFileInformationByHandleEx(
+                    handle.0,
+                    class,
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len() as u32,
+                )
+            } {
+                Ok(()) => {}
+                Err(error) if error.code() == ERROR_NO_MORE_FILES.to_hresult() => return Ok(()),
+                Err(error) => {
+                    return Err(BulkError {
+                        source: io_error(error),
+                        entries_emitted,
+                    });
+                }
+            }
+
+            let mut offset = 0usize;
+            loop {
+                offset
+                    .checked_add(size_of::<FILE_ID_BOTH_DIR_INFO>())
+                    .filter(|end| *end <= buffer.len())
+                    .ok_or_else(|| malformed(entries_emitted))?;
+                let info = unsafe {
+                    buffer
+                        .as_ptr()
+                        .add(offset)
+                        .cast::<FILE_ID_BOTH_DIR_INFO>()
+                        .read_unaligned()
+                };
+                let name_bytes = usize::try_from(info.FileNameLength)
+                    .ok()
+                    .filter(|bytes| bytes % 2 == 0)
+                    .ok_or_else(|| malformed(entries_emitted))?;
+                let name_start = offset
+                    .checked_add(offset_of!(FILE_ID_BOTH_DIR_INFO, FileName))
+                    .ok_or_else(|| malformed(entries_emitted))?;
+                let name_end = name_start
+                    .checked_add(name_bytes)
+                    .filter(|end| *end <= buffer.len())
+                    .ok_or_else(|| malformed(entries_emitted))?;
+                let raw_name: Vec<u16> = buffer[name_start..name_end]
+                    .chunks_exact(2)
+                    .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+                    .collect();
+                if raw_name != [b'.' as u16] && raw_name != [b'.' as u16, b'.' as u16] {
+                    let os_name = OsString::from_wide(&raw_name);
+                    let path = parent.join(&os_name);
+                    let name = String::from_utf16_lossy(&raw_name);
+                    let is_reparse = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0;
+                    let kind = if is_reparse {
+                        EntryKind::Symlink
+                    } else if info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0 {
+                        EntryKind::Directory
+                    } else {
+                        EntryKind::File
+                    };
+                    let entry = DirectoryEntry {
+                        path,
+                        name: name.clone(),
+                        kind,
+                        size: nonnegative(info.EndOfFile),
+                        allocated: if is_reparse {
+                            0
+                        } else {
+                            nonnegative(info.AllocationSize)
+                        },
+                        mtime: system_time(info.LastWriteTime),
+                        created: system_time(info.CreationTime),
+                        // FILE_ID_BOTH_DIR_INFO obtains the identity in the
+                        // same one-handle-per-directory query. Mark every
+                        // entry as potentially linked: file IDs are unique on
+                        // the volume, so the existing set only suppresses a
+                        // repeated hard-link name and never distinct files.
+                        identity: Some((volume.VolumeSerialNumber, info.FileId as u64, 2)),
+                        flags: info.FileAttributes,
+                        hidden: hidden_from_flags(&name, info.FileAttributes),
+                        locked: locked_from_flags(info.FileAttributes),
+                        mount_point: false,
+                    };
+                    entries_emitted = entries_emitted.saturating_add(1);
+                    if !visitor(entry) {
+                        return Ok(());
+                    }
+                }
+                if info.NextEntryOffset == 0 {
+                    break;
+                }
+                offset = offset
+                    .checked_add(info.NextEntryOffset as usize)
+                    .filter(|next| *next > offset && *next < buffer.len())
+                    .ok_or_else(|| malformed(entries_emitted))?;
+            }
+        }
+    }
+
+    fn wide_nul(path: &Path) -> std::io::Result<Vec<u16>> {
+        let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+        if wide.contains(&0) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "directory path contains NUL",
+            ));
+        }
+        wide.push(0);
+        Ok(wide)
+    }
+
+    fn nonnegative(value: i64) -> u64 {
+        u64::try_from(value).unwrap_or(0)
+    }
+
+    fn system_time(ticks: i64) -> Option<SystemTime> {
+        let ticks = u64::try_from(ticks).ok()?;
+        let seconds = ticks / 10_000_000;
+        let nanos = ((ticks % 10_000_000) * 100) as u32;
+        if seconds >= WINDOWS_TO_UNIX_SECONDS {
+            UNIX_EPOCH.checked_add(Duration::new(seconds - WINDOWS_TO_UNIX_SECONDS, nanos))
+        } else {
+            UNIX_EPOCH.checked_sub(Duration::new(WINDOWS_TO_UNIX_SECONDS - seconds, nanos))
+        }
+    }
+
+    fn malformed(entries_emitted: usize) -> BulkError {
+        BulkError {
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "malformed Windows directory batch",
+            ),
+            entries_emitted,
+        }
+    }
+
+    fn io_error(error: ::windows::core::Error) -> std::io::Error {
+        let code = error.code().0 as u32;
+        std::io::Error::from_raw_os_error((code & 0xffff) as i32)
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
@@ -708,6 +955,59 @@ mod macos {
             }
             std::str::from_utf8(bytes).ok().map(str::to_owned)
         }
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    #[test]
+    fn batched_reader_preserves_names_and_reports_stable_file_ids() {
+        let root = std::env::temp_dir().join(format!(
+            "ferail-windows-bulk-reader-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        let original = root.join("café-数据.txt");
+        let link = root.join("second-name.txt");
+        fs::File::create(&original)
+            .unwrap()
+            .write_all(b"same NTFS record")
+            .unwrap();
+        fs::hard_link(&original, &link).unwrap();
+        fs::create_dir(root.join("nested")).unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let mut entries = Vec::new();
+        for_each(&root, &cancel, |entry| {
+            entries.push(entry);
+            true
+        })
+        .unwrap();
+
+        let first = entries
+            .iter()
+            .find(|entry| entry.path == original)
+            .expect("Unicode file returned with its exact path");
+        let second = entries
+            .iter()
+            .find(|entry| entry.path == link)
+            .expect("hard-link name returned");
+        assert_eq!(first.identity, second.identity);
+        assert_eq!(first.size, 16);
+        assert!(first.allocated >= first.size);
+        assert!(entries.iter().any(|entry| {
+            entry.path == root.join("nested") && entry.kind == EntryKind::Directory
+        }));
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
 

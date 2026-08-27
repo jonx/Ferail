@@ -679,7 +679,7 @@ mod tests {
         assert_eq!(t, SubtreeTotals::default());
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn hardlinked_files_count_once() {
         let tmp = fixture();
@@ -688,6 +688,10 @@ mod tests {
         // count twice, in either the plain sum or the fact stream.
         fs::hard_link(root.join("a.txt"), root.join("a-link.txt")).unwrap();
         let cancel = AtomicBool::new(false);
+        // The small synchronous helper still uses portable `std::fs`
+        // metadata on Windows. The production scan below uses the native
+        // batched reader, whose file IDs make hard-link accounting exact.
+        #[cfg(unix)]
         assert_eq!(recursive_size(root, &cancel), 60);
 
         let fs_native = NativeFs::new();
