@@ -51,6 +51,58 @@ It is not evidence that every adversarial or measured subcase in
 every third-party Shell extension, and multi-DPI passes remain separately
 tracked until their evidence is recorded.
 
+### 2026-08-27 — Fast NTFS Disk Usage implementation and automated qualification
+
+Fast NTFS is now implemented as an ephemeral, explicit Disk Usage engine. The
+reviewable series is:
+
+- `d0c0a0b`: bounded, unsafe-free neutral boot/record/runlist parser;
+- `a3a8c99`: local fixed-NTFS probe and sector-aligned raw reader;
+- `de75b41` + `03ee948`: compact link/name index and fragmented `$MFT` stream;
+- `3b12abc` + `d4f1682`: bounded `FDU1` protocol and authenticated runas helper;
+- `429cb19` + `00f69c6`: common Disk Usage facts, exact raw UTF-16 actions,
+  atomic Portable fallback, eligibility UI, preference and translations;
+- `fa6c1df`: hostile helper-stream validation and release packaging;
+- `a0c31bc`: disposable adversarial NTFS VHDX recipe;
+- `d4620eb`: isolated Portable/Fast worker seam outside rendering.
+
+The GUI stays `asInvoker`; ordinary startup and the Portable engine never
+elevate. Fast is enabled only after an off-thread local/fixed/NTFS probe and an
+explicit remembered choice. The sibling helper receives no requested path in
+its command line, connects through a current-user/Admin/SYSTEM DACL pipe,
+authenticates against the `ShellExecuteExW` PID, revalidates volume GUID and
+root file identity, opens the volume read-only, performs one scan and exits.
+Any failure or invalid identity/order/total after partial batches resets the
+whole Fast tree and starts a fresh Portable scan; user cancellation never
+starts fallback. Raw filename components remain opaque UTF-16 for actions.
+
+Windows automated evidence from this machine:
+
+- `cargo test -p ferail-ntfs`: 19 passed;
+- `cargo test -p ferail-ntfs-win32 --all-targets`: 9 passed, including a real
+  private-DACL overlapped named-pipe round trip;
+- `cargo test -p ferail-disk-usage`: 26 passed;
+- `cargo test -p ferail-gpui --lib`: 313 passed, 1 explicit network test
+  ignored;
+- strict all-target Clippy for `ferail-ntfs`, `ferail-ntfs-win32` and
+  `ferail-gpui`: clean;
+- headless screenshots at 1180×760 validate the French Performance setting,
+  NTFS eligibility state, Portable/Fast header controls and active-engine
+  wording; normal screenshot startup showed no UAC.
+
+Still required before the 0.7.0 tag:
+
+1. accept the explicit UAC prompt and retain aggregate output from
+   `ferail-ntfs-client-diag` for a deep local subtree;
+2. compare its visible row count and apparent/allocated totals with Portable;
+3. package the exact release commit and verify the staged sibling helper, PDB
+   identity/dependencies, normal no-UAC launch, Fast UAC scan and clean helper
+   exit from the portable ZIP;
+4. Hyper-V is absent on this machine, so run
+   `scripts/testing/fast-ntfs-vhdx.ps1` later on a Hyper-V-capable Windows host
+   for sparse/compressed/ADS/hard-link/junction/ACL/concurrent-mutation and
+   long-path evidence; do not rewrite that hardware gate as passed here.
+
 ### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
 
 The shared implementation is included in the sidecar feature commit and was
@@ -1614,19 +1666,9 @@ Sidecar/NFO checks added for the next Windows pass:
      the virtualized list, selection action and compact app typography remain
      responsive.
 
-Still deliberately not claimed — Fast NTFS/MFT Disk Usage:
-  - the refreshed source audit confirms there is still no executable MFT
-    reader, elevated DU helper, private named-pipe protocol or engine selector;
-  - do not expose a Fast NTFS label until
-    docs/features/WINDOWS_FAST_NTFS.md and the seven-step summary above are
-    implemented. This work must start as an isolated Windows feature: raw
-    volume access, UAC cancellation, live-volume consistency, sparse/
-    compressed allocation and hard-link accounting cannot be validated from
-    macOS;
-  - first Windows commit should contain only the neutral MFT-record parser and
-    malformed/fixup fixtures. Follow with the asInvoker parent + narrow runas
-    helper/private pipe, then subtree reconstruction and DU fact adaptation,
-    then the explicit UI engine choice and portable fallback. Keep each step
-    independently revertible and keep Fast DU out of Flat/Search until its DU
-    totals and memory gates pass.
+Fast NTFS/MFT Disk Usage has since been implemented in the isolated series
+recorded in the 2026-08-27 section near the top of this handover. That newer
+section supersedes this pre-implementation audit. Keep Fast DU out of
+Flat/Search until the separate read-only adapter and million-entry memory
+gates are designed and qualified; do not share the elevated helper lifetime.
 ```

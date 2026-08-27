@@ -10,9 +10,19 @@ byte of raw-volume state.
 
 ## Status and non-goals
 
-Planned; no executable MFT reader exists yet. Development and qualification
-must happen on a real Windows NTFS machine. The portable scanner remains the
-only shipped engine until every exit gate below passes.
+Implemented on Windows as the isolated commit series `d0c0a0b` through
+`d4620eb`. The neutral parser, fragmented MFT stream, compact index, private
+protocol, authenticated elevated helper, Disk Usage adapter, exact UTF-16 path
+arena, atomic Portable fallback, settings and UI are present. Automated gates
+on a real Windows NTFS machine pass (19 neutral parser/protocol tests, 9 Win32
+helper/pipe tests, 26 Disk Usage model tests and 313 GPUI tests; one explicit
+network test ignored). The disposable adversarial VHDX recipe lives at
+`scripts/testing/fast-ntfs-vhdx.ps1`.
+
+Before publishing a build, retain evidence from the explicit UAC/helper scan
+and packaged-helper smoke test on the release artifact. Hyper-V-dependent VHDX
+and million-entry memory/performance gates remain hardware qualification, not
+claims inferred from unit tests.
 
 V1 is for Disk Usage only. Do not route Flat View, Search, duplicate finding,
 ordinary listings or background indexing through it. Do not persist an MFT
@@ -252,7 +262,7 @@ Each step is a separately reviewable/revertible commit:
    fallback and existing-fact adaptation.
 6. Add the explicit Disk Usage engine UI, translations, progress/coverage
    wording, Settings preference and screenshot state.
-7. Qualify on Windows. Only then enable Fast NTFS in release builds. Evaluate a
+7. Qualify on Windows. Only then publish Fast NTFS in a release build. Evaluate a
    separate read-only adapter for Flat/Search afterward; do not share the
    elevated helper's lifetime or index implicitly.
 
