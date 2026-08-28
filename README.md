@@ -96,6 +96,14 @@ and slides in on an edge-slam; streaming search; quarantine "where from"
 provenance.
 **[Read the tour →](docs/FEATURES.md)**
 
+## Privacy
+
+Ferail processes files locally and has no telemetry or automatic report upload.
+Automatic update checks are opt-in and disabled by default; diagnostic bundles
+exclude user file and folder names by default. See the full
+**[Privacy Policy](PRIVACY.md)** for local storage, update requests, diagnostics,
+permissions, and deletion details.
+
 ## Vision & roadmap
 
 One file manager that is responsive, content-aware, and equally at home on every

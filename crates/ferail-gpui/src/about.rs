@@ -150,7 +150,8 @@ fn about_body() -> impl IntoElement {
                     format!("{os_label} \u{00B7} {arch}"),
                 ))
                 .child(meta_row(tr!("Author"), "John Knipper".to_string()))
-                .child(website_row("github.com/jonx/Ferail")),
+                .child(website_row("github.com/jonx/Ferail"))
+                .child(privacy_row()),
         )
         .child(WithTheme::copyright("Copyright \u{00A9} 2026 John Knipper"))
 }
@@ -224,6 +225,29 @@ fn website_row(url: &'static str) -> impl IntoElement {
                     // UI thread (Prime Directive).
                     cx.background_spawn(async move {
                         crate::platform_shell::open_url(&target);
+                    })
+                    .detach();
+                }),
+        )
+}
+
+/// Public privacy policy. Keep the visible target short while opening the
+/// canonical repository document in the system browser.
+fn privacy_row() -> impl IntoElement {
+    const TARGET: &str = "https://github.com/jonx/Ferail/blob/main/PRIVACY.md";
+    h_flex()
+        .gap_2()
+        .child(div().text_scale_xs().opacity(0.65).child(tr!("Privacy")))
+        .child(
+            div()
+                .id(ElementId::Name("about-privacy-link".into()))
+                .cursor_pointer()
+                .text_scale_xs()
+                .underline()
+                .child("PRIVACY.md")
+                .on_click(move |_: &ClickEvent, _window, cx| {
+                    cx.background_spawn(async move {
+                        crate::platform_shell::open_url(TARGET);
                     })
                     .detach();
                 }),

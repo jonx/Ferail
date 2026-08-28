@@ -237,7 +237,9 @@ fn mutate(cx: &mut App, f: impl FnOnce(&mut UpdateState)) {
 /// Is the automatic daily check enabled? Off unless the user opted in
 /// (Settings ▸ About ▸ Updates).
 pub fn auto_check_enabled() -> bool {
-    crate::app_state::load().update_check.unwrap_or(false)
+    crate::app_state::load()
+        .update_check
+        .unwrap_or(crate::app_state::DEFAULT_UPDATE_CHECK)
 }
 
 // ============================================================================

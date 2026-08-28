@@ -44,7 +44,7 @@ fn main() -> Result<()> {
     ferail_gpui::redact::set_enabled(
         ferail_gpui::app_state::load()
             .redact_diagnostics
-            .unwrap_or(true),
+            .unwrap_or(ferail_gpui::app_state::DEFAULT_REDACT_DIAGNOSTICS),
     );
     let args = screenshot::parse_args();
     if args.screenshot.is_some() {

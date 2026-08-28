@@ -919,7 +919,11 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
              nothing about your files. Turn it off only if a maintainer asks for real paths \
              to reproduce a bug."
                 ),
-                |_cx: &App| app_state::load().redact_diagnostics.unwrap_or(true),
+                |_cx: &App| {
+                    app_state::load()
+                        .redact_diagnostics
+                        .unwrap_or(app_state::DEFAULT_REDACT_DIAGNOSTICS)
+                },
                 |val: bool, _cx: &mut App| {
                     persist_redact_diagnostics(val);
                     crate::redact::set_enabled(val);
@@ -2217,7 +2221,11 @@ fn about_page() -> SettingPage {
                  you choosing to; use Ferail \u{2192} Check for Updates\u{2026} to check by hand \
                  at any time."
                     ),
-                    |_cx: &App| app_state::load().update_check.unwrap_or(false),
+                    |_cx: &App| {
+                        app_state::load()
+                            .update_check
+                            .unwrap_or(app_state::DEFAULT_UPDATE_CHECK)
+                    },
                     |val: bool, cx: &mut App| {
                         persist_update_check(val);
                         if val {

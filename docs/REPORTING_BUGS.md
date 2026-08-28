@@ -4,6 +4,14 @@ A useful report says what Ferail was doing, which exact build was running, and
 includes the diagnostic file produced for that failure. You never need to send
 your files, thumbnails, directory listing, or an unredacted screenshot.
 
+**File and folder path redaction is enabled by default** for Copy report and
+Create report bundle. Ferail replaces user path components before building the
+shareable output, always removes the home-directory account name, saves the
+result locally, and never uploads it automatically. You can inspect the exact
+sanitized activity trail under Settings → Diagnostics. Native minidumps can
+contain incidental process memory, so review them before sharing. See the
+[Privacy Policy](../PRIVACY.md) for the complete boundary.
+
 ## What to include
 
 1. Record the Ferail version shown in the title bar, operating system and CPU

@@ -8,6 +8,24 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Ferail now has a public privacy policy.** It documents local file
+  processing and persistence, the absence of telemetry and automatic report
+  uploads, opt-in update checks (off by default), path-redacted bug bundles
+  (on by default), permissions, minidump caveats, and how to delete local app
+  data. The README, About dialog, and bug-report guide link to it.
+
+- **macOS folder icons now appear consistently in list view.** Native,
+  path-specific folder artwork is warmed only for the visible rows (plus a
+  small overscan), through the same shared dispatcher as the icon grid. A
+  folder no longer has to be visited before its system icon appears, and very
+  large directories do not trigger a whole-list icon sweep.
+
+- **Back, Forward and Parent navigation reveal the correct row after sorting.**
+  Navigation now retains the destination as a semantic file identity until
+  streaming and the final sort are complete, then rebinds and centres that
+  row instead of scrolling to whichever item inherited its provisional row
+  number.
+
 - **The icons-only sidebar now follows very narrow window resizes.** Its strip
   uses less width in ordinary windows, contracts a little further when the app
   is squeezed, and recentres the icons instead of preserving the previous

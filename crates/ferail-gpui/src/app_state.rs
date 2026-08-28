@@ -20,6 +20,11 @@
 //! mid-write can't destroy all settings.
 
 use std::path::PathBuf;
+
+/// Privacy-sensitive defaults are named once so Settings, startup, update
+/// scheduling, tests, and the public policy cannot silently drift apart.
+pub const DEFAULT_REDACT_DIAGNOSTICS: bool = true;
+pub const DEFAULT_UPDATE_CHECK: bool = false;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Mutex, OnceLock};
 
@@ -709,6 +714,18 @@ fn parse_bool(s: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn privacy_sensitive_defaults_are_conservative() {
+        assert!(!DEFAULT_UPDATE_CHECK, "automatic network checks are opt-in");
+        assert!(
+            DEFAULT_REDACT_DIAGNOSTICS,
+            "shareable diagnostics hide user paths by default"
+        );
+        let fresh = AppState::default();
+        assert_eq!(fresh.update_check, None);
+        assert_eq!(fresh.redact_diagnostics, None);
+    }
 
     #[test]
     fn linux_locations_preference_serializes_even_when_disabled() {
