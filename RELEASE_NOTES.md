@@ -1,58 +1,50 @@
-# Ferail 0.7.2 — Millions of files, on every platform
+# Ferail 0.7.3 — Private screenshots and responsive disk maps
 
-This is the first Ferail release for macOS, Windows and Linux together since
-0.6.5. It brings the large-volume work and the shared features accumulated in
-the Windows-first releases to every supported download.
+This release protects screenshots by default and keeps Disk Usage responsive
+while portable scans stream millions of files. The performance fixes are in
+shared code, so macOS, Windows and Linux receive the update together.
 
-## Faster large trees
+## Private Mode
 
-- Flat View remains uncapped and responsive across millions of files, with its
-  compact scan-local path arena, symbolic Select All and viewport-only detail
-  work.
-- macOS enumerates APFS directory metadata in native `getattrlistbulk` batches
-  with bounded parallel readers. Version 0.7.2 reuses each worker's native
-  buffer, extends the bulk path to package and folder-size rollups, and removes
-  avoidable per-file iCloud/extension allocations.
-- Disk Usage releases its scan index when the surface closes, reports skipped
-  folders honestly, and offers Full Disk Access guidance only when protected
-  macOS folders actually limit coverage.
+- The new shield button or `Cmd/Ctrl+Shift+K` replaces every Ferail-owned
+  window with an opaque, synthetic presentation containing no real names,
+  paths, thumbnails, metadata or content.
+- While Private Mode is active, normal commands and interaction are disabled.
+  Escape, the shield, or the shortcut restores the session; window close and
+  app quit remain available.
+- Viewer transparency is forced off, video is torn down, and the native window
+  title is replaced. The mode is session-only and never persisted.
+- Ferail's screenshot harness now enters Private Mode automatically. Its
+  explicit `--unsafe-real-data` override is reserved for repo-owned fixtures.
 
-## New shared tools since 0.6.5
+## Disk Usage at million-file scale
 
-- Find Similar Images reuses the duplicate-finder surface with adjustable
-  structure/detail criteria, best-copy selection, thumbnails and full-size
-  keyboard navigation. Perceptual hashes and thumbnails remain memory-only.
-- Generate SHA-256 for a file and compare it with a whitespace-trimmed digest
-  from the clipboard without persisting either value.
-- Preview CP437/ANSI and Kodi NFO files, verify SFV and common checksum lists,
-  generate SFV/SHA256SUMS atomically, and jump directly to a problematic file.
-- The image/video viewer gains the accumulated navigation, opacity and
-  always-on-top controls; tool results can open their location in a new tab.
+- Depth-limited treemaps use incrementally maintained subtree totals rather
+  than repeatedly walking every hidden descendant on the UI thread.
+- Broad directories use a linear iterative squarifier instead of recursively
+  copying the remaining sibling list.
+- The largest-files panel keeps only its 50 candidates instead of allocating
+  one temporary row per file, and presentation refreshes back off adaptively
+  on very large trees.
+- Scan completion no longer rewrites every node. Privacy-safe timing
+  breadcrumbs identify any remaining slow layout or Top-N pass in a hang
+  report without recording the scanned path.
 
-## Windows Fast NTFS preview
+## Smaller polish
 
-Fast NTFS keeps the unelevated Ferail GUI separate from a temporary read-only
-administrator helper. One explicit UAC approval serves subsequent scans in the
-same Ferail session; live MFT/index/traversal phases are visible, and failures
-discard partial rows before Portable fallback. A real 2.3-million-record volume
-reached subtree delivery in about five seconds after elevation.
-
-Fast NTFS remains a preview while the adversarial VHDX matrix and Authenticode
-qualification stay open. Normal launch, browsing, Flat View and Portable Disk
-Usage do not elevate.
+- Large counts now use localized grouping consistently across tool headers,
+  progress, notifications, checksum results and viewer positions.
+- Windows clipboard paths no longer expose the internal `\\?\` prefix.
+- Ferail's version is visible beside the toolbar wordmark, making screenshots
+  and tester reports easier to identify.
+- The shipped Fast NTFS helper documents its elevated standalone diagnostic:
+  `ferail-ntfs-helper.exe --diagnose <path>`. Its report contains aggregate
+  phases, rates, counts and timings, never file names or the requested path.
 
 ## Downloads
 
 - macOS: signed, notarized and stapled DMG.
 - Windows x64: portable ZIP plus a separate matching symbols archive.
 - Linux: Ubuntu 22.04-compatible `.deb` packages for amd64 and arm64.
-
-## SHA-256
-
-- `Ferail-0.7.2.dmg` — `1ece0107e0a6d388610b8d46583641a7eae3b097eae4b233866ad2e15d1b25eb`
-- `Ferail-0.7.2-win-x64.zip` — `8dbb5f972d9e1e7ed71bce8a36c35864fc4b80411dcc11251e2b151403d3eac5`
-- `Ferail-0.7.2-x64-symbols.zip` — `b5fa7f16b9cfbe6b36b99e2afb4142346185e753f9ef22c70ee511669afc4adb`
-- `ferail_0.7.2-1_amd64.deb` — `e510371166de0516d69b77452626be4372ae3bd796b333847438c83d183e8c46`
-- `ferail_0.7.2-1_arm64.deb` — `be91d9275120c05148f30986d51d5fb9be0a25c9bf64e77701c1dd3819f3ff5b`
 
 The full technical history is in [CHANGELOG.md](CHANGELOG.md).

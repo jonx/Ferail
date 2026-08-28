@@ -437,6 +437,7 @@ mod windows_impl {
     }
 }
 
+#[cfg(any(windows, test))]
 fn resolved_linux_to_windows(authority: &str, distro: &str, path: &str) -> Option<PathBuf> {
     if !path.starts_with('/') || path.contains(['\0', '\r', '\n']) {
         return None;

@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.3 — 2026-08-28
+
 - **Disk Usage remains responsive while Portable scans millions of files.**
   The depth-limited treemap now uses incrementally maintained subtree totals
   instead of revisiting every hidden descendant, broad directories use a
