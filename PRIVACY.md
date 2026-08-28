@@ -25,7 +25,11 @@ on the feature, this can include filenames, paths, sizes, timestamps,
 permissions, filesystem metadata, file signatures, media metadata, thumbnails,
 checksums, archive listings, and image pixels. This processing is local.
 
-Some optional features need broader operating-system access:
+Some optional features need broader operating-system access. Ferail does not
+obtain or activate this access automatically. It is requested only after you
+choose to use an advanced feature that needs it; the operating system remains
+in control of the permission or elevation request, and you can decline it. When
+available, Ferail keeps using an unprivileged fallback instead.
 
 - macOS Full Disk Access allows Ferail to read locations protected by macOS;
 - the Windows Fast NTFS helper uses a narrow, elevated process to read local
@@ -50,6 +54,16 @@ data directories. Local state can include:
 Ferail's own thumbnails and preview pixels are held in bounded process memory,
 not written to Ferail's persistent database. The operating system or an
 installed file provider may maintain its own caches independently.
+
+Archive-entry previews are also ephemeral. Text and supported images are read
+and rendered directly from memory. When an operating-system preview provider
+requires a file URL, Ferail extracts only the selected entry into a private
+per-user temporary directory, gives it a generic name that does not disclose
+the archive entry's original filename, and keeps at most one staged preview
+file at a time. That file is removed when it is superseded or the preview is
+closed. Ferail also removes scratch directories left by an interrupted or
+crashed process on a later launch. These temporary previews are never added to
+Ferail's persistent metadata database.
 
 Similar-image search has a stricter boundary: perceptual hashes, decoded pixels,
 candidate paths, and result thumbnails are kept only by the active scan/result
