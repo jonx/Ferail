@@ -1015,6 +1015,10 @@ pub struct Shell {
     /// until the track has painted once (it only exists in grid view, on a
     /// window wide enough to hold it).
     pub icon_size_track: Bounds<Pixels>,
+    /// Painted bounds of the one visible Private Mode control. The global
+    /// interaction shield uses this rect as its sole in-app click exception;
+    /// no duplicate exit button has to be painted above the prepared UI.
+    pub private_toggle_bounds: Bounds<Pixels>,
     /// True while that track is being scrubbed. Held on the Shell rather
     /// than the track element so the drag keeps following the cursor after
     /// it leaves the 96-px bar — the same reason the viewer's adjustment
@@ -1112,6 +1116,12 @@ pub struct Shell {
     /// `app_state::sidebar_collapsed` so the choice survives
     /// restarts.
     pub sidebar_collapsed: bool,
+    /// Fixed compact-text mode. Mutually exclusive with icon-only mode;
+    /// `sidebar_width` keeps the user's normal resizable width intact.
+    pub sidebar_compact: bool,
+    /// Persisted section ordering/disclosure model. Platform-conditional
+    /// sections remain represented even when absent on this machine.
+    pub sidebar_layout: crate::sidebar_layout::SidebarLayout,
     /// Favorites sidebar section collapsed (disclosure-triangle).
     /// Independent of the sidebar-wide icon-collapse; persisted via
     /// `MetadataDb::favorites_section_collapsed` so the choice
@@ -1523,14 +1533,15 @@ fn window_title_for(dir: &Path) -> String {
     match dir.file_name() {
         Some(name) if !name.is_empty() => {
             // Finder-parity leaf: a folder stored with `:` titles as `/` on macOS.
-            let shown =
+            let raw =
                 ferail_fs_native::paths::display_leaf(name.to_string_lossy().as_ref()).into_owned();
+            let shown = crate::private_mode::present_leaf_str(&raw, true);
             format!("{shown}{SEP}Ferail")
         }
         _ => {
             // A root with no leaf (e.g. `C:\`): show the clean display form,
             // never the canonicalized `\\?\C:\`.
-            let path = ferail_fs_native::paths::display_path(dir);
+            let path = crate::private_mode::present_path(dir);
             if path.is_empty() {
                 "Ferail".to_string()
             } else {
@@ -1759,6 +1770,7 @@ const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 const SLOW_LOAD_INDICATOR_DELAY: Duration = Duration::from_millis(300);
 
 const SIDEBAR_COLLAPSED_WIDTH: f32 = 48.0;
+const SIDEBAR_COMPACT_WIDTH: f32 = 176.0;
 const SIDEBAR_MIN_WIDTH: f32 = 160.0;
 const SIDEBAR_MAX_WIDTH: f32 = 400.0;
 const FILE_PANE_MIN_WIDTH: f32 = 360.0;
@@ -2162,6 +2174,12 @@ impl Shell {
             preview_thumb_drag: None,
             splitter_save_scheduled: false,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
+            sidebar_compact: !persisted.sidebar_collapsed.unwrap_or(false)
+                && persisted.sidebar_compact.unwrap_or(false),
+            sidebar_layout: crate::sidebar_layout::SidebarLayout::from_persisted(
+                persisted.sidebar_section_order.as_deref(),
+                persisted.sidebar_collapsed_sections.as_deref(),
+            ),
             favorites_section_collapsed: false,
             focused_favorite: None,
             favorites_focus: cx.focus_handle(),
@@ -2178,6 +2196,7 @@ impl Shell {
             was_window_active: true,
             typeahead: None,
             icon_size_track: Bounds::default(),
+            private_toggle_bounds: Bounds::default(),
             icon_size_dragging: false,
             similar_structure_track: Bounds::default(),
             similar_detail_track: Bounds::default(),
@@ -4123,6 +4142,77 @@ impl Shell {
         cx.notify();
     }
 
+    fn cycle_sidebar_size(&mut self, cx: &mut Context<Self>) {
+        match (self.sidebar_collapsed, self.sidebar_compact) {
+            (false, false) => self.sidebar_compact = true,
+            (false, true) => {
+                self.sidebar_compact = false;
+                self.sidebar_collapsed = true;
+            }
+            (true, _) => {
+                self.sidebar_collapsed = false;
+                self.sidebar_compact = false;
+            }
+        }
+        let mut state = app_state::load();
+        state.sidebar_collapsed = Some(self.sidebar_collapsed);
+        state.sidebar_compact = Some(self.sidebar_compact);
+        app_state::save(&state);
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_sidebar_section(
+        &mut self,
+        section: crate::sidebar_layout::SidebarSection,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_layout.toggle(section);
+        self.persist_sidebar_layout();
+        cx.notify();
+    }
+
+    pub(crate) fn move_sidebar_section(
+        &mut self,
+        moving: crate::sidebar_layout::SidebarSection,
+        before: Option<crate::sidebar_layout::SidebarSection>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(before) = before {
+            self.sidebar_layout.move_before(moving, before);
+        } else {
+            self.sidebar_layout.move_to_end(moving);
+        }
+        self.persist_sidebar_layout();
+        cx.notify();
+    }
+
+    fn persist_sidebar_layout(&self) {
+        let mut state = app_state::load();
+        state.sidebar_section_order = Some(self.sidebar_layout.order_string());
+        state.sidebar_collapsed_sections = Some(self.sidebar_layout.collapsed_string());
+        app_state::save(&state);
+    }
+
+    fn on_cycle_sidebar_size(
+        &mut self,
+        _: &CycleSidebarSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_sidebar_size(cx);
+    }
+
+    fn on_reset_sidebar_order(
+        &mut self,
+        _: &ResetSidebarOrder,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_layout.reset_order();
+        self.persist_sidebar_layout();
+        cx.notify();
+    }
+
     /// Cmd+I — open the Get Info popup for the target row (the right-click
     /// row, else the lead selection). With nothing selected, gets info on
     /// the tab's current folder, matching Finder.
@@ -4832,6 +4922,9 @@ impl Shell {
     /// path is dead now that loads stream through `append_entries`,
     /// which stubs the tag slots empty.)
     fn refresh_file_list_tags_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if !crate::platform_shell::SUPPORTS_TAGS {
+            return;
+        }
         // Finder-tag reads are xattr I/O, part of the file-detail scan the
         // Performance toggle gates. Off, rows render tagless (no per-row
         // xattr read). Gated inside the fn so every caller — the load-done

@@ -668,6 +668,11 @@ pub struct ViewerWindow {
     /// Whether the current video is paused (we drive play/pause from our
     /// own gpui control since the native controls are hidden).
     video_paused: bool,
+    /// Transition state for the process-global Private Mode. Playback is
+    /// paused while protected and restored only when it was live on entry.
+    private_mode_active: bool,
+    private_resume_video: bool,
+    private_resume_slideshow: bool,
     /// Loop the current video instead of advancing the slideshow when it
     /// reaches the end. Viewer-level toggle (the loop checkbox).
     video_loop: bool,
@@ -849,6 +854,9 @@ impl ViewerWindow {
             video_frames_to_drop: Vec::new(),
             video_dims: (0.0, 0.0),
             video_paused: false,
+            private_mode_active: false,
+            private_resume_video: false,
+            private_resume_slideshow: false,
             video_loop: false,
             stay_on_top: false,
             transparent: false,
@@ -945,7 +953,7 @@ impl ViewerWindow {
         let title = match self.current() {
             Some(e) => tr!(
                 "{name} \u{2014} {index} of {total}",
-                name = e.name,
+                name = crate::private_mode::present_leaf_str(&e.name, false),
                 index = self.index + 1,
                 total = self.playlist.len()
             )
@@ -1325,6 +1333,38 @@ impl ViewerWindow {
             self.video_frames_to_drop.push(img);
         }
         self.video_dims = (0.0, 0.0);
+    }
+
+    fn sync_private_playback(&mut self, private: bool, cx: &mut Context<Self>) {
+        if private == self.private_mode_active {
+            return;
+        }
+        self.private_mode_active = private;
+        if private {
+            self.private_resume_video = self.video_overlay.is_some() && !self.video_paused;
+            if self.private_resume_video {
+                if let Some((stream, _)) = &mut self.video_overlay {
+                    stream.set_paused(true);
+                }
+                self.video_paused = true;
+            }
+            self.private_resume_slideshow = self.playback.playing;
+            if self.private_resume_slideshow {
+                self.set_playing(false, cx);
+            }
+        } else {
+            if self.private_resume_video {
+                if let Some((stream, _)) = &mut self.video_overlay {
+                    stream.set_paused(false);
+                    self.video_paused = false;
+                }
+            }
+            if self.private_resume_slideshow {
+                self.set_playing(true, cx);
+            }
+            self.private_resume_video = false;
+            self.private_resume_slideshow = false;
+        }
     }
 
     /// Toggle audio mute of the current video (the transport's speaker
@@ -3525,7 +3565,7 @@ impl ViewerWindow {
         // Native pixel resolution. For a video, report the decoded frame
         // (or intrinsic player size) — NOT `current_frame()`, which is the
         // smaller Quick Look poster.
-        let dims = if self.current_is_video() {
+        let raw_dims = if self.current_is_video() {
             self.video_frame_image
                 .as_ref()
                 .map(|img| {
@@ -3536,13 +3576,15 @@ impl ViewerWindow {
                     let (w, h) = self.video_dims;
                     (w > 0.0 && h > 0.0).then_some((w as u32, h as u32))
                 })
-                .map(|(w, h)| format!("{w}\u{00d7}{h}"))
-                .unwrap_or_default()
         } else {
-            self.current_frame()
-                .map(|f| format!("{}\u{00d7}{}", f.w, f.h))
-                .unwrap_or_default()
+            self.current_frame().map(|f| (f.w, f.h))
         };
+        let dims = raw_dims
+            .map(|raw| {
+                let (w, h) = crate::private_mode::present_dimensions(self.index as u64, raw);
+                format!("{w}\u{00d7}{h}")
+            })
+            .unwrap_or_default();
         let pos = tr!(
             "{index} of {total}",
             index = (self.index + 1).min(self.playlist.len()),
@@ -3773,23 +3815,15 @@ impl Drop for ViewerWindow {
 
 impl Render for ViewerWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if crate::private_mode::enabled() {
-            let private_title = tr!("Private — Ferail").to_string();
-            window.set_window_title(&private_title);
-            self.last_title = private_title;
-            if let Some(handle) = content_ns_view(window) {
-                crate::platform_shell::set_window_opacity(handle, 1.0);
-            }
-            self.teardown_video();
-            return crate::private_mode::surface(
-                crate::private_mode::SurfaceKind::Viewer,
-                window,
-                cx,
-            )
-            .into_any_element();
-        }
         if let Some(handle) = content_ns_view(window) {
-            crate::platform_shell::set_window_opacity(handle, self.window_opacity);
+            crate::platform_shell::set_window_opacity(
+                handle,
+                if crate::private_mode::enabled() {
+                    1.0
+                } else {
+                    self.window_opacity
+                },
+            );
         }
         self.sync_title(window);
         let fullscreen = window.is_fullscreen();
@@ -3827,8 +3861,23 @@ impl Render for ViewerWindow {
         for img in self.video_frames_to_drop.drain(..) {
             let _ = window.drop_image(img);
         }
-        self.sync_video(cx);
-        let stage_area = self.stage_area(stage_w, stage_h, cx);
+        let private = crate::private_mode::enabled();
+        self.sync_private_playback(private, cx);
+        if !private {
+            self.sync_video(cx);
+        }
+        // The viewer keeps its real chrome, dimensions and playlist position
+        // in Private Mode, but never paints personal image/video pixels.
+        let stage_area = if private {
+            div()
+                .relative()
+                .overflow_hidden()
+                .w_full()
+                .h(px(stage_h))
+                .bg(cx.theme().secondary.opacity(0.35))
+        } else {
+            self.stage_area(stage_w, stage_h, cx)
+        };
 
         let root = v_flex()
             .key_context(VIEWER_CONTEXT)
@@ -3871,7 +3920,7 @@ impl Render for ViewerWindow {
             None
         };
 
-        if fullscreen {
+        let content = if fullscreen {
             // Image edge to edge; the toolbar and status/seek bar ride as
             // hover overlays at the top and bottom. Each is revealed by the
             // reveal strip, pinned open while the pointer is over it
@@ -3919,7 +3968,9 @@ impl Render for ViewerWindow {
                 // doesn't render the layer — do it here so the trash
                 // success/failure toasts appear (same as the Get Info
                 // window).
-                .children(gpui_component::Root::render_notification_layer(window, cx))
+                .when(!private, |this| {
+                    this.children(gpui_component::Root::render_notification_layer(window, cx))
+                })
                 .into_any_element()
         } else {
             let toolbar = self.toolbar(window, cx);
@@ -3928,9 +3979,12 @@ impl Render for ViewerWindow {
                 .child(stage_area)
                 .child(status)
                 .when_some(panel, Div::child)
-                .children(gpui_component::Root::render_notification_layer(window, cx))
+                .when(!private, |this| {
+                    this.children(gpui_component::Root::render_notification_layer(window, cx))
+                })
                 .into_any_element()
-        }
+        };
+        crate::private_mode::protect(content, cx)
     }
 }
 

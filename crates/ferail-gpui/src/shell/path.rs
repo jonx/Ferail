@@ -182,7 +182,7 @@ pub fn path_segments(path: &Path) -> Vec<(String, PathBuf)> {
                 // Navigation keeps the real (possibly `\\?\`-verbatim) path;
                 // the label is the clean display form so a canonicalized root
                 // never shows as `\\?\C:\`.
-                let label = ferail_fs_native::paths::display_path(&accum);
+                let label = crate::private_mode::present_path(&accum);
                 out.push((label, accum.clone()));
             }
             Component::Normal(s) => {
@@ -190,8 +190,9 @@ pub fn path_segments(path: &Path) -> Vec<(String, PathBuf)> {
                 // The label is what the user reads; the accumulated path is
                 // what we navigate to. On macOS a folder stored with a `:`
                 // shows as `/` (Finder parity) without changing the real path.
-                let label = ferail_fs_native::paths::display_leaf(s.to_string_lossy().as_ref())
+                let raw = ferail_fs_native::paths::display_leaf(s.to_string_lossy().as_ref())
                     .into_owned();
+                let label = crate::private_mode::present_leaf_str(&raw, true);
                 out.push((label, accum.clone()));
             }
             Component::CurDir => {}

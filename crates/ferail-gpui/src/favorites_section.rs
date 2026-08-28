@@ -251,6 +251,13 @@ impl SidebarItem for FavoritesSection {
             )
             .child(div().flex_1().child(tr!("Favorites")))
             .child(plus_button)
+            .on_drag(
+                crate::tree::SidebarSectionDrag {
+                    section: crate::sidebar_layout::SidebarSection::Favorites,
+                    label: tr!("Favorites"),
+                },
+                |payload, _, _, cx| cx.new(|_| payload.clone()),
+            )
             .on_click(move |_, _window, cx| {
                 if let Some(shell) = shell_for_click.upgrade() {
                     shell.update(cx, |s, cx| {
@@ -432,7 +439,7 @@ fn render_favorite_row(
     // builders; the sidebar's background icon warm fills the cache).
     let _render_guard = ferail_core::path_guard::enter_render();
     let theme = cx.theme();
-    let label = fav.effective_label();
+    let label = crate::private_mode::present_label(&fav.effective_label());
     let row_key: SharedString = format!("fav-row-{index}").into();
     let path_for_click = match &fav.target {
         FavoriteTarget::Path(p) => Some(p.clone()),

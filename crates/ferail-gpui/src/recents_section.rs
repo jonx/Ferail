@@ -14,8 +14,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, WeakEntity, Window, div, img, px,
+    AnyElement, App, AppContext, ElementId, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, SharedString, StatefulInteractiveElement, Styled, WeakEntity, Window, div, img,
+    px,
 };
 use gpui_component::{
     ActiveTheme, Collapsible, h_flex, menu::ContextMenuExt as _, sidebar::SidebarItem, v_flex,
@@ -88,9 +89,11 @@ impl Collapsible for RecentsSection {
 /// Last path component for the row label, or "/" for the filesystem
 /// root. Pure display — never resolves the path.
 fn row_label(path: &std::path::Path) -> String {
-    path.file_name()
+    let raw = path
+        .file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    crate::private_mode::present_leaf_str(&raw, true)
 }
 
 impl SidebarItem for RecentsSection {
@@ -139,6 +142,13 @@ impl SidebarItem for RecentsSection {
                     ),
             )
             .child(div().flex_1().child(tr!("Recents")))
+            .on_drag(
+                crate::tree::SidebarSectionDrag {
+                    section: crate::sidebar_layout::SidebarSection::Recents,
+                    label: tr!("Recents"),
+                },
+                |payload, _, _, cx| cx.new(|_| payload.clone()),
+            )
             .on_click(move |_, _window, cx| {
                 if let Some(shell) = shell_for_header.upgrade() {
                     shell.update(cx, |s, cx| s.toggle_recents_section_collapsed(cx));

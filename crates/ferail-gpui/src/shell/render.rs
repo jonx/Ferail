@@ -1,5 +1,6 @@
 use super::*;
 use crate::text::IconScale as _;
+use gpui_component::ElementExt as _;
 
 /// Minimum width for rendered-markdown preview content, so its prose
 /// reads as a column instead of folding to slivers in the narrow preview
@@ -166,7 +167,7 @@ impl Shell {
             // on fonts without them (AROS bundled font).
             super::tab::ToolResultMode::Search(search) => Some(format!(
                 "{}  \u{00B7}  {}",
-                search.needle,
+                crate::private_mode::present_label(&search.needle),
                 crate::i18n::tr_static(search.engine_label)
             )),
             super::tab::ToolResultMode::Flat(flat) => Some(
@@ -208,13 +209,15 @@ impl Shell {
             super::tab::ToolResultMode::Archive(am) => Some(
                 am.archive
                     .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
+                    .map(|s| crate::private_mode::present_leaf_str(&s.to_string_lossy(), false))
                     .unwrap_or_else(|| tr!("Archive").to_string()),
             ),
             super::tab::ToolResultMode::Verify(vm) => Some(
                 vm.manifest
                     .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
+                    .map(|name| {
+                        crate::private_mode::present_leaf_str(&name.to_string_lossy(), false)
+                    })
                     .unwrap_or_else(|| tr!("Checksum manifest").to_string()),
             ),
         }
@@ -1086,16 +1089,21 @@ impl Shell {
                     // Display leaf (macOS `:` → `/`) for the grid label/tooltip;
                     // deceptive names get the same highlighted treatment as the
                     // list row so switching to grid view never hides a disguise.
-                    let name = entry.display_name.clone();
-                    let tooltip_name: SharedString = name.clone().into();
-                    let grid_label: AnyElement = if entry.name_has_hazards {
-                        crate::entry_info::name_hazard_element(
-                            &name,
-                            SharedString::from(format!("grid-name-{i}")),
-                        )
-                    } else {
-                        SharedString::from(name.clone()).into_any_element()
-                    };
+                    let name: SharedString = crate::private_mode::present_leaf_str(
+                        &entry.display_name,
+                        matches!(entry.kind, EntryKind::Directory),
+                    )
+                    .into();
+                    let tooltip_name: SharedString = name.clone();
+                    let grid_label: AnyElement =
+                        if entry.name_has_hazards && !crate::private_mode::enabled() {
+                            crate::entry_info::name_hazard_element(
+                                &name,
+                                SharedString::from(format!("grid-name-{i}")),
+                            )
+                        } else {
+                            name.clone().into_any_element()
+                        };
 
                     // Per-cell adornments, read from the same parallel
                     // delegate vecs the list row consumes (see
@@ -1153,7 +1161,9 @@ impl Shell {
                             }
                         }
                         EntryKind::File | EntryKind::Symlink => {
-                            let thumb = if show_thumbs && crate::thumbnails::is_thumbnailable(entry)
+                            let thumb = if show_thumbs
+                                && !crate::private_mode::enabled()
+                                && crate::thumbnails::is_thumbnailable(entry)
                             {
                                 // `get_best`: show the crisp bucket once ready,
                                 // else a smaller cached tier (the low-res
@@ -2035,7 +2045,7 @@ impl Shell {
             row = row.child(tab_drop_gap(idx, cx));
 
             let is_active = idx == active;
-            let label = tab.label();
+            let label = crate::private_mode::present_label(&tab.label());
             let tab_id = tab.id;
             let drag_label: SharedString = label.clone().into();
             let theme = cx.theme();
@@ -2498,16 +2508,18 @@ impl Shell {
                 // user can read what clicking will do.
                 .child(
                     div()
+                        .id("sidebar-density-toggle")
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
+                        .tooltip(|window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tr!("Cycle Sidebar Size"))
+                                .action(&CycleSidebarSize, Some(SHELL_CONTEXT))
+                                .build(window, cx)
+                        })
                         .child(SidebarToggleButton::new().collapsed(collapsed).on_click(
                             cx.listener(|this, _, _, cx| {
-                                this.sidebar_collapsed = !this.sidebar_collapsed;
-                                let mut s = app_state::load();
-                                s.sidebar_collapsed = Some(this.sidebar_collapsed);
-                                app_state::save(&s);
-                                cx.notify();
+                                this.cycle_sidebar_size(cx);
                             }),
                         )),
                 )
@@ -2538,24 +2550,37 @@ impl Shell {
                                 .child(env!("CARGO_PKG_VERSION")),
                         ),
                 )
-                // Session-only screenshot protection.  This is deliberately
-                // visible in the primary toolbar: entering it replaces every
-                // Ferail-owned window with an opaque, non-interactive private
-                // presentation until the badge, shortcut, or Escape exits.
+                // The sole visible Private Mode indicator and in-app exit.
+                // Its painted bounds are remembered so the process-wide
+                // interaction shield can allow exactly this one click.
                 .child(
-                    Button::new("toolbar-private-mode")
-                        .small()
-                        .ghost()
-                        .icon(gpui_component::Icon::empty().path("icons/privacy.svg"))
-                        .tooltip_with_action(
-                            tr!("Private Mode"),
-                            &crate::private_mode::TogglePrivateMode,
-                            None,
-                        )
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
+                    div()
+                        .flex_shrink_0()
+                        .on_prepaint({
+                            let shell = cx.entity();
+                            move |bounds, _, cx| {
+                                shell.update(cx, |this, _| this.private_toggle_bounds = bounds)
+                            }
                         })
-                        .on_click(|_, _window, cx| crate::private_mode::enter(cx)),
+                        .child(
+                            Button::new("toolbar-private-mode")
+                                .small()
+                                .ghost()
+                                .selected(crate::private_mode::enabled())
+                                .when(crate::private_mode::enabled(), |this| {
+                                    this.text_color(cx.theme().primary)
+                                })
+                                .icon(gpui_component::Icon::empty().path("icons/privacy.svg"))
+                                .tooltip_with_action(
+                                    tr!("Private Mode"),
+                                    &crate::private_mode::TogglePrivateMode,
+                                    None,
+                                )
+                                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_click(|_, _window, cx| crate::private_mode::toggle(cx)),
+                        ),
                 )
                 .child(
                     Button::new("nav-back")
@@ -2603,11 +2628,26 @@ impl Shell {
                         // any edit — so the filter subscription drops the
                         // filter and reloads the directory through the
                         // normal path, no second clearing seam.
-                        .child(
+                        .child(if crate::private_mode::enabled() {
+                            div()
+                                .h(px(28.0))
+                                .w_full()
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .rounded(cx.theme().radius)
+                                .border_1()
+                                .border_color(cx.theme().border)
+                                .text_scale_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(tr!("Private"))
+                                .into_any_element()
+                        } else {
                             Input::new(&self.active_tab().filter_input)
                                 .small()
-                                .cleanable(true),
-                        ),
+                                .cleanable(true)
+                                .into_any_element()
+                        }),
                 )
                 // (?) — filter-syntax cheat sheet (filter_help.rs). A
                 // stopgap until the filter grows chips; same mouse-down
@@ -3228,6 +3268,19 @@ impl Shell {
             return row;
         }
         if self.breadcrumb_editing {
+            if crate::private_mode::enabled() {
+                return h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_1()
+                    .px_4()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(div().flex_1().truncate().text_scale_sm().child(
+                        crate::private_mode::present_path(&self.active_tab().current_dir),
+                    ));
+            }
             // Key routing for the autocomplete menu. Two upstream
             // quirks would otherwise leak keystrokes to the Shell
             // keymap (moving the FILE LIST cursor / opening rows
@@ -3353,7 +3406,7 @@ impl Shell {
             let is_last = i + 1 == segments.len();
             let label = label.clone();
             let path = path.clone();
-            let tooltip_path = path.to_string_lossy().into_owned();
+            let tooltip_path = crate::private_mode::present_path(&path);
             // Phase 6 (next-level): right-click on a breadcrumb
             // segment offers "Open in New Tab" / "Reveal in Finder"
             // / "Copy Path" — same right-click surface as the
@@ -3593,6 +3646,35 @@ impl Shell {
                 });
             row = row.child(crumb);
         }
+        // Explorer-style discovery affordance: segments keep their ordinary
+        // navigation click, while the otherwise-empty tail enters path edit
+        // mode. The text cursor makes the area discoverable; the compact icon
+        // teaches the existing Cmd/Ctrl+L command when no empty tail remains.
+        row = row
+            .child(
+                div()
+                    .id("breadcrumb-edit-space")
+                    .flex_1()
+                    .h_full()
+                    .min_w(px(8.0))
+                    .cursor_text()
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tr!("Edit Path")).build(window, cx)
+                    })
+                    .on_click(cx.listener(|_, _, window, cx| {
+                        window.dispatch_action(Box::new(EditBreadcrumb), cx);
+                    })),
+            )
+            .child(
+                Button::new("breadcrumb-edit")
+                    .small()
+                    .ghost()
+                    .icon(gpui_component::Icon::empty().path("icons/path-edit.svg"))
+                    .tooltip_with_action(tr!("Edit Path"), &EditBreadcrumb, Some(SHELL_CONTEXT))
+                    .on_click(cx.listener(|_, _, window, cx| {
+                        window.dispatch_action(Box::new(EditBreadcrumb), cx);
+                    })),
+            );
         if self.active_tab().tool_result.is_some() {
             if self.active_tool_result_can_pop_out() {
                 // One button, two surfaces — dispatch the action that matches
@@ -3669,17 +3751,6 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _path_guard = ferail_core::path_guard::enter_render();
-        if crate::private_mode::enabled() {
-            let private_title = tr!("Private — Ferail").to_string();
-            window.set_window_title(&private_title);
-            self.last_window_title = private_title;
-            return crate::private_mode::surface(
-                crate::private_mode::SurfaceKind::Browser,
-                window,
-                cx,
-            )
-            .into_any_element();
-        }
         // Phase 10: drain any pending system-appearance change the
         // native observer pushed since the last paint, then flip the
         // gpui Theme. The observer can only set an AtomicBool; the
@@ -3765,57 +3836,95 @@ impl Render for Shell {
         // into the TitleBar at the top of the window. Icon-mode collapse
         // is enabled so the toggle button in the TitleBar can shrink the
         // sidebar to a 48-DIP icon strip.
-        let mut sidebar = Sidebar::new("shell-sidebar")
-            .collapsible(gpui_component::sidebar::SidebarCollapsible::Icon)
-            .collapsed(self.sidebar_collapsed)
-            .w_full()
-            .child(ShellSidebarItem::locations(
-                crate::locations_section::LocationsSection::new(
+        use crate::sidebar_layout::SidebarSection;
+        let collapsed = |section| self.sidebar_layout.is_collapsed(section);
+        let mut sections: Vec<(SidebarSection, ShellSidebarItem)> = vec![
+            (
+                SidebarSection::Locations,
+                ShellSidebarItem::locations(crate::locations_section::LocationsSection::new(
                     tr!("Locations"),
                     locations_rows,
                     weak.clone(),
                     crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
-                ),
-            ));
+                    collapsed(SidebarSection::Locations),
+                )),
+            ),
+            (SidebarSection::Favorites, favorites_section),
+            (
+                SidebarSection::Browse,
+                ShellSidebarItem::tree(TreeSection::new(
+                    tr!("Browse"),
+                    browse_rows,
+                    weak.clone(),
+                    self.process.icons.clone(),
+                    SidebarSection::Browse,
+                    collapsed(SidebarSection::Browse),
+                )),
+            ),
+        ];
         #[cfg(windows)]
-        {
-            sidebar = sidebar.child(ShellSidebarItem::windows_namespace(
+        sections.push((
+            SidebarSection::Windows,
+            ShellSidebarItem::windows_namespace(
                 crate::locations_section::WindowsNamespaceSection::new(
                     weak.clone(),
                     crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
+                    collapsed(SidebarSection::Windows),
                 ),
-            ));
-        }
+            ),
+        ));
         if !platform_location_rows.is_empty() {
-            sidebar = sidebar.child(ShellSidebarItem::platform_locations(
-                crate::locations_section::PlatformLocationsSection::new(
-                    tr!("Linux"),
-                    platform_location_rows,
-                    weak.clone(),
-                    crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
+            sections.push((
+                SidebarSection::Linux,
+                ShellSidebarItem::platform_locations(
+                    crate::locations_section::PlatformLocationsSection::new(
+                        tr!("Linux"),
+                        platform_location_rows,
+                        weak.clone(),
+                        crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
+                        collapsed(SidebarSection::Linux),
+                    ),
                 ),
             ));
         }
-        sidebar = sidebar.child(favorites_section);
-        // Recents sits below Favorites, above Browse — hidden until the
-        // user has navigated somewhere (build_recents_section → None).
         if let Some(recents_section) = recents_section {
-            sidebar = sidebar.child(recents_section);
+            sections.push((SidebarSection::Recents, recents_section));
         }
-        sidebar = sidebar.child(ShellSidebarItem::tree(TreeSection::new(
-            tr!("Browse"),
-            browse_rows,
-            weak.clone(),
-            self.process.icons.clone(),
-        )));
         if has_volumes {
-            sidebar = sidebar.child(ShellSidebarItem::tree(TreeSection::new(
-                tr!("Volumes"),
-                volumes_rows,
-                weak.clone(),
-                self.process.icons.clone(),
-            )));
+            sections.push((
+                SidebarSection::Volumes,
+                ShellSidebarItem::tree(TreeSection::new(
+                    tr!("Volumes"),
+                    volumes_rows,
+                    weak.clone(),
+                    self.process.icons.clone(),
+                    SidebarSection::Volumes,
+                    collapsed(SidebarSection::Volumes),
+                )),
+            ));
         }
+        sections.sort_by_key(|(section, _)| {
+            self.sidebar_layout
+                .order
+                .iter()
+                .position(|candidate| candidate == section)
+                .unwrap_or(usize::MAX)
+        });
+
+        let mut sidebar = Sidebar::new("shell-sidebar")
+            .collapsible(gpui_component::sidebar::SidebarCollapsible::Icon)
+            .collapsed(self.sidebar_collapsed)
+            .w_full();
+        for (section_id, section) in sections {
+            sidebar = sidebar
+                .child(ShellSidebarItem::section_gap(
+                    crate::tree::SidebarSectionGap::new(Some(section_id), weak.clone()),
+                ))
+                .child(section);
+        }
+        sidebar = sidebar.child(ShellSidebarItem::section_gap(
+            crate::tree::SidebarSectionGap::new(None, weak.clone()),
+        ));
 
         let tabstrip = self.tabstrip(cx);
         // Phase 8: status-bar density. Compute selected count / size,
@@ -4021,23 +4130,25 @@ impl Render for Shell {
         // being over the popover, moves off. Click-outside dismissal
         // (the shell's `on_mouse_down`) still applies for the
         // never-hovered case.
-        let task_panel =
-            crate::task_panel::render_if_open(self.task_panel_open, &self.process.tasks, cx).map(
-                |panel| {
-                    // `.id(...)` makes the popover stateful so `on_hover` is
-                    // available (it lives on StatefulInteractiveElement).
-                    panel.id("task-panel-popover").on_hover(cx.listener(
-                        |this, hovered: &bool, _window, cx| {
-                            if !*hovered {
-                                this.task_panel_open = false;
-                                cx.notify();
-                            }
-                        },
-                    ))
+        let task_panel = crate::task_panel::render_if_open(
+            self.task_panel_open && !crate::private_mode::enabled(),
+            &self.process.tasks,
+            cx,
+        )
+        .map(|panel| {
+            // `.id(...)` makes the popover stateful so `on_hover` is
+            // available (it lives on StatefulInteractiveElement).
+            panel.id("task-panel-popover").on_hover(cx.listener(
+                |this, hovered: &bool, _window, cx| {
+                    if !*hovered {
+                        this.task_panel_open = false;
+                        cx.notify();
+                    }
                 },
-            );
+            ))
+        });
 
-        div()
+        let content = div()
             .key_context(SHELL_CONTEXT)
             .track_focus(&self.focus_handle)
             // Type-to-select: printable keys with the list or grid
@@ -4134,6 +4245,8 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_select_all))
             .on_action(cx.listener(Self::on_clear_selection))
             .on_action(cx.listener(Self::on_toggle_preview))
+            .on_action(cx.listener(Self::on_cycle_sidebar_size))
+            .on_action(cx.listener(Self::on_reset_sidebar_order))
             .on_action(cx.listener(Self::on_get_info))
             .on_action(cx.listener(Self::on_clear_quarantine))
             .on_action(cx.listener(Self::on_zoom_in))
@@ -4406,14 +4519,19 @@ impl Render for Shell {
                 // size in that mode.
                 let sidebar_width_px = if self.sidebar_collapsed {
                     px(SIDEBAR_COLLAPSED_WIDTH)
+                } else if self.sidebar_compact {
+                    px(SIDEBAR_COMPACT_WIDTH)
                 } else {
                     px(self.sidebar_width)
                 };
                 let preview_width_px = px(self.preview_width);
                 let weak = cx.weak_entity();
                 let sidebar_collapsed = self.sidebar_collapsed;
+                let sidebar_fixed = self.sidebar_collapsed || self.sidebar_compact;
                 let sidebar_width_before = if sidebar_collapsed {
                     SIDEBAR_COLLAPSED_WIDTH
+                } else if self.sidebar_compact {
+                    SIDEBAR_COMPACT_WIDTH
                 } else {
                     self.sidebar_width
                         .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
@@ -4432,7 +4550,7 @@ impl Render for Shell {
                         let preview_changed = preview_visible
                             && sizes.len() >= 3
                             && (f32::from(sizes[2]) - preview_width_before).abs() > 0.5;
-                        if preview_changed && !sidebar_collapsed && !sizes.is_empty() {
+                        if preview_changed && !sidebar_fixed && !sizes.is_empty() {
                             let sw = f32::from(sizes[0]);
                             if (sw - sidebar_width_before).abs() > 0.5 {
                                 // Dragging the preview handle left can push the center pane
@@ -4449,7 +4567,7 @@ impl Render for Shell {
                             s.update(cx, |this, cx| {
                                 if let Some(sw) = sizes.first() {
                                     let sw = f32::from(*sw);
-                                    if sidebar_collapsed {
+                                    if sidebar_fixed {
                                         this.sidebar_width = sidebar_width_before;
                                     } else if !preview_changed {
                                         this.sidebar_width =
@@ -4478,7 +4596,12 @@ impl Render for Shell {
                                     px(SIDEBAR_COLLAPSED_WIDTH)..px(SIDEBAR_COLLAPSED_WIDTH),
                                 )
                             })
-                            .when(!self.sidebar_collapsed, |this| {
+                            .when(self.sidebar_compact, |this| {
+                                this.size_range(
+                                    px(SIDEBAR_COMPACT_WIDTH)..px(SIDEBAR_COMPACT_WIDTH),
+                                )
+                            })
+                            .when(!self.sidebar_collapsed && !self.sidebar_compact, |this| {
                                 this.size_range(px(SIDEBAR_MIN_WIDTH)..px(SIDEBAR_MAX_WIDTH))
                             })
                             .child(sidebar),
@@ -4568,17 +4691,22 @@ impl Render for Shell {
             // Dialog overlay layer — rendered last so dialogs draw
             // above the shell content. Needed for the New Folder /
             // Rename modals (5.5.c).
-            .children(Root::render_dialog_layer(window, cx))
+            .when(!crate::private_mode::enabled(), |this| {
+                this.children(Root::render_dialog_layer(window, cx))
+            })
             // Notification overlay (Stage 5.c) — toasts pushed via
             // `Window::push_notification` show up in the corner the
             // active theme specifies. The outer `div().relative()`
             // gives the absolute-positioned notification list a
             // positioned ancestor to anchor against.
-            .children(Root::render_notification_layer(window, cx))
+            .when(!crate::private_mode::enabled(), |this| {
+                this.children(Root::render_notification_layer(window, cx))
+            })
             // Keyboard-shortcuts help overlay (Stage 9.b). Renders
             // only when `shortcuts_help_filter` is Some(_); the
             // module reads `self` for the filter + input state.
             .children(crate::keyboard_help::render(self, cx))
-            .into_any_element()
+            .into_any_element();
+        crate::private_mode::protect_with_toggle(content, cx, Some(self.private_toggle_bounds))
     }
 }

@@ -69,7 +69,9 @@ pub use preview_handler::preview_broker_main;
 #[cfg(windows)]
 mod crash_dump;
 #[cfg(windows)]
-pub use crash_dump::{install_crash_dump_handler, rearm_crash_dump_handler};
+pub use crash_dump::{
+    capture_hang_dump, hang_dump_broker_main, install_crash_dump_handler, rearm_crash_dump_handler,
+};
 
 // Headless-screenshot capture via PrintWindow. macOS goes through
 // gpui_macos's MetalRenderer; gpui_windows has no equivalent so
@@ -637,6 +639,90 @@ pub fn app_bundle_path() -> Option<String> {
     std::env::current_exe()
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// True only when the running executable is the Ferail copy registered by
+/// Inno Setup. A portable ZIP beside an installed copy remains portable: the
+/// registry's InstallLocation must resolve to the executable that is actually
+/// running.
+#[cfg(windows)]
+pub fn prefer_installer_updates() -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ,
+        RRF_SUBKEY_WOW6464KEY,
+    };
+
+    const KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{EEBE7A1D-2613-4900-8F19-0F955E307518}_is1";
+    fn install_location(root: HKEY) -> Option<std::path::PathBuf> {
+        let key = KEY
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let name = "InstallLocation"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let mut value = vec![0u16; 32_768];
+        let mut bytes = (value.len() * std::mem::size_of::<u16>()) as u32;
+        unsafe {
+            RegGetValueW(
+                root,
+                PCWSTR(key.as_ptr()),
+                PCWSTR(name.as_ptr()),
+                RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+                None,
+                Some(value.as_mut_ptr().cast()),
+                Some(&mut bytes),
+            )
+        }
+        .ok()
+        .ok()?;
+        let units = bytes as usize / std::mem::size_of::<u16>();
+        let end = value[..units]
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(units);
+        Some(std::path::PathBuf::from(String::from_utf16_lossy(
+            &value[..end],
+        )))
+    }
+
+    let Ok(current) = std::env::current_exe() else {
+        return false;
+    };
+    [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE]
+        .into_iter()
+        .filter_map(install_location)
+        .map(|location| location.join("Ferail.exe"))
+        .any(|installed| {
+            installed
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&current.to_string_lossy())
+        })
+}
+
+#[cfg(not(windows))]
+pub fn prefer_installer_updates() -> bool {
+    false
+}
+
+/// Start the downloaded Inno Setup update. Inno/Restart Manager owns closing
+/// this process, replacing locked files, relaunching and rollback.
+#[cfg(windows)]
+pub fn launch_update_installer(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new(path)
+        .args(["/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(not(windows))]
+pub fn launch_update_installer(_path: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Windows installer unavailable",
+    ))
 }
 
 /// Open Explorer with `path` selected. Uses an absolute PIDL for the parent and
@@ -1853,6 +1939,10 @@ pub fn set_hidden_extension(_path: &std::path::Path, _hide: bool) -> Result<(), 
 // =============================================================
 // Finder Tags — no Windows equivalent
 // =============================================================
+
+/// Windows currently has no Ferail tag provider. UI code consumes this
+/// capability instead of presenting Finder-only controls backed by stubs.
+pub const SUPPORTS_TAGS: bool = false;
 
 /// Read canonical Finder colour tags. Windows has no system-wide tag
 /// store; either drop the feature on Windows or back it with

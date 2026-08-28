@@ -9,7 +9,7 @@
 # corresponding `v*` release; this is the recovery path when a tag run fails
 # after GitHub has already recorded it. Manual dispatch leaves the build as a
 # run artifact.
-name: Windows zip
+name: Windows packages
 
 on:
   push:
@@ -25,7 +25,7 @@ env:
 
 jobs:
   zip:
-    name: win-x64 portable zip
+    name: win-x64 portable + installer
     runs-on: windows-latest
     permissions:
       contents: write
@@ -44,13 +44,12 @@ jobs:
       - name: Install NASM (aws-lc-sys)
         run: choco install nasm -y --no-progress; echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      # -NoInstaller: the runner image ships Inno Setup, but the installer
-      # path hasn't been exercised from CI — ship the portable ZIP that
-      # matches what 0.2.2 distributed. Drop the flag once the installer is
-      # validated end to end.
-      - name: Build portable ZIP
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build portable ZIP and installer
         shell: pwsh
-        run: ./scripts/package-win.ps1 -NoInstaller
+        run: ./scripts/package-win.ps1
 
       # The second glob picks up Ferail-<version>-x64-symbols.zip — the
       # PDB bundle whose manifest ties CodeView identity to this commit, so
@@ -59,13 +58,14 @@ jobs:
       # first *win*.zip asset, and the symbols bundle sorts first.
       - name: SHA-256
         shell: pwsh
-        run: Get-FileHash target/package/Ferail-*-win-x64.zip, target/package/Ferail-*-x64-symbols.zip -Algorithm SHA256 | Format-List
+        run: Get-FileHash target/package/Ferail-*-win-x64.zip, target/package/Ferail-*-win-x64-setup.exe, target/package/Ferail-*-x64-symbols.zip -Algorithm SHA256 | Format-List
 
       - uses: actions/upload-artifact@v4
         with:
           name: ferail-win-x64
           path: |
             target/package/Ferail-*-win-x64.zip
+            target/package/Ferail-*-win-x64-setup.exe
             target/package/Ferail-*-x64-symbols.zip
           if-no-files-found: error
 
@@ -104,4 +104,5 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: |
             target/package/Ferail-*-win-x64.zip
+            target/package/Ferail-*-win-x64-setup.exe
             target/package/Ferail-*-x64-symbols.zip

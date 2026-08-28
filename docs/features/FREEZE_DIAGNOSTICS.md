@@ -38,7 +38,9 @@ A plain-text file written to the same folder as the issue bundle:
 - **breadcrumbs** — the `obs` ring;
 - **activity trail** — the last ~40 user actions, path-redacted under the
   same privacy toggle as the issue bundle;
-- **thread stacks** — where a platform tool exists (tier list below).
+- **thread stacks or dump location** — where a platform capture tier exists
+  (tier list below). Windows writes a sibling `.dmp` rather than embedding
+  binary stack memory in the text file.
 
 The in-process half is persisted *before* the stack capture is attempted,
 so a misbehaving capture tool can never lose the report.
@@ -104,10 +106,10 @@ still written.
 | --- | --- | --- |
 | macOS | `/usr/bin/sample <pid> 1 -mayDie` | Symbolized stacks of every thread, no root needed for our own pid. Always available. |
 | Linux | `eu-stack -p`, else `gdb --batch -p … thread apply all bt` | Optional installs (`elfutils` / `gdb`). Yama `ptrace_scope=1` blocks child→parent attach, so the capture opens a `PR_SET_PTRACER_ANY` window for its duration and closes it after. |
-| Windows | none in-process yet | Report tells the user: Task Manager → Details → right-click → Create dump file. A future tier could walk suspended threads via DbgHelp. |
+| Windows | out-of-process `MiniDumpWriteDump` broker | Automatic sibling `ferail-hang-<pid>-<seq>.dmp` with all thread contexts/stacks, loaded/unloaded modules and handle/thread metadata. The disposable broker starts before GPUI initialization, needs no administrator rights to dump its same-user parent, times out after 20 seconds and commits via `.part` → `.dmp`. Use the exact matching release PDB bundle in WinDbg. |
 | AROS | none | In-process sections only. |
 
-When no tool produces stacks, the report says so and names the manual
+When no tool produces stacks/dump, the report says so and names the manual
 alternative — users on macOS can always run `sample Ferail 3` (or Activity
 Monitor → Sample Process) against a frozen app themselves, even on builds
 predating this feature.
@@ -136,7 +138,11 @@ many seconds, three seconds after boot — the one sanctioned Prime
 Directive violation, kept so the whole pipeline can be verified
 end-to-end: `FERAIL_DEBUG_FREEZE=20 ferail-gpui` produces the automatic
 watchdog report at ~10 s, logs the recovery at 20 s, and the report's
-main-thread stack shows the synthetic sleep.
+main-thread stack shows the synthetic sleep. On Windows, the same run must
+produce both a `.txt` and a non-empty same-stem `.dmp`; open it in WinDbg with
+the PDB bundle for that exact commit and verify that the UI thread resolves
+through the synthetic sleep. This is the release qualification for the broker,
+because macOS cross-compilation cannot exercise DbgHelp or the packaged path.
 
 Unit tests also drive the watchdog state machine through suspect, one-shot
 report, recovery/re-arm, and system-sleep sequences. Report rendering is tested
@@ -148,5 +154,6 @@ separately so the independent thread's decision logic does not depend on GPUI.
    (the watchdog report), or press `Ctrl+\` in the launching terminal
    (macOS/Linux) / `Ctrl+Break` (Windows console).
 2. Attach `reports/ferail-hang-*.txt` from the config folder (Settings →
-   Diagnostics shows the path; the issue bundle lives in the same place).
+   Diagnostics shows the path; the issue bundle lives in the same place). On
+   Windows, attach the same-stem `.dmp` too; it contains the useful stacks.
 3. Relaunch with `--safe-mode` and say whether the freeze survives.

@@ -83,15 +83,6 @@ impl IconPickerView {
 
 impl Render for IconPickerView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if crate::private_mode::enabled() {
-            window.set_window_title(&tr!("Private — Ferail"));
-            return crate::private_mode::surface(
-                crate::private_mode::SurfaceKind::Picker,
-                window,
-                cx,
-            )
-            .into_any_element();
-        }
         window.set_window_title(&tr!("Choose Favorite Icon"));
         let theme = cx.theme();
         let query = self.filter.read(cx).value().trim().to_lowercase();
@@ -155,7 +146,7 @@ impl Render for IconPickerView {
                 total = ferail_core::counts::format_count(total as u64)
             )
         };
-        v_flex()
+        let content = v_flex()
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
@@ -192,7 +183,8 @@ impl Render for IconPickerView {
                     .p_3()
                     .child(h_flex().flex_wrap().gap_1().children(cells)),
             )
-            .into_any_element()
+            .into_any_element();
+        crate::private_mode::protect(content, cx)
     }
 }
 

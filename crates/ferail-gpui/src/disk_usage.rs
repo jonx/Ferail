@@ -1186,9 +1186,12 @@ impl DiskUsageView {
         let title = if self.host == ToolHostContext::Docked {
             tr!("Disk Usage").to_string()
         } else {
-            ferail_fs_native::paths::display_path(&self.root_path)
+            crate::private_mode::present_path(&self.root_path)
         };
-        let scanned = humanize_bytes(self.stats.bytes_scanned);
+        let scanned = humanize_bytes(crate::private_mode::present_bytes(
+            0x4455_5343,
+            self.stats.bytes_scanned,
+        ));
         // Counts a scan reports run into the millions; group every one of
         // them the way the status bar does (`ferail_core::counts`).
         let files = format_count(self.stats.files_scanned);
@@ -1204,7 +1207,9 @@ impl DiskUsageView {
                     tr!("permission denied").to_string()
                 }
                 ferail_core::EnumerationError::NotFound => tr!("folder not found").to_string(),
-                ferail_core::EnumerationError::Other(msg) => msg.clone(),
+                ferail_core::EnumerationError::Other(msg) => {
+                    crate::private_mode::present_label(msg)
+                }
             };
             tr!("Scan failed \u{2014} {detail}", detail = why).to_string()
         } else if self.scan_complete && skipped > 0 {
@@ -1490,17 +1495,20 @@ impl DiskUsageView {
         if let Some(v) = &self.volume {
             if let (Some(total), Some(avail)) = (v.total_bytes, v.available_bytes) {
                 if total > 0 {
-                    let used = total.saturating_sub(avail);
-                    let frac = (used as f32 / total as f32).clamp(0.0, 1.0);
+                    let shown_total = crate::private_mode::present_bytes(0x4455_544f, total);
+                    let shown_avail =
+                        crate::private_mode::present_bytes(0x4455_4156, avail).min(shown_total);
+                    let used = shown_total.saturating_sub(shown_avail);
+                    let frac = (used as f32 / shown_total.max(1) as f32).clamp(0.0, 1.0);
                     let bar_w = px(280.0);
                     let fill_w = bar_w * frac;
                     let track_bg = theme.muted_foreground.opacity(0.25);
                     let fill_bg = theme.muted_foreground.opacity(0.85);
                     let label = tr!(
                         "{free} free of {total} on {volume}",
-                        free = humanize_bytes(avail),
-                        total = humanize_bytes(total),
-                        volume = v.name
+                        free = humanize_bytes(shown_avail),
+                        total = humanize_bytes(shown_total),
+                        volume = crate::private_mode::present_label(&v.name)
                     );
                     col = col.child(
                         h_flex()
@@ -1579,7 +1587,9 @@ impl DiskUsageView {
                             } else {
                                 theme.foreground
                             })
-                            .child(SharedString::from(e.name.clone())),
+                            .child(SharedString::from(crate::private_mode::present_leaf_str(
+                                &e.name, false,
+                            ))),
                     )
                     .child(
                         div()
@@ -1590,7 +1600,12 @@ impl DiskUsageView {
                             } else {
                                 theme.muted_foreground
                             })
-                            .child(SharedString::from(humanize_bytes(e.size_bytes))),
+                            .child(SharedString::from(humanize_bytes(
+                                crate::private_mode::present_bytes(
+                                    e.node_id.as_raw(),
+                                    e.size_bytes,
+                                ),
+                            ))),
                     )
                     .into_any_element()
             })
@@ -1694,7 +1709,14 @@ impl DiskUsageView {
                 .and_then(|id| self.tree.nodes.get(&id))
                 .map(|n| {
                     let size = size_for_mode(n.size_bytes, n.allocated_bytes, self.size_mode);
-                    format!("{}  {}", n.display_name, humanize_bytes(size))
+                    format!(
+                        "{}  {}",
+                        crate::private_mode::present_leaf_str(
+                            &n.display_name,
+                            matches!(n.kind, ferail_disk_usage::NodeKind::Container)
+                        ),
+                        humanize_bytes(crate::private_mode::present_bytes(0x4455_5345, size))
+                    )
                 }),
             n => {
                 let total: u64 = self
@@ -1709,7 +1731,8 @@ impl DiskUsageView {
                     tr!(
                         "{n} selected  {size}",
                         n = format_count(n as u64),
-                        size = humanize_bytes(total)
+                        size =
+                            humanize_bytes(crate::private_mode::present_bytes(0x4455_4d55, total))
                     )
                     .to_string(),
                 )
@@ -1874,9 +1897,16 @@ impl DiskUsageView {
                 .tree
                 .nodes
                 .get(&r.node_id)
-                .map(|n| n.display_name.clone())
-                .unwrap_or_default();
-            let size = humanize_bytes(r.size_bytes);
+                .map_or_else(String::new, |n| {
+                    crate::private_mode::present_leaf_str(
+                        &n.display_name,
+                        matches!(n.kind, ferail_disk_usage::NodeKind::Container),
+                    )
+                });
+            let size = humanize_bytes(crate::private_mode::present_bytes(
+                r.node_id.as_raw(),
+                r.size_bytes,
+            ));
             let show_label = r.width >= 60.0 && r.height >= 24.0;
             let show_size = r.width >= 80.0 && r.height >= 40.0;
             let selected = self.selected.contains(&node_id);
@@ -2448,19 +2478,10 @@ impl Drop for DiskUsageView {
 
 impl Render for DiskUsageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if crate::private_mode::enabled() {
-            window.set_window_title(&tr!("Private — Ferail"));
-            return crate::private_mode::surface(
-                crate::private_mode::SurfaceKind::DiskUsage,
-                window,
-                cx,
-            )
-            .into_any_element();
-        }
         if self.host == ToolHostContext::Windowed {
             window.set_window_title(&tr!(
                 "Disk Usage — {path}",
-                path = ferail_fs_native::paths::display_path(&self.root_path)
+                path = crate::private_mode::present_path(&self.root_path)
             ));
         }
         let topn_visible = self.topn_visible;
@@ -2482,7 +2503,7 @@ impl Render for DiskUsageView {
         };
         let legend = self.legend(cx);
         let view = cx.entity().clone();
-        v_flex()
+        let content = v_flex()
             .track_focus(&self.focus_handle)
             .key_context(DISK_USAGE_CONTEXT)
             // Context-menu verbs (rect + background menus dispatch
@@ -2522,7 +2543,8 @@ impl Render for DiskUsageView {
                     .when_some(topn, |this, panel| this.child(panel)),
             )
             .child(legend)
-            .into_any_element()
+            .into_any_element();
+        crate::private_mode::protect(content, cx)
     }
 }
 

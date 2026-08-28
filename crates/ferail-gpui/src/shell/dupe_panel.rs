@@ -526,27 +526,39 @@ impl Shell {
                 let name = member
                     .path
                     .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
+                    .map(|s| crate::private_mode::present_leaf_str(&s.to_string_lossy(), false))
                     .unwrap_or_default();
                 let location = member_location(&member.path, root);
+                let location = if crate::private_mode::enabled() {
+                    crate::private_mode::present_path(Path::new(&location))
+                } else {
+                    location
+                };
                 let location = location_with_note(&location, member.is_hardlink, member.is_clone);
-                let thumbnail = member.image.as_ref().and_then(|image| {
-                    image.thumbnail.as_ref().map(|thumbnail| {
-                        div()
-                            .flex_shrink_0()
-                            .w(px(64.0))
-                            .h(px(64.0))
-                            .rounded(theme.radius)
-                            .overflow_hidden()
-                            .bg(theme.secondary)
-                            .child(
-                                img(thumbnail.clone())
-                                    .size_full()
-                                    .object_fit(gpui::ObjectFit::Contain),
-                            )
-                    })
-                });
+                let thumbnail = (!crate::private_mode::enabled())
+                    .then_some(())
+                    .and(member.image.as_ref())
+                    .and_then(|image| {
+                        image.thumbnail.as_ref().map(|thumbnail| {
+                            div()
+                                .flex_shrink_0()
+                                .w(px(64.0))
+                                .h(px(64.0))
+                                .rounded(theme.radius)
+                                .overflow_hidden()
+                                .bg(theme.secondary)
+                                .child(
+                                    img(thumbnail.clone())
+                                        .size_full()
+                                        .object_fit(gpui::ObjectFit::Contain),
+                                )
+                        })
+                    });
                 let image_detail = member.image.as_ref().map(|image| {
+                    let (width, height) = crate::private_mode::present_dimensions(
+                        node.as_raw(),
+                        (image.width, image.height),
+                    );
                     let similarity = similarity_summary(image.dhash_distance, image.phash_distance);
                     let tooltip = tr!(
                         "Compared with the group reference: dHash {structure}/64 (structure), pHash {detail}/64 (detail). Lower numbers mean greater similarity.",
@@ -561,8 +573,8 @@ impl Shell {
                         .text_color(theme.muted_foreground)
                         .child(tr!(
                             "{width} × {height} · {similarity}",
-                            width = image.width,
-                            height = image.height,
+                            width = width,
+                            height = height,
                             similarity = similarity
                         ))
                         .tooltip(move |window, cx| {

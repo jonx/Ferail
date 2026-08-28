@@ -8,6 +8,60 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.4 — 2026-08-28
+
+- **Audio detection is content-capable without mistaking executables for
+  MP3s.** Known audio extensions remain the zero-extra-I/O fast path. Renamed
+  or extensionless audio reuses Ferail's bounded magic result, while the
+  MPEG/AAC fallback requires multiple coherent frames instead of accepting one
+  random sync word inside a large binary. Get Info, rich Description lines and
+  embedded cover art now share that policy.
+
+- **Bug reports and Fast NTFS diagnostics now have a public recipe.** The new
+  guide lists the exact crash/hang text and dump files to attach, privacy-safe
+  capture guidance, useful scale/resource context, and the elevated
+  `ferail-ntfs-helper.exe --diagnose <path>` procedure and expected aggregate
+  output.
+
+- **The Windows installer now includes the Fast NTFS helper.** The portable
+  ZIP already staged it, but the Inno file list did not; setup installs now
+  preserve the same narrow elevated-helper boundary as portable builds.
+
+- **Windows no longer shows inert Finder-tag controls.** Platform shell
+  capabilities now gate Get Info tags, row dots, tag menus and background tag
+  refresh as one feature instead of leaving controls that can never work.
+
+- **The path bar and sidebar are easier to discover and personalize.** Click
+  the empty breadcrumb tail or its edit icon to type a path. The sidebar cycles
+  through normal, compact and icons-only widths with `Cmd/Ctrl+Shift+B`, keeps
+  the user's normal width, supports persistent section disclosure and
+  drag-reordering, and can restore its default order. French now uses the
+  shorter “Accès” section title.
+
+- **Windows releases now include both portable and installed update paths.**
+  CI builds the portable ZIP and Inno Setup package. An installed copy prefers
+  the setup asset and offers “Install and Restart”; a portable copy keeps the
+  ZIP flow, even when another Ferail installation exists on the same machine.
+
+- **Private Mode now produces useful screenshots instead of replacing Ferail.**
+  The prepared browser and tool layouts remain visible while names, paths,
+  user/provider labels, checksums, sizes, dates and image dimensions receive
+  stable process-session aliases. Personal thumbnails, preview documents and
+  Viewer frames become neutral same-layout placeholders. A process-wide input
+  shield and a reduced native menu freeze the view. The existing title-bar
+  shield is the sole visible indicator: it stays highlighted and toggles the
+  mode back off, with `Cmd/Ctrl+Shift+K` and `Escape` as keyboard exits. Window
+  close and Quit remain available. The screenshot CLI keeps privacy enabled by
+  default.
+
+- **Windows freeze reports now include an automatic all-thread minidump.**
+  When the UI watchdog detects a hang it starts a pristine hidden Ferail
+  broker, which writes a matching `ferail-hang-*.dmp` beside the text report
+  without relying on locks in the frozen process. The dump carries thread
+  contexts/stacks, module history and handle/thread metadata and can be opened
+  with the exact release PDB bundle; no administrator rights are required for
+  Ferail to dump its own process.
+
 ## 0.7.3 — 2026-08-28
 
 - **Disk Usage remains responsive while Portable scans millions of files.**

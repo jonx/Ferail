@@ -20,7 +20,8 @@ the dialog re-renders from every frame.
   toggling *on* checks immediately. Skipped entirely in safe mode.
 - **The dialog** — Installed version, check outcome, then per state:
   Download `<asset>` / Later; a live percent while downloading;
-  Open / Show in Folder once done. When something newer exists, a
+  Open / Show in Folder once done. On Windows, an installed copy instead gets
+  Install and Restart for the downloaded Inno package. When something newer exists, a
   **"What's new"** box renders the release notes — the markdown body of
   the GitHub release — so the decision to update is made with the
   changes in front of you. If the user skipped versions, every release
@@ -43,17 +44,23 @@ the dialog re-renders from every frame.
   menu command raises the window that owns the existing dialog, and a stale
   host-window guard recovers onto another window instead of silently no-oping.
 
-## What "update" means (v1)
+## What "update" means
 
 Download the platform's asset into `~/Downloads` (`.part` file, then
 rename; names never overwrite — "x (2).dmg"), and hand off to the user.
 Any failed/truncated write removes its `.part` file. Then:
-Open mounts the DMG / opens the installer; installing is their step.
-Ferail does not replace its own binary — no Sparkle-style in-place
-swap, no signature verification of its own beyond HTTPS. Asset per
-platform, matching what CI publishes: macOS `Ferail-<v>.dmg`, Windows
-`Ferail-<v>-win-x64.zip`, Linux `ferail_<v>-1_{amd64,arm64}.deb` for
-the running arch.
+Open mounts the DMG or opens the portable package; installing is the user's
+step on macOS/Linux. On Windows, CI publishes both
+`Ferail-<v>-win-x64.zip` and `Ferail-<v>-win-x64-setup.exe`. Ferail consults
+Inno's stable uninstall registration and verifies that its `InstallLocation`
+is the executable actually running. Only then does it prefer setup, launch it
+with `/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS`. Inno/Restart Manager
+then closes and relaunches Ferail. A ZIP copy always remains portable and continues to receive
+the ZIP, including when an unrelated installed copy exists. Releases without
+a setup asset fall back to ZIP. Inno owns locked-file handling, restart and
+rollback; Ferail never hand-replaces its executable. No downloaded asset is
+trusted beyond HTTPS today. Linux uses `ferail_<v>-1_{amd64,arm64}.deb` for
+the running architecture.
 
 ## Wiring
 
@@ -98,7 +105,8 @@ the running arch.
 
 ## Known gaps
 
-- No in-place install (by design for now); no skip-this-version
-  memory; the automatic check's daily timer resets on relaunch.
+- No in-place install on macOS/Linux and no skip-this-version memory; the
+  automatic check's daily timer resets on relaunch. The Windows setup path
+  remains unsigned, so SmartScreen may still require explicit confirmation.
 - The status bar's task registry doesn't show the download — progress
   lives in the dialog (and completion posts a toast).

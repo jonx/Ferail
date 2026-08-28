@@ -58,6 +58,64 @@ It is not evidence that every adversarial or measured subcase in
 every third-party Shell extension, and multi-DPI passes remain separately
 tracked until their evidence is recorded.
 
+### 2026-08-28 — automatic watchdog minidump needs Windows qualification
+
+The freeze watchdog now starts the same `ferail-gpui.exe` in an early hidden
+`--windows-hang-dump-broker <pid> <destination>` mode. The child initializes no
+GPUI, settings, logging or Shell provider and calls `MiniDumpWriteDump` against
+the frozen parent. A successful capture atomically leaves
+`ferail-hang-<pid>-<seq>.dmp` beside the existing text report. The dump includes
+thread contexts/stacks, thread info, handle data and unloaded modules; opening
+the target is same-user and does not require UAC. The parent bounds the broker
+to 20 seconds.
+
+Source qualification completed on macOS:
+
+- `cargo check -p ferail-shell-win32 --target x86_64-pc-windows-msvc` passes;
+- the full GPUI Windows link/check cannot run on this Mac because the local
+  toolchain has no Windows SDK headers or `lib.exe`.
+
+On the Windows dev box, run this exact acceptance before release:
+
+1. build the release GUI and matching PDB archive;
+2. launch with `set FERAIL_DEBUG_FREEZE=20` (PowerShell:
+   `$env:FERAIL_DEBUG_FREEZE='20'`) and wait through detection and recovery;
+3. confirm one same-stem `.txt` + non-empty `.dmp` appears in
+   `%APPDATA%\Ferail\reports` and that no console window flashes;
+4. open the `.dmp` in WinDbg with the exact `ferail-gpui.pdb`, run `!analyze -v`
+   and `~* kb`, and confirm the UI thread resolves to the synthetic sleep;
+5. repeat once from the portable ZIP as a non-administrator, then preserve the
+   report, dump, console excerpt, commit and PDB-manifest identity as evidence.
+
+Failure must leave the text report intact with an explicit minidump failure
+line; it must never stall the watchdog indefinitely or prompt for elevation.
+
+### 2026-08-28 — installer/update qualification
+
+The release workflow now builds and publishes both the portable ZIP and Inno
+Setup package. The Inno payload now explicitly installs the sibling
+`ferail-ntfs-helper.exe`; before this correction only the portable staging
+directory contained it, so an installed build would silently lose Fast NTFS.
+Inno is configured to close and restart Ferail. Update asset
+selection distinguishes an installed copy by the stable uninstall key and
+requires its `InstallLocation\Ferail.exe` to equal the running executable;
+portable copies therefore continue to receive ZIPs. The Windows shell crate
+cross-check and pure asset-selection tests pass on macOS, but the following
+end-to-end evidence must be collected on Windows before calling this complete:
+
+1. install version N per-user, update to N+1, and confirm “Install and Restart”
+   closes, replaces and relaunches Ferail without UAC;
+2. repeat from a machine-wide install and accept UAC only where Windows/Inno
+   requires it;
+3. run the portable ZIP while an installed copy also exists and confirm the
+   dialog offers/downloads ZIP, never setup;
+4. verify a legacy release with no setup asset falls back to ZIP;
+5. confirm both release assets and the symbols archive are attached by CI,
+   hash output covers all three, the installed directory contains a helper
+   whose version matches `Ferail.exe`, and uninstall preserves unrelated user
+   data;
+6. record SmartScreen behavior honestly—the package remains unsigned.
+
 ### 2026-08-27 — Fast NTFS Disk Usage implementation and automated qualification
 
 Fast NTFS is now implemented as an ephemeral, explicit Disk Usage engine. The

@@ -282,7 +282,25 @@ fn is_symbols_asset(name: &str) -> bool {
 /// `Ferail-<v>.dmg`, `Ferail-<v>-win-x64.zip` (plus a PDB bundle —
 /// `…-x64-symbols.zip`, `…-win-x64-symbols.zip` through 0.6.6 — that must
 /// never be offered), `ferail_<v>-1_<arch>.deb`.
+#[cfg(test)]
 fn pick_asset_index_for(names: &[&str], os: &str, arch: &str) -> Option<usize> {
+    pick_asset_index_for_mode(names, os, arch, false)
+}
+
+fn pick_asset_index_for_mode(
+    names: &[&str],
+    os: &str,
+    arch: &str,
+    prefer_installer: bool,
+) -> Option<usize> {
+    if os == "windows" && prefer_installer {
+        if let Some(index) = names
+            .iter()
+            .position(|name| name.ends_with("-win-x64-setup.exe") && !is_symbols_asset(name))
+        {
+            return Some(index);
+        }
+    }
     let wanted: Box<dyn Fn(&str) -> bool> = match os {
         "macos" => Box::new(|n: &str| n.ends_with(".dmg")),
         "windows" => {
@@ -299,7 +317,8 @@ fn pick_asset_index_for(names: &[&str], os: &str, arch: &str) -> Option<usize> {
 
 fn pick_asset_for(release: &GhRelease, os: &str, arch: &str) -> Option<AssetInfo> {
     let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
-    pick_asset_index_for(&names, os, arch).map(|ix| AssetInfo {
+    let prefer_installer = os == "windows" && crate::platform_shell::prefer_installer_updates();
+    pick_asset_index_for_mode(&names, os, arch, prefer_installer).map(|ix| AssetInfo {
         name: release.assets[ix].name.clone(),
         url: release.assets[ix].browser_download_url.clone(),
     })
@@ -310,7 +329,7 @@ fn platforms_for(release: &GhRelease) -> Vec<ReleasePlatform> {
     for asset in &release.assets {
         let platform = if asset.name.ends_with(".dmg") {
             Some(ReleasePlatform::MacOs)
-        } else if asset.name.ends_with(".zip")
+        } else if (asset.name.ends_with(".zip") || asset.name.ends_with("-setup.exe"))
             && asset.name.contains("win")
             && !is_symbols_asset(&asset.name)
         {
@@ -1043,6 +1062,9 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
         (_, DownloadStatus::Done(path)) => {
             let open_path = path.clone();
             let reveal_path = path.clone();
+            let is_installer = path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with("-win-x64-setup.exe"));
             dialog.footer(
                 DialogFooter::new()
                     .child(
@@ -1060,17 +1082,39 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                     )
                     .child(
                         Button::new("update-open")
-                            .label(tr!("Open"))
+                            .label(if is_installer {
+                                tr!("Install and Restart")
+                            } else {
+                                tr!("Open")
+                            })
                             .primary()
                             .small()
                             .on_click(move |_, window, cx| {
                                 let p = open_path.clone();
-                                cx.background_spawn(async move {
-                                    if let Err(e) = crate::platform_shell::open_with_default(&p) {
-                                        crate::log_warn!(90, "open downloaded update failed: {e}");
-                                    }
-                                })
-                                .detach();
+                                if is_installer {
+                                    cx.background_spawn(async move {
+                                        if let Err(e) =
+                                            crate::platform_shell::launch_update_installer(&p)
+                                        {
+                                            crate::log_warn!(
+                                                90,
+                                                "launch downloaded update installer failed: {e}"
+                                            );
+                                        }
+                                    })
+                                    .detach();
+                                } else {
+                                    cx.background_spawn(async move {
+                                        if let Err(e) = crate::platform_shell::open_with_default(&p)
+                                        {
+                                            crate::log_warn!(
+                                                90,
+                                                "open downloaded update failed: {e}"
+                                            );
+                                        }
+                                    })
+                                    .detach();
+                                }
                                 window.close_dialog(cx);
                             }),
                     ),
@@ -1644,14 +1688,19 @@ mod tests {
         let names = [
             "Ferail-0.5.0-win-x64-symbols.zip",
             "Ferail-0.5.0-win-x64.zip",
+            "Ferail-0.5.0-win-x64-setup.exe",
             "Ferail-0.5.0.dmg",
             "ferail_0.5.0-1_amd64.deb",
             "ferail_0.5.0-1_arm64.deb",
         ];
-        assert_eq!(pick_asset_index_for(&names, "macos", "aarch64"), Some(2));
+        assert_eq!(pick_asset_index_for(&names, "macos", "aarch64"), Some(3));
         assert_eq!(pick_asset_index_for(&names, "windows", "x86_64"), Some(1));
-        assert_eq!(pick_asset_index_for(&names, "linux", "x86_64"), Some(3));
-        assert_eq!(pick_asset_index_for(&names, "linux", "aarch64"), Some(4));
+        assert_eq!(
+            pick_asset_index_for_mode(&names, "windows", "x86_64", true),
+            Some(2)
+        );
+        assert_eq!(pick_asset_index_for(&names, "linux", "x86_64"), Some(4));
+        assert_eq!(pick_asset_index_for(&names, "linux", "aarch64"), Some(5));
         assert_eq!(pick_asset_index_for(&names, "freebsd", "x86_64"), None);
         // A release whose only Windows zip is the symbols bundle has no
         // installable Windows asset.

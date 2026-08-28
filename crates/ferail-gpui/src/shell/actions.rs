@@ -183,6 +183,9 @@ actions!(
         /// only when the shell pane itself owns focus.
         ClearSelection,
         TogglePreview,
+        /// Cycle the sidebar between normal, compact-text and icons-only.
+        CycleSidebarSize,
+        ResetSidebarOrder,
         GetInfo,
         /// Strip the Mark-of-the-Web (and its where-from provenance)
         /// from the selected quarantined files — `com.apple.quarantine`

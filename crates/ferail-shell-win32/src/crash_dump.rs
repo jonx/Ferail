@@ -24,7 +24,9 @@
 
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, GENERIC_WRITE};
@@ -37,7 +39,8 @@ use windows::Win32::System::Diagnostics::Debug::{
     MINIDUMP_EXCEPTION_INFORMATION, MINIDUMP_TYPE,
 };
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId,
+    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenProcess, PROCESS_DUP_HANDLE,
+    PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
 };
 
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
@@ -52,6 +55,139 @@ struct Targets {
 }
 
 static TARGETS: OnceLock<Targets> = OnceLock::new();
+
+/// Ask a disposable copy of the Ferail executable to dump this process while
+/// the watchdog thread is still alive. `MiniDumpWriteDump` is deliberately
+/// executed out-of-process: Microsoft recommends that shape because a hung
+/// process may hold the loader or allocator locks the dump writer itself
+/// needs. The child starts in the hidden `--windows-hang-dump-broker` mode
+/// before GPUI or observability initialization.
+pub fn capture_hang_dump(dump_path: &Path) -> Result<(), String> {
+    let parent = dump_path
+        .parent()
+        .ok_or_else(|| "hang dump path has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("create hang dump directory: {e}"))?;
+
+    let exe = std::env::current_exe().map_err(|e| format!("locate Ferail executable: {e}"))?;
+    let mut command = std::process::Command::new(exe);
+    command
+        .arg("--windows-hang-dump-broker")
+        .arg(std::process::id().to_string())
+        .arg(dump_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        // The broker initializes no logger. Capture its one-line DbgHelp/IO
+        // error so the parent can append a useful reason to the text report.
+        .stderr(Stdio::piped());
+    // Do not flash a console window when the packaged GUI starts its broker.
+    use std::os::windows::process::CommandExt as _;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("start hang dump broker: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                use std::io::Read as _;
+                let mut detail = String::new();
+                if let Some(mut stderr) = child.stderr.take() {
+                    let _ = stderr.read_to_string(&mut detail);
+                }
+                let detail = detail.trim();
+                return Err(if detail.is_empty() {
+                    format!("hang dump broker exited with {status}")
+                } else {
+                    format!("hang dump broker exited with {status}: {detail}")
+                });
+            }
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("hang dump broker timed out after 20 seconds".to_string());
+            }
+            Err(e) => return Err(format!("wait for hang dump broker: {e}")),
+        }
+    }
+}
+
+/// Hidden worker entry point for [`capture_hang_dump`]. Expected arguments
+/// are `<pid> <destination.dmp>`. It returns a process exit code and never
+/// initializes GPUI, logging, settings, or any filesystem provider.
+pub fn hang_dump_broker_main(args: &[std::ffi::OsString]) -> i32 {
+    if args.len() != 2 {
+        return 2;
+    }
+    let Some(pid) = args[0].to_str().and_then(|s| s.parse::<u32>().ok()) else {
+        return 2;
+    };
+    let destination = PathBuf::from(&args[1]);
+    match write_process_dump(pid, &destination) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("{error}");
+            1
+        }
+    }
+}
+
+fn write_process_dump(pid: u32, destination: &Path) -> windows::core::Result<()> {
+    let process = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_DUP_HANDLE,
+            false,
+            pid,
+        )?
+    };
+
+    let mut partial = destination.as_os_str().to_os_string();
+    partial.push(".part");
+    let partial = PathBuf::from(partial);
+    let mut partial_w: Vec<u16> = partial.as_os_str().encode_wide().collect();
+    partial_w.push(0);
+    let file = unsafe {
+        CreateFileW(
+            PCWSTR::from_raw(partial_w.as_ptr()),
+            GENERIC_WRITE.0,
+            FILE_SHARE_READ,
+            None,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )?
+    };
+    let kind = MINIDUMP_TYPE(
+        MiniDumpNormal.0
+            | MiniDumpWithThreadInfo.0
+            | MiniDumpWithUnloadedModules.0
+            | MiniDumpWithHandleData.0,
+    );
+    let result = unsafe { MiniDumpWriteDump(process, pid, file, kind, None, None, None) };
+    unsafe {
+        let _ = CloseHandle(file);
+        let _ = CloseHandle(process);
+    }
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&partial);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&partial, destination) {
+        let _ = std::fs::remove_file(&partial);
+        return Err(windows::core::Error::new(
+            windows::core::HRESULT(
+                0x8007_0000u32.wrapping_add(e.raw_os_error().unwrap_or(1) as u32) as i32,
+            ),
+            "rename completed hang dump",
+        ));
+    }
+    Ok(())
+}
 
 /// Install the process-wide unhandled-exception filter. Dumps land in
 /// `reports_dir` as `ferail-<role>-<pid>.dmp`; the sidecar line goes to

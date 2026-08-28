@@ -148,6 +148,13 @@ pub struct AppState {
     /// Whether the sidebar is collapsed to icons-only. None == the
     /// user has never expressed a preference (defaults to expanded).
     pub sidebar_collapsed: Option<bool>,
+    /// Whether the sidebar uses the fixed compact text width. Kept separate
+    /// from `sidebar_width` so returning to normal restores the user's width.
+    pub sidebar_compact: Option<bool>,
+    /// Stable comma-separated sidebar section IDs in user order.
+    pub sidebar_section_order: Option<String>,
+    /// Stable comma-separated IDs of collapsed sidebar sections.
+    pub sidebar_collapsed_sections: Option<String>,
     /// Viewer slideshow auto-advance interval in seconds
     /// (docs/features/VIEWER.md). Clamped at load to [1, 60].
     pub viewer_slideshow_interval: Option<u64>,
@@ -422,6 +429,15 @@ fn load_from_disk() -> AppState {
             "sidebar_collapsed" => {
                 out.sidebar_collapsed = parse_bool(val);
             }
+            "sidebar_compact" => {
+                out.sidebar_compact = parse_bool(val);
+            }
+            "sidebar_section_order" if !val.trim().is_empty() => {
+                out.sidebar_section_order = Some(val.trim().to_string());
+            }
+            "sidebar_collapsed_sections" => {
+                out.sidebar_collapsed_sections = Some(val.trim().to_string());
+            }
             "viewer_slideshow_interval" => {
                 out.viewer_slideshow_interval =
                     val.trim().parse::<u64>().ok().map(|n| n.clamp(1, 60));
@@ -598,6 +614,15 @@ fn serialize(state: &AppState) -> String {
     if let Some(b) = state.sidebar_collapsed {
         s.push_str(&format!("sidebar_collapsed={b}\n"));
     }
+    if let Some(b) = state.sidebar_compact {
+        s.push_str(&format!("sidebar_compact={b}\n"));
+    }
+    if let Some(value) = &state.sidebar_section_order {
+        s.push_str(&format!("sidebar_section_order={value}\n"));
+    }
+    if let Some(value) = &state.sidebar_collapsed_sections {
+        s.push_str(&format!("sidebar_collapsed_sections={value}\n"));
+    }
     if let Some(n) = state.viewer_slideshow_interval {
         s.push_str(&format!("viewer_slideshow_interval={n}\n"));
     }
@@ -701,5 +726,23 @@ mod tests {
             ..AppState::default()
         };
         assert_eq!(serialize(&state), "disk_usage_engine=fast-ntfs\n");
+    }
+
+    #[test]
+    fn sidebar_layout_state_serializes() {
+        let state = AppState {
+            sidebar_compact: Some(true),
+            sidebar_section_order: Some("volumes,locations,browse".into()),
+            sidebar_collapsed_sections: Some("locations,browse".into()),
+            ..AppState::default()
+        };
+        assert_eq!(
+            serialize(&state),
+            concat!(
+                "sidebar_compact=true\n",
+                "sidebar_section_order=volumes,locations,browse\n",
+                "sidebar_collapsed_sections=locations,browse\n"
+            )
+        );
     }
 }

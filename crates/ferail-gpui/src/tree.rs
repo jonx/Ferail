@@ -156,6 +156,8 @@ pub struct TreeSection {
     shell: WeakEntity<Shell>,
     icons: Rc<RefCell<IconCache>>,
     collapsed: bool,
+    section: crate::sidebar_layout::SidebarSection,
+    section_collapsed: bool,
 }
 
 impl TreeSection {
@@ -164,6 +166,8 @@ impl TreeSection {
         rows: Vec<TreeRowSpec>,
         shell: WeakEntity<Shell>,
         icons: Rc<RefCell<IconCache>>,
+        section: crate::sidebar_layout::SidebarSection,
+        section_collapsed: bool,
     ) -> Self {
         Self {
             label: label.into(),
@@ -171,6 +175,8 @@ impl TreeSection {
             shell,
             icons,
             collapsed: false,
+            section,
+            section_collapsed,
         }
     }
 }
@@ -201,6 +207,136 @@ pub(crate) fn section_header(label: SharedString, cx: &App) -> Div {
         .text_color(theme.sidebar_foreground.opacity(0.7))
         .h_8()
         .child(label)
+}
+
+/// Clickable disclosure header for the sidebar sections whose state lives in
+/// the shared persisted layout model.
+pub(crate) fn collapsible_section_header(
+    label: SharedString,
+    collapsed: bool,
+    shell: WeakEntity<Shell>,
+    section: crate::sidebar_layout::SidebarSection,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let drag_label = label.clone();
+    h_flex()
+        .id(SharedString::from(format!(
+            "sidebar-section-{}",
+            section.id()
+        )))
+        .flex_shrink_0()
+        .w_full()
+        .px_2()
+        .gap_1()
+        .items_center()
+        .rounded(theme.radius)
+        .h_8()
+        .cursor_pointer()
+        .text_scale_xs()
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(theme.sidebar_foreground.opacity(0.7))
+        .child(
+            h_flex()
+                .flex_shrink_0()
+                .w(px(12.0))
+                .h(px(12.0))
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path(if collapsed {
+                            "icons/nav/disclosure-right.svg"
+                        } else {
+                            "icons/nav/disclosure-down.svg"
+                        })
+                        .icon_px(9.0)
+                        .text_color(theme.muted_foreground),
+                ),
+        )
+        .child(div().flex_1().child(label))
+        .on_drag(
+            SidebarSectionDrag {
+                section,
+                label: drag_label,
+            },
+            |payload, _, _, cx| cx.new(|_| payload.clone()),
+        )
+        .on_click(move |_, _, cx| {
+            if let Some(shell) = shell.upgrade() {
+                shell.update(cx, |shell, cx| shell.toggle_sidebar_section(section, cx));
+            }
+        })
+        .into_any_element()
+}
+
+#[derive(Clone)]
+pub struct SidebarSectionDrag {
+    pub section: crate::sidebar_layout::SidebarSection,
+    pub label: SharedString,
+}
+
+impl Render for SidebarSectionDrag {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().popover)
+            .border_1()
+            .border_color(cx.theme().border)
+            .text_scale_sm()
+            .child(self.label.clone())
+    }
+}
+
+#[derive(Clone)]
+pub struct SidebarSectionGap {
+    before: Option<crate::sidebar_layout::SidebarSection>,
+    shell: WeakEntity<Shell>,
+    collapsed: bool,
+}
+
+impl SidebarSectionGap {
+    pub fn new(
+        before: Option<crate::sidebar_layout::SidebarSection>,
+        shell: WeakEntity<Shell>,
+    ) -> Self {
+        Self {
+            before,
+            shell,
+            collapsed: false,
+        }
+    }
+}
+
+impl Collapsible for SidebarSectionGap {
+    fn is_collapsed(&self) -> bool {
+        self.collapsed
+    }
+
+    fn collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+}
+
+impl SidebarItem for SidebarSectionGap {
+    fn render(self, _: impl Into<ElementId>, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let accent = cx.theme().primary;
+        div()
+            .when(!self.collapsed, |this| this.h(px(6.0)))
+            .drag_over::<SidebarSectionDrag>(move |style, _, _, _| {
+                style.border_t_2().border_color(accent)
+            })
+            .on_drop(move |payload: &SidebarSectionDrag, _, cx| {
+                if let Some(shell) = self.shell.upgrade() {
+                    shell.update(cx, |shell, cx| {
+                        shell.move_sidebar_section(payload.section, self.before, cx)
+                    });
+                }
+            })
+    }
 }
 
 /// A flat `SidebarMenu` under a [`section_header`]-styled label.
@@ -271,6 +407,7 @@ impl SidebarItem for LabeledMenu {
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum ShellSidebarItem {
+    SectionGap(SidebarSectionGap),
     Group(LabeledMenu),
     Locations(crate::locations_section::LocationsSection),
     PlatformLocations(crate::locations_section::PlatformLocationsSection),
@@ -282,6 +419,9 @@ pub enum ShellSidebarItem {
 }
 
 impl ShellSidebarItem {
+    pub fn section_gap(gap: SidebarSectionGap) -> Self {
+        Self::SectionGap(gap)
+    }
     pub fn group(g: LabeledMenu) -> Self {
         ShellSidebarItem::Group(g)
     }
@@ -309,6 +449,7 @@ impl ShellSidebarItem {
 impl Collapsible for ShellSidebarItem {
     fn is_collapsed(&self) -> bool {
         match self {
+            ShellSidebarItem::SectionGap(gap) => gap.is_collapsed(),
             ShellSidebarItem::Group(g) => g.is_collapsed(),
             ShellSidebarItem::Locations(l) => l.is_collapsed(),
             ShellSidebarItem::PlatformLocations(l) => l.is_collapsed(),
@@ -321,6 +462,7 @@ impl Collapsible for ShellSidebarItem {
     }
     fn collapsed(self, c: bool) -> Self {
         match self {
+            ShellSidebarItem::SectionGap(gap) => ShellSidebarItem::SectionGap(gap.collapsed(c)),
             ShellSidebarItem::Group(g) => ShellSidebarItem::Group(g.collapsed(c)),
             ShellSidebarItem::Locations(l) => ShellSidebarItem::Locations(l.collapsed(c)),
             ShellSidebarItem::PlatformLocations(l) => {
@@ -345,6 +487,7 @@ impl SidebarItem for ShellSidebarItem {
         cx: &mut App,
     ) -> impl IntoElement {
         match self {
+            ShellSidebarItem::SectionGap(gap) => gap.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Group(g) => g.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Locations(l) => l.render(id, window, cx).into_any_element(),
             ShellSidebarItem::PlatformLocations(l) => l.render(id, window, cx).into_any_element(),
@@ -364,7 +507,13 @@ impl SidebarItem for TreeSection {
         _window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        let header = section_header(self.label.clone(), cx);
+        let header = collapsible_section_header(
+            self.label.clone(),
+            self.section_collapsed,
+            self.shell.clone(),
+            self.section,
+            cx,
+        );
 
         let shell = self.shell.clone();
         let icons = self.icons.clone();
@@ -382,7 +531,9 @@ impl SidebarItem for TreeSection {
             // sidebar edges (Finder-style) instead of running edge to
             // edge. The rows stay `w_full` inside the padded box, so no
             // row overflows and the connector guides shift with them.
-            .child(v_flex().w_full().px(px(TREE_ROW_INSET)).children(rows))
+            .when(!self.section_collapsed, |this| {
+                this.child(v_flex().w_full().px(px(TREE_ROW_INSET)).children(rows))
+            })
     }
 }
 
@@ -413,6 +564,7 @@ fn render_tree_row(
         favorited,
         ejectable,
     } = spec;
+    let label = crate::private_mode::present_label(&label);
     let theme = cx.theme();
     let row_key: SharedString = format!("tree-row-{}", path.display()).into();
     let caret_key: SharedString = format!("tree-caret-{}", path.display()).into();

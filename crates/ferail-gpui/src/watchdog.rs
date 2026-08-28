@@ -379,7 +379,7 @@ pub fn write_hang_report(reason: &str) {
         }
     }
 
-    let captured = capture_thread_stacks();
+    let captured = capture_thread_stacks(path.as_deref());
     match &captured {
         Some((tool, stacks)) => {
             let section = format!("\nthread stacks (via {tool}):\n{stacks}\n");
@@ -478,7 +478,7 @@ fn render_console_digest(stacks: Option<&str>, path: Option<&std::path::Path>) -
             );
             let _ = write!(
                 d,
-                "            (full stacks, breadcrumbs and trail are in there; FERAIL_FULL_HANG_REPORT=1 echoes them here)"
+                "            (stack capture location, breadcrumbs and trail are in there; FERAIL_FULL_HANG_REPORT=1 echoes them here)"
             );
         }
         None => {
@@ -624,8 +624,16 @@ fn clean_frame(line: &str) -> String {
 fn report_file_path() -> Option<std::path::PathBuf> {
     let dir = crate::app_state::config_dir()?.join("reports");
     std::fs::create_dir_all(&dir).ok()?;
-    let seq = HANG_SEQ.fetch_add(1, Ordering::Relaxed);
-    Some(dir.join(format!("ferail-hang-{}-{seq}.txt", std::process::id())))
+    // A PID can be reused after a reboot. Never overwrite earlier diagnostic
+    // evidence (and on Windows an existing sibling `.dmp` would also make the
+    // broker's final atomic rename fail).
+    loop {
+        let seq = HANG_SEQ.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!("ferail-hang-{}-{seq}.txt", std::process::id()));
+        if !path.exists() && !path.with_extension("dmp").exists() {
+            return Some(path);
+        }
+    }
 }
 
 fn append_to_file(path: &std::path::Path, text: &str) {
@@ -652,7 +660,7 @@ fn stack_hint() -> &'static str {
 /// macOS: `/usr/bin/sample` gives symbolized call stacks of every thread
 /// of a hung process, no root needed for our own pid.
 #[cfg(target_os = "macos")]
-fn capture_thread_stacks() -> Option<(&'static str, String)> {
+fn capture_thread_stacks(_report_path: Option<&std::path::Path>) -> Option<(&'static str, String)> {
     // Blocking child wait — allowed: this runs on the watchdog /
     // signal-dump thread, never the UI thread (which is wedged anyway;
     // sampling it is the point).
@@ -672,7 +680,7 @@ fn capture_thread_stacks() -> Option<(&'static str, String)> {
 /// default `ptrace_scope=1` blocks a child from attaching to its parent,
 /// so open a `PR_SET_PTRACER` window for the duration of the capture.
 #[cfg(target_os = "linux")]
-fn capture_thread_stacks() -> Option<(&'static str, String)> {
+fn capture_thread_stacks(_report_path: Option<&std::path::Path>) -> Option<(&'static str, String)> {
     unsafe {
         libc::prctl(libc::PR_SET_PTRACER, libc::PR_SET_PTRACER_ANY, 0, 0, 0);
     }
@@ -705,10 +713,40 @@ fn run_stack_tool(tool: &str, args: &[&str]) -> Option<String> {
     Some(text)
 }
 
-/// Windows / AROS: no in-process whole-thread stack tool wired yet; the
-/// report explains what to capture instead (see [`stack_hint`]).
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn capture_thread_stacks() -> Option<(&'static str, String)> {
+/// Windows: launch a pristine copy of Ferail which opens this process and
+/// writes a minidump containing every thread's context, stack pages, loaded
+/// and unloaded modules, and handle/thread metadata. The matching release PDB
+/// turns it into source-level stacks in WinDbg. Keeping MiniDumpWriteDump in a
+/// child avoids depending on locks held by the frozen UI process.
+#[cfg(windows)]
+fn capture_thread_stacks(report_path: Option<&std::path::Path>) -> Option<(&'static str, String)> {
+    let report_path = report_path?;
+    let dump_path = report_path.with_extension("dmp");
+    match crate::platform_shell::capture_hang_dump(&dump_path) {
+        Ok(()) => Some((
+            "MiniDumpWriteDump broker",
+            format!(
+                "All-thread minidump: {}\nAttach this .dmp together with this report; symbolize it with the exact matching Ferail PDB bundle.",
+                dump_path.display()
+            ),
+        )),
+        Err(error) => {
+            append_to_file(
+                report_path,
+                &format!("\nWindows minidump capture FAILED: {error}\n"),
+            );
+            crate::log_warn!(
+                90,
+                "freeze-watchdog: Windows minidump capture failed: {error}"
+            );
+            None
+        }
+    }
+}
+
+/// AROS has no process/thread snapshot facility.
+#[cfg(target_os = "aros")]
+fn capture_thread_stacks(_report_path: Option<&std::path::Path>) -> Option<(&'static str, String)> {
     None
 }
 

@@ -493,17 +493,8 @@ fn persist_recents_enabled(value: bool) {
 
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if crate::private_mode::enabled() {
-            window.set_window_title(&tr!("Private — Ferail"));
-            return crate::private_mode::surface(
-                crate::private_mode::SurfaceKind::Settings,
-                window,
-                cx,
-            )
-            .into_any_element();
-        }
         window.set_window_title(&tr!("Settings"));
-        Settings::new("ferail-settings")
+        let content = Settings::new("ferail-settings")
             .pages(build_pages(
                 self.home_hidden_count,
                 &self.selection_picker,
@@ -514,7 +505,8 @@ impl Render for SettingsView {
                 page_ix: self.category.page_index(),
                 group_ix: None,
             })
-            .into_any_element()
+            .into_any_element();
+        crate::private_mode::protect(content, cx)
     }
 }
 
@@ -1034,13 +1026,9 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                                     .text_color(tag_color)
                                     .child(tag),
                             )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_scale_sm()
-                                    .text_color(fg)
-                                    .child(SharedString::from(check.name.clone())),
-                            )
+                            .child(div().flex_1().text_scale_sm().text_color(fg).child(
+                                SharedString::from(crate::private_mode::present_label(&check.name)),
+                            ))
                             // Jump to the location this check is about:
                             // reveal it (selected in its parent) in a
                             // Ferail file window. Local UI action — the
@@ -1056,13 +1044,9 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                                     })
                             })),
                     )
-                    .child(
-                        div()
-                            .w_full()
-                            .text_scale_xs()
-                            .text_color(muted)
-                            .child(SharedString::from(check.detail.clone())),
-                    )
+                    .child(div().w_full().text_scale_xs().text_color(muted).child(
+                        SharedString::from(crate::private_mode::present_label(&check.detail)),
+                    ))
             }));
         }
         page = page.group(sg);
@@ -1864,7 +1848,8 @@ fn terminal_group() -> SettingGroup {
                 tr!("Terminal application"),
                 SettingField::input(
                     |_cx: &App| {
-                        SharedString::from(app_state::load().terminal_path.unwrap_or_default())
+                        let raw = app_state::load().terminal_path.unwrap_or_default();
+                        SharedString::from(crate::private_mode::present_label(&raw))
                     },
                     |val: SharedString, _cx: &mut App| persist_terminal_path(val.as_ref()),
                 ),
@@ -1882,7 +1867,8 @@ fn terminal_group() -> SettingGroup {
                 tr!("Arguments"),
                 SettingField::input(
                     |_cx: &App| {
-                        SharedString::from(app_state::load().terminal_args.unwrap_or_default())
+                        let raw = app_state::load().terminal_args.unwrap_or_default();
+                        SharedString::from(crate::private_mode::present_label(&raw))
                     },
                     |val: SharedString, _cx: &mut App| persist_terminal_args(val.as_ref()),
                 ),
@@ -2092,9 +2078,10 @@ fn plugins_page() -> SettingPage {
                         tr!("mpv library"),
                         SettingField::input(
                             |_cx: &App| {
-                                SharedString::from(app_state::load().mpv_path.unwrap_or_else(
-                                    || crate::viewer::backend_native::default_mpv_path().into(),
-                                ))
+                                let raw = app_state::load().mpv_path.unwrap_or_else(|| {
+                                    crate::viewer::backend_native::default_mpv_path().into()
+                                });
+                                SharedString::from(crate::private_mode::present_label(&raw))
                             },
                             |val: SharedString, _cx: &mut App| persist_mpv_path(val.as_ref()),
                         ),

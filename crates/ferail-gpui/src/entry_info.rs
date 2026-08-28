@@ -30,6 +30,7 @@ use ferail_core::platform_properties::{
 };
 #[cfg(windows)]
 use ferail_core::platform_shortcuts::{ShortcutInfo, ShortcutResolver as _, ShortcutTarget};
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Root, Sizable, WindowExt as _,
@@ -216,7 +217,11 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     let stat = fsn::stat_info::read_stat_info(path);
     let sh = shell::read_shell_info(path);
     let vol = fsn::volume_info_for_path(path);
-    let colors = shell::read_canonical_tags(path);
+    let colors = if shell::SUPPORTS_TAGS {
+        shell::read_canonical_tags(path)
+    } else {
+        Vec::new()
+    };
     let default_app = shell::open_with_candidates(path)
         .into_iter()
         .find(|c| c.is_default)
@@ -304,10 +309,19 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         }
     }
     if let Some(added) = sh.added_unix {
-        general = general.text_if(tr!("Added").to_string(), fmt_date(added));
+        general = general.row(
+            tr!("Added").to_string(),
+            InfoValue::Timestamp {
+                unix: added,
+                display: fmt_date(added),
+                // Non-editable; the kind is never dispatched to a writer.
+                kind: TimestampKind::Modified,
+                editable: false,
+            },
+        );
     }
     if let Some(app) = default_app {
-        general = general.text_if(tr!("Application").to_string(), app);
+        general = general.private_text_if(tr!("Application").to_string(), app);
     }
     general = general.path_if(
         tr!("Where").to_string(),
@@ -324,11 +338,11 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     if target == InfoTarget::File {
         if let Some(t) = fsn::media::read_media_tags(path) {
             media = media
-                .text_if(tr!("Title").to_string(), t.title.clone())
-                .text_if(tr!("Artist").to_string(), t.artist.clone())
-                .text_if(tr!("Album").to_string(), t.album.clone())
-                .text_if(tr!("Genre").to_string(), t.genre.clone())
-                .text_if(
+                .private_text_if(tr!("Title").to_string(), t.title.clone())
+                .private_text_if(tr!("Artist").to_string(), t.artist.clone())
+                .private_text_if(tr!("Album").to_string(), t.album.clone())
+                .private_text_if(tr!("Genre").to_string(), t.genre.clone())
+                .private_text_if(
                     tr!("Year").to_string(),
                     t.year.map(|y| y.to_string()).unwrap_or_default(),
                 )
@@ -353,9 +367,9 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         if let Some(m) = fsn::image_meta::read_image_meta(path) {
             image = image
                 .text_if(tr!("Dimensions").to_string(), m.dimensions_label())
-                .text_if(tr!("Camera").to_string(), m.camera_label())
-                .text_if(tr!("Lens").to_string(), m.lens_model.clone())
-                .text_if(tr!("Date taken").to_string(), m.taken.clone())
+                .private_text_if(tr!("Camera").to_string(), m.camera_label())
+                .private_text_if(tr!("Lens").to_string(), m.lens_model.clone())
+                .private_text_if(tr!("Date taken").to_string(), m.taken.clone())
                 .text_if(tr!("Exposure").to_string(), m.exposure_label());
             // "Normal" is the unremarkable default — only a stored rotation
             // is worth a row (the volume section's read-only precedent).
@@ -402,21 +416,23 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
             },
         );
     }
-    attributes = attributes.row(
-        tr!("Tags").to_string(),
-        InfoValue::Tags {
-            colors,
-            custom: Vec::new(),
-        },
-    );
+    if shell::SUPPORTS_TAGS {
+        attributes = attributes.row(
+            tr!("Tags").to_string(),
+            InfoValue::Tags {
+                colors,
+                custom: Vec::new(),
+            },
+        );
+    }
 
     // ---- Ownership & Permissions ----
     let mut permissions = InfoSection::new(tr!("Ownership & Permissions").to_string());
     if let Some(s) = &stat {
         let mode = s.mode & 0o7777;
         permissions = permissions
-            .text_if(tr!("Owner").to_string(), s.owner_name.clone())
-            .text_if(tr!("Group").to_string(), s.group_name.clone())
+            .private_text_if(tr!("Owner").to_string(), s.owner_name.clone())
+            .private_text_if(tr!("Group").to_string(), s.group_name.clone())
             .row(
                 tr!("Permissions").to_string(),
                 InfoValue::Permissions(PermMatrix {
@@ -434,19 +450,19 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     // ---- Volume ----
     let mut volume = InfoSection::new(tr!("Volume").to_string());
     if let Some(v) = &vol {
-        volume = volume.text_if(tr!("Volume").to_string(), v.name.clone());
+        volume = volume.private_text_if(tr!("Volume").to_string(), v.name.clone());
         if let Some(t) = v.total_bytes {
-            volume = volume.text_if(tr!("Capacity").to_string(), fsn::humanize_bytes(t));
+            volume = volume.row(tr!("Capacity").to_string(), InfoValue::Bytes(t));
         }
         if let Some(a) = v.available_bytes {
-            volume = volume.text_if(tr!("Available").to_string(), fsn::humanize_bytes(a));
+            volume = volume.row(tr!("Available").to_string(), InfoValue::Bytes(a));
         }
         // Finder parity: Capacity / Available / Used. Used is derived —
         // statfs reports total and free, not a used counter.
         if let (Some(t), Some(a)) = (v.total_bytes, v.available_bytes) {
-            volume = volume.text_if(
+            volume = volume.row(
                 tr!("Used").to_string(),
-                fsn::humanize_bytes(t.saturating_sub(a)),
+                InfoValue::Bytes(t.saturating_sub(a)),
             );
         }
         if let Some(f) = v.format.clone() {
@@ -459,7 +475,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         }
         volume = volume.path_if(tr!("Mount point").to_string(), v.path.display().to_string());
         if let Some(d) = v.bsd_device.clone() {
-            volume = volume.text_if(tr!("Device").to_string(), d);
+            volume = volume.private_text_if(tr!("Device").to_string(), d);
         }
     }
 
@@ -514,7 +530,7 @@ fn append_windows_details(
                     PlatformPropertyValue::Unsigned(value) => value.to_string(),
                     PlatformPropertyValue::TimestampUnixMillis(value) => value.to_string(),
                 };
-                output = output.text_if(property.display_name.to_string(), value);
+                output = output.private_text_if(property.display_name.to_string(), value);
             }
             if !output.rows.is_empty() {
                 info.sections.push(output);
@@ -531,7 +547,7 @@ fn append_windows_details(
                 );
             }
             Ok(ShortcutTarget::Url(url)) => {
-                section = section.text_if(tr!("Target").to_string(), url.to_string());
+                section = section.private_text_if(tr!("Target").to_string(), url.to_string());
             }
             Ok(ShortcutTarget::Platform(_)) => {
                 section = section.text_if(
@@ -540,11 +556,11 @@ fn append_windows_details(
                 );
             }
             Err(error) => {
-                section = section.text_if(tr!("Status").to_string(), format!("{error:?}"));
+                section = section.private_text_if(tr!("Status").to_string(), format!("{error:?}"));
             }
         }
         if !shortcut.arguments.is_empty() {
-            section = section.text_if(
+            section = section.private_text_if(
                 tr!("Arguments").to_string(),
                 shortcut
                     .arguments
@@ -1093,17 +1109,11 @@ impl Drop for EntryInfoView {
 
 impl Render for EntryInfoView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if crate::private_mode::enabled() {
-            window.set_window_title(&tr!("Private — Ferail"));
-            return crate::private_mode::surface(
-                crate::private_mode::SurfaceKind::Information,
-                window,
-                cx,
-            )
-            .into_any_element();
-        }
         if !self.embedded {
-            window.set_window_title(&tr!("Information"));
+            window.set_window_title(&tr!(
+                "Get Info — {name}",
+                name = crate::private_mode::present_leaf_str(&self.name, false)
+            ));
         }
         let muted = cx.theme().muted_foreground;
 
@@ -1140,13 +1150,20 @@ impl Render for EntryInfoView {
             self.did_focus = true;
             window.focus(&self.focus_handle, cx);
         }
+        let shown_name = crate::private_mode::present_leaf_str(&self.name, false);
         let mut header = v_flex().gap_0p5().child(
             div()
                 .text_scale_lg()
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(name_hazard_element(&self.name, "popup-name")),
+                .child(if crate::private_mode::enabled() {
+                    SharedString::from(shown_name.clone()).into_any_element()
+                } else {
+                    name_hazard_element(&shown_name, "popup-name")
+                }),
         );
-        if let Some(warn) = name_hazard_warning(&self.name) {
+        if !crate::private_mode::enabled()
+            && let Some(warn) = name_hazard_warning(&self.name)
+        {
             header = header.child(
                 div()
                     .text_scale_xs()
@@ -1161,7 +1178,7 @@ impl Render for EntryInfoView {
                 .child(self.kind.clone()),
         );
 
-        v_flex()
+        let content = v_flex()
             .key_context(ENTRY_INFO_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_dismiss))
@@ -1182,8 +1199,11 @@ impl Render for EntryInfoView {
             )
             // This window's own Root holds the notification state but doesn't
             // render the layer — do it here so edit-error toasts appear.
-            .children(Root::render_notification_layer(window, cx))
-            .into_any_element()
+            .when(!crate::private_mode::enabled(), |this| {
+                this.children(Root::render_notification_layer(window, cx))
+            })
+            .into_any_element();
+        crate::private_mode::protect(content, cx)
     }
 }
 
@@ -1243,15 +1263,31 @@ impl EntryInfoView {
 
     fn render_value(&self, value: &InfoValue, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         match value {
-            InfoValue::Text(s) | InfoValue::Name(s) => div().child(s.clone()).into_any_element(),
+            InfoValue::Text(s) => div().child(s.clone()).into_any_element(),
+            InfoValue::PrivateText(s) => div()
+                .child(crate::private_mode::present_label(s))
+                .into_any_element(),
+            InfoValue::Bytes(bytes) => div()
+                .child(ferail_fs_native::humanize_bytes(
+                    crate::private_mode::present_bytes(ix as u64, *bytes),
+                ))
+                .into_any_element(),
+            InfoValue::Name(s) => div()
+                .child(crate::private_mode::present_leaf_str(s, false))
+                .into_any_element(),
             InfoValue::Path(path) => {
-                let full: SharedString = path.clone().into();
+                let shown = if crate::private_mode::enabled() {
+                    crate::private_mode::present_path(Path::new(path))
+                } else {
+                    path.clone()
+                };
+                let full: SharedString = shown.clone().into();
                 div()
                     .id(ElementId::Name(format!("entry-info-path-{ix}").into()))
                     .w_full()
                     .min_w_0()
                     .truncate_middle()
-                    .child(elide_label(path, 72))
+                    .child(elide_label(&shown, 72))
                     .tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx))
                     .into_any_element()
             }
@@ -1261,10 +1297,21 @@ impl EntryInfoView {
                 kind,
                 editable,
             } => {
+                let shown = if crate::private_mode::enabled() {
+                    ferail_fs_native::stat_info::format_local_datetime(
+                        crate::private_mode::present_timestamp(
+                            ix as u64,
+                            *unix,
+                            ferail_core::now_unix(),
+                        ),
+                    )
+                } else {
+                    display.clone()
+                };
                 let mut row = h_flex()
                     .gap_1()
                     .items_center()
-                    .child(div().flex_1().child(display.clone()));
+                    .child(div().flex_1().child(shown));
                 if *editable {
                     let (unix, kind) = (*unix, *kind);
                     row = row.child(
@@ -1317,21 +1364,25 @@ impl EntryInfoView {
                     );
                 }
                 for name in custom {
-                    row = row.child(div().child(name.clone()));
+                    row = row.child(div().child(crate::private_mode::present_label(name)));
                 }
                 row.into_any_element()
             }
             InfoValue::Permissions(m) => self.render_permissions(m, cx),
             InfoValue::Size(size) => match size {
                 SizeValue::Known {
+                    bytes,
                     display,
                     refreshable,
-                    ..
                 } => {
-                    let row = h_flex()
-                        .gap_1()
-                        .items_center()
-                        .child(div().child(display.clone()));
+                    let shown = if crate::private_mode::enabled() {
+                        ferail_fs_native::humanize_bytes(crate::private_mode::present_bytes(
+                            ix as u64, *bytes,
+                        ))
+                    } else {
+                        display.clone()
+                    };
+                    let row = h_flex().gap_1().items_center().child(div().child(shown));
                     if *refreshable {
                         // A cached folder/volume total — let the user recompute.
                         row.child(

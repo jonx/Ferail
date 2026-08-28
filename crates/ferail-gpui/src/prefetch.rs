@@ -170,6 +170,7 @@ fn run_worker(
         // served from the DB cache) — only a fresh derive does the extra
         // audio-tag read, since the cache already holds the media line.
         let desc_was_cached = cached_desc.is_some();
+        let mut detected_magic = None;
         let (magic_label, mut description) = if seed.is_dir {
             // See `PrefetchSeed::is_dir` — never sniff a directory,
             // and don't resurrect a label an older build sniffed for
@@ -181,6 +182,7 @@ fn run_worker(
                 (Some(l), Some(d)) => (l, d),
                 (cached_l, cached_d) => {
                     let info = detect_magic_info(&seed.path);
+                    detected_magic = info.clone();
                     let label = cached_l.unwrap_or_else(|| {
                         info.as_ref()
                             .map(|i| i.magic_type.display_name().to_string())
@@ -200,10 +202,15 @@ fn run_worker(
         // already this line (both magic and media descriptions persist to
         // the same `description` field), so a revisit never re-reads tags.
         // lofty reads only the header/tag regions, not the whole file.
-        if !desc_was_cached && crate::video_poster::is_lofty_audio(&seed.path) {
-            if let Some(media_desc) = ferail_fs_native::media::read_media_tags(&seed.path)
-                .map(|t| t.description())
-                .filter(|d| !d.is_empty())
+        if !desc_was_cached
+            && ferail_fs_native::media::is_audio_candidate(&seed.path, detected_magic.as_ref())
+        {
+            if let Some(media_desc) = ferail_fs_native::media::read_media_tags_with_magic(
+                &seed.path,
+                detected_magic.as_ref(),
+            )
+            .map(|t| t.description())
+            .filter(|d| !d.is_empty())
             {
                 description = media_desc;
             }

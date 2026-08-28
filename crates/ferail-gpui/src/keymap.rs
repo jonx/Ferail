@@ -23,14 +23,14 @@ use crate::shell::ShowWindowsContextMenu;
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseToolResult, CloseWindow, CopyFiles, CopyPath, CursorDown,
     CursorDownExtend, CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp,
-    CursorUpExtend, CutFiles, DeleteImmediately, EditBreadcrumb, EmptyTrash, FindDuplicates,
-    FindSimilarImages, FocusFilter, GetInfo, GoHome, GoToFolder, GridDown, GridDownExtend,
-    GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp, GridUpExtend, MovePasteFiles,
-    MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, NextTab,
-    OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend,
-    PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage, PrevTab, QuickLook, Refresh, RenameSelected,
-    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleFlatView, ToggleHidden,
-    TogglePreview, ZoomIn, ZoomOut, ZoomReset,
+    CursorUpExtend, CutFiles, CycleSidebarSize, DeleteImmediately, EditBreadcrumb, EmptyTrash,
+    FindDuplicates, FindSimilarImages, FocusFilter, GetInfo, GoHome, GoToFolder, GridDown,
+    GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp, GridUpExtend,
+    MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
+    NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown,
+    PageDownExtend, PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage, PrevTab, QuickLook, Refresh,
+    RenameSelected, ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleFlatView,
+    ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDelete, ViewerDismiss, ViewerLeft, ViewerNext,
@@ -195,6 +195,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
         "view.toggle_private" => bind!(TogglePrivateMode, None),
         "view.edit_breadcrumb" => bind!(EditBreadcrumb, ctx),
         "view.toggle_preview" => bind!(TogglePreview, ctx),
+        "view.cycle_sidebar_size" => bind!(CycleSidebarSize, ctx),
         "view.toggle_flat" => bind!(ToggleFlatView, ctx),
         "view.open_viewer" => bind!(OpenViewer, ctx),
         // Sort commands have no shortcut today; the arms exist so the

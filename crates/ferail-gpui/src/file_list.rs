@@ -88,6 +88,11 @@ impl Render for DragBadge {
             return gpui::Empty.into_any_element();
         }
         let theme = cx.theme();
+        let private_names: SmallVec<[SharedString; GHOST_STACK_CAP]> = self
+            .names
+            .iter()
+            .map(|name| crate::private_mode::present_leaf(name, false))
+            .collect();
         let content = if self.count <= 1 {
             // Single item: labelled chip with the file's icon/thumbnail.
             const ICON: f32 = 22.0;
@@ -112,7 +117,7 @@ impl Render for DragBadge {
                     div()
                         .max_w(px(260.0))
                         .truncate()
-                        .child(self.names.first().cloned().unwrap_or_default()),
+                        .child(private_names.first().cloned().unwrap_or_default()),
                 );
             div().child(chip)
         } else {
@@ -161,14 +166,14 @@ impl Render for DragBadge {
                     .child(ferail_core::counts::format_count(self.count as u64)),
             );
             // Name list: the first GHOST_NAME_CAP, then a "+N more" line.
-            let shown = self.names.len().min(GHOST_NAME_CAP);
+            let shown = private_names.len().min(GHOST_NAME_CAP);
             let mut names = div()
                 .flex()
                 .flex_col()
                 .gap_0p5()
                 .text_scale_sm()
                 .text_color(theme.foreground);
-            for name in self.names.iter().take(GHOST_NAME_CAP) {
+            for name in private_names.iter().take(GHOST_NAME_CAP) {
                 names = names.child(div().max_w(px(220.0)).truncate().child(name.clone()));
             }
             if self.count > shown {
@@ -2809,7 +2814,7 @@ impl TableDelegate for FileListDelegate {
                         // `get` is a non-mutating HashMap read — the
                         // fetch itself happens off the render path in
                         // `visible_rows_changed`.
-                        let thumb = if thumbs_on {
+                        let thumb = if thumbs_on && !crate::private_mode::enabled() {
                             self.thumbnails.borrow().get(&path, THUMB_PX)
                         } else {
                             None
@@ -2845,7 +2850,11 @@ impl TableDelegate for FileListDelegate {
                 // the list — scanned first — never shows an invisible-char name
                 // as innocuous. `name_has_hazards` is precomputed at enumerate
                 // time, so the row paint just reads a bool.
-                let display_name = entry.display_name.clone();
+                let display_name: SharedString = crate::private_mode::present_leaf_str(
+                    &entry.display_name,
+                    matches!(entry.kind, ferail_core::EntryKind::Directory),
+                )
+                .into();
                 let tooltip_name = display_name.clone();
                 let column_width = self
                     .columns
@@ -2856,7 +2865,7 @@ impl TableDelegate for FileListDelegate {
                 // applies pixel-exact middle truncation as a final fallback.
                 let name_budget = ((column_width - 52.0) / 7.0).floor().max(12.0) as usize;
                 let elided_name = elide_label(display_name.as_ref(), name_budget);
-                let name_child = if entry.name_has_hazards {
+                let name_child = if entry.name_has_hazards && !crate::private_mode::enabled() {
                     div()
                         .flex_1()
                         .min_w_0()
@@ -2879,14 +2888,16 @@ impl TableDelegate for FileListDelegate {
                 // delegate; render only consumes the cached Vec.
                 let row_tags = self.tags.get(row_ix).cloned().unwrap_or_default();
                 let mut chips = gpui_component::h_flex().gap_1().flex_shrink_0();
-                for color in row_tags.iter().take(7) {
-                    chips = chips.child(
-                        div()
-                            .w(px(6.0))
-                            .h(px(6.0))
-                            .rounded_full()
-                            .bg(tag_color_rgba(*color)),
-                    );
+                if crate::platform_shell::SUPPORTS_TAGS {
+                    for color in row_tags.iter().take(7) {
+                        chips = chips.child(
+                            div()
+                                .w(px(6.0))
+                                .h(px(6.0))
+                                .rounded_full()
+                                .bg(tag_color_rgba(*color)),
+                        );
+                    }
                 }
                 // §5 favorited indicator: small accent star trailing
                 // the name. Only painted for folder rows (files can't
@@ -2920,15 +2931,22 @@ impl TableDelegate for FileListDelegate {
                     .child(name_child)
                     .child(chips)
                     .child(star)
-                    .tooltip(move |window, cx| {
-                        Tooltip::new(SharedString::from(tooltip_name.clone())).build(window, cx)
-                    })
+                    .tooltip(move |window, cx| Tooltip::new(tooltip_name.clone()).build(window, cx))
                     .into_any_element()
             }
             "size" => div()
                 .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(SharedString::from(entry.display_size.clone()))
+                .child(SharedString::from(
+                    if crate::private_mode::enabled() && entry.size > 0 {
+                        ferail_fs_native::humanize_bytes(crate::private_mode::present_bytes(
+                            entry.id.as_raw(),
+                            entry.size,
+                        ))
+                    } else {
+                        entry.display_size.to_string()
+                    },
+                ))
                 .into_any_element(),
             // Unified Format column: replaces the old Kind + Magic
             // duplication. The trailing indicator grades how the
@@ -3012,7 +3030,15 @@ impl TableDelegate for FileListDelegate {
                 .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(if entry.mtime_unix > 0 {
-                    ferail_core::humanize_mtime(entry.mtime_unix, ferail_core::now_unix())
+                    let now = ferail_core::now_unix();
+                    ferail_core::humanize_mtime(
+                        crate::private_mode::present_timestamp(
+                            entry.id.as_raw(),
+                            entry.mtime_unix,
+                            now,
+                        ),
+                        now,
+                    )
                 } else {
                     String::new()
                 }))
@@ -3023,14 +3049,24 @@ impl TableDelegate for FileListDelegate {
             "description" => div()
                 .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(SharedString::from(entry.display_description.clone()))
+                .child(SharedString::from(if crate::private_mode::enabled() {
+                    crate::i18n::tr_dyn(&entry.format_label().0).to_string()
+                } else {
+                    entry.display_description.to_string()
+                }))
                 .into_any_element(),
             "path" => {
-                let full_path = self
+                let raw_path = self
                     .flat_paths
                     .as_ref()
                     .and_then(|paths| paths.display_directory(entry.id))
                     .unwrap_or_default();
+                let full_path: SharedString = if crate::private_mode::enabled() {
+                    crate::private_mode::present_path(std::path::Path::new(raw_path.as_ref()))
+                        .into()
+                } else {
+                    raw_path
+                };
                 let column_width = self
                     .columns
                     .get(col_ix)
@@ -3525,39 +3561,41 @@ impl TableDelegate for FileListDelegate {
             }
         }
 
-        // Names of the tags applied to the clicked row — offered for
-        // pinning to the sidebar as Tag favorites (§9).
-        let applied_tag_names: Vec<String> =
-            applied_tags.iter().map(|c| c.name().to_string()).collect();
-        let tags_submenu = PopupMenu::build(window, app_cx, move |m, _w, _c| {
-            let mut m = m
-                .menu_with_check(tr!("Red"), tag_red_on, Box::new(ToggleTagRed))
-                .menu_with_check(tr!("Orange"), tag_orange_on, Box::new(ToggleTagOrange))
-                .menu_with_check(tr!("Yellow"), tag_yellow_on, Box::new(ToggleTagYellow))
-                .menu_with_check(tr!("Green"), tag_green_on, Box::new(ToggleTagGreen))
-                .menu_with_check(tr!("Blue"), tag_blue_on, Box::new(ToggleTagBlue))
-                .menu_with_check(tr!("Purple"), tag_purple_on, Box::new(ToggleTagPurple))
-                .menu_with_check(tr!("Gray"), tag_gray_on, Box::new(ToggleTagGray));
-            // Pin each applied tag to the sidebar. Closure items add the
-            // Tag favorite directly through the process-global entity —
-            // no per-tag action needed (writes are off the paint path).
-            if !applied_tag_names.is_empty() {
-                m = m.separator();
-                for name in &applied_tag_names {
-                    let name = name.clone();
-                    let label = tr!("Pin \u{201c}{name}\u{201d} to Sidebar", name = name);
-                    m = m.item(PopupMenuItem::new(label).on_click(move |_ev, _w, cx| {
-                        let favs = crate::process_state::process_state(cx).favorites().clone();
+        if crate::platform_shell::SUPPORTS_TAGS {
+            // Names of the tags applied to the clicked row — offered for
+            // pinning to the sidebar as Tag favorites (§9).
+            let applied_tag_names: Vec<String> =
+                applied_tags.iter().map(|c| c.name().to_string()).collect();
+            let tags_submenu = PopupMenu::build(window, app_cx, move |m, _w, _c| {
+                let mut m = m
+                    .menu_with_check(tr!("Red"), tag_red_on, Box::new(ToggleTagRed))
+                    .menu_with_check(tr!("Orange"), tag_orange_on, Box::new(ToggleTagOrange))
+                    .menu_with_check(tr!("Yellow"), tag_yellow_on, Box::new(ToggleTagYellow))
+                    .menu_with_check(tr!("Green"), tag_green_on, Box::new(ToggleTagGreen))
+                    .menu_with_check(tr!("Blue"), tag_blue_on, Box::new(ToggleTagBlue))
+                    .menu_with_check(tr!("Purple"), tag_purple_on, Box::new(ToggleTagPurple))
+                    .menu_with_check(tr!("Gray"), tag_gray_on, Box::new(ToggleTagGray));
+                // Pin each applied tag to the sidebar. Closure items add the
+                // Tag favorite directly through the process-global entity —
+                // no per-tag action needed (writes are off the paint path).
+                if !applied_tag_names.is_empty() {
+                    m = m.separator();
+                    for name in &applied_tag_names {
                         let name = name.clone();
-                        favs.update(cx, |f, cx| {
-                            f.add_tag(name, cx);
-                        });
-                    }));
+                        let label = tr!("Pin \u{201c}{name}\u{201d} to Sidebar", name = name);
+                        m = m.item(PopupMenuItem::new(label).on_click(move |_ev, _w, cx| {
+                            let favs = crate::process_state::process_state(cx).favorites().clone();
+                            let name = name.clone();
+                            favs.update(cx, |f, cx| {
+                                f.add_tag(name, cx);
+                            });
+                        }));
+                    }
                 }
-            }
-            m
-        });
-        menu = menu.item(PopupMenuItem::submenu(tr!("Tags"), tags_submenu));
+                m
+            });
+            menu = menu.item(PopupMenuItem::submenu(tr!("Tags"), tags_submenu));
+        }
 
         let menu = menu
             .separator()

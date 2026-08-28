@@ -61,6 +61,8 @@ UninstallDisplayName={#AppName} {#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+CloseApplications=yes
+RestartApplications=yes
 
 ; Dual MIT/Apache-2.0 — show MIT during setup; both ship in licenses\.
 LicenseFile=..\..\LICENSE-MIT
@@ -73,6 +75,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#SourceDir}\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
+; Fast NTFS stays a separate, narrowly elevated process. It must be beside
+; Ferail.exe in installed builds just as it is in the portable ZIP; the GUI
+; deliberately refuses a missing or version-mismatched helper.
+Source: "{#SourceDir}\ferail-ntfs-helper.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; The CLI lives in cli\ because Windows paths are case-insensitive: shipping
 ; `ferail.exe` beside `Ferail.exe` collapses to a single file. Keep this layout
 ; in step with scripts/package-win.ps1, which asserts the two are distinct.

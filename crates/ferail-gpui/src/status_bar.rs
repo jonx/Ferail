@@ -238,6 +238,7 @@ impl Plan {
 pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String, Option<String>) {
     let entries = metrics.entries;
     let filtered = metrics.filtered_count;
+    let presented_bytes = |domain, bytes| crate::private_mode::present_bytes(domain, bytes);
     // Compositions of numbers and separators with no words in them are
     // built with `format!`, not `tr!`: there is nothing to translate, and
     // a msgid whose whole body is "{n} · {size}" only invites
@@ -249,7 +250,7 @@ pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String
                 _ => tr!("Empty folder").to_string(),
             }
         } else {
-            let size = humanize_bytes(metrics.filtered_bytes);
+            let size = humanize_bytes(presented_bytes(0x4649_4c54, metrics.filtered_bytes));
             match density {
                 Density::Full => trn!(
                     "{n} item filtered out \u{00B7} {size}",
@@ -277,7 +278,7 @@ pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String
             trn!("{n} item", "{n} items", entries).to_string()
         }
     } else if entries != 1 && metrics.selected_count > 0 {
-        let size = humanize_bytes(metrics.selected_size);
+        let size = humanize_bytes(presented_bytes(0x5345_4c45, metrics.selected_size));
         match density {
             Density::Full | Density::Short => trn!(
                 "{n} of {total} selected \u{00B7} {size}",
@@ -292,7 +293,7 @@ pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String
             }
         }
     } else {
-        let size = humanize_bytes(metrics.total_size);
+        let size = humanize_bytes(presented_bytes(0x544f_5441, metrics.total_size));
         match density {
             Density::Full | Density::Short => trn!(
                 "{n} item \u{00B7} {size}",
@@ -305,7 +306,7 @@ pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String
         }
     };
     let filtered_label = (filtered > 0).then(|| {
-        let size = humanize_bytes(metrics.filtered_bytes);
+        let size = humanize_bytes(presented_bytes(0x4649_4c54, metrics.filtered_bytes));
         match density {
             Density::Full => trn!(
                 "{n} filtered out \u{00B7} {size}",
@@ -329,16 +330,20 @@ pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String
 
 /// Free-space (or read-only) wording for a density.
 pub(crate) fn free_label(metrics: &StatusMetrics, density: Density) -> Option<SharedString> {
+    let volume_name = metrics
+        .volume_name
+        .as_ref()
+        .map(|name| crate::private_mode::present_label(name));
     if metrics.volume_read_only {
-        return Some(match (&metrics.volume_name, density) {
+        return Some(match (&volume_name, density) {
             (Some(name), Density::Full) => tr!("{name} is read-only", name = name.clone()),
             (_, Density::Minimal) => tr!("Read-only"),
             _ => tr!("Read-only volume"),
         });
     }
     let bytes = metrics.free_bytes?;
-    let size = humanize_bytes(bytes);
-    Some(match (&metrics.volume_name, density) {
+    let size = humanize_bytes(crate::private_mode::present_bytes(0x4652_4545, bytes));
+    Some(match (&volume_name, density) {
         // The volume name is the first thing to go: on a single-disk Mac
         // it repeats what the sidebar already says.
         (Some(name), Density::Full) => {
@@ -359,7 +364,10 @@ fn hidden_label(metrics: &StatusMetrics, density: Density) -> Option<String> {
             "{n} hidden \u{00B7} {size}",
             "{n} hidden \u{00B7} {size}",
             metrics.hidden_count,
-            size = humanize_bytes(metrics.hidden_bytes)
+            size = humanize_bytes(crate::private_mode::present_bytes(
+                0x4849_4444,
+                metrics.hidden_bytes
+            ))
         )
         .to_string(),
         _ => trn!("{n} hidden", "{n} hidden", metrics.hidden_count).to_string(),
@@ -569,7 +577,9 @@ pub fn render(
         // exactly one surfaced task, or whenever the primary is a
         // foreground op, show its label + live rate/ETA. Otherwise just
         // count the ambient background work.
-        if surfaced == 1 || t.kind.is_foreground() {
+        if crate::private_mode::enabled() {
+            Some(trn!("{n} task running", "{n} tasks running", surfaced))
+        } else if surfaced == 1 || t.kind.is_foreground() {
             Some(SharedString::from(label_with_rate(t)))
         } else {
             Some(trn!("{n} task running", "{n} tasks running", surfaced))

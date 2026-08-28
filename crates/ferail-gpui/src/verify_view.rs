@@ -273,7 +273,7 @@ impl Render for VerifyView {
         let title = self
             .source
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
+            .map(|name| crate::private_mode::present_leaf_str(&name.to_string_lossy(), false))
             .unwrap_or_else(|| tr!("Checksum manifest").to_string());
         let entity = cx.entity();
 
@@ -377,7 +377,12 @@ impl Render for VerifyView {
                         .text_color(cx.theme().danger)
                         .child(tr!("Verification failed")),
                 )
-                .child(div().text_scale_sm().text_color(muted).child(error.clone()))
+                .child(
+                    div()
+                        .text_scale_sm()
+                        .text_color(muted)
+                        .child(crate::private_mode::present_label(error)),
+                )
                 .into_any_element(),
             Phase::Ready(report) | Phase::Cancelled(report) => {
                 let (ok, failed, missing, other) = Self::counts(report);
@@ -407,12 +412,17 @@ impl Render for VerifyView {
                             let item = report.outcomes.get(*indices.get(visible)?)?;
                             let (status_color, detail) = match &item.outcome {
                                 EntryOutcome::Ok => (success, None),
-                                EntryOutcome::Mismatch { actual } => {
-                                    (danger, Some(format!("{}: {actual}", tr!("Actual"))))
-                                }
+                                EntryOutcome::Mismatch { actual } => (
+                                    danger,
+                                    Some(format!(
+                                        "{}: {}",
+                                        tr!("Actual"),
+                                        crate::private_mode::present_digest(actual, actual.len())
+                                    )),
+                                ),
                                 EntryOutcome::Missing => (warning, None),
                                 EntryOutcome::Unreadable { reason } => {
-                                    (danger, Some(reason.clone()))
+                                    (danger, Some(crate::private_mode::present_label(reason)))
                                 }
                                 EntryOutcome::UnsafePath { reason } => {
                                     (danger, Some((*reason).to_string()))
@@ -447,7 +457,14 @@ impl Render for VerifyView {
                                     .into_any_element(),
                                 None => div().w(px(28.)).flex_none().into_any_element(),
                             };
-                            let expected: SharedString = item.entry.expected.clone().into();
+                            let expected: SharedString = crate::private_mode::present_digest(
+                                &item.entry.expected,
+                                item.entry.expected.len(),
+                            )
+                            .into();
+                            let entry_name = crate::private_mode::present_path(
+                                std::path::Path::new(&item.entry.name),
+                            );
                             Some(
                                 h_flex()
                                     .h(px(36.))
@@ -474,7 +491,7 @@ impl Render for VerifyView {
                                                 div()
                                                     .truncate()
                                                     .text_color(foreground)
-                                                    .child(item.entry.name.clone()),
+                                                    .child(entry_name),
                                             )
                                             .when_some(detail, |this, detail| {
                                                 this.child(

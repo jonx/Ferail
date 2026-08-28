@@ -1188,6 +1188,20 @@ pub fn set_hidden_extension(_path: &Path, _hide: bool) -> Result<(), String> {
 // Tags (Finder color tags) — no portable Linux equivalent
 // =============================================================
 
+/// No portable desktop-wide tag store is wired on Linux yet.
+pub const SUPPORTS_TAGS: bool = false;
+
+pub fn prefer_installer_updates() -> bool {
+    false
+}
+
+pub fn launch_update_installer(_path: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Windows installer unavailable",
+    ))
+}
+
 /// Read the color tags on `path`. No portable native tag system on Linux;
 /// candidate backing is private `ferail-meta` SQLite. Empty for now.
 pub fn read_canonical_tags(_path: &Path) -> Vec<TagColor> {

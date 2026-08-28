@@ -555,7 +555,8 @@ impl PreviewPanel {
                 // Folders have no file preview — show metadata only
                 // (no thumbnail/text box). Files get the media block.
                 let is_dir = matches!(entry.kind, EntryKind::Directory);
-                let thumb_state = if is_dir {
+                let private = crate::private_mode::enabled();
+                let thumb_state = if is_dir || private {
                     None
                 } else {
                     self.process.preview_cache.borrow().get(&full_path)
@@ -563,7 +564,7 @@ impl PreviewPanel {
                 let thumb_img = crate::preview::loaded_image(thumb_state.clone());
                 // Text/code files render their content inline instead
                 // of a thumbnail (docs/features/PREVIEW.md).
-                let text_document = if is_dir {
+                let text_document = if is_dir || private {
                     None
                 } else {
                     let text_state = self.process.text_preview_cache.borrow().get(&full_path);
@@ -571,7 +572,7 @@ impl PreviewPanel {
                 };
 
                 let mut col = v_flex().gap_3();
-                if is_dir {
+                if is_dir && !private {
                     if let Some(state) = self.process.folder_sidecar_cache.borrow().get(&full_path)
                     {
                         match state {
@@ -696,7 +697,15 @@ impl PreviewPanel {
                         }
                     }
                 }
-                if let Some(document) = text_document {
+                if private && !is_dir {
+                    col = col.child(
+                        div()
+                            .w_full()
+                            .h(px(self.thumb_h))
+                            .rounded(cx.theme().radius)
+                            .bg(cx.theme().secondary.opacity(0.5)),
+                    );
+                } else if let Some(document) = text_document {
                     // Render through gpui-component's TextView:
                     // markdown files format, source files highlight
                     // (the worker already capped this to 500 lines, and
@@ -885,19 +894,23 @@ impl PreviewPanel {
                     .text_scale_lg()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().foreground);
-                let name_header = if entry.name_has_hazards {
+                let shown_name: SharedString = crate::private_mode::present_leaf_str(
+                    &entry.display_name,
+                    matches!(entry.kind, EntryKind::Directory),
+                )
+                .into();
+                let name_header = if entry.name_has_hazards && !private {
                     name_header.child(crate::entry_info::name_hazard_element(
-                        &entry.display_name,
+                        &shown_name,
                         "preview-name",
                     ))
                 } else {
-                    let name_for_tooltip = entry.display_name.clone();
+                    let name_for_tooltip = shown_name.clone();
                     name_header
                         .truncate()
-                        .child(SharedString::from(entry.display_name.clone()))
+                        .child(shown_name)
                         .tooltip(move |window, cx| {
-                            Tooltip::new(SharedString::from(name_for_tooltip.clone()))
-                                .build(window, cx)
+                            Tooltip::new(name_for_tooltip.clone()).build(window, cx)
                         })
                 };
                 col = col.child(name_header);

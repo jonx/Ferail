@@ -18,6 +18,19 @@ const NOUNS: &[&str] = &[
 ];
 const COMPOUND_EXTENSIONS: &[&str] = &["tar.gz", "tar.bz2", "tar.xz", "tar.zst"];
 
+/// Semantic value passed by a renderer to the one private-presentation
+/// interface. Controls do not try to guess whether arbitrary prose contains a
+/// path: the caller states what it is, and the presenter applies the matching
+/// policy. This is the Rust/composition equivalent of a `private_mode`
+/// interface inherited by every control.
+#[derive(Clone, Copy, Debug)]
+pub enum PrivateValue<'a> {
+    Leaf { raw: &'a str, is_dir: bool },
+    Path(&'a Path),
+    Label(&'a str),
+    Digest { raw: &'a str, width: usize },
+}
+
 /// A random disguise namespace whose mapping lasts only for this process.
 #[derive(Clone, Debug)]
 pub struct PrivateSession {
@@ -40,6 +53,15 @@ impl PrivateSession {
     #[cfg(test)]
     fn with_key(key: [u8; 16]) -> Self {
         Self { key }
+    }
+
+    pub fn present(&self, value: PrivateValue<'_>) -> String {
+        match value {
+            PrivateValue::Leaf { raw, is_dir } => self.leaf(raw, is_dir),
+            PrivateValue::Path(path) => self.path(path),
+            PrivateValue::Label(raw) => self.leaf(raw, true),
+            PrivateValue::Digest { raw, width } => self.digest(raw, width),
+        }
     }
 
     /// Present one file or directory leaf while preserving only a safe,
@@ -137,6 +159,34 @@ impl PrivateSession {
         let magnitude = 10u64.saturating_pow(raw.ilog10());
         let factor = 10 + (self.hash(identity, &raw.to_le_bytes()) % 90);
         magnitude.saturating_mul(factor) / 10
+    }
+
+    /// Stable fake timestamp in the recent past. The real instant only feeds
+    /// the keyed mapping; no calendar component is retained in the output.
+    pub fn timestamp(&self, identity: u64, raw: i64, now: i64) -> i64 {
+        if raw <= 0 {
+            return raw;
+        }
+        let hash = self.hash(identity ^ 0x5449_4d45, &raw.to_le_bytes());
+        let seconds = 3_600 + (hash % (540 * 24 * 3_600));
+        now.saturating_sub(seconds as i64)
+    }
+
+    /// Stable, plausible image dimensions with the original orientation but
+    /// no retained pixel count.
+    pub fn dimensions(&self, identity: u64, raw: (u32, u32)) -> (u32, u32) {
+        if raw.0 == 0 || raw.1 == 0 {
+            return raw;
+        }
+        const LONG_EDGES: &[u32] = &[1024, 1280, 1600, 1920, 2048, 2560, 3024, 4032];
+        let hash = self.hash(identity ^ 0x4449_4d53, &raw.0.to_le_bytes());
+        let long = LONG_EDGES[(hash as usize) % LONG_EDGES.len()];
+        let short = ((long as u64 * (55 + ((hash >> 8) % 31))) / 100) as u32;
+        if raw.0 >= raw.1 {
+            (long, short)
+        } else {
+            (short, long)
+        }
     }
 
     fn hash(&self, domain: u64, bytes: &[u8]) -> u64 {
@@ -240,5 +290,41 @@ mod tests {
         assert_eq!(shown, private.bytes(7, 4_123_456));
         assert!((1_000_000..10_000_000).contains(&shown));
         assert_eq!(private.bytes(7, 0), 0);
+    }
+
+    #[test]
+    fn timestamps_and_dimensions_keep_shape_not_values() {
+        let private = session();
+        let timestamp = private.timestamp(9, 1_700_000_000, 1_800_000_000);
+        assert!(timestamp < 1_800_000_000);
+        assert_ne!(timestamp, 1_700_000_000);
+        let dims = private.dimensions(9, (4000, 3000));
+        assert!(dims.0 > dims.1);
+        assert_ne!(dims, (4000, 3000));
+    }
+
+    #[test]
+    fn semantic_interface_routes_each_sensitive_kind() {
+        let private = session();
+        assert_eq!(
+            private.present(PrivateValue::Leaf {
+                raw: "family.jpg",
+                is_dir: false,
+            }),
+            private.leaf("family.jpg", false)
+        );
+        assert_eq!(
+            private.present(PrivateValue::Path(Path::new("/Users/alice"))),
+            private.path(Path::new("/Users/alice"))
+        );
+        assert_eq!(
+            private
+                .present(PrivateValue::Digest {
+                    raw: "abcdef",
+                    width: 6,
+                })
+                .len(),
+            6
+        );
     }
 }

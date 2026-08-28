@@ -72,6 +72,7 @@ pub mod selection_colors;
 pub mod setting_panel;
 pub mod settings;
 pub mod shell;
+pub mod sidebar_layout;
 pub mod sidecar_preview;
 pub mod special_folders;
 pub mod splitter;

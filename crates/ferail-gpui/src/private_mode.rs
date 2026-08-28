@@ -1,26 +1,18 @@
 //! Process-wide, session-only Private Mode.
 //!
-//! The first public implementation is deliberately fail-closed: every Ferail
-//! render root replaces its normal contents with a safe private presentation.
-//! This gives the interaction and pixel-safety contract one small chokepoint;
-//! individual real surfaces can later opt into structured pseudonymized
-//! presentation through `ferail_core::private_presentation`.
+//! Private Mode preserves the prepared Ferail interface and projects only
+//! sensitive values at render time. Raw models never change. A transparent,
+//! process-wide interaction shield freezes the prepared view while a semantic
+//! presenter supplies stable session aliases for names and paths.
 
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use ferail_core::private_presentation::PrivateSession;
+use ferail_core::private_presentation::{PrivateSession, PrivateValue};
 use gpui::{
-    App, ClickEvent, Context, FontWeight, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, SharedString, Styled as _, Window, div, px,
+    AnyElement, App, Bounds, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement as _, Pixels, SharedString, Styled as _, Window, div,
 };
-use gpui_component::{
-    ActiveTheme as _, Icon,
-    button::{Button, ButtonVariants as _},
-    h_flex, v_flex,
-};
-
-use crate::text::TextScale as _;
 
 gpui::actions!(private_mode, [TogglePrivateMode, ExitPrivateMode]);
 
@@ -37,18 +29,6 @@ pub enum State {
     Off,
     Arming { generation: u64 },
     Active { generation: u64 },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SurfaceKind {
-    Browser,
-    Settings,
-    Viewer,
-    DiskUsage,
-    Archive,
-    Information,
-    Picker,
-    Other,
 }
 
 pub fn state() -> State {
@@ -88,6 +68,7 @@ pub fn enter(cx: &mut App) {
     let generation = GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
     let _ = session();
     STATE.store(ARMING, Ordering::Release);
+    crate::boot::install_private_menus(cx);
     crate::log_info!(90, "private mode: arming generation {generation}");
     // Native captions are Ferail-owned pixels too (task switcher, Window
     // menu). Replace them synchronously before the protected state can be
@@ -114,6 +95,7 @@ pub fn exit(cx: &mut App) {
         return;
     }
     STATE.store(OFF, Ordering::Release);
+    crate::boot::install_app_menus(cx);
     crate::log_info!(90, "private mode: off");
     cx.refresh_windows();
 }
@@ -127,163 +109,135 @@ pub fn blocks_normal_actions() -> bool {
 }
 
 fn on_private_key(event: &KeyDownEvent, _window: &mut Window, cx: &mut App) {
-    cx.stop_propagation();
-    if event.keystroke.key == "escape" {
+    let toggle_shortcut = event.keystroke.key.eq_ignore_ascii_case("k")
+        && event.keystroke.modifiers.platform
+        && event.keystroke.modifiers.shift;
+    if event.keystroke.key == "escape" || toggle_shortcut {
         exit(cx);
+    }
+    // Capture-phase listener on the protection wrapper: no focused child can
+    // turn this keystroke into navigation, editing, or a command first.
+    cx.stop_propagation();
+}
+
+/// Present a filesystem leaf through the shared semantic interface. The off
+/// path is a cheap `SharedString` clone; entering Private Mode therefore never
+/// walks or rewrites a million-row model — only visible controls ask for an
+/// alias as they render.
+pub fn present_leaf(raw: &SharedString, is_dir: bool) -> SharedString {
+    if enabled() {
+        session()
+            .present(PrivateValue::Leaf {
+                raw: raw.as_ref(),
+                is_dir,
+            })
+            .into()
+    } else {
+        raw.clone()
     }
 }
 
-fn exit_button() -> impl IntoElement {
-    Button::new("private-mode-exit")
-        .ghost()
-        .icon(Icon::empty().path("icons/privacy.svg"))
-        .label(tr!("Private"))
-        .tooltip(tr!("Leave Private Mode (Esc)"))
-        .on_click(|_: &ClickEvent, _window, cx| {
-            cx.stop_propagation();
-            exit(cx);
-        })
+pub fn present_leaf_str(raw: &str, is_dir: bool) -> String {
+    if enabled() {
+        session().present(PrivateValue::Leaf { raw, is_dir })
+    } else {
+        raw.to_owned()
+    }
 }
 
-/// Safe replacement for a Ferail-owned window.  It renders no raw model and
-/// registers no normal action, drag, wheel or context-menu handlers.
-pub fn surface<T>(
-    kind: SurfaceKind,
-    _window: &mut Window,
-    cx: &mut Context<T>,
-) -> impl IntoElement {
-    let arming = matches!(state(), State::Arming { .. });
-    let theme = cx.theme();
-    let heading = if arming {
-        tr!("Preparing private view…")
+pub fn present_path(raw: &std::path::Path) -> String {
+    if enabled() {
+        session().present(PrivateValue::Path(raw))
     } else {
-        tr!("Private Mode")
-    };
-    let description = if arming {
-        tr!("Ferail is replacing personal content before the next frame.")
+        ferail_fs_native::paths::display_path(raw)
+    }
+}
+
+pub fn present_label(raw: &str) -> String {
+    if enabled() {
+        session().present(PrivateValue::Label(raw))
     } else {
-        tr!("Personal names, paths, content, and metadata are hidden.")
-    };
-    let kind_label = match kind {
-        SurfaceKind::Browser => tr!("Files"),
-        SurfaceKind::Settings => tr!("Settings"),
-        SurfaceKind::Viewer => tr!("Viewer"),
-        SurfaceKind::DiskUsage => tr!("Disk Usage"),
-        SurfaceKind::Archive => tr!("Archive"),
-        SurfaceKind::Information => tr!("Information"),
-        SurfaceKind::Picker => tr!("Picker"),
-        SurfaceKind::Other => tr!("Ferail"),
-    };
+        raw.to_owned()
+    }
+}
 
-    let aliases = session();
-    let rows = [
-        aliases.leaf("capture-document.pdf", false),
-        aliases.leaf("reference-photo.jpg", false),
-        aliases.leaf("project-folder", true),
-        aliases.leaf("notes.txt", false),
-        aliases.leaf("archive.tar.gz", false),
-    ];
+pub fn present_bytes(identity: u64, raw: u64) -> u64 {
+    if enabled() {
+        session().bytes(identity, raw)
+    } else {
+        raw
+    }
+}
 
-    v_flex()
-        .id("private-mode-surface")
-        .key_context("FerailPrivate")
-        .on_key_down(on_private_key)
+pub fn present_timestamp(identity: u64, raw: i64, now: i64) -> i64 {
+    if enabled() {
+        session().timestamp(identity, raw, now)
+    } else {
+        raw
+    }
+}
+
+pub fn present_dimensions(identity: u64, raw: (u32, u32)) -> (u32, u32) {
+    if enabled() {
+        session().dimensions(identity, raw)
+    } else {
+        raw
+    }
+}
+
+pub fn present_digest(raw: &str, width: usize) -> String {
+    if enabled() {
+        session().present(PrivateValue::Digest { raw, width })
+    } else {
+        raw.to_owned()
+    }
+}
+
+/// Preserve the real prepared UI and place an invisible input shield above it.
+/// Window close/quit remain OS-level and therefore continue to work.
+pub fn protect(content: impl IntoElement, cx: &App) -> AnyElement {
+    protect_with_toggle(content, cx, None)
+}
+
+/// Shell variant of [`protect`]. The invisible shield still blocks the whole
+/// window, but a click landing on the already-painted title-bar shield toggles
+/// Private Mode off. No duplicate exit control is painted above the UI.
+pub fn protect_with_toggle(
+    content: impl IntoElement,
+    _cx: &App,
+    toggle_bounds: Option<Bounds<Pixels>>,
+) -> AnyElement {
+    if !enabled() {
+        return content.into_any_element();
+    }
+    let shield = div()
+        .id("private-mode-interaction-shield")
+        .absolute()
+        .top_0()
+        .right_0()
+        .bottom_0()
+        .left_0()
+        // One almost-transparent pixel layer gives the overlay a hitbox while
+        // leaving the prepared application visually unchanged.
+        .bg(gpui::rgba(0x00000001))
+        .occlude()
+        .on_mouse_down(MouseButton::Left, move |event, _, cx| {
+            if toggle_bounds.is_some_and(|bounds| bounds.contains(&event.position)) {
+                exit(cx);
+            }
+            cx.stop_propagation();
+        })
+        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(MouseButton::Middle, |_, _, cx| cx.stop_propagation())
+        .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
+    div()
+        .id("private-mode-protected-root")
+        .relative()
         .size_full()
-        .min_w_0()
-        .min_h_0()
-        .bg(theme.background)
-        .text_color(theme.foreground)
-        .child(
-            h_flex()
-                .h(px(52.0))
-                .w_full()
-                .px_4()
-                .items_center()
-                .border_b_1()
-                .border_color(theme.border)
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_scale_sm()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("Ferail"),
-                        )
-                        .child(
-                            div()
-                                .text_scale_xs()
-                                .text_color(theme.muted_foreground)
-                                .child(env!("CARGO_PKG_VERSION")),
-                        ),
-                )
-                .child(div().flex_1())
-                .child(exit_button()),
-        )
-        .child(
-            h_flex()
-                .flex_1()
-                .min_h_0()
-                .child(
-                    v_flex()
-                        .h_full()
-                        .w(px(220.0))
-                        .p_4()
-                        .gap_3()
-                        .border_r_1()
-                        .border_color(theme.border)
-                        .text_color(theme.muted_foreground)
-                        .child(tr!("Locations"))
-                        .child(tr!("Home"))
-                        .child(tr!("Documents"))
-                        .child(tr!("Downloads"))
-                        .child(tr!("Pictures")),
-                )
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .child(
-                            h_flex()
-                                .h(px(48.0))
-                                .px_4()
-                                .items_center()
-                                .border_b_1()
-                                .border_color(theme.border)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(kind_label),
-                        )
-                        .child(v_flex().flex_1().min_h_0().p_5().gap_3().children(
-                            rows.into_iter().map(|name| {
-                                h_flex()
-                                    .h(px(38.0))
-                                    .items_center()
-                                    .gap_3()
-                                    .border_b_1()
-                                    .border_color(theme.border)
-                                    .child(
-                                        Icon::empty().path("icons/file/generic.svg").size(px(18.0)),
-                                    )
-                                    .child(SharedString::from(name))
-                            }),
-                        )),
-                ),
-        )
-        .child(
-            h_flex()
-                .h(px(34.0))
-                .px_4()
-                .items_center()
-                .border_t_1()
-                .border_color(theme.border)
-                .text_scale_xs()
-                .text_color(theme.muted_foreground)
-                .child(heading)
-                .child(div().flex_1())
-                .child(description),
-        )
+        .capture_key_down(on_private_key)
+        .child(content)
+        .child(shield)
+        .into_any_element()
 }
 
 #[cfg(test)]

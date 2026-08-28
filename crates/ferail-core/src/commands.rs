@@ -392,6 +392,18 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[TOGGLE_PREVIEW_SHORTCUT],
     },
     CommandSpec {
+        id: CommandId("view.cycle_sidebar_size"),
+        title: msgid!("Cycle Sidebar Size"),
+        category: Category::View,
+        shortcuts: &[Shortcut::primary_shift("B")],
+    },
+    CommandSpec {
+        id: CommandId("view.reset_sidebar_order"),
+        title: msgid!("Reset Sidebar Order"),
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
         id: CommandId("view.open_viewer"),
         title: msgid!("Open Viewer"),
         category: Category::View,

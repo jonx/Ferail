@@ -1503,7 +1503,7 @@ impl ArchiveView {
         let name = self
             .archive_path
             .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
+            .map(|s| crate::private_mode::present_leaf_str(&s.to_string_lossy(), false))
             .unwrap_or_default();
         let label: SharedString = self
             .format
@@ -1528,13 +1528,19 @@ impl ArchiveView {
                     parts.push(
                         tr!(
                             "{packed} archive → {unpacked} unpacked",
-                            packed = ferail_fs_native::humanize_bytes(stamp.byte_len()),
-                            unpacked = ferail_fs_native::humanize_bytes(unpacked)
+                            packed = ferail_fs_native::humanize_bytes(
+                                crate::private_mode::present_bytes(0x4152_504b, stamp.byte_len())
+                            ),
+                            unpacked = ferail_fs_native::humanize_bytes(
+                                crate::private_mode::present_bytes(0x4152_554e, unpacked)
+                            )
                         )
                         .to_string(),
                     );
                 } else if let Some(stamp) = self.stamp {
-                    parts.push(ferail_fs_native::humanize_bytes(stamp.byte_len()));
+                    parts.push(ferail_fs_native::humanize_bytes(
+                        crate::private_mode::present_bytes(0x4152_504b, stamp.byte_len()),
+                    ));
                 }
                 if toc.needs_password {
                     parts.push(tr!("encrypted").to_string());
@@ -1684,12 +1690,25 @@ impl ArchiveView {
             .when(
                 loaded && self.host_width.unwrap_or(f32::MAX) >= FILTER_MIN_WIDTH,
                 |this| {
-                    this.child(
-                        div()
-                            .w(px(180.0))
-                            .flex_shrink_0()
-                            .child(Input::new(&self.filter_input).small()),
-                    )
+                    this.child(div().w(px(180.0)).flex_shrink_0().child(
+                        if crate::private_mode::enabled() {
+                            div()
+                                .h(px(28.0))
+                                .w_full()
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .rounded(theme.radius)
+                                .border_1()
+                                .border_color(theme.border)
+                                .text_scale_sm()
+                                .text_color(theme.muted_foreground)
+                                .child(tr!("Private"))
+                                .into_any_element()
+                        } else {
+                            Input::new(&self.filter_input).small().into_any_element()
+                        },
+                    ))
                 },
             )
             .child(
@@ -1924,23 +1943,15 @@ pub(crate) fn archive_addition_root(addition: &ferail_fs_native::ArchiveAddition
 
 impl Render for ArchiveView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if crate::private_mode::enabled() {
-            window.set_window_title(&tr!("Private — Ferail"));
-            return crate::private_mode::surface(
-                crate::private_mode::SurfaceKind::Archive,
-                window,
-                cx,
-            )
-            .into_any_element();
-        }
         if self.host == ToolHostContext::Windowed {
+            let raw_name = self
+                .archive_path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
             window.set_window_title(&tr!(
                 "Archive — {name}",
-                name = self
-                    .archive_path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default()
+                name = crate::private_mode::present_leaf_str(&raw_name, false)
             ));
         }
         let bg = cx.theme().background;
@@ -2000,7 +2011,7 @@ impl Render for ArchiveView {
         };
 
         let view = cx.entity().clone();
-        v_flex()
+        let content = v_flex()
             .track_focus(&self.focus_handle)
             .key_context(ARCHIVE_CONTEXT)
             .size_full()
@@ -2175,7 +2186,8 @@ impl Render for ArchiveView {
                     .text_color(color)
                     .child(message)
             }))
-            .into_any_element()
+            .into_any_element();
+        crate::private_mode::protect(content, cx)
     }
 }
 

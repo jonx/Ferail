@@ -12,6 +12,13 @@ use ferail_fs_native::{DEFAULT_DU_BATCH, NativeFs, detect_magic};
 use ferail_gpui::screenshot;
 
 fn main() -> Result<()> {
+    // Disposable Windows hang-dump broker. This must be the very first
+    // dispatch: the parent UI may be wedged while holding arbitrary locks,
+    // so the child must reach MiniDumpWriteDump without initializing GPUI,
+    // logging, settings, or Shell providers.
+    if let Some(code) = run_windows_hang_dump_broker() {
+        std::process::exit(code);
+    }
     // Disposable Windows Shell-menu broker. Dispatch before String-based CLI
     // parsing so every NTFS path survives as its original OsString and before
     // GPUI/observability startup so third-party extensions stay isolated.
@@ -48,6 +55,22 @@ fn main() -> Result<()> {
     run_gui(args);
     ferail_gpui::log_info!(90, "event loop exited");
     Ok(())
+}
+
+fn run_windows_hang_dump_broker() -> Option<i32> {
+    #[cfg(windows)]
+    {
+        let mut args = std::env::args_os().skip(1);
+        if args.next().as_deref() != Some(std::ffi::OsStr::new("--windows-hang-dump-broker")) {
+            return None;
+        }
+        let args = args.collect::<Vec<_>>();
+        Some(ferail_gpui::platform_shell::hang_dump_broker_main(&args))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 fn run_windows_properties_broker() -> Option<i32> {

@@ -2160,6 +2160,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !crate::platform_shell::SUPPORTS_TAGS {
+            return;
+        }
         // Tag xattrs are filesystem I/O — a large selection means one
         // read-modify-write per file, and any file on a dead network
         // mount blocks for the mount timeout. Prime Directive: collect

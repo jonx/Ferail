@@ -152,7 +152,7 @@ Prebuilt builds are published on the
 | Platform | Download | Signed |
 |---|---|---|
 | **macOS** (Apple silicon) | `Ferail-<version>.dmg` — open it and drag Ferail to Applications | ✅ Developer ID signed **and notarized**, so it opens without warnings |
-| **Windows** (x64) | `Ferail-<version>-win-x64.zip` — unzip anywhere and run `Ferail.exe`. No installation, no admin rights. An Inno Setup installer ships alongside it when built. | ❌ unsigned — see below |
+| **Windows** (x64) | Portable: `Ferail-<version>-win-x64.zip` — unzip anywhere, no admin rights. Installed: `Ferail-<version>-win-x64-setup.exe` — per-user by default and eligible for one-click Install and Restart updates. | ❌ unsigned — see below |
 | **Linux** (Ubuntu 22.04+ / Debian, Intel & ARM) | `ferail_<version>-1_amd64.deb` or `…_arm64.deb` — install with `sudo apt install ./ferail_*.deb`, run `ferail` | — (unsigned, like most out-of-repo `.deb`s; built and smoke-tested by CI) |
 
 The platforms are not always released in lockstep: the newest downloads may
@@ -184,6 +184,13 @@ each.
 
 The macOS download carries no such warning — it is signed with a Developer ID
 and notarized by Apple.
+
+## Reporting bugs
+
+See [Reporting a Ferail bug](docs/REPORTING_BUGS.md) for the exact crash/freeze
+files to attach, privacy-safe screenshot guidance, and the elevated standalone
+Fast NTFS helper diagnostic. A Windows freeze report is most useful with both
+its `.txt` and same-stem `.dmp`; a screenshot alone does not contain stacks.
 
 ## Getting started
 

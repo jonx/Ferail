@@ -3,7 +3,7 @@
 ← [Feature notes](README.md) · [Screenshot harness](SCREENSHOTS.md) ·
 [Diagnostics privacy](DIAGNOSTICS.md) · [Architecture](../ARCHITECTURE.md)
 
-**Status: implemented — fail-closed presentation, August 2026.** Private Mode is a process-wide,
+**Status: implemented — semantic live projection, August 2026.** Private Mode is a process-wide,
 session-only presentation lock for making screenshots of a real Ferail session
 without displaying personal names, paths, content or identifying metadata. It
 is not a second file-browser mode and it never changes the filesystem model.
@@ -12,8 +12,9 @@ The user prepares the exact screen to capture, activates Private Mode, and the
 whole Ferail process becomes read-only from an interaction perspective. The
 only Ferail actions that remain available are:
 
-- leave Private Mode from its visible control;
-- dispatch `view.toggle_private` again;
+- click the highlighted title-bar shield again;
+- dispatch `view.toggle_private` again (`Cmd+Shift+K` on macOS,
+  `Ctrl+Shift+K` elsewhere);
 - press `Escape`;
 - close a window or quit Ferail.
 
@@ -24,14 +25,16 @@ future feature should do while the user is looking at disguised data.
 `--screenshot` enables Private Mode by default. Capturing real data requires an
 explicitly alarming `--unsafe-real-data` override.
 
-The shipped first implementation uses the contract's fail-closed projection:
-each Ferail window root renders an opaque, generic private representation with
-session-keyed plausible file aliases instead of evaluating its ordinary view.
-That provides complete pixel and interaction coverage today, independent of
-surface complexity and row count. The pure presenter is already separated in
-`ferail_core::private_presentation`; individual surfaces may later preserve
-more of their prepared layout by adopting its structured values, but must
-remain fail-closed until their complete render boundary has been audited.
+The first generic replacement surface was intentionally removed: it protected
+the data but made screenshots useless. The shipped implementation now renders
+the real prepared interface and sends semantic values (`Leaf`, `Path`,
+`Label`, `Digest`, byte counts, timestamps and dimensions) through the
+process-session presenter at paint time. Personal content pixels become
+same-size placeholders. A transparent root shield freezes the prepared UI,
+and the native menu is reduced to Private Mode and Quit. It paints no badge,
+button, glyph or message of its own: the existing title-bar shield is simply
+highlighted. Only visible controls are projected, so entering the mode never
+walks a Flat View with millions of rows.
 
 ---
 
@@ -101,15 +104,14 @@ Entry must be fail-closed:
 1. create or reuse the process-session disguise key;
 2. set the global state to `Arming(generation)`;
 3. install the interaction gate before requesting repaints;
-4. stop new thumbnail/preview requests and pause live viewer playback;
+4. suppress thumbnail/preview content and Viewer frames at paint time;
 5. force Ferail-owned transparent windows to opacity 1.0;
 6. repaint every Ferail window through the private presenter;
-7. acknowledge the generation after each relevant root has painted safely;
-8. change the state to `Active(generation)` and show the active badge.
+7. advance the generation on the next UI turn;
+8. change the state to `Active(generation)` and highlight the title-bar shield.
 
-While `Arming`, roots render an opaque neutral curtain rather than risk one
-stale frame. The UI must never claim that protection is active before the safe
-paint is complete.
+While `Arming`, roots already use the private presenter. The screenshot harness
+waits for `Active(generation)` and a settled render before capturing.
 
 Ferail-rendered dialogs, result panels and popovers stay in their prepared
 state so they can be captured. They are frozen by the interaction gate and
@@ -135,8 +137,9 @@ Blocked inputs include:
 
 Allowed inputs are deliberately tiny:
 
-- the dedicated exit control, drawn above the interaction shield;
-- `view.toggle_private`;
+- the existing highlighted title-bar shield, whose measured bounds are the
+  interaction shield's sole in-app pointer exception;
+- `view.toggle_private` (`Cmd/Ctrl+Shift+K`);
 - `Escape`, intercepted at the root capture phase and consumed;
 - window close and application quit. Closing the final window may terminate
   Ferail normally while Private Mode is active.
@@ -146,30 +149,28 @@ the private presentation but cannot dispatch a Ferail feature.
 
 ### 2.3 Leaving
 
-Clicking the private badge/icon, dispatching `view.toggle_private`, or pressing
-`Escape` leaves the mode for all Ferail windows. Exit is explicit, so real data
-may appear on the next paint.
+Clicking the highlighted title-bar shield, dispatching `view.toggle_private`,
+or pressing `Escape` leaves the mode for all Ferail windows. Exit is explicit,
+so real data may appear on the next paint.
 
 On exit:
 
-- drop the private presentation cache;
+- retain only the process-session key (there is no whole-model alias cache);
 - restore prior per-window opacity;
-- restore viewer playback only when it was playing before entry;
-- resume viewport thumbnail/preview scheduling;
+- resume ordinary Viewer and viewport preview painting;
 - remove the interaction gate and repaint all windows.
 
 No state is written to app settings. Relaunch always starts non-private.
 
 ### 2.4 Visible affordance
 
-Every Ferail window needs an unmistakable top-level badge/control while
-private. It must not be hidden by the surface being captured and must remain
-clickable above the interaction shield. Suggested copy is **Private** with the
-dedicated command glyph. The status conveys three states:
-
-- `Off` — no badge;
-- `Arming` — opaque curtain and “Preparing private view…”;
-- `Active` — private badge and safe presentation.
+The normal title-bar shield is the only Private Mode affordance. It is
+unselected while off and highlighted while arming or active. Its actual painted
+bounds are remembered from the preceding frame and form the interaction
+shield's sole in-app pointer exception, so clicking the same icon toggles the
+mode off without exposing any neighboring title-bar command. There is no
+duplicate badge, floating exit button, placeholder shield glyph or explanatory
+message in the captured interface.
 
 No “content visible but names hidden” sub-mode exists. Showing real content
 means leaving Private Mode. Synthetic screenshot fixtures remain the way to
@@ -235,12 +236,12 @@ different mapping.
 
 ### 3.2 GPUI global and lifecycle
 
-Add `ferail_gpui::private_mode` containing:
+`ferail_gpui::private_mode` contains:
 
 - `PrivateModeState::{Off, Arming { generation }, Active { generation }}`;
 - an `Arc<PrivateSession>` created for the current process;
-- a bounded presentation cache;
-- entry/exit hooks for all Ferail window types;
+- render-time semantic presentation helpers;
+- entry/exit hooks shared by all Ferail window types;
 - the action allowlist and root interaction shield;
 - test-only leak canaries and generation acknowledgements.
 
@@ -250,12 +251,10 @@ windows. The session is passed explicitly to core presentation functions.
 
 ### 3.3 Raw/display compiler chokepoint
 
-Rename `FileEntry.display_name` to `display_name_raw`. Keep `name` as the
-on-disk operation truth. Do not add a core method that silently consults GPUI.
-Instead, visible GPUI code must request a value from `PrivatePresenter`.
-
-The rename intentionally breaks every current call site. Each site is then
-classified as one of:
+`FileEntry.name` remains the on-disk operation truth and `display_name` remains
+the ordinary user-facing string. Visible GPUI code requests a projected value
+from `PrivatePresenter`; operation and model code never consults Private Mode.
+Call sites are classified as one of:
 
 - **operation/indexing** — raw display name is correct;
 - **rendered text** — must use the presenter;
@@ -275,14 +274,13 @@ archive-member names, Disk Usage labels and platform namespace DTOs.
 
 Entering Private Mode must be proportional to visible UI, not model size.
 
-- Cache only presented strings needed by active windows and a small scrolling
-  margin; use a bounded LRU (initial target: 2,048–4,096 entries).
-- Clear it on exit.
+- Compute aliases only for controls painted in active windows and their normal
+  virtualization margin. The keyed presenter is allocation-bounded by that
+  paint and owns no model-sized cache.
 - Never attach a fake string to every `FileEntry`, path-arena node or Disk
   Usage node.
 - Never re-sort or re-filter a surface when entering/leaving.
-- The off path returns/clones existing shared display strings and does no hash
-  or allocation work.
+- The off path returns ordinary display values and does no keyed hashing.
 
 The Flat View regression gate remains four million rows. Private activation
 must have bounded time and memory independent of those four million rows.
@@ -477,7 +475,7 @@ until the release gate in Phase 6 passes.
 
 - Add the pure `PrivateSession` and deterministic presentation tests.
 - Add the GPUI Global, `Off/Arming/Active` state and bounded LRU.
-- Add `view.toggle_private`, icon, visible control and en/de/fr strings.
+- Add `view.toggle_private`, the title-bar toggle icon and en/de/fr strings.
 - Implement multi-window repaint/generation acknowledgement.
 - Keep the entry point hidden from ordinary users.
 

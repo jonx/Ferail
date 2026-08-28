@@ -226,9 +226,13 @@ signature output, and clean-machine recording.
   `InputState`/`TableState` assertion, orphan helper, or rising handle count.
 - [ ] `WTEST-011` Open/close 20 windows and 100 tabs in varied order; final
   shutdown is clean.
-- [ ] `WTEST-012` Force a diagnostic UI-thread stall. The report contains a
-  symbolized stack, last activities, active task/provider ids, and no raw path
-  in default redacted mode.
+- [ ] `WTEST-012` Set `FERAIL_DEBUG_FREEZE=20` and force a diagnostic
+  UI-thread stall from both a dev build and the portable release ZIP. The
+  watchdog writes a same-stem `.txt` plus non-empty `.dmp` without UAC or a
+  console flash, recovers/re-arms, and leaves no broker process. The text has
+  last activities and active task/provider ids with no raw path in default
+  redacted mode. Open the dump in WinDbg with the exact release PDB bundle;
+  `~* kb` resolves every thread and the UI thread reaches the synthetic sleep.
 - [ ] `WTEST-013` Force a helper crash. Ferail stays interactive, reports the
   helper role/provider, offers/falls back safely, and can service the next
   request with a restarted helper.

@@ -605,6 +605,20 @@ pub fn show_quick_look(_paths: &[&std::path::Path]) -> Result<(), String> {
     Err("quick_look is macOS-only".into())
 }
 
+/// Whether the active platform shell has a native, writable tag store.
+pub const SUPPORTS_TAGS: bool = cfg!(target_os = "macos");
+
+pub fn prefer_installer_updates() -> bool {
+    false
+}
+
+pub fn launch_update_installer(_path: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Windows installer unavailable",
+    ))
+}
+
 /// Read the canonical Finder-colour tags currently set on `path`.
 /// User-defined tag names are dropped on the floor here; callers
 /// that need the raw strings should use `read_tag_names` instead.

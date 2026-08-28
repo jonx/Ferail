@@ -170,6 +170,7 @@ mod tests {
             "icons/undock.svg",
             "icons/external-link.svg",
             "icons/folder-open.svg",
+            "icons/path-edit.svg",
             "icons/copy.svg",
             "icons/network.svg",
             "icons/eye.svg",

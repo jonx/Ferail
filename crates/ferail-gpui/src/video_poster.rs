@@ -69,18 +69,6 @@ pub fn is_poster_candidate(path: &Path) -> bool {
         .is_some_and(|e| POSTER_VIDEO_EXTS.contains(&e.as_str()))
 }
 
-/// Audio extensions whose containers `lofty` can read embedded cover art
-/// from. A subset of the app's audio-icon set (`icons.rs`) — WMA is omitted
-/// because lofty doesn't parse ASF. Case-insensitive, like every other gate.
-const AUDIO_COVER_EXTS: &[&str] = &[
-    "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "aiff", "aif", "aifc", "wav", "ape",
-    "wv", "mpc",
-];
-
-/// Whether `path`'s extension marks it as an audio file `lofty` can read —
-/// used both to probe for embedded cover art here and to gate the rich
-/// media description in the prefetch worker. Gating on the extension keeps
-/// us from opening every non-audio file with lofty just to find nothing.
 /// Raster formats the bundled `image` crate is compiled with (Cargo
 /// features: png/jpeg/gif/webp/bmp/tiff) — the same decoder set the
 /// viewer's `decode_raster` relies on. Case-insensitive.
@@ -112,13 +100,6 @@ fn fetch_raster_thumbnail(path: &Path, size_px: u32) -> Option<ThumbPayload> {
     let rgba = decoded.into_rgba8();
     let (w, h) = (rgba.width(), rgba.height());
     Some((rgba.into_raw(), w, h))
-}
-
-pub(crate) fn is_lofty_audio(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .is_some_and(|e| AUDIO_COVER_EXTS.contains(&e.as_str()))
 }
 
 /// Which surface the pixels are for. The platform shell may answer the
@@ -213,13 +194,12 @@ fn fetch_content_inner(
             return Fetched::Done(Some(hit));
         }
     }
-    if is_lofty_audio(path) {
-        // The shell came up empty (or this platform has none) — pull the
-        // cover straight out of the tag; a file with no picture falls
-        // through to the icon tier below.
-        if let Some(cover) = fetch_audio_cover(path, size_px) {
-            return Fetched::Done(Some(cover));
-        }
+    // The shell came up empty (or this platform has none) — try embedded
+    // cover art. The shared media reader uses the extension as its fast path
+    // and a bounded content check for renamed files. This path only runs for
+    // viewport-owned thumbnail requests, never across an entire listing.
+    if let Some(cover) = fetch_audio_cover(path, size_px) {
+        return Fetched::Done(Some(cover));
     }
     if is_poster_candidate(path) && poster_provider_available() {
         return Fetched::NeedsPoster;

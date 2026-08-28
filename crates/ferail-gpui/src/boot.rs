@@ -6,23 +6,23 @@
 //! the desktop `main()`, and the AROS port's staticlib wrapper
 //! (`ferail-aros-app`), where a C harness owns `main()` and calls in.
 
+use crate::private_mode::{ExitPrivateMode, TogglePrivateMode};
 use crate::{
     assets::FeraAssets,
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
-        ClearRecents, CloseTab, CloseWindow, CopyPath, CreateChecksumFile, DeleteImmediately,
-        EmptyTrash, FindDuplicates, FindSimilarImages, FocusFilter, GenerateSha256, GoHome,
-        GoToFolder, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
-        OpenDiskUsage, OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell,
-        ShowDesktop, ToggleFavoriteForTarget, ToggleFlatView, ToggleHidden, TogglePreview,
-        VerifyChecksums,
+        ClearRecents, CloseTab, CloseWindow, CopyPath, CreateChecksumFile, CycleSidebarSize,
+        DeleteImmediately, EmptyTrash, FindDuplicates, FindSimilarImages, FocusFilter,
+        GenerateSha256, GoHome, GoToFolder, MoveToTrash, NavigateBack, NavigateForward,
+        NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected, OpenSettings, Refresh,
+        RenameSelected, ResetSidebarOrder, RevealInFinder, Shell, ShowDesktop,
+        ToggleFavoriteForTarget, ToggleFlatView, ToggleHidden, TogglePreview, VerifyChecksums,
     },
 };
 use ferail_core::commands::{CommandId, find};
 use gpui::*;
 use gpui_component::Theme;
-use crate::private_mode::{ExitPrivateMode, TogglePrivateMode};
 
 #[cfg(feature = "screenshot-harness")]
 static DEV_QUIT_CLEANUP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -679,6 +679,14 @@ pub(crate) fn install_app_menus(cx: &mut App) {
         TogglePreview,
     ));
     view_items.push(MenuItem::action(
+        title("view.cycle_sidebar_size", "Cycle Sidebar Size"),
+        CycleSidebarSize,
+    ));
+    view_items.push(MenuItem::action(
+        title("view.reset_sidebar_order", "Reset Sidebar Order"),
+        ResetSidebarOrder,
+    ));
+    view_items.push(MenuItem::action(
         title("view.toggle_hidden", "Show Hidden Files"),
         ToggleHidden,
     ));
@@ -813,6 +821,30 @@ pub(crate) fn install_app_menus(cx: &mut App) {
     // Mirror the menu list into gpui-component's GlobalState. macOS
     // ignores this (uses its NSApp menu); Windows/Linux's AppMenuBar
     // reads from here. One source of truth for the menu spec.
+    if let Some(menus) = cx.get_menus() {
+        gpui_component::global_state::GlobalState::global_mut(cx).set_app_menus(menus);
+    }
+}
+
+/// While Private Mode is active the native menu bar is reduced to the two
+/// commands that remain legal. This closes the one input route an in-window
+/// hit shield cannot intercept: selecting an operating-system menu item.
+pub(crate) fn install_private_menus(cx: &mut App) {
+    cx.set_menus([
+        Menu {
+            name: "Ferail".into(),
+            items: vec![MenuItem::action(tr!("Quit Ferail"), Quit)],
+            disabled: false,
+        },
+        Menu {
+            name: tr!("View"),
+            items: vec![MenuItem::action(
+                title("view.toggle_private", "Private Mode"),
+                TogglePrivateMode,
+            )],
+            disabled: false,
+        },
+    ]);
     if let Some(menus) = cx.get_menus() {
         gpui_component::global_state::GlobalState::global_mut(cx).set_app_menus(menus);
     }

@@ -1635,23 +1635,16 @@ struct DragGhostPreview {
 }
 
 impl Render for DragGhostPreview {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if crate::private_mode::enabled() {
-            return crate::private_mode::surface(
-                crate::private_mode::SurfaceKind::Other,
-                window,
-                cx,
-            )
-            .into_any_element();
-        }
-        div()
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = div()
             .size_full()
             .flex()
             .items_center()
             .justify_center()
             .bg(rgb(0x2b2b30))
             .child(self.badge.clone())
-            .into_any_element()
+            .into_any_element();
+        crate::private_mode::protect(content, cx)
     }
 }
 

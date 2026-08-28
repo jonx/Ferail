@@ -112,6 +112,19 @@ impl InfoSection {
         self
     }
 
+    /// Push user/provider-authored text whose value must be replaced at the
+    /// presentation boundary while Private Mode is active.
+    pub fn private_text_if(mut self, label: impl Into<String>, value: impl Into<String>) -> Self {
+        let value = value.into();
+        if !value.is_empty() {
+            self.rows.push(InfoRow {
+                label: label.into(),
+                value: InfoValue::PrivateText(value),
+            });
+        }
+        self
+    }
+
     /// Push a filesystem-path row only when `value` is non-empty. Keeping the
     /// semantic distinction lets compact inspector UIs elide paths without
     /// applying the same treatment to ordinary prose or metadata.
@@ -141,6 +154,10 @@ pub struct InfoRow {
 pub enum InfoValue {
     /// Plain, already-formatted, read-only text.
     Text(String),
+    /// User/provider-authored text (owner, media tag, device label, etc.).
+    PrivateText(String),
+    /// Structured byte count so private presentation can retain its shape.
+    Bytes(u64),
     /// A display-form filesystem path. Renderers preserve its beginning,
     /// middle and end when horizontal space is limited.
     Path(String),

@@ -52,6 +52,7 @@ pub struct LocationsSection {
     shell: WeakEntity<Shell>,
     ui_scale: f32,
     collapsed: bool,
+    section_collapsed: bool,
 }
 
 impl LocationsSection {
@@ -60,6 +61,7 @@ impl LocationsSection {
         rows: Vec<LocationRow>,
         shell: WeakEntity<Shell>,
         ui_scale: f32,
+        section_collapsed: bool,
     ) -> Self {
         Self {
             label: label.into(),
@@ -67,6 +69,7 @@ impl LocationsSection {
             shell,
             ui_scale,
             collapsed: false,
+            section_collapsed,
         }
     }
 }
@@ -91,6 +94,7 @@ pub struct PlatformLocationsSection {
     shell: WeakEntity<Shell>,
     ui_scale: f32,
     collapsed: bool,
+    section_collapsed: bool,
 }
 
 impl PlatformLocationsSection {
@@ -99,6 +103,7 @@ impl PlatformLocationsSection {
         rows: Vec<PlatformLocationRow>,
         shell: WeakEntity<Shell>,
         ui_scale: f32,
+        section_collapsed: bool,
     ) -> Self {
         Self {
             label: label.into(),
@@ -106,6 +111,7 @@ impl PlatformLocationsSection {
             shell,
             ui_scale,
             collapsed: false,
+            section_collapsed,
         }
     }
 }
@@ -153,14 +159,20 @@ impl SidebarItem for LocationsSection {
             // The header disappears in icon-collapse mode, matching how the
             // menu-backed section behaved.
             .when(!collapsed, |this| {
-                this.child(crate::tree::section_header(self.label.clone(), cx))
+                this.child(crate::tree::collapsible_section_header(
+                    self.label.clone(),
+                    self.section_collapsed,
+                    self.shell.clone(),
+                    crate::sidebar_layout::SidebarSection::Locations,
+                    cx,
+                ))
             })
-            .child(
+            .when(!self.section_collapsed || collapsed, |this| this.child(
                 v_flex()
                     .w_full()
                     .px(px(crate::tree::TREE_ROW_INSET))
                     .children(rows),
-            )
+            ))
     }
 }
 
@@ -191,14 +203,20 @@ impl SidebarItem for PlatformLocationsSection {
         v_flex()
             .w_full()
             .when(!collapsed, |this| {
-                this.child(crate::tree::section_header(self.label.clone(), cx))
+                this.child(crate::tree::collapsible_section_header(
+                    self.label.clone(),
+                    self.section_collapsed,
+                    self.shell.clone(),
+                    crate::sidebar_layout::SidebarSection::Linux,
+                    cx,
+                ))
             })
-            .child(
+            .when(!self.section_collapsed || collapsed, |this| this.child(
                 v_flex()
                     .w_full()
                     .px(px(crate::tree::TREE_ROW_INSET))
                     .children(rows),
-            )
+            ))
     }
 }
 
@@ -208,15 +226,17 @@ pub struct WindowsNamespaceSection {
     shell: WeakEntity<Shell>,
     ui_scale: f32,
     collapsed: bool,
+    section_collapsed: bool,
 }
 
 #[cfg(windows)]
 impl WindowsNamespaceSection {
-    pub fn new(shell: WeakEntity<Shell>, ui_scale: f32) -> Self {
+    pub fn new(shell: WeakEntity<Shell>, ui_scale: f32, section_collapsed: bool) -> Self {
         Self {
             shell,
             ui_scale,
             collapsed: false,
+            section_collapsed,
         }
     }
 }
@@ -272,14 +292,20 @@ impl SidebarItem for WindowsNamespaceSection {
         v_flex()
             .w_full()
             .when(!self.collapsed, |this| {
-                this.child(crate::tree::section_header(tr!("Windows"), cx))
+                this.child(crate::tree::collapsible_section_header(
+                    tr!("Windows"),
+                    self.section_collapsed,
+                    self.shell.clone(),
+                    crate::sidebar_layout::SidebarSection::Windows,
+                    cx,
+                ))
             })
-            .child(
+            .when(!self.section_collapsed || self.collapsed, |this| this.child(
                 v_flex()
                     .w_full()
                     .px(px(crate::tree::TREE_ROW_INSET))
                     .children(rows),
-            )
+            ))
     }
 }
 
@@ -296,6 +322,7 @@ fn render_windows_namespace_row(
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
+    let label: SharedString = crate::private_mode::present_label(label.as_ref()).into();
     let tooltip = label.clone();
     h_flex()
         .id(ElementId::Name(
@@ -356,6 +383,7 @@ fn render_platform_location_row(
         is_default,
         is_active,
     } = row;
+    let label: SharedString = crate::private_mode::present_label(label.as_ref()).into();
     let status = match state {
         PathBackedRootState::Stopped => Some(tr!("Stopped")),
         PathBackedRootState::Starting => Some(tr!("Starting…")),
@@ -468,6 +496,7 @@ fn render_location_row(
         favorited,
         cloud,
     } = row;
+    let label: SharedString = crate::private_mode::present_label(label.as_ref()).into();
 
     let path_for_click = path.clone();
     let path_for_menu = path.clone();
