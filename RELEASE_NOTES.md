@@ -66,9 +66,11 @@ unknown-publisher warning.
 ## SHA-256
 
 - `Ferail-0.7.4.dmg` — `694cbd3253e9cf65e0bfab2e784c25c2d477d614560a22d7ab7456f3f8b63e71`
-
-Windows and Linux checksums will be added after their isolated CI builds have
-finished and the published assets have been downloaded and verified.
+- `Ferail-0.7.4-win-x64-setup.exe` — `8bb2386705638018241ae953f5a4c86a1bb423d7f052a0c0ede164ea83d46c4e`
+- `Ferail-0.7.4-win-x64.zip` — `6a359396d1511b9bcde85dd20dbf5aaab1e5f0dc76a73abec6508074b5d0bd81`
+- `Ferail-0.7.4-x64-symbols.zip` — `844376944c7a17af2241ad02015b19a566575692c55fa33a31ebd432fbcb15d4`
+- `ferail_0.7.4-1_amd64.deb` — `0ae91352e1b67ef9a2611428d025e4fb246c4847ce3cfd7c3f5fb6097dc206cb`
+- `ferail_0.7.4-1_arm64.deb` — `4f53d4d311dbc2411a28b1ba2804f2fe9a747a8b0de579fa2405adf7a7302274`
 
 The full technical history is in [CHANGELOG.md](CHANGELOG.md), and reporting
 instructions are in [docs/REPORTING_BUGS.md](docs/REPORTING_BUGS.md).

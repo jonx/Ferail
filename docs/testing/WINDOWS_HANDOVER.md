@@ -19,19 +19,19 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 ## Current resume point
 
 - Branch: `main`
-- Last published baseline: `v0.7.3` (all-platform privacy/responsiveness release)
+- Last published baseline: `v0.7.4` (all-platform private-presentation/setup release)
 - Fast NTFS implementation and qualification series: `d0c0a0b` through
   `9c832fc`, 0.7.0 release commit `3eda9ce`, corrective commits `3cf95e5`
   through `8dca494`, 0.7.1 release commit `1e8e64e`, native enumeration audit
-  commit `0de72dd`, 0.7.2 release commit `6a8d50b`, and 0.7.3 release commit
-  `c92a532`. Use
+  commit `0de72dd`, 0.7.2 release commit `6a8d50b`, 0.7.3 release commit
+  `c92a532`, and 0.7.4 release commit `65cc442`. Use
   `git rev-parse HEAD` after pulling rather than assuming an abbreviated hash
   in this document.
-- Current release: `0.7.3` on Windows, macOS and Linux.
-- Published artifacts: signed/notarized/stapled macOS DMG; unsigned portable
-  Windows x64 ZIP containing the GUI, CLI and sibling Fast NTFS helper plus the
-  matching three-PDB symbols ZIP; Ubuntu 22.04-compatible amd64 and arm64
-  `.deb` packages.
+- Current release: `0.7.4` on Windows, macOS and Linux.
+- Published artifacts: signed/notarized/stapled macOS DMG; unsigned Windows
+  x64 per-user setup EXE and portable ZIP, both containing the sibling Fast
+  NTFS helper, plus the matching three-PDB symbols ZIP; Ubuntu
+  22.04-compatible amd64 and arm64 `.deb` packages.
 - Next campaign: independent administrator-equipped qualification of the Fast
   helper/VHDX/large-volume matrix, plus the remaining adversarial and hardware-
   dependent cases (MTP disconnect, hostile providers, long soaks and multi-DPI
@@ -322,6 +322,39 @@ zero per-entry metadata fallbacks on its direct fixture, and strict native
 tests/Clippy pass. Raw APFS catalog parsing is intentionally rejected: mounted
 FileVault volumes expose decrypted names and metadata through the filesystem,
 not through a stable MFT-like raw catalog contract.
+
+### 2026-08-28 — 0.7.4 all-platform release evidence
+
+`v0.7.4` is the annotated tag on `65cc442` and is published as **Ferail
+0.7.4 — Private screenshots, flexible navigation and Windows setup**. The
+macOS app and final DMG were accepted independently by Apple's notary service,
+stapled, mounted from the finished image and accepted by Gatekeeper.
+
+GitHub workflow `33167005840` built, installed and smoke-tested both Ubuntu
+22.04-compatible Linux packages on amd64 and arm64. Workflow `33167005852`
+built the Windows GUI, CLI and exact sibling Fast NTFS helper, passed the
+static-runtime, dependency, staged-copy and PDB identity gates, then produced
+the portable ZIP, per-user Inno Setup installer and matching symbols bundle.
+All six public assets were downloaded again after publication and their
+SHA-256 values were recomputed. The portable ZIP contains the GUI, CLI and
+`ferail-ntfs-helper.exe`; the symbols manifest records version 0.7.4, target
+`x86_64-pc-windows-msvc`, exact commit
+`65cc4422a1a83bc1f3ec31ef36a08350f1fcc6b5`, a static CRT and matching PDBs
+for all three binaries. The setup is built from that same verified staging
+directory and its Inno source explicitly installs the sibling helper.
+
+- `Ferail-0.7.4.dmg`: 22,392,939 bytes, SHA-256
+  `694cbd3253e9cf65e0bfab2e784c25c2d477d614560a22d7ab7456f3f8b63e71`;
+- `Ferail-0.7.4-win-x64-setup.exe`: 30,114,452 bytes, SHA-256
+  `8bb2386705638018241ae953f5a4c86a1bb423d7f052a0c0ede164ea83d46c4e`;
+- `Ferail-0.7.4-win-x64.zip`: 44,121,182 bytes, SHA-256
+  `6a359396d1511b9bcde85dd20dbf5aaab1e5f0dc76a73abec6508074b5d0bd81`;
+- `Ferail-0.7.4-x64-symbols.zip`: 84,712,904 bytes, SHA-256
+  `844376944c7a17af2241ad02015b19a566575692c55fa33a31ebd432fbcb15d4`;
+- `ferail_0.7.4-1_amd64.deb`: 17,640,956 bytes, SHA-256
+  `0ae91352e1b67ef9a2611428d025e4fb246c4847ce3cfd7c3f5fb6097dc206cb`;
+- `ferail_0.7.4-1_arm64.deb`: 15,613,160 bytes, SHA-256
+  `4f53d4d311dbc2411a28b1ba2804f2fe9a747a8b0de579fa2405adf7a7302274`.
 
 ### 2026-08-28 — 0.7.3 all-platform release evidence
 
