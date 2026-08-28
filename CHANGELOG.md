@@ -8,6 +8,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The icons-only sidebar now follows very narrow window resizes.** Its strip
+  uses less width in ordinary windows, contracts a little further when the app
+  is squeezed, and recentres the icons instead of preserving the previous
+  oversized left gutter.
+
 ## 0.7.4 — 2026-08-28
 
 - **Audio detection is content-capable without mistaking executables for

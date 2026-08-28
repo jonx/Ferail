@@ -1769,7 +1769,6 @@ const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 /// would flash a skeleton on every ordinary navigation.
 const SLOW_LOAD_INDICATOR_DELAY: Duration = Duration::from_millis(300);
 
-const SIDEBAR_COLLAPSED_WIDTH: f32 = 48.0;
 const SIDEBAR_COMPACT_WIDTH: f32 = 176.0;
 const SIDEBAR_MIN_WIDTH: f32 = 160.0;
 const SIDEBAR_MAX_WIDTH: f32 = 400.0;

@@ -3911,9 +3911,19 @@ impl Render for Shell {
                 .unwrap_or(usize::MAX)
         });
 
+        let collapsed_sidebar = crate::sidebar_layout::collapsed_sidebar_geometry(
+            window.viewport_size().width.as_f32(),
+        );
         let mut sidebar = Sidebar::new("shell-sidebar")
             .collapsible(gpui_component::sidebar::SidebarCollapsible::Icon)
             .collapsed(self.sidebar_collapsed)
+            // gpui-component currently fixes icon-collapse at 48 DIPs. Keep
+            // using its behaviour, but clip and recenter that inner strip in
+            // Ferail's narrower responsive panel. Removing its own right
+            // border lets the panel draw the border at the actual edge.
+            .when(self.sidebar_collapsed, |this| {
+                this.ml(px(-collapsed_sidebar.content_shift)).border_r_0()
+            })
             .w_full();
         for (section_id, section) in sections {
             sidebar = sidebar
@@ -4513,12 +4523,13 @@ impl Render for Shell {
                 // `.size(...)` — they survive across launches because
                 // they're written through `on_resize` to app_state
                 // (debounced via SPLITTER_PERSIST_INTERVAL below).
-                // Collapsed sidebar shrinks to the gpui-component
-                // icon strip width (~48 DIPs). Drag handle hides
-                // implicitly because we squeeze the range to a fixed
-                // size in that mode.
+                // Icon-only width is recomputed from the current viewport,
+                // so an outer-window resize can reclaim space instead of
+                // retaining gpui-component's fixed 48-DIP strip. The drag
+                // handle hides implicitly because the range is fixed to the
+                // effective width for this frame.
                 let sidebar_width_px = if self.sidebar_collapsed {
-                    px(SIDEBAR_COLLAPSED_WIDTH)
+                    px(collapsed_sidebar.width)
                 } else if self.sidebar_compact {
                     px(SIDEBAR_COMPACT_WIDTH)
                 } else {
@@ -4529,7 +4540,7 @@ impl Render for Shell {
                 let sidebar_collapsed = self.sidebar_collapsed;
                 let sidebar_fixed = self.sidebar_collapsed || self.sidebar_compact;
                 let sidebar_width_before = if sidebar_collapsed {
-                    SIDEBAR_COLLAPSED_WIDTH
+                    collapsed_sidebar.width
                 } else if self.sidebar_compact {
                     SIDEBAR_COMPACT_WIDTH
                 } else {
@@ -4587,13 +4598,23 @@ impl Render for Shell {
                     .child(
                         resizable_panel()
                             .size(sidebar_width_px)
+                            // The component's inner icon strip remains 48 DIPs
+                            // wide; clip it to the responsive panel, fill the
+                            // exposed edge with the sidebar colour and put the
+                            // separator on the true panel boundary.
+                            .when(self.sidebar_collapsed, |this| {
+                                this.overflow_hidden()
+                                    .bg(cx.theme().sidebar)
+                                    .border_r_1()
+                                    .border_color(cx.theme().sidebar_border)
+                            })
                             // Collapsed: pin the panel to the icon
                             // strip width so the drag handle can't
                             // reopen it accidentally; the TitleBar
                             // toggle is the one way back to expanded.
                             .when(self.sidebar_collapsed, |this| {
                                 this.size_range(
-                                    px(SIDEBAR_COLLAPSED_WIDTH)..px(SIDEBAR_COLLAPSED_WIDTH),
+                                    px(collapsed_sidebar.width)..px(collapsed_sidebar.width),
                                 )
                             })
                             .when(self.sidebar_compact, |this| {
