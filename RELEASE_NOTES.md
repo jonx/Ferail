@@ -47,4 +47,12 @@ shared code, so macOS, Windows and Linux receive the update together.
 - Windows x64: portable ZIP plus a separate matching symbols archive.
 - Linux: Ubuntu 22.04-compatible `.deb` packages for amd64 and arm64.
 
+## SHA-256
+
+- `Ferail-0.7.3.dmg` — `b743e815a26641e468350a571b7cd13ffd22661bb436cb50c0cff8a1f1651e94`
+- `Ferail-0.7.3-win-x64.zip` — `a1f02f1367888ded909613a8766b8b95476e385a4e8570bc0e36354bc1fbdf97`
+- `Ferail-0.7.3-x64-symbols.zip` — `9f88c2029c231d45f2abbae9e4783d6481ca4bc34df95e22302421bf9b3d42ce`
+- `ferail_0.7.3-1_amd64.deb` — `dc4ef41a534b85f61e33e80ba5243be64cb805b30bbae0d7ab8d8adad58cd486`
+- `ferail_0.7.3-1_arm64.deb` — `ea636394189af4c579107767887c9b763d53cea72e1e9d86c21776f33ebddcd8`
+
 The full technical history is in [CHANGELOG.md](CHANGELOG.md).

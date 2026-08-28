@@ -19,14 +19,15 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 ## Current resume point
 
 - Branch: `main`
-- Last published baseline: `v0.7.2` (all-platform release)
+- Last published baseline: `v0.7.3` (all-platform privacy/responsiveness release)
 - Fast NTFS implementation and qualification series: `d0c0a0b` through
   `9c832fc`, 0.7.0 release commit `3eda9ce`, corrective commits `3cf95e5`
   through `8dca494`, 0.7.1 release commit `1e8e64e`, native enumeration audit
-  commit `0de72dd`, and 0.7.2 release commit `6a8d50b`. Use
+  commit `0de72dd`, 0.7.2 release commit `6a8d50b`, and 0.7.3 release commit
+  `c92a532`. Use
   `git rev-parse HEAD` after pulling rather than assuming an abbreviated hash
   in this document.
-- Current release: `0.7.2` on Windows, macOS and Linux.
+- Current release: `0.7.3` on Windows, macOS and Linux.
 - Published artifacts: signed/notarized/stapled macOS DMG; unsigned portable
   Windows x64 ZIP containing the GUI, CLI and sibling Fast NTFS helper plus the
   matching three-PDB symbols ZIP; Ubuntu 22.04-compatible amd64 and arm64
@@ -263,6 +264,36 @@ zero per-entry metadata fallbacks on its direct fixture, and strict native
 tests/Clippy pass. Raw APFS catalog parsing is intentionally rejected: mounted
 FileVault volumes expose decrypted names and metadata through the filesystem,
 not through a stable MFT-like raw catalog contract.
+
+### 2026-08-28 — 0.7.3 all-platform release evidence
+
+`v0.7.3` is the annotated tag on `c92a532` and is published as **Ferail
+0.7.3 — Private screenshots and responsive disk maps**. The macOS app and DMG
+were accepted independently by Apple's notary service, stapled, mounted again
+from the final image and accepted by Gatekeeper. The packaged `doctor`
+reported version 0.7.3, release mode, compiled-in mpv support and 0 failures.
+
+GitHub workflow `33144501259` built both Linux packages in Ubuntu 22.04,
+installed each package and passed the `doctor` / `magic` smoke tests on amd64
+and arm64. Workflow `33144501252` built the Windows GUI, CLI and sibling Fast
+NTFS helper, passed the static-runtime, dependency, staged-copy and PDB
+identity gates, and published both archives. All five public assets were
+downloaded again after publication and their SHA-256 values were recomputed.
+The Windows ZIP contains the GUI, CLI and helper; the symbols manifest records
+version 0.7.3, target `x86_64-pc-windows-msvc`, exact commit
+`c92a532b2bd5c77d9f8296e00adca216cfc81615` and matching PDBs for all three
+binaries.
+
+- `Ferail-0.7.3.dmg`: 22,368,972 bytes, SHA-256
+  `b743e815a26641e468350a571b7cd13ffd22661bb436cb50c0cff8a1f1651e94`;
+- `Ferail-0.7.3-win-x64.zip`: 44,140,371 bytes, SHA-256
+  `a1f02f1367888ded909613a8766b8b95476e385a4e8570bc0e36354bc1fbdf97`;
+- `Ferail-0.7.3-x64-symbols.zip`: 84,676,478 bytes, SHA-256
+  `9f88c2029c231d45f2abbae9e4783d6481ca4bc34df95e22302421bf9b3d42ce`;
+- `ferail_0.7.3-1_amd64.deb`: 17,630,204 bytes, SHA-256
+  `dc4ef41a534b85f61e33e80ba5243be64cb805b30bbae0d7ab8d8adad58cd486`;
+- `ferail_0.7.3-1_arm64.deb`: 15,618,304 bytes, SHA-256
+  `ea636394189af4c579107767887c9b763d53cea72e1e9d86c21776f33ebddcd8`.
 
 ### 2026-08-28 — 0.7.2 all-platform release evidence
 
