@@ -674,6 +674,12 @@ pub struct Tab {
     /// destination and then wants to select what it just wrote there, and
     /// those rows do not exist at click time. Cleared on apply.
     pub pending_select_names: Vec<String>,
+    /// Semantic row to reveal once a navigation's streamed listing has been
+    /// sorted into its final order. Back/Forward and Parent navigation seed
+    /// this with a `NodeId`; keeping it out of the table's numeric row state
+    /// prevents a pre-sort row index from pointing at a different item after
+    /// `Done`.
+    pub pending_reveal: Option<NodeId>,
     /// Live filter text for *this* tab. Spec §3.1: each tab owns its
     /// own filter. Switching tabs swaps the visible filter input
     /// to this tab's `filter_input`; typing only re-enumerates
@@ -789,6 +795,7 @@ impl Tab {
             pending_select_row: None,
             pending_select_rows: Vec::new(),
             pending_select_names: Vec::new(),
+            pending_reveal: None,
             filter_text: String::new(),
             filter_input,
             _table_subscription: table_subscription,

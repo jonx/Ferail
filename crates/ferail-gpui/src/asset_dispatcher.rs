@@ -63,6 +63,16 @@ pub(crate) enum ThumbnailTarget {
     Shell(WeakEntity<Shell>),
 }
 
+/// Entity that must repaint when a native icon lands. List rows are owned by
+/// their table entity, while the grid/sidebar render directly from `Shell`.
+/// Keeping the target explicit lets list icon warming stay viewport-scoped
+/// without retaining a back-reference from every delegate to the shell.
+#[derive(Clone)]
+pub(crate) enum IconTarget {
+    Table(WeakEntity<TableState<FileListDelegate>>),
+    Shell(WeakEntity<Shell>),
+}
+
 pub(crate) struct ThumbnailSubscription {
     pub table: WeakEntity<TableState<FileListDelegate>>,
     pub target: ThumbnailTarget,
@@ -132,7 +142,7 @@ struct UploadedCompletion {
 
 enum AssetNotification {
     Row(ThumbnailWaiter),
-    Shell(WeakEntity<Shell>),
+    Icon(IconTarget),
     #[cfg(windows)]
     Shortcut {
         waiter: Box<ShortcutWaiter>,
@@ -176,7 +186,7 @@ pub(crate) struct ThumbnailDispatcher {
     live_by_key: HashMap<AssetKey, WorkId>,
     waiters: HashMap<AssetKey, Vec<ThumbnailWaiter>>,
     live_icons: HashMap<IconKey, WorkId>,
-    icon_waiters: HashMap<IconKey, Vec<WeakEntity<Shell>>>,
+    icon_waiters: HashMap<IconKey, Vec<IconTarget>>,
     upload_payloads: HashMap<WorkId, ProviderCompletion>,
     apply_payloads: HashMap<WorkId, UploadedCompletion>,
     #[cfg(windows)]
@@ -312,7 +322,7 @@ impl ThumbnailDispatcher {
         work: &mut AssetWorkCoordinator,
         thumbnails: &mut ThumbnailCache,
         icons: &mut IconCache,
-        target: WeakEntity<Shell>,
+        target: IconTarget,
         items: Vec<(PathBuf, Option<u32>)>,
     ) {
         for (path, size_px) in items {
@@ -359,7 +369,7 @@ impl ThumbnailDispatcher {
         work: &mut AssetWorkCoordinator,
         thumbnails: &mut ThumbnailCache,
         icons: &mut IconCache,
-        target: WeakEntity<Shell>,
+        target: IconTarget,
         seeds: Vec<TypeIconSeed>,
     ) {
         for seed in seeds {
@@ -732,7 +742,7 @@ impl ThumbnailDispatcher {
                     let key = IconKey::Path(path, IconCache::path_icon_px(size_px));
                     self.live_icons.remove(&key);
                     if let Some(waiters) = self.icon_waiters.remove(&key) {
-                        notifications.extend(waiters.into_iter().map(AssetNotification::Shell));
+                        notifications.extend(waiters.into_iter().map(AssetNotification::Icon));
                     }
                 }
                 UploadedPayload::TypeIcon { cache_key } => {
@@ -740,7 +750,7 @@ impl ThumbnailDispatcher {
                     let key = IconKey::Type(cache_key);
                     self.live_icons.remove(&key);
                     if let Some(waiters) = self.icon_waiters.remove(&key) {
-                        notifications.extend(waiters.into_iter().map(AssetNotification::Shell));
+                        notifications.extend(waiters.into_iter().map(AssetNotification::Icon));
                     }
                 }
             }
@@ -924,9 +934,14 @@ async fn dispatch_ready_work(cx: &mut AsyncApp) {
                             }
                         }
                     }
-                    AssetNotification::Shell(shell) => {
-                        let _ = shell.update(cx, |_shell, cx| cx.notify());
-                    }
+                    AssetNotification::Icon(target) => match target {
+                        IconTarget::Table(table) => {
+                            let _ = table.update(cx, |_table, cx| cx.notify());
+                        }
+                        IconTarget::Shell(shell) => {
+                            let _ = shell.update(cx, |_shell, cx| cx.notify());
+                        }
+                    },
                     #[cfg(windows)]
                     AssetNotification::Shortcut { waiter, result } => {
                         let shell = waiter.shell.clone();

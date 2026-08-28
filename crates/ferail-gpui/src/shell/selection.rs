@@ -686,6 +686,49 @@ impl Shell {
         self.recompute_live_range_in_tab(idx, cx);
     }
 
+    /// Resolve a Back/Forward/Parent reveal only after the streamed model has
+    /// received its final sort. During streaming the same `NodeId` may occupy
+    /// a provisional row; retaining that number across `Done` focuses and
+    /// scrolls to whichever unrelated entry inherited it after sorting.
+    pub(super) fn reveal_pending_navigation_target_in_tab(
+        &mut self,
+        idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.get_mut(idx) else {
+            return;
+        };
+        let Some(target) = tab.pending_reveal.take() else {
+            return;
+        };
+        // A user selection made while the directory was still streaming wins
+        // over the navigation seed; never yank them back at `Done`.
+        if tab.lead != Some(target) {
+            return;
+        }
+        let table = tab.table.clone();
+        let row = {
+            let state = table.read(cx);
+            state
+                .delegate()
+                .entries
+                .iter()
+                .position(|entry| entry.id == target)
+        };
+        let Some(row) = row else {
+            return;
+        };
+        table.update(cx, |state, cx| state.reveal_lead_row(row, cx));
+        if matches!(tab.view_mode, crate::grid::ViewMode::Grid) {
+            let icon_px = crate::grid::icon_size(cx);
+            let gap = crate::grid::cell_gap(cx);
+            let width = f32::from(tab.grid_pane_width).max(crate::grid::cell_width(icon_px, gap));
+            let cols = crate::grid::cols_per_row(width, icon_px, gap).max(1);
+            tab.grid_scroll
+                .scroll_to_item(row / cols, gpui::ScrollStrategy::Center);
+        }
+    }
+
     /// Keyboard navigation: move the lead by `delta` and, when
     /// `extend` is true (Shift-extend variants), make the
     /// selection the inclusive span from anchor to the new lead.

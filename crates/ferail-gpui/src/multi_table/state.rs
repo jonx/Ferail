@@ -562,6 +562,19 @@ where
         self.right_clicked_row = right_clicked;
     }
 
+    /// Rebind the primitive's numeric focus row after a model reorder and
+    /// reveal it without emitting a synthetic selection event. The Shell's
+    /// semantic selection is keyed by `NodeId`; this method is only the final
+    /// row-index projection once streaming + sorting have settled.
+    pub fn reveal_lead_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        self.selection_mode = SelectionMode::Row;
+        self.selected_row = Some(row_ix);
+        self.right_clicked_row = None;
+        self.vertical_scroll_handle
+            .scroll_to_item(row_ix, ScrollStrategy::Center);
+        cx.notify();
+    }
+
     /// Clear the selected-row focus overlay. Used when the semantic
     /// selection model goes empty (e.g. after navigating to a new folder)
     /// so the primitive's stale row index doesn't paint a phantom focus

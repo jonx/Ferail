@@ -2062,6 +2062,56 @@ impl FileListDelegate {
         self.warm_thumbnails_sized(visible_range, THUMB_PX, cx);
     }
 
+    /// Warm native folder icons for the visible list rows. Folder artwork is
+    /// path-specific (custom Finder icons and sync-provider badges), so unlike
+    /// file-type icons it must never be swept across a million-row model.
+    /// A small overscan keeps scrolling smooth while bounding both native
+    /// lookups and path-keyed cache growth to folders the user actually sees.
+    pub fn warm_folder_icons(
+        &mut self,
+        visible_range: Range<usize>,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        if self.is_archive_mode() {
+            return;
+        }
+        const OVERSCAN: usize = 8;
+        let start = visible_range.start.saturating_sub(OVERSCAN);
+        let end = visible_range
+            .end
+            .saturating_add(OVERSCAN)
+            .min(self.entries.len());
+        let mut candidates = Vec::with_capacity(end.saturating_sub(start));
+        for row in start..end {
+            let Some(entry) = self.entries.get(row) else {
+                continue;
+            };
+            if !matches!(entry.kind, EntryKind::Directory) {
+                continue;
+            }
+            if let Some(path) = self.path_for_entry(entry.id) {
+                candidates.push(path);
+            }
+        }
+        // Submit cached candidates too: the dispatcher drops resolved ones,
+        // but if the sidebar/grid already started the same fetch it attaches
+        // this table as an additional waiter so the list is repainted when
+        // that shared result lands.
+        let wanted: Vec<(PathBuf, Option<u32>)> =
+            candidates.into_iter().map(|path| (path, None)).collect();
+        if wanted.is_empty() {
+            return;
+        }
+        let process = crate::process_state::process_state(cx);
+        process.asset_dispatcher.borrow_mut().submit_path_icons(
+            &mut process.asset_work.borrow_mut(),
+            &mut process.thumbnails.borrow_mut(),
+            &mut process.icons.borrow_mut(),
+            crate::asset_dispatcher::IconTarget::Table(cx.entity().downgrade()),
+            wanted,
+        );
+    }
+
     /// Warm thumbnails for `visible_range` at a specific physical fetch
     /// size. The table calls this at [`THUMB_PX`]; the icon grid calls
     /// it at its bucketed display size. Same off-thread, dedup, repaint
@@ -3131,6 +3181,7 @@ impl TableDelegate for FileListDelegate {
         cx: &mut Context<TableState<Self>>,
     ) {
         self.warm_visible_details(visible_range.clone(), cx);
+        self.warm_folder_icons(visible_range.clone(), cx);
         self.warm_thumbnails(visible_range, cx);
     }
 

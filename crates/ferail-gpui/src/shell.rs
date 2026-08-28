@@ -4518,6 +4518,7 @@ impl Shell {
             tab.selection = snapshot.selection;
             tab.anchor = snapshot.anchor;
             tab.lead = snapshot.lead;
+            tab.pending_reveal = snapshot.lead;
             tab.filtered_out.clear();
             tab.range_live = false;
         }
@@ -5099,6 +5100,7 @@ impl Shell {
         // upfront makes this a no-op there, but back/forward and
         // any future external-mutation reload route through here.
         self.reconcile_done_in_tab(idx, cx);
+        self.reveal_pending_navigation_target_in_tab(idx, cx);
 
         // Stage 4: arm viewport-owned magic/description/quarantine warming
         // after the foreground table has received its final snapshot. The
@@ -5227,10 +5229,25 @@ impl Shell {
         };
         let table = tab.table.read(cx);
         let delegate = table.delegate();
+        let mut seen_type_keys = HashSet::new();
         delegate
             .entries
             .iter()
             .filter_map(|entry| {
+                if matches!(entry.kind, EntryKind::Directory) {
+                    return None;
+                }
+                // File type keys only need the leaf extension (symlinks use a
+                // single constant key). Decide uniqueness before cloning the
+                // full path so a million-row model pays O(rows) cheap string
+                // reads, not a million `PathBuf` allocations.
+                let key = crate::icons::IconCache::type_key(
+                    entry,
+                    std::path::Path::new(entry.name.as_ref()),
+                );
+                if !seen_type_keys.insert(key) {
+                    return None;
+                }
                 delegate
                     .path_for_entry(entry.id)
                     .map(|path| (entry.clone(), path))
@@ -5372,6 +5389,7 @@ impl Shell {
                     range = 0..n;
                 }
                 ts.delegate_mut().warm_visible_details(range.clone(), cx);
+                ts.delegate_mut().warm_folder_icons(range.clone(), cx);
                 ts.delegate_mut().warm_thumbnails(range, cx);
             });
         })
@@ -5393,7 +5411,7 @@ impl Shell {
                 &mut self.process.asset_work.borrow_mut(),
                 &mut self.process.thumbnails.borrow_mut(),
                 &mut self.process.icons.borrow_mut(),
-                cx.entity().downgrade(),
+                crate::asset_dispatcher::IconTarget::Shell(cx.entity().downgrade()),
                 seeds,
             );
     }
@@ -5431,7 +5449,7 @@ impl Shell {
                 &mut self.process.asset_work.borrow_mut(),
                 &mut self.process.thumbnails.borrow_mut(),
                 &mut self.process.icons.borrow_mut(),
-                cx.entity().downgrade(),
+                crate::asset_dispatcher::IconTarget::Shell(cx.entity().downgrade()),
                 items,
             );
     }
@@ -7136,6 +7154,7 @@ impl Shell {
                 tab.selection.insert(child_id);
                 tab.anchor = Some(child_id);
                 tab.lead = Some(child_id);
+                tab.pending_reveal = Some(child_id);
             }
         }
     }
@@ -7330,6 +7349,7 @@ impl Shell {
         self.active_tab_mut().pending_select_row = None;
         self.active_tab_mut().pending_select_rows.clear();
         self.active_tab_mut().pending_select_names.clear();
+        self.active_tab_mut().pending_reveal = None;
         if record_visit {
             self.record_ant_visit(node_id, cx);
         }
