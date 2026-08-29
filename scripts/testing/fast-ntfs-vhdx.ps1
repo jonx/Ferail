@@ -23,6 +23,7 @@ param(
     [string]$Action = 'Create',
     [string]$VhdxPath,
     [string]$HelperPath,
+    [switch]$RecoverPartial,
     [ValidateRange(1, 600)]
     [int]$MutationSeconds = 15
 )
@@ -117,12 +118,24 @@ function Get-FixtureRoot {
 
 switch ($Action) {
     'Create' {
+        if ($RecoverPartial -and
+            (Test-Path -LiteralPath $VhdxPath) -and
+            -not (Test-Path -LiteralPath $MarkerPath)) {
+            $partialImage = Get-DiskImage -ImagePath $VhdxPath -ErrorAction SilentlyContinue
+            if ($partialImage -and $partialImage.Attached) {
+                throw "refusing to recover an attached partial VHDX: $VhdxPath"
+            }
+            Remove-Item -LiteralPath $VhdxPath -Force
+            Write-Host "Removed partial fixture from a failed Create: $VhdxPath"
+        }
         if ((Test-Path -LiteralPath $VhdxPath) -or (Test-Path -LiteralPath $MarkerPath)) {
             throw "fixture already exists: $VhdxPath"
         }
         New-Item -ItemType Directory -Path (Split-Path -Parent $VhdxPath) -Force | Out-Null
-        New-FixtureVhd
+        $createdVhdx = $false
         try {
+            New-FixtureVhd
+            $createdVhdx = $true
             $disk = Mount-FixtureVhd
             Initialize-Disk -Number $disk.DiskNumber -PartitionStyle GPT -PassThru | Out-Null
             $partition = New-Partition -DiskNumber $disk.DiskNumber -UseMaximumSize -AssignDriveLetter
@@ -150,7 +163,12 @@ switch ($Action) {
             & compact.exe /c /i /q $compressed | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'NTFS compression setup failed' }
 
-            [IO.File]::WriteAllText("$compressed`:ferail-ads", 'named stream is not charged in v1')
+            # Windows PowerShell 5.1's .NET Framework rejects an ADS path in
+            # File.WriteAllText even though NTFS accepts it. The FileSystem
+            # provider's native -Stream parameter works on every supported
+            # Windows host and avoids path/parser ambiguity around the colon.
+            Set-Content -LiteralPath $compressed -Stream 'ferail-ads' `
+                -Value 'named stream is not charged in v1' -Encoding UTF8
             New-Item -ItemType Junction -Path (Join-Path $root 'junction-leaf') `
                 -Target (Join-Path $root 'nested') | Out-Null
 
@@ -177,7 +195,12 @@ switch ($Action) {
             } | ConvertTo-Json | Set-Content -LiteralPath $MarkerPath -Encoding UTF8
             Write-Host "Fixture ready: $root"
         } catch {
-            Dismount-FixtureVhd
+            Dismount-FixtureVhd | Out-Null
+            if ($createdVhdx -and
+                (Test-Path -LiteralPath $VhdxPath) -and
+                -not (Test-Path -LiteralPath $MarkerPath)) {
+                Remove-Item -LiteralPath $VhdxPath -Force -ErrorAction SilentlyContinue
+            }
             throw
         }
     }
