@@ -19,11 +19,11 @@ pub use aggregate::{
     build_filtered_layout_node_with_mode, build_layout_node, build_layout_node_with_mode,
 };
 pub use facts::DiskUsageFact;
-pub use file_category::{FileCategory, classify_extension, classify_path};
+pub use file_category::{classify_extension, classify_path, FileCategory};
 pub use html_export::{
     category_color_rgba, category_label, treemap_html_document, treemap_html_fragment,
 };
-pub use layout::{TreemapRect, compute_treemap, hit_test};
+pub use layout::{compute_treemap, hit_test, TreemapRect};
 pub use model::{
     DiskUsageLayoutNode, DiskUsageNode, DiskUsageStats, DiskUsageTree, NodeKind, ScanState,
     SizeMode,

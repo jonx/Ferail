@@ -19,8 +19,8 @@
 use crate::file_category::FileCategory;
 use crate::model::{DiskUsageTree, NodeKind, SizeMode};
 use crate::{build_layout_node_with_mode, compute_treemap};
-use ferail_core::NodeId;
 use ferail_core::msgid;
+use ferail_core::NodeId;
 
 /// Canonical category palette as `(r, g, b, a)` bytes. The GPUI view
 /// converts these to its float color type; the HTML export emits them

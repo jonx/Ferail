@@ -32,7 +32,7 @@
 //! directive; a metadata value the filesystem didn't provide
 //! (`created_unix == None`) quietly fails the predicate.
 
-use crate::{EntryKind, FileEntry, msgid};
+use crate::{msgid, EntryKind, FileEntry};
 
 /// Clock + zone context for resolving dates. `now_unix` is the current
 /// unix time; `tz_offset_secs` is the local zone's offset from UTC in

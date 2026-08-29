@@ -417,16 +417,14 @@ mod tests {
         let mut tree = DiskUsageTree::new(nid(1));
         seed(&mut tree, nid(2), NodeKind::File, 10);
         link(&mut tree, nid(1), nid(2));
-        assert!(
-            build_filtered_layout_node_with_mode(
-                &tree,
-                nid(1),
-                4,
-                SizeMode::Apparent,
-                |_| true,
-                || true,
-            )
-            .is_none()
-        );
+        assert!(build_filtered_layout_node_with_mode(
+            &tree,
+            nid(1),
+            4,
+            SizeMode::Apparent,
+            |_| true,
+            || true,
+        )
+        .is_none());
     }
 }
