@@ -2210,3 +2210,37 @@ for this interactive/native qualification and dump capture. Windows and Linux
 artifacts are built by GitHub Actions from the reviewed tag; macOS is built,
 signed, notarised and Gatekeeper-checked on the Mac. Do not publish a Windows
 artifact built ad hoc from the qualification checkout.
+
+## 2026-08-29 — 0.7.5 publication evidence
+
+Release `v0.7.5` is public from application commit `e86ed42`. The initial
+Windows tag job compiled successfully but the strict PE-import gate stopped
+packaging because the updated Zed/GPUI stack imports the Windows system DLL
+`userenv.dll`, which was not yet in Ferail's explicit allowlist. Commit
+`a5f4e77` added only that system DLL; it did not relax the CRT/third-party DLL
+gate. The documented recovery tag `retry-v0.7.5-userenv` then rebuilt and
+attached the Windows artifacts to the immutable public release tag.
+
+Publication proof:
+
+- Windows retry run `33234202093`: success. The gate verified 37 system-only
+  imports for each Ferail executable and five for `ferail-ntfs-helper.exe`.
+  The downloaded public portable ZIP contains the GUI, CLI and Fast NTFS
+  helper. SHA-256: portable ZIP
+  `8c70fb257e3b4e4fa2bf9f49b45efc9f87c408afa33aec7a09ba5a1e6387efd4`;
+  installer
+  `d0e7999f3d59748a2a1097d1d7b4db9190cf23978000894054e9014eab272b7a`;
+  symbols
+  `061d37c9c978dc12c16c0e42d6199edcd98b61213e32380771b29c467471e8db`.
+- Linux run `33232769391`: success for the Ubuntu 22.04 amd64 and arm64 build,
+  install and smoke-test legs. Public package SHA-256 values are
+  `8a58d061259ff7216406361890a9f85c71a84113f73623109a289d1fb5f0ae80`
+  (amd64) and
+  `56935f9081d62d144e78734fbd0f84ba0b0438ccabeda048eabf74300ee9ffac`
+  (arm64).
+- The macOS DMG was signed, notarised, stapled and Gatekeeper-validated on the
+  Mac. SHA-256:
+  `547a63f9304dfd60d96040e95fd74b9fca9c3023e97d34d232b00ad703b1b0e0`.
+- The public release is neither draft nor prerelease and exposes exactly six
+  platform assets: DMG; amd64/arm64 DEBs; Windows portable ZIP, installer and
+  symbols.
