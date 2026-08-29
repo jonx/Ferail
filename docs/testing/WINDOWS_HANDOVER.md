@@ -58,6 +58,62 @@ It is not evidence that every adversarial or measured subcase in
 every third-party Shell extension, and multi-DPI passes remain separately
 tracked until their evidence is recorded.
 
+### 2026-08-29 — native Windows continuation after the GPUI update
+
+The Windows checkout was updated to `8daafa3`, then the following reviewable
+qualification/fix commits were added:
+
+- `85384ee`: deterministic Windows screenshot states. Streamed selection is
+  resolved before F2/key injection, and the headless Disk Usage surface always
+  uses Portable mode so a persisted Fast NTFS preference cannot raise UAC or
+  stall a screenshot run;
+- `bcd262f`: the disposable Fast NTFS VHDX fixture can use built-in DiskPart
+  when the optional Hyper-V PowerShell module is absent, and has a `Diagnose`
+  action that runs `ferail-ntfs-helper.exe --diagnose <fixture-root>` directly;
+- `6ebc6d9`: warm folder-size cache hits are emitted in 64-row producer batches,
+  foreground work is capped at 512 rows per frame, and duplicate-result apply
+  stops after 16 messages and yields even when a fast scanner continuously
+  refills its bounded channel.
+
+Evidence collected on this native Windows checkout:
+
+- Rust 1.97.1: `cargo check --workspace --all-targets` and
+  `cargo test --workspace --all-targets` passed at `8daafa3` before the three
+  isolated commits above (the GPUI suite reported 334 passed, one ignored);
+- shell, Get Info, native context menu, Settings and Disk Usage headless
+  captures completed and exited cleanly. The corrected rename capture shows
+  the selected `quarterly report v2.txt` row editing inline, the breadcrumb
+  completion shows a normal `C:\Source\Fer...` path with no `\\?\`, and Disk
+  Usage renders a complete 14-file Portable result without elevation;
+- the user completed the requested live F2 rename pass and reported it working.
+  This covers the multi-dot stem selection, file/folder rename, cancellation
+  and immediate repeat path exercised in that pass; retain a video/artifact if
+  the release sign-off needs auditable evidence rather than user acceptance;
+- the same live pass confirmed that typing `kind:` opens the token-completion
+  choices and that its clear control works, plus list-view rectangle selection
+  from empty space with the Ctrl/Shift modifier variants;
+- after `6ebc6d9`, the targeted folder-size test proved that 131 warm-cache rows
+  arrive as three batches of at most 64, the duplicate regroup test passed,
+  and the complete `cargo test -p ferail-gpui --lib` result was 335 passed,
+  one network test ignored and zero failed;
+- direct non-elevated
+  `ferail-ntfs-helper.exe --diagnose C:\Source\Ferail` completed its path and
+  volume probe in 0 ms, then correctly returned access denied for the raw
+  read with an explicit `run elevated` diagnostic. The elevated `Create` /
+  `Diagnose` / `Mutate` / `Cleanup` VHDX sequence remains required;
+- the hidden hang-dump broker captured a disposable same-user process with
+  exit 0, a non-empty atomic dump and no `.part`. The full
+  `FERAIL_DEBUG_FREEZE=20` path then reported a synthetic UI stall after about
+  ten seconds, wrote a same-stem 864-byte text report and 459,237-byte dump in
+  `%APPDATA%\Ferail\reports`, and the UI recovered. No UAC was shown. WinDbg/CDB
+  is not installed on this workstation, so resolving the synthetic sleep with
+  the matching PDB remains a release-candidate evidence step.
+
+Do not infer completion of the million-row marquee, result-heavy
+duplicate/folder-size soak, drag/drop modifier matrix, elevated VHDX or
+installer/update matrix from these checks. Those are still the shortest useful
+interactive pass before the next tag.
+
 ### 2026-08-28 — automatic watchdog minidump needs Windows qualification
 
 The freeze watchdog now starts the same `ferail-gpui.exe` in an early hidden

@@ -11,13 +11,16 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 - **Large background listings can no longer outrun the interface.** Ordinary
   folders and recursive searches now use the same finite producer queue and
   time-sliced, coalesced UI apply as Flat View; duplicate and folder-size
-  result streams are bounded too. Rapid selection cooperatively cancels both
-  native and text previews, and bursty volume/download progress notifications
-  have finite queues. Results are not capped: producers simply wait when the
-  UI is busy, keeping memory, redraws and cancellation latency predictable.
-  Background tabs still receive their data, but no longer refresh tables or
-  redraw the window for invisible batches; selecting the tab refreshes its
-  accumulated model and warms only its then-visible viewport.
+  result streams are bounded too. Warm folder-size cache hits are sliced just
+  like cold results, and a continuously refilled duplicate queue yields between
+  foreground batches instead of monopolising a frame. Rapid selection
+  cooperatively cancels both native and text previews, and bursty
+  volume/download progress notifications have finite queues. Results are not
+  capped: producers simply wait when the UI is busy, keeping memory, redraws
+  and cancellation latency predictable. Background tabs still receive their
+  data, but no longer refresh tables or redraw the window for invisible
+  batches; selecting the tab refreshes its accumulated model and warms only
+  its then-visible viewport.
 
 - **Deceptive filenames now elide without hiding their warning.** Highlighted
   control characters, unusual whitespace, bidirectional marks and homoglyphs
