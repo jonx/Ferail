@@ -22,7 +22,7 @@ use super::actions::{
     Cancel, SelectDown, SelectFirst, SelectLast, SelectNextColumn, SelectPageDown, SelectPageUp,
     SelectPrevColumn, SelectUp,
 };
-use super::context_menu::LiveContextMenuExt as _;
+use super::context_menu::PlatformContextMenuExt as _;
 use super::virtual_list::VirtualListScrollHandle;
 use super::*;
 
@@ -569,9 +569,47 @@ where
     pub fn scroll_to_col(&mut self, col_ix: usize, cx: &mut Context<Self>) {
         let col_ix = col_ix.saturating_sub(self.fixed_left_cols_count());
 
-        self.horizontal_scroll_handle
-            .scroll_to_item(col_ix, ScrollStrategy::Top);
+        // Resolve the offset here instead of deferring it to the virtual list.
+        //
+        // The header and the rows share `horizontal_scroll_handle`, but only
+        // the rows are a `VirtualList`, and a deferred `scroll_to_item` is
+        // applied during that list's prepaint — after the header has already
+        // used the old offset. That left the header one frame behind the rows.
+        match self.horizontal_offset_for_col(col_ix) {
+            Some(offset_x) => {
+                let mut offset = self.horizontal_scroll_handle.offset();
+                offset.x = offset_x;
+                self.horizontal_scroll_handle.set_offset(offset);
+            }
+            // Before the first layout the viewport is unknown; let the
+            // virtual list resolve the request once it has been laid out.
+            None => self
+                .horizontal_scroll_handle
+                .scroll_to_item(col_ix, ScrollStrategy::Top),
+        }
         cx.notify();
+    }
+
+    /// Horizontal offset that brings scrollable column `col_ix` fully into
+    /// view while preserving the current position when it is already visible.
+    fn horizontal_offset_for_col(&self, col_ix: usize) -> Option<Pixels> {
+        let viewport_width = self.horizontal_scroll_handle.bounds().size.width;
+        if viewport_width <= px(0.) {
+            return None;
+        }
+
+        let cols = self.col_groups.get(self.fixed_left_cols_count()..)?;
+        let col_left: Pixels = cols.get(..col_ix)?.iter().map(|col| col.width).sum();
+        let col_right = col_left + cols.get(col_ix)?.width;
+        let offset_x = self.horizontal_scroll_handle.offset().x;
+
+        Some(if col_left + offset_x < px(0.) {
+            -col_left
+        } else if col_right + offset_x > viewport_width {
+            viewport_width - col_right
+        } else {
+            offset_x
+        })
     }
 
     /// Returns the selected row index.
@@ -2599,7 +2637,12 @@ where
             .right_0()
             .bottom_0()
             .h(px(16.))
-            .child(Scrollbar::horizontal(&self.horizontal_scroll_handle))
+            // The horizontal handle is deliberately measured from the table
+            // header so column scrolling stays synchronized.  The scrollbar
+            // must nevertheless use this bottom overlay's bounds as its
+            // viewport; otherwise the component paints the track over the
+            // header bounds supplied by the handle.
+            .child(Scrollbar::horizontal(&self.horizontal_scroll_handle).viewport_from_layout())
     }
 }
 
@@ -2691,40 +2734,31 @@ where
                 }
             }))
             .child(self.render_table_header(left_columns_count, window, cx))
-            // Fork's own context-menu element, not gpui-component's: an open
-            // row menu must pick up content that could only be fetched
-            // off-thread (see `multi_table::context_menu`). The revision
-            // closure is what tells it something changed.
-            .live_context_menu(
-                {
-                    let view = cx.entity().clone();
-                    move |cx: &App| view.read(cx).delegate.context_menu_revision(cx)
-                },
-                {
-                    let view = cx.entity().clone();
-                    move |this, window: &mut Window, cx: &mut Context<PopupMenu>| {
-                        if let Some(row_ix) = view.read(cx).right_clicked_row {
-                            view.update(cx, |menu, cx| {
-                                menu.delegate_mut().context_menu(row_ix, this, window, cx)
-                            })
-                        } else if view.read(cx).right_clicked_background {
-                            // Empty-space click: the delegate's background
-                            // menu (folder-scoped commands for the file
-                            // list; empty — and therefore suppressed — by
-                            // default). The event lets the subscriber stage
-                            // the menu's target before an item is picked.
-                            view.update(cx, |table, cx| {
-                                cx.emit(TableEvent::RightClickedBackground);
-                                table
-                                    .delegate_mut()
-                                    .background_context_menu(this, window, cx)
-                            })
-                        } else {
-                            this
-                        }
+            // Ferail's wrapper only reserves Shift+right-click for Windows'
+            // native extended Shell menu. Dynamic children (notably
+            // "Open With") rebuild their own submenu entity in place.
+            .platform_context_menu({
+                let view = cx.entity().clone();
+                move |this, window: &mut Window, cx: &mut Context<PopupMenu>| {
+                    if let Some(row_ix) = view.read(cx).right_clicked_row {
+                        view.update(cx, |menu, cx| {
+                            menu.delegate_mut().context_menu(row_ix, this, window, cx)
+                        })
+                    } else if view.read(cx).right_clicked_background {
+                        // Empty-space click: the delegate's background menu
+                        // (folder-scoped commands for the file list; empty —
+                        // and therefore suppressed — by default).
+                        view.update(cx, |table, cx| {
+                            cx.emit(TableEvent::RightClickedBackground);
+                            table
+                                .delegate_mut()
+                                .background_context_menu(this, window, cx)
+                        })
+                    } else {
+                        this
                     }
-                },
-            )
+                }
+            })
             .map(|this| {
                 if rows_count == 0 {
                     this.children(empty_view)

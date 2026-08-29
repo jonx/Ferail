@@ -52,7 +52,7 @@ mod table;
 mod virtual_list;
 
 pub use column::*;
-pub use context_menu::LiveContextMenuExt;
+pub use context_menu::PlatformContextMenuExt;
 pub use data_table::*;
 pub use delegate::*;
 pub(crate) use loading::Loading;

@@ -25,6 +25,9 @@ pub(crate) const PREVIEW_CODE_PAD: f32 = 48.0;
 /// Upper bound on the sized width so a minified single-line file doesn't
 /// build a multi-thousand-pixel element (it clips past this — rare).
 pub(crate) const PREVIEW_CODE_MAX_W: f32 = 4000.0;
+/// Render-aware ceiling for preview text. The worker already caps source
+/// lines; this additionally bounds heavily wrapped prose by visual lines.
+pub(crate) const PREVIEW_TEXT_MAX_VISUAL_LINES: usize = 1000;
 
 /// Payload carried by a tab-strip drag (Phase D, spec §3.3
 /// "Reorder tab"). The same Render-as-its-own-preview shape
@@ -1034,7 +1037,7 @@ impl Shell {
     /// gesture through the same `Shell` methods. See `crate::grid`.
     fn grid_body(&self, cx: &mut Context<Self>) -> AnyElement {
         use crate::file_list::{DragBadge, GHOST_STACK_CAP};
-        use crate::multi_table::LiveContextMenuExt as _;
+        use crate::multi_table::PlatformContextMenuExt as _;
         use crate::thumbnails::THUMB_PX;
         use ferail_core::EntryKind;
         use gpui::ExternalPaths;
@@ -1765,51 +1768,32 @@ impl Shell {
                                 },
                             )
                         })
-                        .live_context_menu(
-                            {
-                                // Same revision source as the list: an open
-                                // grid menu picks up late Open With candidates
-                                // instead of being stuck with the placeholder.
-                                let weak_rev = weak_menu.clone();
-                                move |cx: &gpui::App| {
-                                    use crate::multi_table::TableDelegate as _;
-                                    weak_rev
-                                        .upgrade()
-                                        .map(|shell_ent| {
-                                            let shell = shell_ent.read(cx);
-                                            let table = shell.active_tab().table.read(cx);
-                                            table.delegate().context_menu_revision(cx)
-                                        })
-                                        .unwrap_or(0)
-                                }
-                            },
-                            move |menu, window, cx| {
-                                // Same right-click menu the table uses, reached
-                                // through the shared TableState delegate — so
-                                // icons mode gets Rename, Open With, tags, Trash,
-                                // everything the list row has, from one menu
-                                // definition. Mirrors TableEvent::RightClickedRow:
-                                // select the cell (unless it's already inside the
-                                // selection) and stash context_row so the menu's
-                                // actions (Rename included) target it.
-                                use crate::multi_table::TableDelegate as _;
-                                let Some(shell_ent) = weak_menu.upgrade() else {
-                                    return menu;
-                                };
-                                shell_ent.update(cx, |this, cx| {
-                                    let was_selected = this
-                                        .node_id_at_row(i, cx)
-                                        .map(|id| this.active_tab().is_selected(id))
-                                        .unwrap_or(false);
-                                    this.apply_row_right_click(i, cx);
-                                    this.context_row = if was_selected { None } else { Some(i) };
-                                    let table = this.active_tab().table.clone();
-                                    table.update(cx, |tbl, cx| {
-                                        tbl.delegate_mut().context_menu(i, menu, window, cx)
-                                    })
+                        .platform_context_menu(move |menu, window, cx| {
+                            // Same right-click menu the table uses, reached
+                            // through the shared TableState delegate — so
+                            // icons mode gets Rename, Open With, tags, Trash,
+                            // everything the list row has, from one menu
+                            // definition. Mirrors TableEvent::RightClickedRow:
+                            // select the cell (unless it's already inside the
+                            // selection) and stash context_row so the menu's
+                            // actions (Rename included) target it.
+                            use crate::multi_table::TableDelegate as _;
+                            let Some(shell_ent) = weak_menu.upgrade() else {
+                                return menu;
+                            };
+                            shell_ent.update(cx, |this, cx| {
+                                let was_selected = this
+                                    .node_id_at_row(i, cx)
+                                    .map(|id| this.active_tab().is_selected(id))
+                                    .unwrap_or(false);
+                                this.apply_row_right_click(i, cx);
+                                this.context_row = if was_selected { None } else { Some(i) };
+                                let table = this.active_tab().table.clone();
+                                table.update(cx, |tbl, cx| {
+                                    tbl.delegate_mut().context_menu(i, menu, window, cx)
                                 })
-                            },
-                        );
+                            })
+                        });
                     row_el = row_el.child(cell);
                 }
                 out.push(row_el.into_any_element());
@@ -4541,6 +4525,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_undock))
             .on_action(cx.listener(Self::on_toggle_hidden))
             .on_action(cx.listener(Self::on_toggle_flat_view))
+            .on_action(cx.listener(Self::on_toggle_performance_hud))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_copy_path))
             .on_action(cx.listener(Self::on_show_windows_context_menu))
@@ -4729,7 +4714,7 @@ impl Render for Shell {
                 // file-row menu selection to dismiss without firing.
                 // Don't reintroduce one here. The empty-space menu
                 // (New Folder / Paste / …) now lives INSIDE the
-                // table's own LiveContextMenu instead — see
+                // table's own platform context-menu wrapper instead — see
                 // `FileListDelegate::background_context_menu` and the
                 // capture-phase region pick in `TableState::render` —
                 // so it can't fight the row menus for events.
@@ -5062,6 +5047,12 @@ impl Render for Shell {
             // positioned ancestor to anchor against.
             .when(!crate::private_mode::enabled(), |this| {
                 this.children(Root::render_notification_layer(window, cx))
+            })
+            // Explicit diagnostics only. The monitor is configured with
+            // continuous(false), so it observes Ferail's real redraw workload
+            // rather than keeping the window artificially busy.
+            .when_some(self.performance_monitor.clone(), |this, monitor| {
+                this.child(gpui_fps::FpsOverlay::new(&monitor))
             })
             // Keyboard-shortcuts help overlay (Stage 9.b). Renders
             // only when `shortcuts_help_filter` is Some(_); the

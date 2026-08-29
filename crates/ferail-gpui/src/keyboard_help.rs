@@ -5,19 +5,16 @@
 //! filterable by a top text-input. The state (visible flag + filter
 //! string) lives on `Shell`; this module is a pure render helper.
 
-use crate::text::TextScale as _;
-use ferail_core::commands::{Category, CommandSpec, Shortcut, all_commands};
+use ferail_core::commands::{Category, Shortcut, all_commands};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Sizable, h_flex,
-    input::{Escape, Input},
+    ActiveTheme, Disableable as _,
+    command::{Command, CommandGroup, CommandItem},
     v_flex,
 };
-// gpui-component's `Kbd` renders macOS ⌘ glyphs; only the macOS badge uses it.
-#[cfg(target_os = "macos")]
-use gpui_component::kbd::Kbd;
 
 use crate::shell::Shell;
+use crate::text::TextScale as _;
 
 /// Map a catalogue `CommandId` to a dispatchable `gpui::Action`.
 /// Used by the shortcuts-help overlay (which doubles as our Cmd+K
@@ -57,6 +54,7 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "view.zoom_out" => Box::new(ZoomOut),
         "view.zoom_reset" => Box::new(ZoomReset),
         "view.disk_usage" => Box::new(OpenDiskUsage),
+        "view.performance_hud" => Box::new(TogglePerformanceHud),
         "view.find_duplicates" => Box::new(FindDuplicates),
         "view.find_similar_images" => Box::new(FindSimilarImages),
         "view.open_viewer" => Box::new(OpenViewer),
@@ -93,79 +91,83 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
     })
 }
 
-/// Commands matching `filter`, grouped by category in display order
-/// (categories in first-encounter order; rows in catalogue order).
-/// Shared by the render and the "top match" the palette runs on Enter
-/// so the highlight and Enter target always agree with what's shown.
-fn filtered_groups(filter: &str) -> Vec<(Category, Vec<&'static CommandSpec>)> {
-    let lower = filter.to_lowercase();
-    let mut groups: Vec<(Category, Vec<&CommandSpec>)> = Vec::new();
+fn command_groups() -> Vec<CommandGroup> {
+    let mut groups: Vec<(Category, Vec<CommandItem>)> = Vec::new();
     for spec in all_commands() {
-        // Match the translated title (what the user sees) and the English
-        // catalogue title (so muscle memory keeps working in any language).
-        let title_match = spec.title.to_lowercase().contains(&lower)
-            || crate::i18n::tr_static(spec.title)
-                .to_lowercase()
-                .contains(&lower);
-        let shortcut_match = spec
+        let translated = crate::i18n::tr_static(spec.title);
+        let shortcuts = spec
             .shortcuts
             .iter()
-            .any(|s| format_shortcut(s).to_lowercase().contains(&lower));
-        if !filter.is_empty() && !title_match && !shortcut_match {
-            continue;
+            .map(format_shortcut)
+            .map(SharedString::from)
+            .collect::<Vec<_>>();
+        let mut keywords = vec![SharedString::from(spec.title)];
+        keywords.extend(shortcuts);
+        let mut item = CommandItem::new().label(translated).keywords(keywords);
+        if let Some(action) = action_for_command(spec.id) {
+            // Command resolves the live keybinding for this Action, displays
+            // it, and dispatches it on click or Enter.
+            item = item.action(action);
+        } else {
+            item = item.disabled(true);
         }
         if let Some((_, list)) = groups.iter_mut().find(|(c, _)| *c == spec.category) {
-            list.push(spec);
+            list.push(item);
         } else {
-            groups.push((spec.category, vec![spec]));
+            groups.push((spec.category, vec![item]));
         }
     }
     groups
-}
-
-/// The first dispatchable command in display order — what the palette
-/// runs on Enter and highlights as the default pick.
-pub fn palette_top_command(filter: &str) -> Option<ferail_core::commands::CommandId> {
-    filtered_groups(filter)
         .into_iter()
-        .flat_map(|(_, list)| list)
-        .find(|spec| action_for_command(spec.id).is_some())
-        .map(|spec| spec.id)
-}
-
-/// The boxed action for the palette's current top match, if any.
-pub fn palette_top_action(filter: &str) -> Option<Box<dyn gpui::Action>> {
-    palette_top_command(filter).and_then(action_for_command)
+        .map(|(category, items)| {
+            CommandGroup::new()
+                .label(category_title(category))
+                .items(items)
+        })
+        .collect()
 }
 
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let filter = shell.shortcuts_help_filter.as_ref()?.clone();
+    shell.shortcuts_help_filter.as_ref()?;
     let bg = cx.theme().background;
     let border = cx.theme().border;
     let foreground = cx.theme().foreground;
-    let muted = cx.theme().muted_foreground;
-    let accent = cx.theme().secondary;
-    let input = shell.shortcuts_help_input.clone();
-
-    // The default pick: highlighted, and run by Enter (see the
-    // shortcuts-help input's PressEnter subscription in shell.rs).
-    let top = palette_top_command(&filter);
-
-    let body_sections: Vec<Div> = filtered_groups(&filter)
-        .into_iter()
-        .map(|(cat, list)| section(cat, list, top, foreground, muted, accent, cx))
-        .collect();
-
-    let header = v_flex()
-        .gap_2()
-        .child(
+    let command_state = shell.shortcuts_help_command.clone();
+    let weak_confirm = cx.weak_entity();
+    let weak_cancel = cx.weak_entity();
+    let mut palette = Command::new(&command_state)
+        .placeholder(tr!("Search commands…"))
+        .max_h(px(460.0))
+        .bordered(false)
+        .header(move |_state, _window, _cx| {
             div()
+                .pb_2()
                 .text_scale_lg()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(foreground)
-                .child(tr!("Keyboard Shortcuts")),
-        )
-        .child(Input::new(&input).small());
+                .child(tr!("Keyboard Shortcuts"))
+        })
+        .empty(|_state, _window, cx| {
+            div()
+                .w_full()
+                .py_6()
+                .text_center()
+                .text_color(cx.theme().muted_foreground)
+                .child(tr!("No matching command"))
+        })
+        .on_confirm(move |_index, window, cx| {
+            let _ = weak_confirm.update(cx, |shell, cx| {
+                shell.close_shortcuts_help(window, cx);
+            });
+        })
+        .on_cancel(move |window, cx| {
+            let _ = weak_cancel.update(cx, |shell, cx| {
+                shell.close_shortcuts_help(window, cx);
+            });
+        });
+    for group in command_groups() {
+        palette = palette.group(group);
+    }
 
     let backdrop = div()
         .absolute()
@@ -184,23 +186,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let card = v_flex()
         .w(px(560.0))
         .max_h(px(560.0))
-        .gap_3()
         .p_5()
         .bg(bg)
         .rounded(px(12.0))
         .border_1()
         .border_color(border)
         .shadow_lg()
-        .child(header)
-        .child(div().h_px().bg(border))
-        .child(
-            div()
-                .id("shortcuts-help-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .child(v_flex().gap_4().children(body_sections)),
-        )
+        .child(palette)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
 
     Some(
@@ -213,15 +205,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .flex()
             .items_center()
             .justify_center()
-            // Esc dismisses the palette. The focused filter Input
-            // propagates the `Escape` action up its ancestor chain
-            // (see gpui-component InputState::escape → cx.propagate);
-            // we sit on that chain and consume it before the shell's
-            // ClearFilter handler can act.
-            .on_action(cx.listener(|this, _: &Escape, window, cx| {
-                this.close_shortcuts_help(window, cx);
-                cx.stop_propagation();
-            }))
             // Swallow scroll while the modal is up. The overlay is a
             // sibling subtree of the file list, painted on top; GPUI
             // still dispatches the wheel to the list's scroll hitbox
@@ -235,17 +218,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn section(
-    cat: Category,
-    specs: Vec<&CommandSpec>,
-    top: Option<ferail_core::commands::CommandId>,
-    foreground: gpui::Hsla,
-    muted: gpui::Hsla,
-    accent: gpui::Hsla,
-    cx: &mut Context<Shell>,
-) -> Div {
-    let title = match cat {
+fn category_title(category: Category) -> SharedString {
+    let title = match category {
         Category::App => tr!("App"),
         Category::File => tr!("File"),
         Category::Edit => tr!("Edit"),
@@ -256,150 +230,7 @@ fn section(
         Category::Help => tr!("Help"),
         Category::Context => tr!("Context"),
     };
-    let rows: Vec<AnyElement> = specs
-        .into_iter()
-        .map(|spec| row(spec, top == Some(spec.id), foreground, muted, accent, cx))
-        .collect();
-    v_flex()
-        .gap_1()
-        .child(
-            div()
-                .text_scale_xs()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(muted)
-                .child(title),
-        )
-        .children(rows)
-}
-
-fn row(
-    spec: &CommandSpec,
-    is_top: bool,
-    foreground: gpui::Hsla,
-    muted: gpui::Hsla,
-    accent: gpui::Hsla,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    // The trailing key-cap badge. On macOS this is gpui-component's `Kbd`
-    // (native ⌘ glyphs, matching Finder's menu-bar shortcuts); on
-    // Windows/Linux `Kbd` would still draw ⌘, so we render `Ctrl+…` text in a
-    // matching bordered box instead. See `shortcut_badge`.
-    let badge: Option<AnyElement> = spec
-        .shortcuts
-        .first()
-        .and_then(|s| shortcut_badge(s, muted));
-    let id = spec.id;
-    let dispatchable = action_for_command(id).is_some();
-    let row_id = SharedString::from(format!("cmd-{}", id.0));
-    let mut row = h_flex()
-        .id(ElementId::Name(row_id))
-        .w_full()
-        .items_center()
-        .py_1()
-        .px_2()
-        .gap_2()
-        .rounded(px(4.0));
-    // The default pick (run by Enter) sits pre-highlighted.
-    if is_top {
-        row = row.bg(accent);
-    }
-    // Inert commands (no Shell-level handler yet — tag colours,
-    // open-with slots, etc.) read in muted grey so it's obvious they
-    // can't be invoked from the palette; live ones keep full contrast.
-    let title_color = if dispatchable { foreground } else { muted };
-    let mut title = h_flex().flex_1().items_center().gap_2().child(
-        div()
-            .text_scale_sm()
-            .text_color(title_color)
-            .child(crate::i18n::tr_static(spec.title)),
-    );
-    if !dispatchable {
-        // A trailing tag spells out *why* the row is dim, so it doesn't
-        // just look like a styling glitch.
-        title = title.child(
-            div()
-                .text_scale_xs()
-                .text_color(muted)
-                .child(tr!("\u{2014} unavailable here")),
-        );
-    }
-    row = row.child(title);
-    if let Some(b) = badge {
-        row = row.child(div().flex_shrink_0().child(b));
-    }
-    if dispatchable {
-        // Clickable + hover-tinted when the command maps to a known
-        // action handler.
-        row.cursor_pointer()
-            .hover(move |this| this.bg(accent))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if let Some(action) = action_for_command(id) {
-                    this.close_shortcuts_help(window, cx);
-                    window.dispatch_action(action, cx);
-                }
-            }))
-            .into_any_element()
-    } else {
-        // Dimmed and non-interactive: no pointer cursor, no hover tint.
-        row.opacity(0.5).cursor_default().into_any_element()
-    }
-}
-
-/// The trailing key-cap badge for a command row.
-///
-/// macOS hands the chord to gpui-component's `Kbd`, which renders native ⌘/⇧
-/// glyphs. `Kbd` only speaks macOS glyphs, so on Windows/Linux we instead draw
-/// `format_shortcut`'s `Ctrl+…` text in a bordered box that matches the row.
-#[cfg(target_os = "macos")]
-fn shortcut_badge(s: &Shortcut, _muted: gpui::Hsla) -> Option<AnyElement> {
-    let kb_str = keystroke_string(s)?;
-    gpui::Keystroke::parse(&kb_str)
-        .ok()
-        .map(|ks| Kbd::new(ks).into_any_element())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn shortcut_badge(s: &Shortcut, muted: gpui::Hsla) -> Option<AnyElement> {
-    Some(
-        div()
-            .px(px(5.0))
-            .py(px(1.0))
-            .rounded(px(4.0))
-            .border_1()
-            .border_color(muted)
-            .text_scale_xs()
-            .child(SharedString::from(format_shortcut(s)))
-            .into_any_element(),
-    )
-}
-
-/// Mirror of `keymap::translate_shortcut` — produces the same
-/// `cmd-shift-x` style chord string the keymap installer uses, so
-/// `Keystroke::parse` accepts it. Returns `None` for unsupported
-/// keys (e.g. the catalogue's `+` alternate, gpui's parser treats
-/// `-` as a separator). Only the macOS badge path needs it.
-#[cfg(target_os = "macos")]
-fn keystroke_string(s: &Shortcut) -> Option<String> {
-    let key = match s.key {
-        "Up" | "Down" | "Left" | "Right" | "Home" | "End" | "PageUp" | "PageDown" | "Escape"
-        | "Enter" | "Tab" | "Space" | "Backspace" | "Delete" | "F1" | "F2" | "F3" | "F4" | "F5"
-        | "F6" | "F7" | "F8" | "F9" | "F10" | "F11" | "F12" => s.key.to_ascii_lowercase(),
-        "+" => return None,
-        k if k.chars().count() == 1 => k.to_ascii_lowercase(),
-        _ => return None,
-    };
-    let mut parts: Vec<&str> = Vec::with_capacity(4);
-    if s.primary {
-        parts.push("cmd");
-    }
-    if s.shift {
-        parts.push("shift");
-    }
-    if s.alt {
-        parts.push("alt");
-    }
-    parts.push(&key);
-    Some(parts.join("-"))
+    title.to_string().into()
 }
 
 /// Render a `Shortcut` as a human-readable chord.

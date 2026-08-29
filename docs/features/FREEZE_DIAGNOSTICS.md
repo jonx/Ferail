@@ -131,6 +131,16 @@ watchdog stays **on** in safe mode — it is the diagnostic layer safe mode
 exists to serve. The AROS port's `FERAIL_FOLDER_SIZES` gate predates this
 and remains the finer-grained switch for that one walker.
 
+## Live performance HUD
+
+For a slowdown that still leaves the interface responsive, launch with
+`--performance-hud` or `FERAIL_PERFORMANCE_HUD=1`. The same per-window overlay
+can be toggled from the command palette with **Toggle Performance HUD**. It
+shows GPUI frame time, tail latency, dropped-frame ratio and process resource
+samples. It is session-only, disabled by default, and configured in
+non-continuous mode: it observes Ferail's actual redraws instead of creating a
+busy render loop of its own.
+
 ## Testing the machinery
 
 `FERAIL_DEBUG_FREEZE=<secs>` deliberately wedges the UI thread for that

@@ -61,7 +61,7 @@ is an environment boundary, not a successful Windows validation.
 | Delta | Post-bump finding | Decision |
 | --- | --- | --- |
 | `multi_table/` modifier-aware selection | Upstream row selection events still omit click modifiers. | Keep; issue #2795 remains the right upstream discussion. |
-| Refreshable context menu fork | Upstream menu open/close state and built items remain private/static. | Keep; issues #2796/#2797 still describe the gaps. |
+| Context-menu wrapper | `PopupMenu::rebuild` now solves async submenu content; root open/close remains private and Shift+right-click needs a Windows guard. | Removed revision polling/root rebuild; keep only the narrow platform wrapper. Issues #2796/#2797 describe the remaining general gaps. |
 | `vendor/gpui_windows` external drag | Upstream Windows still leaves external-drag promotion disabled. | Keep the narrow OLE delta; native Windows regression test required. |
 | `vendor/ztracing` | Zed still links its tracing crate through GPUI/sum-tree. | Keep the permissive no-op source patch and graph assertions. |
 | GPUI dev/test teardown | The old per-paint strong callback is gone in e8f54eb, and the deterministic leak repro passes. | Keep containment until native Windows close/overlay tests pass; do not propose a PR without a new minimal repro. |

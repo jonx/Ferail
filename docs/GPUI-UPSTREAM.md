@@ -133,18 +133,17 @@ one-liner.
 - Or expose the open state through `Root` so consumers can query "is a context
   menu currently open in this window".
 
-## 4b. `context_menu` builds once and can never refresh its contents
+## 4b. Async context-menu contents — RESOLVED for Ferail
 
 **Filed upstream 2026-08-21:** [gpui-component#2797](https://github.com/longbridge/gpui-component/issues/2797).
 
 **Hit during:** "Open With" arriving empty on the first right-click of a row
 (docs/features/CONTEXT_MENU.md).
 
-`ContextMenuExt::context_menu` runs its builder exactly once, from a
-`window.defer` scheduled inside its mouse-down listener, and then holds the
-resulting `Entity<PopupMenu>` in private element state. `PopupMenu`'s items are
-`pub(crate)` and every mutator is builder-style (`mut self -> Self`), so an
-already-built menu can be neither rebuilt nor edited from outside the crate.
+`ContextMenuExt::context_menu` still runs its root builder once, but
+gpui-component #2609 added `PopupMenu::rebuild`: a retained submenu entity can
+replace its own items after asynchronous work while keeping its identity,
+parent, focus and layer priority.
 
 That is fine for menus made of static labels, and wrong for a file manager. Our
 menu content includes data that is *illegal* to fetch on the UI thread (the
@@ -155,29 +154,19 @@ open — the user gets a "loading" placeholder that never resolves and has to
 close and reopen the menu. It makes a *cache* load-bearing for correctness,
 which is exactly backwards: prefetching should buy latency, never content.
 
-**Workaround:** a second small fork,
-`crates/ferail-gpui/src/multi_table/context_menu.rs` — upstream's element
-plus a `revision: impl Fn(&App) -> u64` closure polled each frame while the
-menu is open. When the value changes, the builder re-runs and the open menu is
-replaced in place. `TableDelegate::context_menu_revision` plumbs it to the
-delegate; `FileListDelegate::menu_revision` ticks when the off-thread Open With
-fetch reports back. Cost: the rebuild resets the menu's hover/keyboard
-highlight, so revisions must only tick on genuine content changes.
+**Current implementation:** Ferail creates the Open-With submenu immediately
+with a loading row, keeps a weak handle to that entity, and calls
+`PopupMenu::rebuild` when the off-thread association lookup completes. The
+delegate cache is updated first so displayed slot N and dispatched slot N stay
+identical. There is no per-frame polling, `menu_revision`, or root-menu
+replacement anymore.
 
-Second-order cost worth remembering: the rebuild made a latent
-`TableState::set_selected_row` behavior fatal — it clears `right_clicked_row`,
-and the Shell's lead mirror calls it right after every right-click, so a
-rebuild found no row and produced an *empty* menu (popup vanished mid-use).
-Hence the fork's `mirror_lead_row`, which mirrors the lead without pretending a
-click happened.
+The small element wrapper in `multi_table/context_menu.rs` remains only for a
+separate Windows rule: Shift+right-click belongs exclusively to the isolated
+native extended Shell menu. It no longer owns dynamic-content behavior.
 
-**What upstream could do:**
-- Let the builder be re-run: `.refresh_on(impl Fn(&App) -> u64)`, or a handle
-  to the built `Entity<PopupMenu>` so consumers can rebuild it themselves.
-- Or make `PopupMenu` mutable after construction (`pub fn set_items`), which
-  would also serve async submenus.
-- Longer term, first-class support for a menu item whose content resolves
-  asynchronously — every OS file manager needs it for "Open With".
+**Remaining upstream gap:** #2797 still applies to dynamic *root* menu content,
+but Ferail currently has no such need. The submenu API solves our real case.
 
 ## 5. `img` can't be rotated/transformed (only `svg` can)
 

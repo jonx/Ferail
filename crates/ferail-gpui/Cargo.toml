@@ -55,6 +55,7 @@ gpui.workspace = true
 gpui_platform.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
+gpui-fps.workspace = true
 # HttpClient impl behind cx.http_client() — see the workspace Cargo.toml
 # note. Update check only; everything else stays offline.
 reqwest_client.workspace = true

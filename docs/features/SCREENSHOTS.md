@@ -201,8 +201,8 @@ scratch. Add `--select-rows 1,2` to capture the multi-selection form instead
 must be on screen — the click point comes from the laid-out row geometry.
 
 Because the click is real, the capture also exercises the menu's async fill-in:
-"Open With" starts as a disabled placeholder and the open menu rebuilds itself
-once the off-thread LaunchServices fetch lands.
+"Open With" starts as a disabled submenu placeholder, then that submenu alone
+rebuilds once the off-thread association lookup lands.
 
 ### Disk-usage treemap, depth-limited, coloured by depth
 

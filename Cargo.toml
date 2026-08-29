@@ -132,6 +132,7 @@ reqwest_client = { git = "https://github.com/zed-industries/zed" }
 # grammar is a C-compiled crate — a real but one-time build cost.
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781" }
+gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781" }
 
 # Zed-source patches allowed here are **in-repo** paths, committed and therefore
 # present in every clone and on CI.

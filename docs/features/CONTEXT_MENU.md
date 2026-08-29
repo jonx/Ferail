@@ -41,7 +41,7 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
   (emitted at menu-build time) is what stages the current directory there.
   An earlier attempt hung a `.context_menu` on the file-pane wrapper and
   ate the row menus' clicks — this one lives inside the same
-  `LiveContextMenu` the rows use, so the two can't fight.
+  `PlatformContextMenu` wrapper the rows use, so the two can't fight.
 - Disk-usage treemap: Open, Reveal, Copy Path, Quick Look, Zoom into,
   Move to Trash. Multi-selection-aware.
 
@@ -136,17 +136,17 @@ blocking shell query that the [Prime Directive](../ARCHITECTURE.md#prime-directi
 forbids on the UI thread, and the menu builder is synchronous. The rule is:
 
 - The builder reads **only caches** (`open_with_warm`, the per-row caps). On a
-  miss it shows a disabled "loading" item and kicks the off-thread fetch.
-- When that fetch reports back it bumps `FileListDelegate::menu_revision`, and
-  the **open menu rebuilds itself** around the real data
-  (`multi_table::context_menu`, a fork of gpui-component's element — see
+  miss it creates an Open-With submenu with a disabled loading row and kicks
+  the off-thread fetch.
+- When that fetch reports back, it updates the delegate cache and calls
+  `PopupMenu::rebuild` on that retained submenu entity. The root menu, its
+  focus and its highlighted item are untouched (see
   [GPUI-UPSTREAM.md §4b](../GPUI-UPSTREAM.md)).
 
 So warming is a latency optimisation and nothing more: a cold right-click
 shows the same menu a warm one does, a beat later. Never gate a command's
 *existence* on a cache being populated — gate it on the caps, which are
-projected from rows already in memory. Bump `menu_revision` only for real
-content changes; a rebuild resets the menu's hover/keyboard highlight.
+projected from rows already in memory.
 
 #### Three command archetypes
 
@@ -252,7 +252,7 @@ hover. Open With's Launch Services query — once the last synchronous
 Cocoa call on this path — now pre-warms off the UI thread on
 selection-lead change (`spawn_open_with_warm`), and a cache miss shows a
 disabled "Open With (loading…)" item that the arriving fetch replaces in
-place via `menu_revision`. Measured, the query costs a one-time ~5–10 ms
+place by rebuilding only the retained submenu. Measured, the query costs a one-time ~5–10 ms
 Launch Services bootstrap per process and then ~0.03 ms per call, so the
 warm cache is insurance against cold bundles on slow volumes rather than
 a hot-path saving (see [OPEN_WITH.md](OPEN_WITH.md) §3).

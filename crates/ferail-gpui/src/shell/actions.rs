@@ -183,6 +183,8 @@ actions!(
         /// only when the shell pane itself owns focus.
         ClearSelection,
         TogglePreview,
+        /// Toggle the opt-in per-window GPUI frame/resource diagnostics HUD.
+        TogglePerformanceHud,
         /// Cycle the sidebar between normal, compact-text and icons-only.
         CycleSidebarSize,
         ResetSidebarOrder,

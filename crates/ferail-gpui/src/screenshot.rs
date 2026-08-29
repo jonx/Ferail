@@ -150,6 +150,8 @@ pub struct Args {
     /// real sampler never runs on the screenshot path, so captures
     /// stay deterministic.
     pub simulate_stats: bool,
+    /// Show the opt-in GPUI frame/resource diagnostics overlay.
+    pub performance_hud: bool,
     /// Force the file pane into the slow-load skeleton state (the view
     /// a spun-down external drive shows after
     /// `SLOW_LOAD_INDICATOR_DELAY`), labeled with the given name.
@@ -332,6 +334,7 @@ pub fn parse_args() -> Args {
             }
             "--simulate-task-panel" => args.simulate_task_panel = true,
             "--simulate-stats" => args.simulate_stats = true,
+            "--performance-hud" => args.performance_hud = true,
             "--simulate-slow-load" => args.simulate_slow_load = iter.next(),
             "--shortcuts-help" => args.shortcuts_help = Some(String::new()),
             "--shortcuts-help-filter" => args.shortcuts_help = iter.next(),
@@ -425,6 +428,8 @@ OPTIONS
   --simulate-progress <p>  Force-show the progress strip. Lands in Stage 5.
   --simulate-task-panel    Open task panel with fixtures. Lands in Stage 5.
   --simulate-stats         Show the status-bar stats segment with fixed values.
+  --performance-hud        Show the opt-in GPUI frame/resource diagnostics HUD.
+                           Env spelling: FERAIL_PERFORMANCE_HUD=1.
   --simulate-slow-load <name>  Force the slow-device skeleton loading view.
   --shortcuts-help[-filter] Open keyboard help overlay. Lands in Stage 9.
   --ui-scale <factor>      Apply UI zoom. Lands in Stage 9.
@@ -469,6 +474,9 @@ EXAMPLES
 /// Run the headless screenshot path. Opens an invisible window, lets
 /// one frame render, captures the framebuffer, writes a PNG, quits.
 pub fn run(args: Args) -> Result<()> {
+    crate::performance_hud::set_start_enabled(
+        args.performance_hud || crate::performance_hud::from_env(),
+    );
     let path = args
         .screenshot
         .clone()

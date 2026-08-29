@@ -999,6 +999,10 @@ pub struct Shell {
     /// are deterministic (the real sampler never runs on the
     /// screenshot path).
     pub simulated_stats: bool,
+    /// Lazily-created per-window GPUI performance monitor. `None` keeps frame
+    /// tracing and resource sampling completely off; when present it runs in
+    /// non-continuous mode so the diagnostic does not manufacture redraws.
+    pub performance_monitor: Option<Entity<gpui_fps::FpsMonitor>>,
     /// Generic inline-edit lifecycle for Cmd+L's path field.  The target is
     /// the owning tab, so switching tabs cannot accidentally mount a stale
     /// path editor.
@@ -1019,9 +1023,9 @@ pub struct Shell {
     /// while visible — the string is the live filter text shown in
     /// the modal's search input.
     pub shortcuts_help_filter: Option<String>,
-    /// Input state for the shortcuts-help filter. Always allocated;
-    /// only rendered when the overlay is visible.
-    pub shortcuts_help_input: Entity<InputState>,
+    /// Upstream command-palette state: owns query, highlight, keyboard
+    /// navigation, virtual scrolling, and focus while the overlay is open.
+    pub shortcuts_help_command: Entity<gpui_component::command::CommandState>,
     /// Painted bounds of the toolbar's grid icon-size track, captured each
     /// render through a `canvas` so a cursor x maps back to a size. Zero
     /// until the track has painted once (it only exists in grid view, on a
@@ -1934,6 +1938,8 @@ impl Shell {
         // immediately without the user having to click into the
         // shell.
         focus_handle.focus(window, cx);
+        let performance_monitor = crate::performance_hud::start_enabled()
+            .then(|| cx.new(|cx| gpui_fps::FpsMonitor::new(window, cx).continuous(false)));
 
         let inline_name_edit = crate::inline_edit::InlineEditModel::default();
         let inline_name_input = cx.new(|cx| {
@@ -1967,42 +1973,10 @@ impl Shell {
             },
         );
 
-        // Stage 9.b: shortcuts-help filter Input. Subscribed for
-        // Change so typing updates `shortcuts_help_filter` live.
-        let shortcuts_help_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Search\u{2026}")));
-        // The callback reads the input through the `state` parameter the
-        // subscription hands back — capturing a strong Entity clone here
-        // instead is a self-cycle (the App holds the listener for as long as
-        // the entity lives, and the listener would hold the entity), which
-        // surfaced as GPUI's leaked-handle assertion on Windows quit.
-        let shortcuts_help_subscription = cx.subscribe_in(
-            &shortcuts_help_input,
-            window,
-            move |this, state, ev: &InputEvent, window, cx| {
-                let Some(filter) = this.shortcuts_help_filter.clone() else {
-                    return;
-                };
-                match ev {
-                    InputEvent::Change => {
-                        let v = state.read(cx).value().to_string();
-                        this.shortcuts_help_filter = Some(v);
-                        cx.notify();
-                    }
-                    // Enter runs the highlighted top match — turns the
-                    // shortcuts overlay into a keyboard-driven command
-                    // palette (filter, Enter). Arrow-key selection
-                    // between matches is a follow-up.
-                    InputEvent::PressEnter { .. } => {
-                        if let Some(action) = crate::keyboard_help::palette_top_action(&filter) {
-                            this.close_shortcuts_help(window, cx);
-                            window.dispatch_action(action, cx);
-                        }
-                    }
-                    _ => {}
-                }
-            },
-        );
+        // The upstream Command component owns filtering, arrow navigation,
+        // Enter dispatch, Escape semantics and a virtualized result list.
+        let shortcuts_help_command =
+            cx.new(|cx| gpui_component::command::CommandState::new(window, cx));
 
         // Stage 9.b: breadcrumb-edit Input. Subscribed for
         // PressEnter (commit) and Blur (cancel). The completion
@@ -2214,6 +2188,7 @@ impl Shell {
             task_panel_open: false,
             simulated_progress: None,
             simulated_stats: false,
+            performance_monitor,
             breadcrumb_edit,
             breadcrumb_input,
             breadcrumb_suggestions: Default::default(),
@@ -2221,7 +2196,7 @@ impl Shell {
             inline_name_edit,
             inline_name_input,
             shortcuts_help_filter: None,
-            shortcuts_help_input,
+            shortcuts_help_command,
             // Default off: the preview pane eats ~250-300px on the
             // right and pushes file-list columns (Description in
             // particular) out of view at the default window size.
@@ -2279,11 +2254,7 @@ impl Shell {
             similar_structure_track: Bounds::default(),
             similar_detail_track: Bounds::default(),
             similar_criteria_dragging: None,
-            _subscriptions: vec![
-                breadcrumb_subscription,
-                inline_name_subscription,
-                shortcuts_help_subscription,
-            ],
+            _subscriptions: vec![breadcrumb_subscription, inline_name_subscription],
         };
         shell.process.register_shell(cx.weak_entity());
         // gpui-component's focused Input resolves its own, more-specific
@@ -3782,6 +3753,21 @@ impl Shell {
         self.open_shortcuts_help(String::new(), window, cx);
     }
 
+    pub fn on_toggle_performance_hud(
+        &mut self,
+        _: &TogglePerformanceHud,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.performance_monitor.is_some() {
+            self.performance_monitor = None;
+        } else {
+            self.performance_monitor =
+                Some(cx.new(|cx| gpui_fps::FpsMonitor::new(window, cx).continuous(false)));
+        }
+        cx.notify();
+    }
+
     /// Programmatic version of `on_shortcuts_help` — the CLI flag
     /// can seed the filter so the screenshot captures a focused
     /// subset of the catalogue.
@@ -3792,13 +3778,10 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.shortcuts_help_filter = Some(initial_filter.clone());
-        self.shortcuts_help_input.update(cx, |state, cx| {
-            state.set_value(initial_filter, window, cx);
+        self.shortcuts_help_command.update(cx, |state, cx| {
+            state.set_query(initial_filter, window, cx);
+            state.focus(window, cx);
         });
-        self.shortcuts_help_input
-            .read(cx)
-            .focus_handle(cx)
-            .focus(window, cx);
         cx.notify();
     }
 

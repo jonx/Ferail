@@ -69,9 +69,10 @@ The GPUI side is Prime-Directive-clean already:
 - `spawn_open_with_warm` fetches candidates **off the UI thread** on
   selection-lead change; the menu builder reads only that warm cache
   ([file_list.rs:2300](../../crates/ferail-gpui/src/file_list.rs#L2300)).
-- A cache miss shows a disabled *"Open With (loading…)"* item and bumps
-  `menu_revision` when the fetch lands, so the **open** menu rebuilds
-  itself — Finder's "Fetching…" behaviour.
+- A cache miss opens a retained submenu with a disabled *"Loading…"* row.
+  When the fetch lands, only that submenu is rebuilt through upstream
+  `PopupMenu::rebuild` — Finder's "Fetching…" behaviour, without polling or
+  replacing the root menu.
 - Picking an entry dispatches `OpenWithSlot0..11`, resolved against *the
   same warm snapshot the menu was built from* (a re-fetch could reorder
   candidates and launch the wrong app), then runs

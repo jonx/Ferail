@@ -8,6 +8,29 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **List-view horizontal scrolling is back at the bottom of the table.** The
+  updated scrollbar component no longer mistakes the fixed column header for
+  the scrolling viewport, and keyboard column navigation now moves headers and
+  rows in the same frame.
+
+- **The command palette now uses gpui-component's native Command control.**
+  Search, grouped results, live shortcut hints, arrow-key navigation, Enter,
+  Escape and virtual scrolling share the maintained upstream implementation.
+
+- **“Open With” now fills in without rebuilding its context menu.** A cold
+  association lookup updates only its retained submenu, preserving the root
+  menu's focus and highlighted item while all shell queries remain off-thread.
+
+- **An opt-in performance HUD helps diagnose slow frames and freezes.** Run
+  with `--performance-hud` / `FERAIL_PERFORMANCE_HUD=1`, or choose “Toggle
+  Performance HUD” in the command palette. It reports GPUI frame timing and
+  process resources without forcing continuous redraws.
+
+- **Pathological text previews now have a render-aware safety bound.** Large
+  TextView replacements still parse off the UI thread, while heavily wrapped
+  content is capped on whole visual lines instead of growing layout without
+  limit.
+
 ## 0.7.5 — 2026-08-29
 
 - **Large background listings can no longer outrun the interface.** Ordinary

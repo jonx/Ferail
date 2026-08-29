@@ -23,7 +23,7 @@ use ferail_core::{EntryKind, FileEntry};
 use crate::process_state::ProcessState;
 use crate::shell::render::{
     PREVIEW_CODE_CHAR_W, PREVIEW_CODE_MAX_W, PREVIEW_CODE_PAD, PREVIEW_CODE_TAB_COLS,
-    PREVIEW_MD_MIN_W, ResizePreviewThumb, truncated_url_value,
+    PREVIEW_MD_MIN_W, PREVIEW_TEXT_MAX_VISUAL_LINES, ResizePreviewThumb, truncated_url_value,
 };
 use crate::shell::{
     ClearQuarantine, CopyPath, OpenSelected, OpenViewer, RevealInFinder, SHELL_CONTEXT, Shell,
@@ -771,6 +771,10 @@ impl PreviewPanel {
                             SharedString::from(md),
                         )
                         .style(style)
+                        // TextView parses large replacements off the UI
+                        // thread; max_lines adds a visual-line bound for a
+                        // short source whose prose wraps pathologically.
+                        .max_lines(PREVIEW_TEXT_MAX_VISUAL_LINES)
                         .selectable(true);
                         // Neither preview kind scrolls horizontally on its own
                         // in the narrow pane, so we give the content a definite

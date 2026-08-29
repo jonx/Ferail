@@ -55,6 +55,9 @@ pub fn run_gui(args: screenshot::Args) {
     // launch with every optional background subsystem off. Resolved
     // before anything below consults it (docs/features/FREEZE_DIAGNOSTICS.md).
     crate::safe_mode::set(args.safe_mode || crate::safe_mode::from_env());
+    crate::performance_hud::set_start_enabled(
+        args.performance_hud || crate::performance_hud::from_env(),
+    );
     if crate::safe_mode::enabled() {
         crate::log_info!(
             90,

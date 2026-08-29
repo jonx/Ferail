@@ -489,6 +489,12 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[Shortcut::primary_shift("D")],
     },
     CommandSpec {
+        id: CommandId("view.performance_hud"),
+        title: msgid!("Toggle Performance HUD"),
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
         id: CommandId("view.close_results"),
         title: msgid!("Close Results"),
         category: Category::View,

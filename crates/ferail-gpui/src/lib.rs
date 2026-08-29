@@ -52,6 +52,7 @@ pub mod locations_section;
 pub mod multi_table;
 pub mod obs;
 pub mod path_complete;
+pub mod performance_hud;
 pub mod platform_locations;
 pub mod platform_namespace;
 pub mod prefetch;
