@@ -13,7 +13,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ferail_core::{EnumerationError, FileEntry, NodeId};
 use ferail_fs_native::perceptual::SimilarityCluster;
@@ -72,6 +72,11 @@ pub(super) enum DupeMsg {
 /// bounded train of already-built result batches; `send_blocking` then slows
 /// the scanner instead of allowing scan-local paths and thumbnails to pile up.
 const DUPE_CHANNEL_MESSAGES: usize = 16;
+/// A busy scanner can refill the bounded channel while the foreground drains
+/// it. Stop after one channel's worth even when it never becomes momentarily
+/// empty, then yield a frame so duplicate-heavy scans cannot monopolise GPUI.
+const DUPE_UI_MESSAGES_PER_TICK: usize = DUPE_CHANNEL_MESSAGES;
+const DUPE_UI_TICK: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SimilarCriterion {
@@ -358,6 +363,7 @@ impl Shell {
                 let mut similar_index = None;
                 let mut progress = None;
                 let mut done_error: Option<Option<EnumerationError>> = None;
+                let mut messages = 1usize;
 
                 absorb_dupe_msg(
                     msg,
@@ -366,15 +372,18 @@ impl Shell {
                     &mut progress,
                     &mut done_error,
                 );
-                while done_error.is_none() {
+                while done_error.is_none() && messages < DUPE_UI_MESSAGES_PER_TICK {
                     match rx.try_recv() {
-                        Ok(msg) => absorb_dupe_msg(
-                            msg,
-                            &mut batch,
-                            &mut similar_index,
-                            &mut progress,
-                            &mut done_error,
-                        ),
+                        Ok(msg) => {
+                            messages += 1;
+                            absorb_dupe_msg(
+                                msg,
+                                &mut batch,
+                                &mut similar_index,
+                                &mut progress,
+                                &mut done_error,
+                            );
+                        }
                         Err(async_channel::TryRecvError::Empty) => break,
                         Err(async_channel::TryRecvError::Closed) => {
                             done_error = Some(None);
@@ -415,6 +424,7 @@ impl Shell {
                 if stale || done {
                     break;
                 }
+                cx.background_executor().timer(DUPE_UI_TICK).await;
             }
         })
         .detach();

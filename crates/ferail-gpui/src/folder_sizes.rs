@@ -73,6 +73,11 @@ const FOLDER_SIZE_TTL_SECS: i64 = 10 * 60;
 const SIZE_CHANNEL_BATCHES: usize = 8;
 const SIZE_ROWS_PER_BATCH: usize = 64;
 const SIZE_BATCH_MAX_LATENCY: Duration = Duration::from_millis(100);
+/// Bound one foreground update even when a warm cache can feed the worker much
+/// faster than GPUI can repaint. Eight full channel batches are coalesced into
+/// one sort/refresh, then the receiver yields for a frame.
+const SIZE_UI_ROWS_PER_TICK: usize = SIZE_CHANNEL_BATCHES * SIZE_ROWS_PER_BATCH;
+const SIZE_UI_TICK: Duration = Duration::from_millis(16);
 
 /// Process-wide master switch for the background folder-size walker
 /// (Settings → Performance). Recursively summing a directory tree is
@@ -202,7 +207,14 @@ pub fn start(
     let table_for_apply = table.clone();
     let tasks_for_end = tasks.clone();
     cx.spawn(async move |this, cx| {
-        while let Ok(batch) = rx.recv().await {
+        while let Ok(mut batch) = rx.recv().await {
+            while batch.len() < SIZE_UI_ROWS_PER_TICK {
+                match rx.try_recv() {
+                    Ok(next) => batch.extend(next),
+                    Err(async_channel::TryRecvError::Empty) => break,
+                    Err(async_channel::TryRecvError::Closed) => break,
+                }
+            }
             let stale = this
                 .update(cx, |shell, cx| {
                     // Same staleness rule as the directory-load
@@ -238,6 +250,7 @@ pub fn start(
             if stale {
                 break;
             }
+            cx.background_executor().timer(SIZE_UI_TICK).await;
         }
         // Channel closed (worker done) or stale-exit: either way the
         // registry row comes down. The worker itself stops at the
@@ -249,7 +262,7 @@ pub fn start(
 }
 
 /// Body of the background pass. Two phases: a cache sweep that
-/// answers every mtime-valid folder in one cheap batch, then a
+/// answers mtime-valid folders in bounded batches, then a
 /// compute sweep that walks the misses one folder at a time,
 /// streaming each result as it lands and writing through to the DB.
 fn run_worker(
@@ -260,7 +273,8 @@ fn run_worker(
     tx: async_channel::Sender<Vec<SizeRow>>,
 ) {
     let now = now_unix();
-    let mut hits: Vec<SizeRow> = Vec::new();
+    let mut hit_count = 0usize;
+    let mut hit_batch = Vec::with_capacity(SIZE_ROWS_PER_BATCH);
     let mut misses: Vec<SizeSeed> = Vec::new();
     for seed in seeds {
         if cancel.load(Ordering::Relaxed) {
@@ -283,13 +297,20 @@ fn run_worker(
                 if rec.mtime_unix == seed.mtime_unix
                     && now.saturating_sub(rec.computed_at_unix) < FOLDER_SIZE_TTL_SECS =>
             {
-                hits.push(SizeRow {
+                hit_count += 1;
+                hit_batch.push(SizeRow {
                     row_ix: seed.row_ix,
                     node: seed.node,
                     size: rec.size,
                     file_count: rec.file_count,
                     dir_count: rec.dir_count,
-                })
+                });
+                if hit_batch.len() >= SIZE_ROWS_PER_BATCH {
+                    if tx.send_blocking(std::mem::take(&mut hit_batch)).is_err() {
+                        return;
+                    }
+                    hit_batch.reserve(SIZE_ROWS_PER_BATCH);
+                }
             }
             _ => misses.push(seed),
         }
@@ -302,11 +323,11 @@ fn run_worker(
     crate::log_info!(
         90,
         "folder-sizes: {} cache hit(s), {} to walk{}",
-        hits.len(),
+        hit_count,
         misses.len(),
         if force { " (forced)" } else { "" }
     );
-    if !hits.is_empty() && tx.send_blocking(hits).is_err() {
+    if !hit_batch.is_empty() && tx.send_blocking(hit_batch).is_err() {
         return;
     }
 
@@ -472,4 +493,52 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_folder_results_are_emitted_in_bounded_batches() {
+        let db = Arc::new(Mutex::new(MetadataDb::in_memory().unwrap()));
+        let mut seeds = Vec::new();
+        let computed_at = now_unix();
+        for index in 0..(SIZE_ROWS_PER_BATCH * 2 + 3) {
+            let path = PathBuf::from(format!("cached-folder-{index}"));
+            let mtime_unix = 123;
+            db.lock()
+                .unwrap()
+                .upsert_folder_size(&FolderSizeRecord {
+                    path: path.to_string_lossy().into_owned(),
+                    mtime_unix,
+                    size: index as u64,
+                    computed_at_unix: computed_at,
+                    file_count: 1,
+                    dir_count: 0,
+                })
+                .unwrap();
+            seeds.push(SizeSeed {
+                row_ix: index,
+                node: ferail_core::NodeId::from_raw(index as u64 + 1).unwrap(),
+                path,
+                mtime_unix,
+            });
+        }
+
+        let (tx, rx) = async_channel::bounded(16);
+        run_worker(seeds, Some(db), false, Arc::new(AtomicBool::new(false)), tx);
+        let mut batches = Vec::new();
+        while let Ok(batch) = rx.try_recv() {
+            batches.push(batch);
+        }
+
+        assert_eq!(batches.len(), 3);
+        assert!(
+            batches
+                .iter()
+                .all(|batch| batch.len() <= SIZE_ROWS_PER_BATCH)
+        );
+        assert_eq!(batches.iter().map(Vec::len).sum::<usize>(), 131);
+    }
 }
