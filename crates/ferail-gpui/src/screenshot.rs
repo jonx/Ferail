@@ -568,7 +568,7 @@ pub fn run(args: Args) -> Result<()> {
                             crate::tasks::TaskRegistry::new(),
                         ));
                         let view = cx.new(|cx| {
-                            crate::disk_usage::DiskUsageView::new(
+                            crate::disk_usage::DiskUsageView::new_for_screenshot(
                                 canonical, fs, tasks, None, None, cx,
                             )
                         });
@@ -1184,55 +1184,10 @@ impl ShellArgs {
                 });
             });
         }
-        // Mount inline rename before `--keys` so its real keyboard lifecycle
-        // can be regression-tested (`--rename --keys escape`, Enter, etc.).
-        if self.rename {
-            let _ = cx.update_window((*handle).into(), |_, window, cx| {
-                shell.update(cx, |s, cx| {
-                    // RenameSelected handler reads target_row; need
-                    // a selection (the lead row in particular).
-                    if s.active_tab().lead.is_none() {
-                        s.select_row_index(0, cx);
-                    }
-                    s.trigger_rename(window, cx);
-                });
-            });
-        }
         if let Some(state) = self.update_dialog.clone() {
             let _ = cx.update_window((*handle).into(), |_, _window, cx| {
                 crate::update_check::seed_dialog_for_screenshot(&state, cx);
             });
-        }
-        if let Some(keys) = self.keys.clone() {
-            // Let async UI (e.g. a completion worker)
-            // land before dispatching, then send each keystroke
-            // through the window's REAL dispatch path — focus,
-            // contexts, and keymap all behave exactly as a physical
-            // key press would.
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(400))
-                .await;
-            for k in keys.split_whitespace() {
-                // "pause" waits out async UI between keys (e.g. the
-                // completion menu's accept inserts on a spawned task —
-                // a human's next keystroke lands after it).
-                if k == "pause" {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(300))
-                        .await;
-                    continue;
-                }
-                let _ =
-                    cx.update_window(
-                        (*handle).into(),
-                        |_, window, cx| match gpui::Keystroke::parse(k) {
-                            Ok(ks) => {
-                                window.dispatch_keystroke(ks, cx);
-                            }
-                            Err(e) => crate::log_warn!(90, "--keys: bad keystroke {k:?}: {e}"),
-                        },
-                    );
-            }
         }
         if !self.paste_sources.is_empty() {
             // Let the initial enumeration land so the paste's in-place
@@ -1307,6 +1262,45 @@ impl ShellArgs {
                     }
                 }
             });
+        }
+        // Selection is streamed, so resolve it before rename reads the lead
+        // row. Keyboard dispatch follows this block so
+        // `--rename --keys escape|enter` reaches the mounted editor rather
+        // than the file list.
+        if self.rename {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    if s.active_tab().lead.is_none() {
+                        s.select_row_index(0, cx);
+                    }
+                    s.trigger_rename(window, cx);
+                });
+            });
+        }
+        if let Some(keys) = self.keys.clone() {
+            // Let async UI (for example a completion worker) land before
+            // dispatching through the real focus/keymap path.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
+            for k in keys.split_whitespace() {
+                if k == "pause" {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(300))
+                        .await;
+                    continue;
+                }
+                let _ =
+                    cx.update_window(
+                        (*handle).into(),
+                        |_, window, cx| match gpui::Keystroke::parse(k) {
+                            Ok(ks) => {
+                                window.dispatch_keystroke(ks, cx);
+                            }
+                            Err(e) => crate::log_warn!(90, "--keys: bad keystroke {k:?}: {e}"),
+                        },
+                    );
+            }
         }
         if let Some((col, asc)) = self.sort.clone() {
             shell.update(cx, |s, cx| {

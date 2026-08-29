@@ -455,6 +455,40 @@ impl DiskUsageView {
         dock_owner: Option<DockOwner>,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_with_engine(root_path, fs, tasks, notify_owner, dock_owner, None, cx)
+    }
+
+    /// Deterministic constructor for the hidden screenshot harness. A visual
+    /// smoke test must not request elevation or depend on an out-of-process
+    /// helper completing inside the fixed capture settle delay.
+    pub(crate) fn new_for_screenshot(
+        root_path: PathBuf,
+        fs: Arc<NativeFs>,
+        tasks: Rc<RefCell<TaskRegistry>>,
+        notify_owner: Option<NotifyOwner>,
+        dock_owner: Option<DockOwner>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_engine(
+            root_path,
+            fs,
+            tasks,
+            notify_owner,
+            dock_owner,
+            Some(DuEngine::Portable),
+            cx,
+        )
+    }
+
+    fn new_with_engine(
+        root_path: PathBuf,
+        fs: Arc<NativeFs>,
+        tasks: Rc<RefCell<TaskRegistry>>,
+        notify_owner: Option<NotifyOwner>,
+        dock_owner: Option<DockOwner>,
+        engine_override: Option<DuEngine>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // Keep construction UI-cheap. The background scanner performs
         // canonicalisation before walking; opening the window should
         // not wait on filesystem resolution.
@@ -468,7 +502,7 @@ impl DiskUsageView {
         // the NSURL/statfs lookup can round-trip to a network mount,
         // and this constructor runs on the UI thread.
         let volume = None;
-        let engine = DuEngine::from_preference();
+        let engine = engine_override.unwrap_or_else(DuEngine::from_preference);
         #[cfg(target_os = "windows")]
         let fast_eligibility = FastEligibility::Checking;
         #[cfg(not(target_os = "windows"))]
