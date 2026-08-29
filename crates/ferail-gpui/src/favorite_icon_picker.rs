@@ -191,16 +191,22 @@ impl Render for IconPickerView {
 /// Open the picker as a centered window for `target`, writing the chosen
 /// glyph back through the shared `favorites` entity.
 pub fn open_window(cx: &mut App, favorites: Entity<Favorites>, target: FavoriteId) {
+    let title = tr!("Choose Favorite Icon");
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(560.0), px(560.0)), cx)),
         titlebar: Some(TitlebarOptions {
-            title: Some(tr!("Choose Favorite Icon")),
+            title: Some(title.clone()),
             ..Default::default()
         }),
         ..crate::base_window_options()
     };
-    let _ = cx.open_window(opts, |window, cx| {
+    let handle = cx.open_window(opts, |window, cx| {
         let view = cx.new(|cx| IconPickerView::new(favorites, target, window, cx));
         cx.new(|cx| Root::new(view, window, cx))
     });
+    if let Ok(handle) = handle {
+        crate::process_state::process_state(cx)
+            .register_aux_window(handle.into(), title.to_string());
+        crate::boot::refresh_window_menu(cx);
+    }
 }

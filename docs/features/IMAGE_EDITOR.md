@@ -23,6 +23,8 @@ after a confirmation.
   route through an unsaved-edits guard (Save Copy / Discard / Cancel).
   The location button returns to the exact Ferail source tab and reselects the
   image, falling back to an ordinary Ferail reveal if that tab was closed.
+  Command-icon tooltips show their Cmd/Ctrl shortcuts, and open editor windows
+  are listed in the app's Window menu.
 - **Drawing.** Strokes are stored in full-image pixel coordinates.
   Rectangles preview as a live element overlay and composite on release;
   brush strokes composite live. Redact rectangles are filled opaque

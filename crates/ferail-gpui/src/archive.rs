@@ -68,6 +68,25 @@ const PREVIEW_INMEMORY_CAP: u64 = 16 * 1024 * 1024;
 /// Key context for the archive pane (keymap bindings hang off this).
 pub const ARCHIVE_CONTEXT: &str = "Archive";
 
+actions!(archive, [ArchiveDismiss]);
+
+#[derive(Clone)]
+enum ArchiveCloseTarget {
+    Window(AnyWindowHandle),
+    Dock(WeakEntity<Shell>),
+}
+
+fn close_archive_target(target: ArchiveCloseTarget, cx: &mut App) {
+    match target {
+        ArchiveCloseTarget::Window(handle) => {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+        ArchiveCloseTarget::Dock(shell) => {
+            let _ = shell.update(cx, |shell, cx| shell.close_active_tool_result(cx));
+        }
+    }
+}
+
 /// The off-thread load state of the archive's table of contents.
 enum ArchiveLoad {
     Loading,
@@ -153,6 +172,7 @@ pub struct ArchiveView {
     /// crash/startup cleanup covers a window closed during background work.
     staged_file: Option<PathBuf>,
     focus_handle: FocusHandle,
+    _escape_subscription: Option<Subscription>,
 }
 
 impl ArchiveView {
@@ -276,6 +296,7 @@ impl ArchiveView {
             previewed: None,
             staged_file: None,
             focus_handle: cx.focus_handle(),
+            _escape_subscription: None,
         };
         view.start_load(None, cx);
         view
@@ -1255,7 +1276,12 @@ impl ArchiveView {
         self.refresh_edit_projection(cx);
     }
 
-    fn confirm_window_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn confirm_close(
+        &mut self,
+        target: ArchiveCloseTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.edits.is_empty() || self.close_prompt_open || self.saving {
             return;
         }
@@ -1265,10 +1291,14 @@ impl ArchiveView {
         let cancel_view = view.clone();
         let discard_view = view.clone();
         let save_view = view.clone();
+        let discard_target = target.clone();
+        let save_target = target;
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let cancel_view = cancel_view.clone();
             let discard_view = discard_view.clone();
             let save_view = save_view.clone();
+            let discard_target = discard_target.clone();
+            let save_target = save_target.clone();
             let dismissed_view = view.clone();
             dialog
                 .title(tr!("Save changes before closing?"))
@@ -1303,7 +1333,7 @@ impl ArchiveView {
                                         this.pending_entries.clear();
                                     });
                                     window.close_dialog(cx);
-                                    window.remove_window();
+                                    close_archive_target(discard_target.clone(), cx);
                                 }),
                         )
                         .child(
@@ -1313,10 +1343,13 @@ impl ArchiveView {
                                 .small()
                                 .on_click(move |_, window, cx| {
                                     window.close_dialog(cx);
-                                    let close_window = window.window_handle();
                                     let _ = save_view.update(cx, |this, cx| {
                                         this.close_prompt_open = false;
-                                        this.save_edits_with_close(Some(close_window), window, cx);
+                                        this.save_edits_with_close(
+                                            Some(save_target.clone()),
+                                            window,
+                                            cx,
+                                        );
                                     });
                                 }),
                         ),
@@ -1329,6 +1362,31 @@ impl ArchiveView {
                     true
                 })
         });
+    }
+
+    pub(crate) fn request_dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_prompt_open || self.saving || window.has_active_dialog(cx) {
+            return;
+        }
+        let target = match self.host {
+            ToolHostContext::Docked => self.shell.clone().map(ArchiveCloseTarget::Dock),
+            ToolHostContext::Windowed => Some(ArchiveCloseTarget::Window(window.window_handle())),
+        };
+        let Some(target) = target else { return };
+        if self.edits.is_empty() {
+            match target {
+                ArchiveCloseTarget::Window(_) => window.remove_window(),
+                ArchiveCloseTarget::Dock(shell) => {
+                    let _ = shell.update(cx, |shell, cx| shell.close_active_tool_result(cx));
+                }
+            }
+        } else {
+            self.confirm_close(target, window, cx);
+        }
+    }
+
+    fn on_dismiss(&mut self, _: &ArchiveDismiss, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_dismiss(window, cx);
     }
 
     pub fn rename_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1451,7 +1509,7 @@ impl ArchiveView {
 
     fn save_edits_with_close(
         &mut self,
-        close_window: Option<AnyWindowHandle>,
+        close_target: Option<ArchiveCloseTarget>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1484,8 +1542,13 @@ impl ArchiveView {
                 }
             });
             if success {
-                if let Some(close_window) = close_window {
-                    let _ = close_window.update(cx, |_, window, _| window.remove_window());
+                if let Some(close_target) = close_target {
+                    match close_target {
+                        ArchiveCloseTarget::Window(close_window) => {
+                            let _ = close_window.update(cx, |_, window, _| window.remove_window());
+                        }
+                        ArchiveCloseTarget::Dock(_) => _shell.close_active_tool_result(cx),
+                    }
                 }
             }
         });
@@ -2021,6 +2084,7 @@ impl Render for ArchiveView {
                 this.activate_lead(window, cx);
                 cx.stop_propagation();
             }))
+            .on_action(cx.listener(Self::on_dismiss))
             .size_full()
             .bg(bg)
             .on_prepaint(move |bounds, _, cx| {
@@ -2210,16 +2274,18 @@ pub fn open_existing_window(
     cx: &mut App,
 ) -> Result<WindowHandle<gpui_component::Root>, anyhow::Error> {
     view.update(cx, |view, cx| view.set_dock_owner(dock_owner, cx));
+    let raw_name = archive
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let menu_label = tr!(
+        "Archive \u{2014} {name}",
+        name = crate::private_mode::present_leaf_str(&raw_name, false)
+    );
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(900.0), px(640.0)), cx)),
         titlebar: Some(TitlebarOptions {
-            title: Some(tr!(
-                "Archive \u{2014} {name}",
-                name = archive
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default()
-            )),
+            title: Some(menu_label.clone()),
             ..Default::default()
         }),
         ..crate::base_window_options()
@@ -2235,11 +2301,30 @@ pub fn open_existing_window(
                 if view.read(cx).edits.is_empty() {
                     return true;
                 }
-                view.update(cx, |view, cx| view.confirm_window_close(window, cx));
+                let target = ArchiveCloseTarget::Window(window.window_handle());
+                view.update(cx, |view, cx| view.confirm_close(target, window, cx));
                 false
             }
         });
+        let target_window = window.window_handle();
+        let escape_view = view.downgrade();
+        let escape_subscription = cx.intercept_keystrokes(move |event, window, app| {
+            if event.keystroke.key != "escape"
+                || window.window_handle() != target_window
+                || window.has_active_dialog(app)
+            {
+                return;
+            }
+            let _ = escape_view.update(app, |view, cx| view.request_dismiss(window, cx));
+            app.stop_propagation();
+        });
+        view.update(cx, |view, _| {
+            view._escape_subscription = Some(escape_subscription)
+        });
         cx.new(|cx| gpui_component::Root::new(view, window, cx))
     })?;
+    crate::process_state::process_state(cx)
+        .register_aux_window(handle.into(), menu_label.to_string());
+    crate::boot::refresh_window_menu(cx);
     Ok(handle)
 }

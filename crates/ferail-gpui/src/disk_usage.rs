@@ -215,6 +215,22 @@ impl DiskUsagePathArena {
         Some(row)
     }
 
+    fn parent_for(&self, id: NodeId) -> Option<NodeId> {
+        let row = self.row_index(id)?;
+        self.parents.get(row).copied().flatten()
+    }
+
+    fn nearest_visible_ancestor(&self, id: NodeId, visible: &HashSet<NodeId>) -> Option<NodeId> {
+        let mut current = id;
+        for _ in 0..=self.parents.len() {
+            if visible.contains(&current) {
+                return Some(current);
+            }
+            current = self.parent_for(current)?;
+        }
+        None
+    }
+
     #[cfg(target_os = "windows")]
     fn set_raw_name(&mut self, id: NodeId, raw_name: &[u16]) {
         let Ok(start) = u32::try_from(self.raw_names.len()) else {
@@ -2274,6 +2290,19 @@ impl DiskUsageView {
                     }
                 }
             });
+        // A Top-N file can live deeper than the treemap's drawing depth. In
+        // that case highlight its nearest drawn ancestor instead of leaving
+        // the selection invisible.
+        let visible_nodes: HashSet<NodeId> =
+            self.rects_cache.iter().map(|rect| rect.node_id).collect();
+        let visible_selection: HashSet<NodeId> = self
+            .selected
+            .iter()
+            .filter_map(|id| {
+                self.path_arena
+                    .nearest_visible_ancestor(*id, &visible_nodes)
+            })
+            .collect();
         for (ix, r) in self.rects_cache.iter().enumerate() {
             if r.width < 1.0 || r.height < 1.0 {
                 continue;
@@ -2301,7 +2330,7 @@ impl DiskUsageView {
                 r.width >= 60.0 && r.height >= 24.0
             };
             let show_size = !r.lays_out_children && r.width >= 80.0 && r.height >= 40.0;
-            let selected = self.selected.contains(&node_id);
+            let selected = visible_selection.contains(&node_id);
             let dimmed = (!self.filter_results_only
                 || (self.filter_pending && self.filtered_layout.is_none()))
                 && (self
@@ -2319,12 +2348,11 @@ impl DiskUsageView {
                 .w(px(r.width))
                 .h(px(r.height))
                 .bg(color)
-                // Selected: a fat near-black border reads on every
-                // category color (the old 1px theme-blue vanished on
-                // saturated tiles).
+                // Selected: the app accent survives both light and dark
+                // themes and links Top-N rows to their treemap tile.
                 .map(|this| {
                     if selected {
-                        this.border_2().border_color(rgba(0x000000E0))
+                        this.border_2().border_color(cx.theme().primary)
                     } else {
                         this.border_1().border_color(rgba(0x00000033))
                     }
@@ -2708,13 +2736,23 @@ impl DiskUsageView {
     fn on_du_clear_selection(
         &mut self,
         _: &DuClearSelection,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.selected.is_empty() || self.lead.is_some() {
             self.selected.clear();
             self.lead = None;
             cx.notify();
+            return;
+        }
+
+        match self.host {
+            ToolHostContext::Docked => {
+                if let Some(shell) = self.shell.clone() {
+                    let _ = shell.update(cx, |shell, cx| shell.close_active_tool_result(cx));
+                }
+            }
+            ToolHostContext::Windowed => window.remove_window(),
         }
     }
 
@@ -3493,18 +3531,22 @@ pub fn open_existing_window(
     cx: &mut App,
 ) -> Result<WindowHandle<Root>, anyhow::Error> {
     view.update(cx, |view, cx| view.set_dock_owner(dock_owner, cx));
+    let menu_label = tr!(
+        "Disk Usage \u{2014} {path}",
+        path = crate::private_mode::present_path(&root)
+    );
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(960.0), px(720.0)), cx)),
         titlebar: Some(TitlebarOptions {
-            title: Some(tr!(
-                "Disk Usage \u{2014} {path}",
-                path = ferail_fs_native::paths::display_path(&root)
-            )),
+            title: Some(menu_label.clone()),
             ..Default::default()
         }),
         ..crate::base_window_options()
     };
     let handle = cx.open_window(opts, |window, cx| cx.new(|cx| Root::new(view, window, cx)))?;
+    crate::process_state::process_state(cx)
+        .register_aux_window(handle.into(), menu_label.to_string());
+    crate::boot::refresh_window_menu(cx);
     Ok(handle)
 }
 
@@ -3534,6 +3576,7 @@ fn short_path(p: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod path_arena_tests {
+    use std::collections::HashSet;
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
 
@@ -3609,6 +3652,32 @@ mod path_arena_tests {
             Some(PathBuf::from("/scan-root/nested/report.txt"))
         );
         assert_eq!(arena.parents.len(), 3);
+    }
+
+    #[test]
+    fn deep_selection_resolves_to_the_nearest_drawn_treemap_node() {
+        let base = 1_u64 << 62;
+        let mut arena = DiskUsagePathArena::new(PathBuf::from("/scan-root"), base);
+        let root = arena.root_id();
+        let folder = NodeId::from_raw(base + 2).unwrap();
+        let file = NodeId::from_raw(base + 3).unwrap();
+        arena.apply_facts(&[
+            DiskUsageFact::NodeLinked {
+                container: root,
+                node: folder,
+            },
+            DiskUsageFact::NodeLinked {
+                container: folder,
+                node: file,
+            },
+        ]);
+
+        let visible = HashSet::from([root, folder]);
+        assert_eq!(arena.nearest_visible_ancestor(file, &visible), Some(folder));
+        assert_eq!(
+            arena.nearest_visible_ancestor(folder, &visible),
+            Some(folder)
+        );
     }
 
     #[test]

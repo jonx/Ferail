@@ -96,7 +96,9 @@ selection continue to use the literal member name after safety validation.
 Primary actions use distinct icons with translated tooltips at every width.
 The filter appears only when enough width remains for the archive identity and
 primary actions. Extracting a lasting copy always requires an explicit Extract
-command; row activation only expands or previews.
+command; row activation only expands or previews. Escape exits the workbench
+whether it is docked or in its own window; a modified ZIP first asks whether to
+save, discard, or keep editing.
 
 ## Entry metadata
 

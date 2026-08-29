@@ -58,6 +58,18 @@ actions!(
 /// Zoom step per gesture, matching the viewer's feel.
 const ZOOM_STEP: f32 = 1.25;
 
+fn command_tooltip(label: SharedString, mac: &str, other: &str) -> SharedString {
+    format!(
+        "{label} ({})",
+        if cfg!(target_os = "macos") {
+            mac
+        } else {
+            other
+        }
+    )
+    .into()
+}
+
 /// Formats the editor accepts: decodable AND re-encodable by the bundled
 /// `image` crate. GIF is deliberately out (re-encoding would silently drop
 /// animation); HEIC/AVIF/RAW have no encoder here.
@@ -235,6 +247,21 @@ fn open_impl(
             weak.update(cx, |view, cx| view.platform_should_close(window, cx))
                 .unwrap_or(true)
         });
+        let target_window = window.window_handle();
+        let escape_view = view.downgrade();
+        let escape_subscription = cx.intercept_keystrokes(move |event, window, app| {
+            if event.keystroke.key != "escape"
+                || window.window_handle() != target_window
+                || window.has_active_dialog(app)
+            {
+                return;
+            }
+            let _ = escape_view.update(app, |view, cx| view.request_dismiss(window, cx));
+            app.stop_propagation();
+        });
+        view.update(cx, |view, _| {
+            view._escape_subscription = Some(escape_subscription)
+        });
         cx.new(|cx| Root::new(view, window, cx))
     });
     if let Ok(handle) = handle {
@@ -280,6 +307,7 @@ pub struct ImageEditView {
     shell: Option<WeakEntity<Shell>>,
     origin_tab: Option<crate::shell::TabId>,
     demo_on_load: bool,
+    _escape_subscription: Option<Subscription>,
     _cascade: Option<CascadeGuard>,
 }
 
@@ -338,6 +366,7 @@ impl ImageEditView {
             shell,
             origin_tab,
             demo_on_load,
+            _escape_subscription: None,
             _cascade: cascade,
         }
     }
@@ -841,6 +870,10 @@ impl ImageEditView {
     }
 
     fn on_dismiss(&mut self, _: &ImageEditorDismiss, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_dismiss(window, cx);
+    }
+
+    fn request_dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.dirty() && !self.allow_close {
             self.prompt_unsaved(window, cx);
         } else {
@@ -1054,7 +1087,7 @@ impl ImageEditView {
                 Button::new("image-zoom-out")
                     .icon(gpui_component::Icon::empty().path("icons/minus.svg"))
                     .small()
-                    .tooltip(tr!("Zoom Out"))
+                    .tooltip(command_tooltip(tr!("Zoom Out"), "⌘−", "Ctrl+−"))
                     .disabled(!ready)
                     .on_click(cx.listener(|view, _, _, cx| view.zoom_by(1.0 / ZOOM_STEP, cx))),
             )
@@ -1067,8 +1100,12 @@ impl ImageEditView {
                     .text_center()
                     .cursor_pointer()
                     .tooltip(move |window, cx| {
-                        gpui_component::tooltip::Tooltip::new(tr!("Fit to Window"))
-                            .build(window, cx)
+                        gpui_component::tooltip::Tooltip::new(command_tooltip(
+                            tr!("Fit to Window"),
+                            "⌘0",
+                            "Ctrl+0",
+                        ))
+                        .build(window, cx)
                     })
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.on_zoom_reset(&ImageZoomReset, window, cx)
@@ -1079,7 +1116,7 @@ impl ImageEditView {
                 Button::new("image-zoom-in")
                     .icon(gpui_component::Icon::empty().path("icons/plus.svg"))
                     .small()
-                    .tooltip(tr!("Zoom In"))
+                    .tooltip(command_tooltip(tr!("Zoom In"), "⌘+", "Ctrl++"))
                     .disabled(!ready)
                     .on_click(cx.listener(|view, _, _, cx| view.zoom_by(ZOOM_STEP, cx))),
             )
@@ -1096,7 +1133,7 @@ impl ImageEditView {
                 Button::new("image-undo")
                     .icon(gpui_component::Icon::empty().path("icons/undo.svg"))
                     .small()
-                    .tooltip(tr!("Undo"))
+                    .tooltip(command_tooltip(tr!("Undo"), "⌘Z", "Ctrl+Z"))
                     .disabled(!ready || !has_edits)
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.on_undo(&ImageUndo, window, cx);
@@ -1106,7 +1143,7 @@ impl ImageEditView {
                 Button::new("image-reveal")
                     .icon(gpui_component::Icon::empty().path("icons/locate-fixed.svg"))
                     .small()
-                    .tooltip(tr!("Show in Ferail"))
+                    .tooltip(command_tooltip(tr!("Show in Ferail"), "⌘R", "Ctrl+R"))
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.on_reveal_file(&ImageRevealFile, window, cx)
                     })),
@@ -1117,7 +1154,7 @@ impl ImageEditView {
                     .icon(gpui_component::Icon::empty().path("icons/save.svg"))
                     .primary()
                     .small()
-                    .tooltip(tr!("Save Copy"))
+                    .tooltip(command_tooltip(tr!("Save Copy"), "⌘S", "Ctrl+S"))
                     .disabled(!ready || !has_edits || self.saving)
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.save(false, false, window, cx);
@@ -1127,7 +1164,11 @@ impl ImageEditView {
                 Button::new("image-overwrite")
                     .icon(gpui_component::Icon::empty().path("icons/replace.svg"))
                     .small()
-                    .tooltip(tr!("Overwrite\u{2026}"))
+                    .tooltip(command_tooltip(
+                        tr!("Overwrite\u{2026}"),
+                        "⌘⇧S",
+                        "Ctrl+Shift+S",
+                    ))
                     .disabled(!ready || !has_edits || self.saving)
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.on_overwrite(&ImageOverwrite, window, cx);

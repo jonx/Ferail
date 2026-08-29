@@ -55,6 +55,18 @@ const MIN_ZOOM: f32 = 0.5;
 const MAX_ZOOM: f32 = 4.0;
 const ZOOM_STEP: f32 = 1.15;
 
+fn command_tooltip(label: SharedString, mac: &str, other: &str) -> SharedString {
+    format!(
+        "{label} ({})",
+        if cfg!(target_os = "macos") {
+            mac
+        } else {
+            other
+        }
+    )
+    .into()
+}
+
 /// Refuse files past this size — the widget is comfortable to ~50K lines,
 /// and "fast and simple" stops being either on a huge file. The system
 /// editor entry in the context menu covers the rest.
@@ -151,6 +163,24 @@ pub fn open(
             weak.update(cx, |view, cx| view.platform_should_close(window, cx))
                 .unwrap_or(true)
         });
+        // The rich editor owns a more-specific key context and can consume
+        // Escape before the parent view sees EditorDismiss. Intercept the raw
+        // key for this native window so Escape reaches the guarded close path.
+        let target_window = window.window_handle();
+        let escape_view = view.downgrade();
+        let escape_subscription = cx.intercept_keystrokes(move |event, window, app| {
+            if event.keystroke.key != "escape"
+                || window.window_handle() != target_window
+                || window.has_active_dialog(app)
+            {
+                return;
+            }
+            let _ = escape_view.update(app, |view, cx| view.request_dismiss(window, cx));
+            app.stop_propagation();
+        });
+        view.update(cx, |view, _| {
+            view._escape_subscription = Some(escape_subscription)
+        });
         cx.new(|cx| Root::new(view, window, cx))
     });
     if let Ok(handle) = handle {
@@ -183,6 +213,7 @@ pub struct TextEditorView {
     focus_handle: FocusHandle,
     shell: Option<WeakEntity<Shell>>,
     origin_tab: Option<crate::shell::TabId>,
+    _escape_subscription: Option<Subscription>,
     _cascade: Option<CascadeGuard>,
 }
 
@@ -250,6 +281,7 @@ impl TextEditorView {
             focus_handle: cx.focus_handle(),
             shell,
             origin_tab,
+            _escape_subscription: None,
             _cascade: cascade,
         }
     }
@@ -351,6 +383,10 @@ impl TextEditorView {
     }
 
     fn on_dismiss(&mut self, _: &EditorDismiss, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_dismiss(window, cx);
+    }
+
+    fn request_dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.dirty && !self.allow_close {
             self.prompt_unsaved(window, cx);
         } else {
@@ -405,7 +441,7 @@ impl TextEditorView {
                 Button::new("editor-save")
                     .icon(gpui_component::Icon::empty().path("icons/save.svg"))
                     .small()
-                    .tooltip(tr!("Save"))
+                    .tooltip(command_tooltip(tr!("Save"), "⌘S", "Ctrl+S"))
                     .disabled(!ready || self.saving)
                     .on_click(cx.listener(|view, _, window, cx| view.save(false, window, cx))),
             )
@@ -413,7 +449,7 @@ impl TextEditorView {
                 Button::new("editor-reveal")
                     .icon(gpui_component::Icon::empty().path("icons/locate-fixed.svg"))
                     .small()
-                    .tooltip(tr!("Show in Ferail"))
+                    .tooltip(command_tooltip(tr!("Show in Ferail"), "⌘R", "Ctrl+R"))
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.on_reveal_file(&EditorRevealFile, window, cx)
                     })),
@@ -423,7 +459,7 @@ impl TextEditorView {
                 Button::new("editor-zoom-out")
                     .icon(gpui_component::Icon::empty().path("icons/minus.svg"))
                     .small()
-                    .tooltip(tr!("Smaller Text"))
+                    .tooltip(command_tooltip(tr!("Smaller Text"), "⌘−", "Ctrl+−"))
                     .disabled(!ready)
                     .on_click(cx.listener(|view, _, _, cx| view.zoom_by(1.0 / ZOOM_STEP, cx))),
             )
@@ -436,8 +472,12 @@ impl TextEditorView {
                     .text_center()
                     .cursor_pointer()
                     .tooltip(move |window, cx| {
-                        gpui_component::tooltip::Tooltip::new(tr!("Reset Text Size"))
-                            .build(window, cx)
+                        gpui_component::tooltip::Tooltip::new(command_tooltip(
+                            tr!("Reset Text Size"),
+                            "⌘0",
+                            "Ctrl+0",
+                        ))
+                        .build(window, cx)
                     })
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.zoom = 1.0;
@@ -449,7 +489,7 @@ impl TextEditorView {
                 Button::new("editor-zoom-in")
                     .icon(gpui_component::Icon::empty().path("icons/plus.svg"))
                     .small()
-                    .tooltip(tr!("Bigger Text"))
+                    .tooltip(command_tooltip(tr!("Bigger Text"), "⌘+", "Ctrl++"))
                     .disabled(!ready)
                     .on_click(cx.listener(|view, _, _, cx| view.zoom_by(ZOOM_STEP, cx))),
             )

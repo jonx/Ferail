@@ -44,7 +44,9 @@ see [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) and "Still open" below.
   non-empty.
 - **Top-N panel**: toggleable via `disk_usage.toggle_topn`. Shows the
   50 largest individual files anywhere in the scanned tree, sorted by
-  size descending. Selection-synced with the treemap.
+  size descending. Selection-synced with the treemap; when a listed file lies
+  below the treemap's current drawing depth, its nearest visible ancestor is
+  highlighted so the click never produces an invisible selection.
 - **Filter in place**: the normal toolbar filter keeps Disk Usage open and
   applies the same free-text, extension, kind, size and modified-date
   expression language as a file-list filter. Predicates the compact DU scan
@@ -98,7 +100,8 @@ footer shows the single item's name+size or "N selected · total".
 Clicking a Top-N row selects the matching file in the treemap, and
 vice versa. Keyboard (shipped, `DiskUsage` context, claimed by clicking
 the treemap): `Enter` zooms into the selected folder, `Backspace` zooms
-out, `Escape` clears the selection, and `Cmd+C` / `Cmd+I` /
+out, `Escape` clears the selection (and a second Escape with no selection
+closes the DU surface), and `Cmd+C` / `Cmd+I` /
 `Cmd+Backspace` mirror Copy / Get Info / Move to Trash on the treemap
 selection. (User-remappable command ids for these are a follow-up —
 the `disk_usage.*` ids in keymap.rs are still placeholders.)

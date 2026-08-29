@@ -23,14 +23,14 @@ use crate::shell::ShowWindowsContextMenu;
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseToolResult, CloseWindow, CopyFiles, CopyPath, CursorDown,
     CursorDownExtend, CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp,
-    CursorUpExtend, CutFiles, CycleSidebarSize, DeleteImmediately, EditBreadcrumb, EmptyTrash,
-    EditFile, FindDuplicates, FindSimilarImages, FocusFilter, GetInfo, GoHome, GoToFolder, GridDown,
-    GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp, GridUpExtend,
-    MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
-    NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown,
-    PageDownExtend, PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage, PrevTab, QuickLook, Refresh,
-    RenameSelected, ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleFlatView,
-    ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
+    CursorUpExtend, CutFiles, CycleSidebarSize, DeleteImmediately, EditBreadcrumb, EditFile,
+    EmptyTrash, FindDuplicates, FindSimilarImages, FocusFilter, GetInfo, GoHome, GoToFolder,
+    GridDown, GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp,
+    GridUpExtend, MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
+    NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings,
+    OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage,
+    PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab, RevealInFinder, SelectAll,
+    ShortcutsHelp, ToggleFlatView, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDelete, ViewerDismiss, ViewerLeft, ViewerNext,
@@ -68,7 +68,8 @@ pub fn install(cx: &mut App) {
 
     // Disk Usage treemap keys — DiskUsage context only, so they never
     // shadow the file list. Enter zooms into the selected folder,
-    // Backspace zooms out, Escape clears the selection; Cmd+C / Cmd+I /
+    // Backspace zooms out, Escape clears the selection then closes an
+    // already-clear surface; Cmd+C / Cmd+I /
     // Cmd+Backspace mirror the file-list verbs on the treemap
     // selection.
     let du_ctx = Some(crate::disk_usage::DISK_USAGE_CONTEXT);
@@ -80,6 +81,11 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("secondary-i", crate::disk_usage::DuGetInfo, du_ctx),
         KeyBinding::new("secondary-backspace", crate::disk_usage::DuTrash, du_ctx),
     ]);
+    cx.bind_keys([KeyBinding::new(
+        "escape",
+        crate::archive::ArchiveDismiss,
+        Some(crate::archive::ARCHIVE_CONTEXT),
+    )]);
 
     // Icon-grid 2-D navigation. Bound in the FerailGrid context,
     // which is more specific than SHELL_CONTEXT, so these win over the

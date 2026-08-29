@@ -8,6 +8,27 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Escape now unwinds Ferail's transient UI consistently.** It closes filter
+  suggestions before clearing a query, cancels inline name/path edits, exits
+  archive and other docked result surfaces, hides the preview pane, and closes
+  standalone viewers, Get Info, archive, and built-in editor windows. Unsaved
+  text, image, or archive edits still require an explicit Save / Discard /
+  Cancel decision. Editor command-icon tooltips now show their shortcuts, and
+  secondary windows are listed in the app's Window menu and removed from it as
+  soon as they close.
+
+- **Compact controls no longer hide their meaning.** The filter autocomplete
+  popover can grow independently of the narrow title-bar field, and clicking
+  the field's clear button closes the popover instead of reopening the empty
+  syntax list. Tab close buttons now sit to the left of their labels, keeping
+  the pointer at one fixed position while several tabs are closed in sequence.
+
+- **Disk Usage and Flat View refresh selection details immediately.** Clicking
+  a deeply nested file in Disk Usage's largest-files list highlights its
+  nearest visible treemap ancestor when the exact leaf is below the drawing
+  depth. Flat View now starts the visible metadata/description pass as soon as
+  enumeration completes instead of waiting for the first scroll.
+
 - **Disk Usage filters stay inside Disk Usage.** Typing or pressing Enter in
   the shared filter field now filters the already-scanned treemap instead of
   replacing it with a generic Search result. The full map remains available

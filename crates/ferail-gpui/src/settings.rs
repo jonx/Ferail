@@ -532,12 +532,19 @@ pub fn open_settings_window(cx: &mut App) {
     cx.spawn(async move |cx| {
         // A failed `open_window` (display reconfiguration, resource pressure)
         // must not take the app down — log and leave the existing windows be.
-        if let Err(e) = cx.open_window(opts, |window, cx| {
+        match cx.open_window(opts, |window, cx| {
             crate::boot::install_dev_window_callback_cleanup(window, cx);
             let view = cx.new(|cx| SettingsView::new(SettingsCategory::Appearance, window, cx));
             cx.new(|cx| Root::new(view, window, cx))
         }) {
-            crate::log_warn!(90, "could not open settings window: {e}");
+            Ok(handle) => {
+                cx.update(|cx| {
+                    crate::process_state::process_state(cx)
+                        .register_aux_window(handle.into(), tr!("Settings").to_string());
+                    crate::boot::refresh_window_menu(cx);
+                });
+            }
+            Err(e) => crate::log_warn!(90, "could not open settings window: {e}"),
         }
     })
     .detach();

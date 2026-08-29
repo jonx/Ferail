@@ -82,6 +82,9 @@ The shell owns placement and lifecycle:
 - watcher reloads skip tabs with active tool results;
 - navigation clears the result surface and commits the destination directory;
 - closing the result reloads the tab root as a normal directory;
+- Escape closes the active result after any more-local cancellation layer
+  (autocomplete, inline edit, or selection) has had its turn; editable archive
+  results run the same unsaved-change confirmation as their close button;
 - the status bar and task popover still use the shared `TaskRegistry`.
 
 The tool owns domain state:

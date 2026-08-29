@@ -136,7 +136,10 @@ fn open_impl(
     shell: WeakEntity<Shell>,
     cx: &mut App,
 ) {
-    let title: SharedString = tr!("Get Info \u{2014} {name}", name = name);
+    let title: SharedString = tr!(
+        "Get Info \u{2014} {name}",
+        name = crate::private_mode::present_leaf_str(&name, false)
+    );
     // Claim the next spiral slot; the guard rides along in the view and
     // releases the slot when the window closes.
     let cascade = CascadeGuard::claim();
@@ -148,12 +151,12 @@ fn open_impl(
             cx,
         )),
         titlebar: Some(TitlebarOptions {
-            title: Some(title),
+            title: Some(title.clone()),
             ..Default::default()
         }),
         ..crate::base_window_options()
     };
-    let _ = cx.open_window(opts, move |window, cx| {
+    let handle = cx.open_window(opts, move |window, cx| {
         crate::boot::install_dev_window_callback_cleanup(window, cx);
         let view = cx.new(|cx| {
             EntryInfoView::new(
@@ -169,6 +172,11 @@ fn open_impl(
         });
         cx.new(|cx| Root::new(view, window, cx))
     });
+    if let Ok(handle) = handle {
+        crate::process_state::process_state(cx)
+            .register_aux_window(handle.into(), title.to_string());
+        crate::boot::refresh_window_menu(cx);
+    }
 }
 
 /// Classify a path for the size/volume behavior. Touches the filesystem

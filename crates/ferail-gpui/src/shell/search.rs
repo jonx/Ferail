@@ -647,6 +647,7 @@ impl Shell {
                 let table = self.tabs[idx].table.clone();
                 table.update(cx, |state, cx| {
                     state.delegate_mut().finish_flat();
+                    state.delegate_mut().enable_visible_details(false);
                     if visible {
                         state.refresh(cx);
                     }
@@ -663,6 +664,7 @@ impl Shell {
                 }
                 self.tabs[idx].load_cancel = None;
                 self.refresh_file_list_selection_in_tab(idx, cx);
+                self.warm_loaded_viewport_in_tab(idx, cx);
                 if let (Some(window), Some(error)) = (notify_window, error) {
                     let message =
                         super::enumeration_error_message(&tr!("Include Subfolders"), &error);

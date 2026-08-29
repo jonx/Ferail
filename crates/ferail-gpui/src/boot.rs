@@ -82,6 +82,18 @@ aux_window_slots! {
     ActivateAuxWindow9 => 9,
     ActivateAuxWindow10 => 10,
     ActivateAuxWindow11 => 11,
+    ActivateAuxWindow12 => 12,
+    ActivateAuxWindow13 => 13,
+    ActivateAuxWindow14 => 14,
+    ActivateAuxWindow15 => 15,
+    ActivateAuxWindow16 => 16,
+    ActivateAuxWindow17 => 17,
+    ActivateAuxWindow18 => 18,
+    ActivateAuxWindow19 => 19,
+    ActivateAuxWindow20 => 20,
+    ActivateAuxWindow21 => 21,
+    ActivateAuxWindow22 => 22,
+    ActivateAuxWindow23 => 23,
 }
 
 /// Bring the `index`-th live secondary window to the front.
@@ -408,15 +420,16 @@ pub fn run_gui(args: screenshot::Args) {
         install_aux_window_slot_actions(cx);
         install_app_menus(cx);
 
-        // Windows/Linux: quit the process when the last window closes.
-        // macOS keeps the process resident (Finder/Safari model) and
-        // relies on Cmd+Q or the app menu to exit; this matches the
-        // platform's convention. The subscription leaks intentionally
-        // (lives the whole app run).
-        #[cfg(not(target_os = "macos"))]
+        // Every close refreshes the explicit Window menu, pruning its weak
+        // native handles. Windows/Linux additionally quit when the last
+        // window closes; macOS keeps the process resident (Finder model).
         cx.on_window_closed(|cx, _| {
-            if cx.windows().is_empty() && !dev_quit_cleanup_in_progress() {
-                quit_after_dev_cleanup(cx);
+            refresh_window_menu(cx);
+            #[cfg(not(target_os = "macos"))]
+            {
+                if cx.windows().is_empty() && !dev_quit_cleanup_in_progress() {
+                    quit_after_dev_cleanup(cx);
+                }
             }
         })
         .detach();

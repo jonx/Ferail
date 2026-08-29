@@ -114,6 +114,8 @@ fn open_viewer_inner(
     match (handle, weak_view) {
         (Ok(handle), Some(weak)) => {
             process.register_viewer(handle, weak);
+            process.register_aux_window(handle.into(), tr!("Viewer").to_string());
+            crate::boot::refresh_window_menu(cx);
         }
         (Err(e), _) => crate::log_warn!(90, "viewer: open_window failed: {e:?}"),
         _ => {}

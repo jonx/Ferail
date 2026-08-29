@@ -3677,20 +3677,40 @@ impl Shell {
             .read(cx)
             .focus_handle(cx)
             .is_focused(window);
-        if !crate::inline_edit::should_capture_inline_escape(
+        if crate::inline_edit::should_capture_inline_escape(
             name_focused,
             path_focused,
             filter_focused,
         ) {
-            return false;
+            if filter_focused && self.active_tab().filter_suggestions.is_open() {
+                self.active_tab_mut().filter_suggestions.clear();
+                cx.notify();
+                return true;
+            }
+            self.on_clear_filter(&ClearFilter, window, cx);
+            return true;
         }
-        if filter_focused && self.active_tab().filter_suggestions.is_open() {
-            self.active_tab_mut().filter_suggestions.clear();
+
+        // Escape unwinds transient work surfaces before it touches the file
+        // selection. Archive owns its dirty-state confirmation; the shell
+        // interceptor makes this reliable even while its internal table/input
+        // has the more-specific focus context.
+        let archive = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.archive_mode())
+            .map(|archive| archive.view.clone());
+        if let Some(archive) = archive {
+            archive.update(cx, |archive, cx| archive.request_dismiss(window, cx));
+            return true;
+        }
+        if self.preview_visible {
+            self.preview_visible = false;
             cx.notify();
             return true;
         }
-        self.on_clear_filter(&ClearFilter, window, cx);
-        true
+        false
     }
 
     /// Cmd+Shift+H — navigate the active tab to the home directory.

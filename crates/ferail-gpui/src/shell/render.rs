@@ -2093,7 +2093,7 @@ impl Shell {
     /// Tabstrip above the toolbar. Each tab is a clickable pill
     /// labelled with the directory's basename; the active tab has
     /// a filled background. A trailing "+" opens a new tab; when more
-    /// than one tab is open each carries a trailing close affordance —
+    /// than one tab is open each carries a leading close affordance —
     /// the shared `close.svg` glyph in a rounded hover highlight.
     fn tabstrip(&self, cx: &mut Context<Self>) -> Div {
         use gpui_component::Sizable as _;
@@ -2150,7 +2150,6 @@ impl Shell {
                 chip = chip.hover(|this| this.bg(theme.accent.opacity(0.10)));
             }
             chip = chip
-                .child(div().truncate().max_w(px(160.0)).child(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     // Resolve by TabId, not the render-time `idx` —
                     // same staleness rule as the close button: a
@@ -2225,7 +2224,7 @@ impl Shell {
             if multi {
                 let close = div()
                     .id(("tab-close", idx))
-                    .ml_0p5()
+                    .mr_0p5()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -2247,6 +2246,7 @@ impl Shell {
                             .text_color(theme.muted_foreground),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
                         // Phase A+B+C: tabs own their own TableState,
                         // and closing the last tab closes the window
                         // (process stays resident).
@@ -2286,6 +2286,7 @@ impl Shell {
                     }));
                 chip = chip.child(close);
             }
+            chip = chip.child(div().truncate().max_w(px(160.0)).child(label));
             row = row.child(chip);
         }
         // Phase D: trailing drop gap after the last tab. Stays inside
@@ -2461,76 +2462,6 @@ impl Shell {
         let filter_tab_id = self.active_tab().id;
         let filter_suggestions = self.active_tab().filter_suggestions.clone();
         let weak_filter_escape = cx.weak_entity();
-        let filter_completion_menu = if filter_suggestions.is_open() {
-            let mut menu = v_flex()
-                .w_full()
-                .max_h(px(240.0))
-                .overflow_y_scrollbar()
-                .rounded(cx.theme().radius)
-                .border_1()
-                .border_color(cx.theme().border)
-                .bg(cx.theme().popover)
-                .shadow_md()
-                .p_1();
-            for (index, suggestion) in filter_suggestions.items().iter().take(10).enumerate() {
-                let weak = cx.weak_entity();
-                let selected = index == filter_suggestions.selected_index();
-                let label = suggestion.label.clone();
-                let detail = suggestion.detail.clone();
-                menu = menu.child(
-                    h_flex()
-                        .id(("filter-completion", index))
-                        .w_full()
-                        .min_w_0()
-                        .gap_2()
-                        .px_2()
-                        .py_1()
-                        .rounded(cx.theme().radius)
-                        .text_scale_sm()
-                        .when(selected, |this| this.bg(cx.theme().accent.opacity(0.18)))
-                        .hover(|this| this.bg(cx.theme().accent.opacity(0.12)))
-                        .child(div().flex_1().min_w_0().truncate().child(label))
-                        .when_some(detail, |this, detail| {
-                            this.child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_scale_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(detail),
-                            )
-                        })
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .on_click(move |_, window, cx| {
-                            cx.stop_propagation();
-                            let _ = weak.update(cx, |this, cx| {
-                                this.accept_filter_completion(
-                                    filter_tab_id,
-                                    Some(index),
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }),
-                );
-            }
-            Some(
-                deferred(
-                    div()
-                        .absolute()
-                        .top(px(30.0))
-                        .left_0()
-                        .w_full()
-                        .occlude()
-                        .child(menu),
-                )
-                .with_priority(10)
-                .into_any_element(),
-            )
-        } else {
-            None
-        };
         // Show Desktop is a private-symbol feature: the button only
         // exists when `ferail-shell-mac` resolved the Dock notification
         // on a supported macOS. Cached after first resolve, so this is a
@@ -2634,6 +2565,81 @@ impl Shell {
         const EDGE_MARGIN: f32 = 16.0;
         let deficit = (need + EDGE_MARGIN - avail / ui_scale).max(0.0);
         let filter_w = (FILTER_W - deficit).clamp(FILTER_MIN_W, FILTER_W);
+        // The field itself stays compact, but syntax help needs room for both
+        // the token and its explanation. Size the popover independently and
+        // centre it under the field, bounded by the actual window width.
+        let filter_completion_menu = if filter_suggestions.is_open() {
+            let popup_w = (avail / ui_scale - 32.0).max(filter_w).min(620.0);
+            let popup_left = (filter_w - popup_w) / 2.0;
+            let mut menu = v_flex()
+                .w_full()
+                .max_h(px(240.0))
+                .overflow_y_scrollbar()
+                .rounded(cx.theme().radius)
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().popover)
+                .shadow_md()
+                .p_1();
+            for (index, suggestion) in filter_suggestions.items().iter().take(10).enumerate() {
+                let weak = cx.weak_entity();
+                let selected = index == filter_suggestions.selected_index();
+                let label = suggestion.label.clone();
+                let detail = suggestion.detail.clone();
+                menu = menu.child(
+                    h_flex()
+                        .id(("filter-completion", index))
+                        .w_full()
+                        .min_w_0()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .rounded(cx.theme().radius)
+                        .text_scale_sm()
+                        .when(selected, |this| this.bg(cx.theme().accent.opacity(0.18)))
+                        .hover(|this| this.bg(cx.theme().accent.opacity(0.12)))
+                        .child(div().flex_1().min_w_0().truncate().child(label))
+                        .when_some(detail, |this, detail| {
+                            this.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_scale_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(detail),
+                            )
+                        })
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            let _ = weak.update(cx, |this, cx| {
+                                this.accept_filter_completion(
+                                    filter_tab_id,
+                                    Some(index),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }),
+                );
+            }
+            Some(
+                deferred(
+                    div()
+                        .absolute()
+                        .top(px(30.0))
+                        .left(px(popup_left))
+                        .w(px(popup_w))
+                        .occlude()
+                        .child(menu),
+                )
+                .with_priority(10)
+                .into_any_element(),
+            )
+        } else {
+            None
+        };
         let show_size_slider = is_grid && !hide_size_bar;
         let show_size_steps = is_grid && !hide_size_steps;
         // SHELL_CONTEXT-bearing handle for the toolbar dropdowns, so
@@ -2850,6 +2856,7 @@ impl Shell {
                                 )
                                 .when(filter_has_value, |this| {
                                     let filter_input = filter_input.clone();
+                                    let weak = cx.weak_entity();
                                     this.child(
                                         div()
                                             .absolute()
@@ -2870,8 +2877,19 @@ impl Shell {
                                                             .path("icons/close.svg"),
                                                     )
                                                     .on_click(move |_, window, cx| {
+                                                        cx.stop_propagation();
                                                         filter_input.update(cx, |state, cx| {
                                                             state.clean(window, cx);
+                                                        });
+                                                        let _ = weak.update(cx, |this, cx| {
+                                                            if let Some(tab) = this
+                                                                .tabs
+                                                                .iter_mut()
+                                                                .find(|tab| tab.id == filter_tab_id)
+                                                            {
+                                                                tab.filter_suggestions.clear();
+                                                                cx.notify();
+                                                            }
                                                         });
                                                     }),
                                         ),

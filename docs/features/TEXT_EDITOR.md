@@ -22,7 +22,9 @@ around it.
   `on_window_should_close` and honours the same guard. The prompt offers
   **Save / Don't Save / Cancel**. The location button returns to the exact
   Ferail tab that opened the editor and reselects the source file; if that tab
-  is gone, it falls back to an ordinary reveal in Ferail.
+  is gone, it falls back to an ordinary reveal in Ferail. Command-icon
+  tooltips include their Cmd/Ctrl shortcuts, and every editor window appears
+  in the app's Window menu.
 - **Language pick is extension-only** (no content sniffing on the UI
   thread); unknown extensions fall back to plain text inside the widget.
   `syntax_extra`'s vendored highlight queries apply here exactly as in the
