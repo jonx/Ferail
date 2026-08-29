@@ -1,6 +1,5 @@
 //! Settings — Phase 3 of the next-level plan adopts gpui-component's
-//! setting primitive (now vendored as [`crate::setting_panel::Settings`]
-//! to fix a resize flicker; see that module's header). The library ships
+//! setting primitive. The library ships
 //! a hierarchical Settings (pages → groups → items → fields) with
 //! a sidebar, **built-in search**, optional reset, and the same field
 //! types we used to hand-roll (switch / dropdown / number-input /
@@ -21,11 +20,11 @@ use crate::text::TextScale as _;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{Axis, *};
 use gpui_component::{
-    ActiveTheme, Icon, Root, Theme, ThemeMode,
+    ActiveTheme, AxisExt as _, Icon, Root, Theme, ThemeMode,
     color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
 };
 
-use crate::setting_panel::{
+use gpui_component::setting::{
     SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
 };
 
@@ -36,7 +35,6 @@ use crate::app_state::{self, AppState};
 
 const SETTINGS_SWITCH_LANE: f32 = 36.0;
 const SETTINGS_DROPDOWN_LANE: f32 = 260.0;
-const SETTINGS_SHORTCUT_LANE: f32 = 180.0;
 const SETTINGS_CONTROL_GAP: f32 = 12.0;
 const SETTINGS_TOP_ROW_HEIGHT: f32 = 28.0;
 
@@ -495,6 +493,11 @@ impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&tr!("Settings"));
         let content = Settings::new("ferail-settings")
+            // Long translated section names need more than the component's
+            // compact default. The current component also supplies a real
+            // splitter, so this is a starting width rather than a hard wall.
+            .sidebar_width(px(300.0))
+            .sidebar_size_range(px(240.0)..px(420.0))
             .pages(build_pages(
                 self.home_hidden_count,
                 &self.selection_picker,
@@ -643,7 +646,7 @@ fn dropdown_setting_dyn(
     let keyword_title = title.clone();
     let keyword_description = description.clone();
     let on_pick = std::rc::Rc::new(on_pick);
-    SettingItem::render(move |_options, _window, cx| {
+    SettingItem::render(move |render_options, _window, cx| {
         use gpui_component::{
             ActiveTheme as _, Sizable as _,
             button::Button,
@@ -662,82 +665,73 @@ fn dropdown_setting_dyn(
         let title = title.clone();
         let description = description.clone();
 
-        gpui_component::v_flex()
-            .w_full()
-            .min_w_0()
-            .overflow_hidden()
-            .gap_1()
-            .child(
-                div()
-                    .relative()
-                    .w_full()
-                    .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .pr(px(SETTINGS_DROPDOWN_LANE + SETTINGS_CONTROL_GAP))
-                            .text_scale_sm()
-                            .text_color(fg)
-                            .child(title.clone()),
+        let control = Button::new(SharedString::from(format!("dd-{title}")))
+            .label(current_label)
+            .dropdown_caret(true)
+            .outline()
+            .small()
+            .max_w(px(SETTINGS_DROPDOWN_LANE))
+            .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _window, _cx| {
+                options.iter().fold(menu, |menu, opt| {
+                    let checked = opt.value == current;
+                    let value = opt.value.clone();
+                    let on_pick = on_pick.clone();
+                    menu.item(
+                        PopupMenuItem::new(opt.label.clone())
+                            .checked(checked)
+                            .disabled(opt.disabled)
+                            .on_click(move |_, _window: &mut Window, cx: &mut App| {
+                                on_pick(&value, cx);
+                            }),
                     )
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .right_0()
-                            .w(px(SETTINGS_DROPDOWN_LANE))
-                            .h(px(SETTINGS_TOP_ROW_HEIGHT))
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .child(
-                                Button::new(SharedString::from(format!("dd-{title}")))
-                                    .label(current_label)
-                                    .dropdown_caret(true)
-                                    .outline()
-                                    .small()
-                                    .max_w(px(SETTINGS_DROPDOWN_LANE))
-                                    .dropdown_menu_with_anchor(
-                                        gpui::Anchor::TopRight,
-                                        move |menu, _window, _cx| {
-                                            options.iter().fold(menu, |menu, opt| {
-                                                let checked = opt.value == current;
-                                                let value = opt.value.clone();
-                                                let on_pick = on_pick.clone();
-                                                // A disabled item is greyed and its
-                                                // click handler is dropped by the menu
-                                                // (see PopupMenuItem render), so it
-                                                // can't be selected.
-                                                menu.item(
-                                                    PopupMenuItem::new(opt.label.clone())
-                                                        .checked(checked)
-                                                        .disabled(opt.disabled)
-                                                        .on_click(move |_, _window: &mut Window, cx: &mut App| {
-                                                            // `on_pick` persists and repaints
-                                                            // (and, for a live setting, also
-                                                            // recomputes its global). The
-                                                            // refresh inside must hit every
-                                                            // window — this fires in the popup,
-                                                            // so a window-local refresh would
-                                                            // repaint the popup, not the page
-                                                            // behind it.
-                                                            on_pick(&value, cx);
-                                                        }),
-                                                )
-                                            })
-                                        },
-                                    ),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .text_scale_sm()
-                    .text_color(muted)
-                    .child(description),
-            )
+                })
+            });
+
+        if render_options.layout().is_vertical() {
+            gpui_component::v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_2()
+                .child(div().text_scale_sm().text_color(fg).child(title))
+                .child(
+                    div()
+                        .w_full()
+                        .text_scale_sm()
+                        .text_color(muted)
+                        .child(description),
+                )
+                .child(div().w_full().flex().justify_start().child(control))
+                .into_any_element()
+        } else {
+            gpui_component::v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_1()
+                .child(
+                    gpui_component::h_flex()
+                        .w_full()
+                        .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
+                        .items_center()
+                        .gap(px(SETTINGS_CONTROL_GAP))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_scale_sm()
+                                .text_color(fg)
+                                .child(title),
+                        )
+                        .child(div().flex_shrink_0().child(control)),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .text_scale_sm()
+                        .text_color(muted)
+                        .child(description),
+                )
+                .into_any_element()
+        }
     })
     .keywords([keyword_title, keyword_description])
 }
@@ -761,7 +755,7 @@ fn switch_setting(
     // setter (moved into the switch's `on_click`) must be shareable: `Rc` it
     // and hand each render a clone.
     let set_value = std::rc::Rc::new(set_value);
-    SettingItem::render(move |_options, _window, cx| {
+    SettingItem::render(move |render_options, _window, cx| {
         use gpui_component::{ActiveTheme as _, Sizable as _, switch::Switch};
 
         let muted = cx.theme().muted_foreground;
@@ -771,50 +765,39 @@ fn switch_setting(
         let title = title.clone();
         let description = description.clone();
 
+        let control = Switch::new(SharedString::from(format!("sw-{title}")))
+            .checked(checked)
+            .small()
+            .on_click(move |checked: &bool, _window: &mut Window, cx: &mut App| {
+                set_value(*checked, cx);
+                cx.refresh_windows();
+            });
+
         gpui_component::v_flex()
             .w_full()
             .min_w_0()
-            .overflow_hidden()
             .gap_1()
+            .when(render_options.layout().is_vertical(), |this| this.gap_2())
             .child(
-                div()
-                    .relative()
+                gpui_component::h_flex()
                     .w_full()
                     .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
+                    .items_center()
+                    .gap(px(SETTINGS_CONTROL_GAP))
                     .child(
                         div()
-                            .w_full()
+                            .flex_1()
                             .min_w_0()
-                            .pr(px(SETTINGS_SWITCH_LANE + SETTINGS_CONTROL_GAP))
                             .text_scale_sm()
                             .text_color(fg)
-                            .child(title.clone()),
+                            .child(title),
                     )
                     .child(
                         div()
-                            .absolute()
-                            .top_0()
-                            .right_0()
                             .w(px(SETTINGS_SWITCH_LANE))
-                            .h(px(SETTINGS_TOP_ROW_HEIGHT))
                             .flex()
-                            .items_center()
                             .justify_end()
-                            .child(
-                                Switch::new(SharedString::from(format!("sw-{title}")))
-                                    .checked(checked)
-                                    .small()
-                                    .on_click(move |checked: &bool, _window: &mut Window, cx: &mut App| {
-                                        set_value(*checked, cx);
-                                        // The Switch is controlled by `checked`, re-read
-                                        // from app state on the next render — so we must
-                                        // request one or the toggle never visibly moves.
-                                        // refresh_windows() is the same call the theme
-                                        // tiles use; it repaints every window. (macOS
-                                        // repaints eagerly per event; Windows does not.)
-                                        cx.refresh_windows();
-                                    }),
-                            ),
+                            .child(control),
                     ),
             )
             .child(
@@ -1072,15 +1055,37 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                 };
                 let caption = if crate::redact::enabled() {
                     tr!(
-                        "Names are redacted \u{2014} this is exactly what a shared report contains."
+                        "Privacy protection is on: paths and file names are replaced before this activity is attached to a report."
                     )
                 } else {
-                    tr!("Redaction is off \u{2014} a shared report would include these real paths.")
+                    tr!("Privacy protection is off: a shared report would include the paths shown here.")
                 };
                 gpui_component::v_flex()
                     .w_full()
-                    .gap_1()
-                    .child(div().w_full().text_scale_xs().text_color(muted).child(body))
+                    .gap_2()
+                    .child(
+                        div()
+                            .w_full()
+                            .text_scale_sm()
+                            .text_color(muted)
+                            .child(tr!(
+                                "Preview of the latest actions included with a diagnostic report."
+                            )),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .min_h(px(72.0))
+                            .p_3()
+                            .rounded(cx.theme().radius)
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().muted.opacity(0.22))
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_scale_xs()
+                            .text_color(cx.theme().foreground)
+                            .child(body),
+                    )
                     .child(
                         div()
                             .w_full()
@@ -2124,45 +2129,33 @@ fn shortcuts_page() -> SettingPage {
             gpui_component::v_flex()
                 .w_full()
                 .min_w_0()
-                .overflow_hidden()
                 .gap_1()
                 .child(
-                    div()
-                        .relative()
+                    gpui_component::h_flex()
                         .w_full()
-                        .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
+                        .min_w_0()
+                        .items_center()
+                        .flex_wrap()
+                        .gap_2()
                         .child(
                             div()
-                                .w_full()
+                                .flex_1()
                                 .min_w_0()
-                                .pr(px(SETTINGS_SHORTCUT_LANE + SETTINGS_CONTROL_GAP))
                                 .text_scale_sm()
                                 .text_color(theme.foreground)
                                 .child(title_for_render.clone()),
                         )
                         .child(
                             div()
-                                .absolute()
-                                .top_0()
-                                .right_0()
-                                .w(px(SETTINGS_SHORTCUT_LANE))
-                                .h(px(SETTINGS_TOP_ROW_HEIGHT))
-                                .flex()
-                                .items_center()
-                                .justify_end()
-                                .child(
-                                    div()
-                                        .max_w(px(SETTINGS_SHORTCUT_LANE))
-                                        .px_2()
-                                        .py_0p5()
-                                        .rounded(theme.radius)
-                                        .bg(theme.muted.opacity(0.6))
-                                        .border_1()
-                                        .border_color(theme.border)
-                                        .text_scale_xs()
-                                        .text_color(theme.muted_foreground)
-                                        .child(SharedString::from(chord_for_render.clone())),
-                                ),
+                                .px_2()
+                                .py_0p5()
+                                .rounded(theme.radius)
+                                .bg(theme.muted.opacity(0.6))
+                                .border_1()
+                                .border_color(theme.border)
+                                .text_scale_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(SharedString::from(chord_for_render.clone())),
                         ),
                 )
                 .child(
@@ -2264,15 +2257,15 @@ fn about_page() -> SettingPage {
                             .mt_2()
                             .text_scale_sm()
                             .text_color(theme.foreground)
-                            .child(tr!(
-                                "The macOS port of Ferail — a Finder-class file explorer."
-                            )),
+                            .child(tr!("Fast, focused file operations at any scale.")),
                     )
                     .child(
                         div()
                             .text_scale_xs()
                             .text_color(theme.muted_foreground)
-                            .child(tr!("Built for speed, predictability, and a calm UI.")),
+                            .child(tr!(
+                                "Predictable, private, and built for real-world directories."
+                            )),
                     )
                     .into_any_element()
             })),

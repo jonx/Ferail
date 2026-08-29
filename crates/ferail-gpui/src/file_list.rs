@@ -21,12 +21,13 @@ use ferail_core::{EntryKind, FileEntry, FormatFlag, NodeId};
 use ferail_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, Pixels, Point, Render, RenderImage, SharedString, Stateful,
+    App, AppContext as _, Context, Div, Entity, ExternalPaths, FontWeight, InteractiveElement,
+    IntoElement, ParentElement, Pixels, Point, Render, RenderImage, SharedString, Stateful,
     StatefulInteractiveElement as _, Styled, WeakEntity, Window, div, img, px, svg,
 };
 use gpui_component::{
     ActiveTheme,
+    input::InputState,
     menu::{PopupMenu, PopupMenuItem},
     tooltip::Tooltip,
 };
@@ -574,6 +575,10 @@ pub struct FileListDelegate {
     /// tab. At most one. Cosmetic only — the Table primitive's
     /// `selected_row` overlay is the visible focus ring.
     pub lead: Option<NodeId>,
+    /// One persistent filename editor shared by the Shell's tabs.  The
+    /// virtualized table mounts it only for the matching `(tab, NodeId)`;
+    /// every other row stays allocation-free and renders its normal label.
+    pub inline_name_edit: Option<InlineNameEditBinding>,
     /// Warm cache for the right-click "Open With" submenu: the most
     /// recently fetched `(path, LaunchServices candidates)` pair.
     /// Populated off the UI thread by [`spawn_open_with_warm`] —
@@ -648,6 +653,24 @@ pub struct FileListDelegate {
     /// `replace_entries()` like `slow_load`, so a new load can't paint
     /// the previous one's figure.
     pub filtered_out: usize,
+}
+
+/// Render-only bridge from a tab delegate to the Shell-owned generic inline
+/// edit lifecycle.  It contains no paths and performs no filesystem work.
+#[derive(Clone)]
+pub struct InlineNameEditBinding {
+    pub tab_id: u64,
+    pub model: crate::inline_edit::InlineEditModel<crate::inline_edit::FileNameEditTarget>,
+    pub input: Entity<InputState>,
+}
+
+/// Process-shared filename editor resources passed into a new tab. `build_tab`
+/// binds them to the freshly minted tab id without growing its constructor by
+/// one argument per reusable editor primitive.
+#[derive(Clone)]
+pub struct InlineNameEditResources {
+    pub model: crate::inline_edit::InlineEditModel<crate::inline_edit::FileNameEditTarget>,
+    pub input: Entity<InputState>,
 }
 
 /// Drag payload for entries inside an archive.
@@ -1186,6 +1209,7 @@ impl FileListDelegate {
             selection_all: false,
             all_menu_caps: MenuCapCounts::default(),
             lead: None,
+            inline_name_edit: None,
             open_with_warm: None,
             menu_revision: 0,
             current_sort,
@@ -2905,24 +2929,55 @@ impl TableDelegate for FileListDelegate {
                     matches!(entry.kind, ferail_core::EntryKind::Directory),
                 )
                 .into();
+                let inline_session = self.inline_name_edit.as_ref().and_then(|binding| {
+                    let target = crate::inline_edit::FileNameEditTarget {
+                        tab_id: binding.tab_id,
+                        node_id: entry.id,
+                    };
+                    binding
+                        .model
+                        .snapshot()
+                        .filter(|session| session.target == target)
+                        .map(|session| (binding.input.clone(), session))
+                });
+                let is_editing = inline_session.is_some();
+                let is_selected = if self.selection_all {
+                    !self.selected_set.contains(&entry.id)
+                } else {
+                    self.selected_set.contains(&entry.id)
+                };
                 let tooltip_name = display_name.clone();
                 let column_width = self
                     .columns
                     .get(col_ix)
                     .map(|column| f32::from(column.width))
                     .unwrap_or(240.0);
-                // Approximate the small-label glyph advance. The table still
-                // applies pixel-exact middle truncation as a final fallback.
-                let name_budget = ((column_width - 52.0) / 7.0).floor().max(12.0) as usize;
+                // Hazard names are several independent text runs, so GPUI
+                // cannot apply its ordinary pixel-exact ellipsis across the
+                // whole label. Use a deliberately conservative advance here
+                // (including badge padding) so the semantic elider always
+                // wins before the cell's hard edge can clip a suffix.
+                let name_budget = ((column_width - 52.0) / 9.0).floor().max(10.0) as usize;
                 let elided_name = elide_label(display_name.as_ref(), name_budget);
-                let name_child = if entry.name_has_hazards && !crate::private_mode::enabled() {
+                let name_child: gpui::AnyElement = if let Some((input, session)) = inline_session {
+                    crate::inline_edit::InlineEditor::new(
+                        ("inline-file-name", entry.id.as_raw()),
+                        crate::inline_edit::InlineEditInput::Text(input),
+                        crate::inline_edit::InlineEditLayout::Row,
+                        &session,
+                        tr!("File name"),
+                    )
+                    .into_any_element()
+                } else if entry.name_has_hazards && !crate::private_mode::enabled() {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .child(crate::entry_info::name_hazard_element(
+                        .child(crate::entry_info::name_hazard_element_elided(
                             &display_name,
                             SharedString::from(format!("file-row-name-{row_ix}")),
+                            name_budget,
                         ))
+                        .into_any_element()
                 } else {
                     div()
                         .flex_1()
@@ -2931,6 +2986,7 @@ impl TableDelegate for FileListDelegate {
                         // AND its extension when the column is too narrow.
                         .truncate_middle()
                         .child(elided_name)
+                        .into_any_element()
                 };
                 // Inline tag chips — 6-DIP coloured dots after the
                 // filename, one per applied Finder tag (max 7). Read
@@ -2938,7 +2994,7 @@ impl TableDelegate for FileListDelegate {
                 // delegate; render only consumes the cached Vec.
                 let row_tags = self.tags.get(row_ix).cloned().unwrap_or_default();
                 let mut chips = gpui_component::h_flex().gap_1().flex_shrink_0();
-                if crate::platform_shell::SUPPORTS_TAGS {
+                if !is_editing && crate::platform_shell::SUPPORTS_TAGS {
                     for color in row_tags.iter().take(7) {
                         chips = chips.child(
                             div()
@@ -2956,15 +3012,16 @@ impl TableDelegate for FileListDelegate {
                 // load + every favorites mutation.
                 let is_favorited = self.is_favorited.get(row_ix).copied().unwrap_or(false);
                 let star_color = cx.theme().primary;
-                let star = if is_favorited && matches!(entry.kind, EntryKind::Directory) {
-                    svg()
-                        .path("icons/nav/star.svg")
-                        .icon_px(12.0)
-                        .text_color(star_color)
-                        .into_any_element()
-                } else {
-                    div().w(px(0.0)).h(px(12.0)).into_any_element()
-                };
+                let star =
+                    if !is_editing && is_favorited && matches!(entry.kind, EntryKind::Directory) {
+                        svg()
+                            .path("icons/nav/star.svg")
+                            .icon_px(12.0)
+                            .text_color(star_color)
+                            .into_any_element()
+                    } else {
+                        div().w(px(0.0)).h(px(12.0)).into_any_element()
+                    };
                 // Archive rows only: depth indent + a disclosure caret for
                 // folders. Ordinary listings have no `archive_rows`, so this
                 // is `None` and the cell is byte-for-byte what it was.
@@ -2981,7 +3038,29 @@ impl TableDelegate for FileListDelegate {
                     .child(name_child)
                     .child(chips)
                     .child(star)
-                    .tooltip(move |window, cx| Tooltip::new(tooltip_name.clone()).build(window, cx))
+                    .on_click(
+                        cx.listener(move |_table, event: &gpui::ClickEvent, _window, cx| {
+                            let modifiers = event.modifiers();
+                            let modified = modifiers.platform
+                                || modifiers.control
+                                || modifiers.alt
+                                || modifiers.shift;
+                            if crate::inline_edit::should_begin_click_rename(
+                                is_selected,
+                                is_editing,
+                                event.click_count(),
+                                modified,
+                            ) {
+                                cx.stop_propagation();
+                                cx.emit(TableEvent::RenameRequested(row_ix));
+                            }
+                        }),
+                    )
+                    .when(!is_editing, |this| {
+                        this.tooltip(move |window, cx| {
+                            Tooltip::new(tooltip_name.clone()).build(window, cx)
+                        })
+                    })
                     .into_any_element()
             }
             "size" => div()

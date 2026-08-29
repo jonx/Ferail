@@ -455,6 +455,7 @@ impl Shell {
         let selection_all = tab.selection_all;
         let lead = tab.lead;
         let table = tab.table.clone();
+        let visible = idx == self.active;
         let lead_row = table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             delegate.selected_set = selection;
@@ -462,9 +463,14 @@ impl Shell {
             delegate.invalidate_selection_snapshot();
             delegate.lead = lead;
             let lead_row = lead.and_then(|id| delegate.entries.iter().position(|e| e.id == id));
-            state.refresh(cx);
+            if visible {
+                state.refresh(cx);
+            }
             lead_row
         });
+        if !visible {
+            return;
+        }
         match lead_row {
             Some(row) => {
                 let needs_set = table.read(cx).selected_row() != Some(row);
@@ -922,6 +928,197 @@ impl Shell {
         self.move_grid_selection(c, true, cx);
     }
 
+    // -- List/grid marquee (rubber-band) selection -----------------
+    //
+    // Both presentations share the tab-owned selection session. The list
+    // maps only the rectangle's vertical span to virtual rows; the grid maps
+    // both axes to cells. Neither path scans the complete row model.
+
+    pub(super) fn on_list_marquee_down(
+        &mut self,
+        ev: &gpui::MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let starts_on_background = {
+            let table = self.active_tab().table.read(cx);
+            table.body_contains(ev.position) && table.row_at_position(ev.position, cx).is_none()
+        };
+        if !starts_on_background {
+            return;
+        }
+        let additive = ev.modifiers.shift || ev.modifiers.secondary();
+        let base = if additive {
+            self.active_tab().selection.clone()
+        } else {
+            HashSet::new()
+        };
+        self.active_tab_mut().marquee = Some(super::tab::Marquee {
+            surface: super::tab::MarqueeSurface::List,
+            start: ev.position,
+            current: ev.position,
+            additive,
+            base,
+            hits: HashSet::new(),
+            lead_row: None,
+            applied: false,
+            moved: false,
+        });
+    }
+
+    pub(super) fn on_list_marquee_move(
+        &mut self,
+        ev: &gpui::MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((start, was_moved)) = self
+            .active_tab()
+            .marquee
+            .as_ref()
+            .filter(|m| m.surface == super::tab::MarqueeSurface::List)
+            .map(|m| (m.start, m.moved))
+        else {
+            return;
+        };
+        let dx = f32::from(ev.position.x) - f32::from(start.x);
+        let dy = f32::from(ev.position.y) - f32::from(start.y);
+        let past = dx.abs() > MARQUEE_THRESHOLD || dy.abs() > MARQUEE_THRESHOLD;
+        if let Some(marquee) = self.active_tab_mut().marquee.as_mut() {
+            marquee.current = ev.position;
+            marquee.moved |= past;
+        }
+        if was_moved || past {
+            self.apply_list_marquee_selection(cx);
+            cx.notify();
+        }
+    }
+
+    pub(super) fn on_list_marquee_up(
+        &mut self,
+        _ev: &gpui::MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let is_list = self
+            .active_tab()
+            .marquee
+            .as_ref()
+            .is_some_and(|m| m.surface == super::tab::MarqueeSurface::List);
+        if !is_list {
+            return;
+        }
+        let Some(marquee) = self.active_tab_mut().marquee.take() else {
+            return;
+        };
+        if !marquee.moved && !marquee.additive {
+            self.clear_active_selection(cx);
+        } else {
+            self.mirror_marquee_selection(marquee.lead_row, true, cx);
+        }
+    }
+
+    fn apply_list_marquee_selection(&mut self, cx: &mut Context<Self>) {
+        if self.active_tab().selection_all
+            && self
+                .active_tab()
+                .marquee
+                .as_ref()
+                .is_some_and(|m| m.additive)
+        {
+            return;
+        }
+        let (start_y, current_y) = {
+            let Some(m) = self.active_tab().marquee.as_ref() else {
+                return;
+            };
+            (m.start.y, m.current.y)
+        };
+        let (hits, last_hit, lead_row) = {
+            let table = self.active_tab().table.read(cx);
+            let rows = table.rows_intersecting_y(start_y, current_y, cx);
+            let mut hits = HashSet::with_capacity(rows.len());
+            for row in rows.clone() {
+                let Some(entry) = table.delegate().entries.get(row) else {
+                    break;
+                };
+                hits.insert(entry.id);
+            }
+            // The keyboard lead follows the pointer edge, not iteration
+            // order: an upward sweep leaves the topmost hit focused.
+            let lead_row = if rows.is_empty() {
+                None
+            } else if current_y < start_y {
+                Some(rows.start)
+            } else {
+                Some(rows.end - 1)
+            };
+            let last_hit = lead_row
+                .and_then(|row| table.delegate().entries.get(row))
+                .map(|entry| entry.id);
+            (hits, last_hit, lead_row)
+        };
+        let tab = self.active_tab_mut();
+        tab.selection_all = false;
+        let marquee = tab.marquee.as_mut().expect("list marquee exists above");
+        if !marquee.applied {
+            tab.selection.clone_from(&marquee.base);
+            marquee.applied = true;
+        }
+        for old in marquee.hits.drain() {
+            if !marquee.base.contains(&old) {
+                tab.selection.remove(&old);
+            }
+        }
+        tab.selection.extend(hits.iter().copied());
+        marquee.hits = hits;
+        marquee.lead_row = lead_row;
+        tab.range_live = false;
+        if let Some(last) = last_hit {
+            tab.lead = Some(last);
+            tab.anchor = Some(last);
+        } else if tab.lead.is_some_and(|lead| !tab.selection.contains(&lead)) {
+            let fallback = tab.selection.iter().next().copied();
+            tab.lead = fallback;
+            tab.anchor = fallback;
+        }
+        self.mirror_marquee_selection(lead_row, false, cx);
+    }
+
+    /// Mirror a marquee into the table delegate without the ordinary
+    /// `entries.position(lead)` pass. That pass is fine for a click, but it is
+    /// the wrong complexity inside a mouse-move loop over millions of rows.
+    fn mirror_marquee_selection(
+        &mut self,
+        lead_row: Option<usize>,
+        finalize: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let tab = self.active_tab();
+        let selection = tab.selection.clone();
+        let selection_all = tab.selection_all;
+        let lead = tab.lead;
+        let table = tab.table.clone();
+        table.update(cx, |state, cx| {
+            let delegate = state.delegate_mut();
+            delegate.selected_set = selection;
+            delegate.selection_all = selection_all;
+            delegate.lead = lead;
+            delegate.invalidate_selection_snapshot();
+            if finalize {
+                match lead_row {
+                    Some(row) if state.selected_row() != Some(row) => {
+                        state.mirror_lead_row(row, cx);
+                    }
+                    None => state.clear_selected_row(cx),
+                    _ => cx.notify(),
+                }
+            } else {
+                cx.notify();
+            }
+        });
+    }
+
     // -- Grid marquee / rubber-band selection ----------------------
     //
     // A press on the grid's empty background (not a cell) begins a
@@ -981,11 +1178,13 @@ impl Shell {
             HashSet::new()
         };
         self.active_tab_mut().marquee = Some(super::tab::Marquee {
+            surface: super::tab::MarqueeSurface::Grid,
             start: ev.position,
             current: ev.position,
             additive,
             base,
             hits: HashSet::new(),
+            lead_row: None,
             applied: false,
             moved: false,
         });
@@ -1004,6 +1203,7 @@ impl Shell {
             .active_tab()
             .marquee
             .as_ref()
+            .filter(|m| m.surface == super::tab::MarqueeSurface::Grid)
             .map(|m| (m.start, m.moved))
         else {
             return;
@@ -1032,6 +1232,14 @@ impl Shell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let is_grid = self
+            .active_tab()
+            .marquee
+            .as_ref()
+            .is_some_and(|m| m.surface == super::tab::MarqueeSurface::Grid);
+        if !is_grid {
+            return;
+        }
         let Some(m) = self.active_tab_mut().marquee.take() else {
             return;
         };
@@ -1039,9 +1247,9 @@ impl Shell {
             self.clear_active_selection(cx);
         } else {
             // The grid reads the tab's authoritative selection during the
-            // gesture. Mirror it to the list delegate once at gesture end.
-            self.refresh_file_list_selection(cx);
-            cx.notify();
+            // gesture. Mirror it once at gesture end without searching the
+            // complete model for the already-known lead row.
+            self.mirror_marquee_selection(m.lead_row, true, cx);
         }
     }
 
@@ -1085,6 +1293,7 @@ impl Shell {
         let entries = &table.delegate().entries;
         let mut hits = HashSet::new();
         let mut last_hit: Option<NodeId> = None;
+        let mut last_row: Option<usize> = None;
         if let Some((col_start, col_end, row_start, row_end)) =
             marquee_grid_bounds((x0, x1, y0, y1), (cell_w, cell_h), cols, entries.len())
         {
@@ -1097,8 +1306,14 @@ impl Shell {
                         break;
                     };
                     hits.insert(entry.id);
-                    last_hit = Some(entry.id);
                 }
+            }
+            let lead_col = if bx < ax { col_start } else { col_end - 1 };
+            let lead_grid_row = if by < ay { row_start } else { row_end - 1 };
+            let index = lead_grid_row * cols + lead_col;
+            if let Some(entry) = entries.get(index) {
+                last_hit = Some(entry.id);
+                last_row = Some(index);
             }
         }
         let tab = self.active_tab_mut();
@@ -1115,6 +1330,7 @@ impl Shell {
         }
         tab.selection.extend(hits.iter().copied());
         marquee.hits = hits;
+        marquee.lead_row = last_row;
         tab.range_live = false;
         if let Some(l) = last_hit {
             tab.lead = Some(l);

@@ -110,18 +110,13 @@ Write-Step "Ferail $Version (x86_64-pc-windows-msvc)"
 # ---------------------------------------------------------------------------
 # 1. Build
 # ---------------------------------------------------------------------------
-if (-not $SkipBuild) {
-    # --no-default-features strips ferail-gpui's dev-only screenshot-harness
-    # feature, and with it gpui's leak-detection exit assertion — users must
-    # never see a clean quit turn into exit 101 over a diagnostic assert.
-    # --screenshot keeps working in the packaged exe via PrintWindow.
-    # -p is load-bearing: from the virtual workspace root, cargo silently
-    # ignores --no-default-features unless the package is selected explicitly.
-    $cargoArgs = @('build', '--release', '-p', 'ferail-gpui', '-p', 'ferail-ntfs-win32',
-        '--bin', 'ferail-gpui', '--bin', 'ferail', '--bin', 'ferail-ntfs-helper',
-        '--no-default-features')
-    if ($Features) { $cargoArgs += @('--features', $Features) }
-    Write-Step "cargo $($cargoArgs -join ' ') (static MSVC runtime)"
+
+# One release cargo invocation with the shipping environment applied. Factored
+# into a function because the Fast NTFS helper attestation (step 4b) has to
+# build the GUI a second time, after the helper's final bytes are known, and
+# the two builds must be configured identically.
+function Invoke-CargoRelease {
+    param([string[]]$CargoArgs)
 
     # Apply crt-static to the whole Cargo graph, including cc-rs-built native
     # dependencies. Applying it only to the final rustc invocation can mix /MT
@@ -137,7 +132,7 @@ if (-not $SkipBuild) {
     # enabling full debug info or changing release optimization.
     $env:CARGO_PROFILE_RELEASE_DEBUG = 'line-tables-only'
     try {
-        & cargo @cargoArgs
+        & cargo @CargoArgs
         if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
     } finally {
         if ($hadRustFlags) { $env:RUSTFLAGS = $previousRustFlags }
@@ -145,6 +140,21 @@ if (-not $SkipBuild) {
         if ($hadReleaseDebug) { $env:CARGO_PROFILE_RELEASE_DEBUG = $previousReleaseDebug }
         else { Remove-Item Env:CARGO_PROFILE_RELEASE_DEBUG -ErrorAction SilentlyContinue }
     }
+}
+
+if (-not $SkipBuild) {
+    # --no-default-features strips ferail-gpui's dev-only screenshot-harness
+    # feature, and with it gpui's leak-detection exit assertion — users must
+    # never see a clean quit turn into exit 101 over a diagnostic assert.
+    # --screenshot keeps working in the packaged exe via PrintWindow.
+    # -p is load-bearing: from the virtual workspace root, cargo silently
+    # ignores --no-default-features unless the package is selected explicitly.
+    $cargoArgs = @('build', '--release', '-p', 'ferail-gpui', '-p', 'ferail-ntfs-win32',
+        '--bin', 'ferail-gpui', '--bin', 'ferail', '--bin', 'ferail-ntfs-helper',
+        '--no-default-features')
+    if ($Features) { $cargoArgs += @('--features', $Features) }
+    Write-Step "cargo $($cargoArgs -join ' ') (static MSVC runtime)"
+    Invoke-CargoRelease -CargoArgs $cargoArgs
 } else {
     Write-Step 'Skipping build (-SkipBuild)'
 }
@@ -328,6 +338,81 @@ function Invoke-Sign {
 $signed = Invoke-Sign -Files @($GuiDst, $CliDst, $HelperDst)
 
 # ---------------------------------------------------------------------------
+# 4b. Fast NTFS helper attestation (interim, until Authenticode)
+# ---------------------------------------------------------------------------
+# Ferail launches ferail-ntfs-helper.exe elevated from its own directory, which
+# on a portable install the user can write. Until the package is signed and the
+# launcher can require a same-publisher signature, the GUI instead carries the
+# helper's salted digest and refuses to elevate anything else.
+# See docs/features/WINDOWS_FAST_NTFS.md and crates/ferail-ntfs-win32/src/attest.rs.
+#
+# This runs AFTER signing on purpose: signtool rewrites the helper, so a digest
+# taken before it would describe a file that no longer exists. The GUI is then
+# rebuilt to carry the value and re-signed. Only ferail-gpui is rebuilt, so the
+# helper staged and hashed above is not touched — the check below proves it.
+function Get-SaltedDigest {
+    param([string]$Path, [byte[]]$Salt)
+    $hash = [System.Security.Cryptography.IncrementalHash]::CreateHash(
+        [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+    try {
+        $hash.AppendData($Salt)
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $buffer = New-Object byte[] 65536
+            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $hash.AppendData($buffer, 0, $read)
+            }
+        } finally { $stream.Dispose() }
+        $hash.AppendData($Salt)
+        return $hash.GetHashAndReset()
+    } finally { $hash.Dispose() }
+}
+
+function Format-Hex {
+    param([byte[]]$Bytes)
+    return -join ($Bytes | ForEach-Object { $_.ToString('x2') })
+}
+
+$attested = $false
+if ($SkipBuild) {
+    Write-Warn '-SkipBuild: cannot bake the Fast NTFS helper digest into the GUI.'
+    Write-Warn 'The shipped build will launch its helper UNVERIFIED. Do not publish it.'
+} else {
+    $salt = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($salt) } finally { $rng.Dispose() }
+    $digest = Get-SaltedDigest -Path $HelperDst -Salt $salt
+
+    $helperBefore = (Get-FileHash $HelperDst -Algorithm SHA256).Hash
+    $env:FERAIL_NTFS_HELPER_SALT = Format-Hex $salt
+    $env:FERAIL_NTFS_HELPER_DIGEST = Format-Hex $digest
+    try {
+        $attestArgs = @('build', '--release', '-p', 'ferail-gpui',
+            '--bin', 'ferail-gpui', '--no-default-features')
+        if ($Features) { $attestArgs += @('--features', $Features) }
+        Write-Step 'Rebuilding Ferail.exe with the Fast NTFS helper digest'
+        Invoke-CargoRelease -CargoArgs $attestArgs
+    } finally {
+        Remove-Item Env:FERAIL_NTFS_HELPER_SALT -ErrorAction SilentlyContinue
+        Remove-Item Env:FERAIL_NTFS_HELPER_DIGEST -ErrorAction SilentlyContinue
+    }
+
+    Copy-Item $GuiSrc $GuiDst -Force
+    if ((Get-FileHash $GuiDst -Algorithm SHA256).Hash -ne (Get-FileHash $GuiSrc -Algorithm SHA256).Hash) {
+        throw 'restaged Ferail.exe does not match the attested build'
+    }
+    # The rebuild selected only ferail-gpui, so the helper must be byte-identical
+    # to the file we hashed. If cargo ever relinks it here, the baked digest is
+    # stale and every Fast NTFS launch would fail closed — catch that now.
+    if ((Get-FileHash $HelperDst -Algorithm SHA256).Hash -ne $helperBefore) {
+        throw 'the Fast NTFS helper changed after its digest was taken'
+    }
+    Invoke-Sign -Files @($GuiDst) | Out-Null
+    $attested = $true
+    Write-Step 'Fast NTFS helper digest baked into Ferail.exe'
+}
+
+# ---------------------------------------------------------------------------
 # 5. Portable + symbol ZIPs
 # ---------------------------------------------------------------------------
 $ZipPath = Join-Path $StageRoot "Ferail-$Version-win-x64.zip"
@@ -459,5 +544,14 @@ foreach ($a in @($GuiDst, $CliDst, $HelperDst, $InstallerPath) | Where-Object { 
 }
 if (-not $signed) {
     Write-Warn 'UNSIGNED build — for local testing only.'
+}
+
+Write-Step 'Fast NTFS helper verification'
+if ($attested) {
+    Write-Host '  Ferail.exe carries the staged helper digest; a substituted helper fails closed to Portable.'
+    Write-Host '  Interim measure only — it raises the cost of tampering, it is not an Authenticode boundary.'
+} else {
+    Write-Warn 'Ferail.exe carries NO helper digest — it will elevate whatever helper sits beside it.'
+    Write-Warn 'Do not publish this artifact.'
 }
 Write-Step 'Done'

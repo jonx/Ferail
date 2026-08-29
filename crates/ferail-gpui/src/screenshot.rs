@@ -119,10 +119,9 @@ pub struct Args {
     /// Simulate macOS traffic-light inset on the tabstrip. N/A —
     /// the GPUI shell already has native window chrome.
     pub mac_chrome: bool,
-    /// Open the rename dialog for the selected row.
+    /// Start inline rename for the selected row.
     pub rename: bool,
-    /// Start inline (in-row) rename. The GPUI shell uses the modal
-    /// rename only; falls back to `--rename` semantics.
+    /// Explicit alias for the inline-rename screenshot state.
     pub inline_rename: bool,
     /// Open the new-folder dialog.
     pub new_folder: bool,
@@ -162,6 +161,9 @@ pub struct Args {
     /// User UI zoom scale. Lands in Stage 9 alongside the
     /// `ferail_design::Tokens::scaled` integration.
     pub ui_scale: Option<f32>,
+    /// Force the sidebar into its icon-only presentation. This is a
+    /// screenshot-only override and does not persist the choice.
+    pub sidebar_collapsed: Option<bool>,
     /// Open the Disk Usage window at this path and render its
     /// treemap headless. Lands in Stage 7.
     pub disk_usage: Option<PathBuf>,
@@ -334,6 +336,8 @@ pub fn parse_args() -> Args {
             "--shortcuts-help" => args.shortcuts_help = Some(String::new()),
             "--shortcuts-help-filter" => args.shortcuts_help = iter.next(),
             "--ui-scale" => args.ui_scale = iter.next().and_then(|s| s.parse().ok()),
+            "--sidebar-collapsed" => args.sidebar_collapsed = Some(true),
+            "--sidebar-expanded" => args.sidebar_collapsed = Some(false),
             "--disk-usage" => args.disk_usage = iter.next().map(PathBuf::from),
             "--archive" => args.archive = iter.next().map(PathBuf::from),
             "--archive-preview-row" => {
@@ -409,8 +413,8 @@ OPTIONS
   --preview                Show preview pane (always on today).
   --sort <column[-desc]>   Sort by name | size | kind | magic | mtime | ant ± desc.
   --properties             Open Get Info pane. Lands in Stage 8.
-  --rename                 Open the rename dialog for the selected row.
-  --inline-rename          Start inline rename. Falls back to modal in the GPUI shell.
+  --rename                 Start inline rename for the selected row.
+  --inline-rename          Explicit alias for --rename.
   --new-folder             Open the new-folder dialog.
   --bulk-rename            Open the bulk-rename dialog over the selection
                            (seeds rows 0-3 when --select-rows is absent).
@@ -424,6 +428,8 @@ OPTIONS
   --simulate-slow-load <name>  Force the slow-device skeleton loading view.
   --shortcuts-help[-filter] Open keyboard help overlay. Lands in Stage 9.
   --ui-scale <factor>      Apply UI zoom. Lands in Stage 9.
+  --sidebar-collapsed      Render the icon-only sidebar without persisting it.
+  --sidebar-expanded       Render the full sidebar without persisting it.
   --disk-usage <path>      Render disk-usage treemap. Lands in Stage 7.
   --archive <path>         Render the archive workbench for <path>.
   --archive-preview-row N  With --archive: select row N and show its preview.
@@ -485,6 +491,9 @@ pub fn run(args: Args) -> Result<()> {
     let app = gpui_platform::application().with_assets(FeraAssets);
     app.run(move |cx| {
         gpui_component::init(cx);
+        // Match the live app: focused controls use the compact tinted border,
+        // not an outer ring that clipped settings rows can turn into a shadow.
+        gpui_component::Theme::global_mut(cx).focus_ring = false;
         // Same language bootstrap as the live app, so screenshots can be
         // taken in any installed language.
         crate::i18n::init(cx);
@@ -924,6 +933,7 @@ struct ShellArgs {
     properties: bool,
     edit_mode: bool,
     ui_scale: Option<f32>,
+    sidebar_collapsed: Option<bool>,
     simulate_toast: Option<String>,
     simulate_progress: Option<f32>,
     simulate_task_panel: bool,
@@ -973,6 +983,7 @@ impl From<&Args> for ShellArgs {
             properties: a.properties,
             edit_mode: a.edit_mode,
             ui_scale: a.ui_scale,
+            sidebar_collapsed: a.sidebar_collapsed,
             simulate_toast: a.simulate_toast.clone(),
             simulate_progress: a.simulate_progress,
             simulate_task_panel: a.simulate_task_panel,
@@ -1136,14 +1147,13 @@ impl ShellArgs {
         }
         if let Some(text) = self.breadcrumb.clone() {
             // Enter breadcrumb edit mode and SIMULATE TYPING `text`
-            // (via the EntityInputHandler trait method, so the
-            // completion-provider trigger path runs exactly as it
-            // does for real keystrokes). Used to capture the Cmd+L
-            // autocomplete menu.
+            // (via the EntityInputHandler trait method, so the ordinary
+            // InputEvent::Change path runs exactly as it does for real
+            // keystrokes). Used to capture the Cmd+L autocomplete menu.
             let shell_for_edit = shell.clone();
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell_for_edit.update(cx, |s, cx| {
-                    s.breadcrumb_editing = true;
+                    s.breadcrumb_edit.begin(s.active_tab().id, text.clone());
                     let input = s.breadcrumb_input.clone();
                     input.update(cx, |state, cx| {
                         state.focus(window, cx);
@@ -1174,13 +1184,27 @@ impl ShellArgs {
                 });
             });
         }
+        // Mount inline rename before `--keys` so its real keyboard lifecycle
+        // can be regression-tested (`--rename --keys escape`, Enter, etc.).
+        if self.rename {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    // RenameSelected handler reads target_row; need
+                    // a selection (the lead row in particular).
+                    if s.active_tab().lead.is_none() {
+                        s.select_row_index(0, cx);
+                    }
+                    s.trigger_rename(window, cx);
+                });
+            });
+        }
         if let Some(state) = self.update_dialog.clone() {
             let _ = cx.update_window((*handle).into(), |_, _window, cx| {
                 crate::update_check::seed_dialog_for_screenshot(&state, cx);
             });
         }
         if let Some(keys) = self.keys.clone() {
-            // Let async UI (e.g. the completion menu's provider task)
+            // Let async UI (e.g. a completion worker)
             // land before dispatching, then send each keystroke
             // through the window's REAL dispatch path — focus,
             // contexts, and keymap all behave exactly as a physical
@@ -1378,18 +1402,6 @@ impl ShellArgs {
                 None => crate::log_warn!(90, "--context-menu-background: table not laid out"),
             }
         }
-        if self.rename {
-            let _ = cx.update_window((*handle).into(), |_, window, cx| {
-                shell.update(cx, |s, cx| {
-                    // RenameSelected handler reads target_row; need
-                    // a selection (the lead row in particular).
-                    if s.active_tab().lead.is_none() {
-                        s.select_row_index(0, cx);
-                    }
-                    s.trigger_rename(window, cx);
-                });
-            });
-        }
         if self.new_folder {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
@@ -1581,6 +1593,12 @@ impl ShellArgs {
             shell.update(cx, |s, cx| {
                 s.ui_scale = scale.clamp(0.6, 2.0);
                 s.apply_ui_zoom(cx);
+            });
+        }
+        if let Some(collapsed) = self.sidebar_collapsed {
+            shell.update(cx, |s, cx| {
+                s.sidebar_collapsed = collapsed;
+                cx.notify();
             });
         }
         // Stage 5.c: push a toast notification via gpui-component's

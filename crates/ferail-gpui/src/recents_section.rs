@@ -13,6 +13,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, AppContext, ElementId, FontWeight, InteractiveElement, IntoElement,
     ParentElement, SharedString, StatefulInteractiveElement, Styled, WeakEntity, Window, div, img,
@@ -57,6 +58,10 @@ pub struct RecentsSection {
     section_collapsed: bool,
     shell: WeakEntity<Shell>,
     icons: Rc<RefCell<IconCache>>,
+    icon_px: f32,
+    /// Snapshot supplied by `Shell` to avoid reading the Shell entity while
+    /// its render method already holds the update lease.
+    active_path: PathBuf,
 }
 
 impl RecentsSection {
@@ -65,6 +70,8 @@ impl RecentsSection {
         section_collapsed: bool,
         shell: WeakEntity<Shell>,
         icons: Rc<RefCell<IconCache>>,
+        icon_px: f32,
+        active_path: PathBuf,
     ) -> Self {
         Self {
             recents,
@@ -72,6 +79,8 @@ impl RecentsSection {
             section_collapsed,
             shell,
             icons,
+            icon_px,
+            active_path,
         }
     }
 }
@@ -89,11 +98,14 @@ impl Collapsible for RecentsSection {
 /// Last path component for the row label, or "/" for the filesystem
 /// root. Pure display — never resolves the path.
 fn row_label(path: &std::path::Path) -> String {
-    let raw = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    crate::private_mode::present_leaf_str(&raw, true)
+    match path.file_name() {
+        Some(name) => {
+            let name = name.to_string_lossy();
+            let raw = ferail_fs_native::paths::display_leaf(&name);
+            crate::private_mode::present_leaf_str(&raw, true)
+        }
+        None => crate::private_mode::present_path(path),
+    }
 }
 
 impl SidebarItem for RecentsSection {
@@ -161,14 +173,11 @@ impl SidebarItem for RecentsSection {
                 )
             });
 
-        if section_collapsed || self.icon_only {
+        if section_collapsed && !self.icon_only {
             return v_flex().w_full().child(header).into_any_element();
         }
 
-        let active_path = self
-            .shell
-            .upgrade()
-            .map(|s| s.read(cx).active_tab().current_dir.clone());
+        let active_path = self.active_path.clone();
         let icons = self.icons.clone();
         let rows: Vec<AnyElement> = self
             .recents
@@ -180,7 +189,11 @@ impl SidebarItem for RecentsSection {
                     path,
                     &icons,
                     self.shell.clone(),
-                    active_path.as_deref(),
+                    Some(active_path.as_path()),
+                    RecentRowLayout {
+                        icon_px: self.icon_px,
+                        icon_only: self.icon_only,
+                    },
                     cx,
                 )
             })
@@ -188,10 +201,16 @@ impl SidebarItem for RecentsSection {
 
         v_flex()
             .w_full()
-            .child(header)
+            .when(!self.icon_only, |this| this.child(header))
             .child(v_flex().w_full().children(rows))
             .into_any_element()
     }
+}
+
+#[derive(Clone, Copy)]
+struct RecentRowLayout {
+    icon_px: f32,
+    icon_only: bool,
 }
 
 /// One Recents row: folder icon + basename. Click navigates (Cmd-click
@@ -202,10 +221,13 @@ fn render_recent_row(
     icons: &Rc<RefCell<IconCache>>,
     shell: WeakEntity<Shell>,
     active_path: Option<&std::path::Path>,
+    layout: RecentRowLayout,
     cx: &App,
 ) -> AnyElement {
+    let RecentRowLayout { icon_px, icon_only } = layout;
     let theme = cx.theme();
     let label = row_label(path);
+    let collapsed_tooltip: SharedString = label.clone().into();
     let is_active = active_path == Some(path);
     let row_key: SharedString = format!("recent-row-{index}").into();
     let icon = icons.borrow_mut().folder_icon_for(path);
@@ -213,9 +235,9 @@ fn render_recent_row(
     let mut row = h_flex()
         .id(ElementId::Name(row_key))
         .w_full()
-        .px_2()
         .py_1()
-        .gap_2()
+        .when(icon_only, |this| this.justify_center())
+        .when(!icon_only, |this| this.px_2().gap_2())
         .items_center()
         .text_scale_sm()
         .rounded(theme.radius)
@@ -224,6 +246,11 @@ fn render_recent_row(
             theme.sidebar_accent_foreground
         } else {
             theme.sidebar_foreground
+        })
+        .when(icon_only, |this| {
+            this.tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(collapsed_tooltip.clone()).build(window, cx)
+            })
         });
     if is_active {
         row = row.bg(theme.sidebar_accent);
@@ -231,20 +258,21 @@ fn render_recent_row(
         let hover_bg = theme.sidebar_accent.opacity(0.5);
         row = row.hover(move |this| this.bg(hover_bg));
     }
-    row = row
-        .child(
-            div()
-                .flex_shrink_0()
-                .icon_px(crate::tree::SIDEBAR_ICON_PX)
-                .child(img(icon).icon_px(crate::tree::SIDEBAR_ICON_PX)),
-        )
-        .child(
+    row = row.child(
+        div()
+            .flex_shrink_0()
+            .icon_px(icon_px)
+            .child(img(icon).icon_px(icon_px)),
+    );
+    if !icon_only {
+        row = row.child(
             div()
                 .flex_1()
                 .min_w_0()
                 .truncate()
                 .child(SharedString::from(label)),
         );
+    }
 
     let shell_for_click = shell.clone();
     let shell_for_menu = shell.clone();

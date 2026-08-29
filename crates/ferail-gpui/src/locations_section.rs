@@ -167,12 +167,17 @@ impl SidebarItem for LocationsSection {
                     cx,
                 ))
             })
-            .when(!self.section_collapsed || collapsed, |this| this.child(
-                v_flex()
-                    .w_full()
-                    .px(px(crate::tree::TREE_ROW_INSET))
-                    .children(rows),
-            ))
+            .when(!self.section_collapsed || collapsed, |this| {
+                this.child(
+                    v_flex()
+                        .w_full()
+                        // Sidebar itself already leaves 8 DIPs around its
+                        // 48-DIP icon strip. A second inset made only 20 DIPs
+                        // available for our 24-DIP glyph and clipped it.
+                        .when(!collapsed, |this| this.px(px(crate::tree::TREE_ROW_INSET)))
+                        .children(rows),
+                )
+            })
     }
 }
 
@@ -211,12 +216,14 @@ impl SidebarItem for PlatformLocationsSection {
                     cx,
                 ))
             })
-            .when(!self.section_collapsed || collapsed, |this| this.child(
-                v_flex()
-                    .w_full()
-                    .px(px(crate::tree::TREE_ROW_INSET))
-                    .children(rows),
-            ))
+            .when(!self.section_collapsed || collapsed, |this| {
+                this.child(
+                    v_flex()
+                        .w_full()
+                        .when(!collapsed, |this| this.px(px(crate::tree::TREE_ROW_INSET)))
+                        .children(rows),
+                )
+            })
     }
 }
 
@@ -300,12 +307,16 @@ impl SidebarItem for WindowsNamespaceSection {
                     cx,
                 ))
             })
-            .when(!self.section_collapsed || self.collapsed, |this| this.child(
-                v_flex()
-                    .w_full()
-                    .px(px(crate::tree::TREE_ROW_INSET))
-                    .children(rows),
-            ))
+            .when(!self.section_collapsed || self.collapsed, |this| {
+                this.child(
+                    v_flex()
+                        .w_full()
+                        .when(!self.collapsed, |this| {
+                            this.px(px(crate::tree::TREE_ROW_INSET))
+                        })
+                        .children(rows),
+                )
+            })
     }
 }
 
@@ -324,14 +335,15 @@ fn render_windows_namespace_row(
     let theme = cx.theme();
     let label: SharedString = crate::private_mode::present_label(label.as_ref()).into();
     let tooltip = label.clone();
+    let collapsed_tooltip = label.clone();
     h_flex()
         .id(ElementId::Name(
             format!("windows-namespace-row-{index}").into(),
         ))
         .w_full()
         .h_9()
-        .px_2()
-        .gap_2()
+        .when(collapsed, |this| this.justify_center())
+        .when(!collapsed, |this| this.px_2().gap_2())
         .items_center()
         .rounded(theme.radius)
         .cursor_pointer()
@@ -344,6 +356,11 @@ fn render_windows_namespace_row(
                 .text_color(theme.sidebar_foreground)
                 .flex_shrink_0(),
         )
+        .when(collapsed, |this| {
+            this.tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(collapsed_tooltip.clone()).build(window, cx)
+            })
+        })
         .when(!collapsed, |this| {
             this.child(
                 div()
@@ -394,6 +411,7 @@ fn render_platform_location_row(
     };
     let shell_for_click = shell.clone();
     let label_tooltip = label.clone();
+    let collapsed_tooltip = label.clone();
 
     let mut element = h_flex()
         .id(ElementId::Name(
@@ -401,8 +419,8 @@ fn render_platform_location_row(
         ))
         .w_full()
         .h_9()
-        .px_2()
-        .gap_2()
+        .when(collapsed, |this| this.justify_center())
+        .when(!collapsed, |this| this.px_2().gap_2())
         .items_center()
         .flex_shrink_0()
         .rounded(theme.radius)
@@ -424,7 +442,12 @@ fn render_platform_location_row(
                     theme.sidebar_foreground
                 })
                 .flex_shrink_0(),
-        );
+        )
+        .when(collapsed, |this| {
+            this.tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(collapsed_tooltip.clone()).build(window, cx)
+            })
+        });
     if !collapsed {
         element = element
             .child(
@@ -497,6 +520,7 @@ fn render_location_row(
         cloud,
     } = row;
     let label: SharedString = crate::private_mode::present_label(label.as_ref()).into();
+    let collapsed_tooltip = label.clone();
 
     let path_for_click = path.clone();
     let path_for_menu = path.clone();
@@ -515,8 +539,8 @@ fn render_location_row(
         // 36 DIPs: the height gpui-component's SidebarMenuItem gave these
         // rows, kept so replacing the widget changes no sidebar metrics.
         .h_9()
-        .px_2()
-        .gap_2()
+        .when(collapsed, |this| this.justify_center())
+        .when(!collapsed, |this| this.px_2().gap_2())
         .items_center()
         .flex_shrink_0()
         .rounded(theme.radius)
@@ -538,7 +562,12 @@ fn render_location_row(
                     theme.sidebar_foreground
                 })
                 .flex_shrink_0(),
-        );
+        )
+        .when(collapsed, |this| {
+            this.tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(collapsed_tooltip.clone()).build(window, cx)
+            })
+        });
 
     // Icon-collapse mode shows the glyph alone; the label and badges would
     // not fit the 48-DIP strip.

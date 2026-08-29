@@ -12,8 +12,8 @@
 # Required checkout layout is documented in docs/features/aros-building.md
 # § "Checkout layout (sibling paths are load-bearing)".
 
-# gpui + gpui_platform come from the sibling zed fork checkout (same pinned rev
-# 1d217ee as the workspace manifest, plus the new gpui_aros backend crate).
+# gpui + gpui_platform come from the sibling zed fork checkout (Zed f66ed399
+# after the 2026-08-28 rebase, plus the gpui_aros backend crate).
 # On macOS/Windows/Linux the fork's code is byte-identical to the pinned rev,
 # so this patch changes nothing off-AROS; gpui's intra-repo path deps (and
 # gpui-component's gpui dep) all resolve into the fork automatically.
@@ -21,10 +21,10 @@
 gpui = { path = "../zed-aros/crates/gpui" }
 gpui_platform = { path = "../zed-aros/crates/gpui_platform" }
 
-# gpui-component at the same pinned rev (a worktree of the local checkout at
-# c112e7b, branch aros-port) with one delta: `smol` -> `async-channel` at its
-# two channel-only call sites, keeping smol's async-io/rustix reactor (no
-# AROS arm) out of the graph. Identical behavior on every target.
+# gpui-component at e8f54eb (branch aros-port) with the narrow `smol` ->
+# `async-channel` channel substitution, keeping smol's async-io/rustix reactor
+# (no AROS arm) out of the graph. The upstream split means both base and UI
+# manifests/source must be checked during the rebase.
 [patch."https://github.com/longbridge/gpui-component"]
 gpui-component = { path = "../gpui-component-aros/crates/ui" }
 gpui-component-assets = { path = "../gpui-component-aros/crates/assets" }

@@ -8,6 +8,52 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Large background listings can no longer outrun the interface.** Ordinary
+  folders and recursive searches now use the same finite producer queue and
+  time-sliced, coalesced UI apply as Flat View; duplicate and folder-size
+  result streams are bounded too. Rapid selection cooperatively cancels both
+  native and text previews, and bursty volume/download progress notifications
+  have finite queues. Results are not capped: producers simply wait when the
+  UI is busy, keeping memory, redraws and cancellation latency predictable.
+  Background tabs still receive their data, but no longer refresh tables or
+  redraw the window for invisible batches; selecting the tab refreshes its
+  accumulated model and warms only its then-visible viewport.
+
+- **Deceptive filenames now elide without hiding their warning.** Highlighted
+  control characters, unusual whitespace, bidirectional marks and homoglyphs
+  stay on one line in list and icon views. When narrowing the Name column cuts
+  out the dangerous portion, the ellipsis itself carries the warning colour
+  and tooltip instead of letting the name appear harmless.
+
+- **Rename now happens directly on the file in list and icon views.** F2,
+  context-menu Rename and single-item Bulk Rename replace the visible name
+  with one persistent editor, select a file's stem while preserving its
+  extension, validate as you type, accept with Enter or a click elsewhere,
+  and cancel with Escape. A later plain click on an already-selected name also
+  starts editing, while a real double-click still opens it. Holding F2 can no
+  longer stack rename dialogs. The path bar uses the same quiet inline-editor
+  frame, and editable Windows paths no longer expose the internal `\\?\`
+  canonicalization prefix.
+
+- **Rectangle selection is restored in list view.** Drag from the empty area
+  below a listing to sweep whole rows, or hold Shift/Cmd/Ctrl to add them to
+  the current selection. The gesture uses virtual-row geometry instead of
+  scanning the directory, so it remains responsive with millions of files;
+  icon view uses the same shared selection lifecycle.
+
+- **Windows: Fast NTFS now checks its administrator helper before elevating
+  it.** Fast NTFS runs a small separate program with administrator rights, and
+  a portable install lives in a folder you can write to — so nothing stopped a
+  different program from taking that helper's place. Ferail now recognises the
+  exact helper it shipped with, and refuses to elevate anything else: a helper
+  that is stale, damaged, half-updated or substituted makes Disk Usage say
+  *"Portable fallback — the Fast NTFS helper does not match this build"* and
+  scan the ordinary way instead. This is a stopgap, and worth being plain
+  about: it reliably catches a broken or replaced helper, but someone who can
+  already modify files in Ferail's own folder can work around it. Signing the
+  Windows build with a certificate is what closes that properly, and it is
+  still on the list.
+
 - **Ferail now has a public privacy policy.** It documents local file
   processing and persistence, the absence of telemetry and automatic report
   uploads, opt-in update checks (off by default), path-redacted bug bundles
@@ -29,7 +75,17 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 - **The icons-only sidebar now follows very narrow window resizes.** Its strip
   uses less width in ordinary windows, contracts a little further when the app
   is squeezed, and recentres the icons instead of preserving the previous
-  oversized left gutter.
+  oversized left gutter. Every icon-only location, favorite, recent and tree
+  folder now shows its name in a tooltip.
+
+- **Several dense controls now resize cleanly.** Search and editable paths are
+  real single-line controls with lightweight completion menus, so their text
+  is centred with compact input padding instead of inheriting a document
+  editor's gutter. Escape clears search and cancels path or filename editing;
+  Settings has a wider, user-resizable navigation sidebar and responsive field
+  rows; and Disk Usage keeps its summary and controls on one wrapping header
+  row without repeating the volume free-space meter already shown in the
+  status bar.
 
 ## 0.7.4 — 2026-08-28
 

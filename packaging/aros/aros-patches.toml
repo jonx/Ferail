@@ -18,21 +18,24 @@
 # `~/Source/Ferail`. Sibling layout: docs/features/aros-building.md
 # § "Checkout layout".
 #
-# This list is deliberately short. Ferail's AROS graph needs no vendored
-# crates: gpui takes `http_client` with `default-features = false`, which drops
-# `github_download` and util's smol half, and with them the whole async-io
-# reactor (errno / rustix / polling / async-std) that has no AROS arm. If a
-# future gpui bump drags that stack back in, the fix is to keep the graph
-# reactor-free — not to mirror zed-aros/vendor-aros here.
+# This list is deliberately short. The AROS graph stays reactor-free: gpui
+# takes `http_client` with `default-features = false`, which drops
+# `github_download` and util's smol half, and with them async-io (errno /
+# rustix / polling / async-std), which has no AROS arm. The libc and stacker
+# entries below are target shims, not an invitation to mirror the rest of
+# zed-aros/vendor-aros. If a future bump drags the reactor back in, remove that
+# edge instead of growing this patch set.
 
-# gpui + gpui_platform from the zed fork (pinned rev 1d217ee plus the gpui_aros
-# backend crate). Off-AROS the fork is byte-identical to the pinned rev.
+# gpui + gpui_platform from the zed fork. After the 2026-08-28 desktop bump,
+# that sibling must be rebased onto Zed f66ed399 before the AROS gate is
+# considered valid; the path remains the same because it also owns gpui_aros.
 [patch."https://github.com/zed-industries/zed"]
 gpui = { path = "../../zed-aros/crates/gpui" }
 gpui_platform = { path = "../../zed-aros/crates/gpui_platform" }
 
-# gpui-component at the same pinned rev (c112e7b, branch aros-port) with one
-# delta: `smol::channel` -> `async-channel` at its two channel-only call sites.
+# gpui-component must likewise be based on e8f54eb. Its AROS delta remains the
+# narrow `smol::channel` -> `async-channel` substitution, now split across the
+# upstream base/ui crates. Do not point this at the older c112e7b worktree.
 [patch."https://github.com/longbridge/gpui-component"]
 gpui-component = { path = "../../gpui-component-aros/crates/ui" }
 gpui-component-assets = { path = "../../gpui-component-aros/crates/assets" }
@@ -52,12 +55,12 @@ gpui-component-assets = { path = "../../gpui-component-aros/crates/assets" }
 [patch.crates-io]
 libc = { path = "../../zed-aros/vendor-aros/libc" }
 
-# NOTE — `stacker` and `filetime` are deliberately NOT here.
-#
-# They live in the workspace manifest as `vendor/stacker` and `vendor/filetime`
-# instead. A patch whose version differs from the registry's goes silently
-# inert the moment a host `cargo` command re-resolves the lock to a newer
-# version (cargo will not downgrade to a patch — it drops it), and the next
-# AROS build fails with the original "no libc for this target" errors. Only
-# *source* replacements like the gpui ones above are safe to scope this way,
-# because the version is unchanged and the patch always applies.
+# The standard f66ed399 GPUI graph no longer enables stack growth, so Ferail's
+# shared manifest intentionally has no global stacker patch. The older AROS
+# backend fork still references stacksafe while it is being rebased; keep its
+# no-op implementation scoped to the AROS build. Cargo.lock must remain on
+# 0.1.23 until the rebased AROS GPUI proves this edge is gone too.
+stacker = { path = "../../zed-aros/vendor-aros/stacker" }
+
+# filetime remains globally patched from Ferail/vendor/filetime because notify
+# uses it on every desktop graph; no AROS-only override is needed here.

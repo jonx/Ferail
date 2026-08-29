@@ -425,13 +425,19 @@ impl DupeGroupView {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TabId(pub u64);
 
-/// Live rubber-band (marquee) drag state for the icon grid. A press on
-/// empty grid background starts one; dragging sweeps a selection
-/// rectangle over the cells. Coordinates are window-space (raw mouse
-/// event positions); the render maps them into the grid's content space
-/// via the cached `grid_pane_origin` + scroll offset. Only present while
-/// a marquee is in flight.
+/// Surface currently owning a rubber-band selection gesture.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarqueeSurface {
+    List,
+    Grid,
+}
+
+/// Live rubber-band (marquee) drag state. A press on empty list/grid
+/// background starts one; dragging sweeps a selection rectangle over the
+/// rows or cells. Coordinates are window-space (raw mouse event positions).
+/// Only present while a marquee is in flight.
 pub struct Marquee {
+    pub surface: MarqueeSurface,
     /// Window-space position where the press began.
     pub start: gpui::Point<Pixels>,
     /// Window-space position of the pointer now.
@@ -446,6 +452,10 @@ pub struct Marquee {
     /// proportional to the swept area instead of cloning the entire base
     /// selection on every mouse packet.
     pub hits: HashSet<NodeId>,
+    /// Row index of the last swept item. Keeping it with the gesture avoids
+    /// searching a multi-million-row model merely to mirror the lead at the
+    /// end of the drag.
+    pub lead_row: Option<usize>,
     /// Whether the first selection update has replaced the pre-gesture state
     /// with `base`. A plain background click must not clear until it actually
     /// crosses the movement threshold.
@@ -689,6 +699,10 @@ pub struct Tab {
     /// this tab. The title-bar render mounts the active tab's input
     /// directly so cursor / focus / value are naturally per-tab.
     pub filter_input: Entity<InputState>,
+    /// Lightweight suggestions for the single-line filter input. This stays
+    /// per-tab alongside the value/cursor and never invokes the document
+    /// editor merely to show a completion popup.
+    pub filter_suggestions: crate::single_line_complete::SingleLineSuggestions,
     /// Subscription handle for this tab's table-event bridge into
     /// `Shell`. Owned by the tab so dropping the tab drops the
     /// subscription — important for Phase D's tab-close path.
@@ -798,6 +812,7 @@ impl Tab {
             pending_reveal: None,
             filter_text: String::new(),
             filter_input,
+            filter_suggestions: Default::default(),
             _table_subscription: table_subscription,
             _filter_subscription: filter_subscription,
         }
@@ -819,8 +834,8 @@ impl Tab {
         self.current_dir
             .file_name()
             .and_then(|s| s.to_str())
-            .map(str::to_owned)
-            .unwrap_or_else(|| self.current_dir.to_string_lossy().into_owned())
+            .map(|name| ferail_fs_native::paths::display_leaf(name).into_owned())
+            .unwrap_or_else(|| ferail_fs_native::paths::display_path(&self.current_dir))
     }
 
     /// Snapshot the parts of this tab the closed-tab stack needs to

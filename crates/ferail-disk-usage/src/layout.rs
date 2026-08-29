@@ -198,7 +198,11 @@ fn aspect_ratio(a: f32, b: f32) -> f32 {
         return f32::MAX;
     }
     let r = a / b;
-    if r >= 1.0 { r } else { 1.0 / r }
+    if r >= 1.0 {
+        r
+    } else {
+        1.0 / r
+    }
 }
 
 fn add_node_rect(
@@ -326,11 +330,9 @@ mod tests {
         let rects = compute_treemap(&root, (0.0, 0.0, 1920.0, 1080.0), 1);
         assert!(!rects.is_empty());
         assert!(rects.len() <= 50_001);
-        assert!(
-            rects
-                .iter()
-                .all(|rect| rect.x.is_finite() && rect.y.is_finite())
-        );
+        assert!(rects
+            .iter()
+            .all(|rect| rect.x.is_finite() && rect.y.is_finite()));
     }
 
     #[test]

@@ -318,6 +318,10 @@ enum FastEligibility {
 enum FastFallbackReason {
     ElevationDeclined,
     HelperMissing,
+    /// The helper is there but is not the binary this build shipped with.
+    /// Kept distinct from `Failed` because it is the one fallback that may
+    /// mean something tampered with the installation.
+    HelperUntrusted,
     Unsupported,
     Failed,
 }
@@ -1127,6 +1131,9 @@ impl DiskUsageView {
                     FastFallbackReason::HelperMissing => {
                         tr!("Portable fallback — the Fast NTFS helper is missing")
                     }
+                    FastFallbackReason::HelperUntrusted => {
+                        tr!("Portable fallback — the Fast NTFS helper does not match this build")
+                    }
                     FastFallbackReason::Unsupported => {
                         tr!("Portable fallback — Fast NTFS is unavailable here")
                     }
@@ -1310,230 +1317,165 @@ impl DiskUsageView {
                     window.remove_window();
                 }))
         });
-        let mut col = v_flex()
+        // Keep the scan identity, progress and controls on one compact row at
+        // normal window widths. The row wraps deliberately on small windows;
+        // no action disappears and the treemap keeps the remaining height.
+        let row = h_flex()
             .w_full()
+            .items_center()
+            .flex_wrap()
             .gap_2()
+            .child(
+                div()
+                    .min_w(px(120.0))
+                    .truncate()
+                    .text_scale_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.foreground)
+                    .child(SharedString::from(title)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(220.0))
+                    .truncate()
+                    .text_scale_xs()
+                    .text_color(summary_color)
+                    .child(SharedString::from(summary)),
+            )
+            .when(
+                cfg!(target_os = "macos") && self.stats.permission_denied_dirs > 0,
+                |this| {
+                    this.child(
+                        Button::new("du-full-disk-access")
+                            .small()
+                            .label(tr!("Full Disk Access"))
+                            .tooltip(tr!("Include folders protected by macOS in future scans"))
+                            .on_click(cx.listener(|_, _, window, cx| {
+                                use gpui_component::notification::Notification;
+                                if let Some(path) = crate::platform_shell::app_bundle_path() {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(path));
+                                    window.push_notification(
+                                        Notification::info(tr!(
+                                            "Ferail's path is copied. Add it in Full Disk Access, then relaunch Ferail."
+                                        ))
+                                        .autohide(false),
+                                        cx,
+                                    );
+                                }
+                                cx.background_spawn(async move {
+                                    crate::platform_shell::open_url(
+                                        crate::shell::FULL_DISK_ACCESS_SETTINGS_URL,
+                                    );
+                                })
+                                .detach();
+                            })),
+                    )
+                },
+            )
+            .when(cfg!(target_os = "windows"), |this| {
+                let fast_tooltip = match self.fast_eligibility {
+                    FastEligibility::Checking => tr!("Checking Fast NTFS availability…"),
+                    FastEligibility::Eligible => {
+                        tr!("Read NTFS metadata with a temporary administrator helper")
+                    }
+                    FastEligibility::Ineligible => {
+                        tr!("Fast NTFS requires a local fixed NTFS volume")
+                    }
+                };
+                this.child(
+                    ButtonGroup::new("du-engine")
+                        .small()
+                        .outline()
+                        .compact()
+                        .child(
+                            Button::new("du-engine-portable")
+                                .label(tr!("Portable"))
+                                .selected(self.engine == DuEngine::Portable),
+                        )
+                        .child(
+                            Button::new("du-engine-fast-ntfs")
+                                .label(tr!("Fast NTFS"))
+                                .tooltip(fast_tooltip)
+                                .disabled(self.fast_eligibility != FastEligibility::Eligible)
+                                .selected(self.engine == DuEngine::FastNtfs),
+                        )
+                        .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
+                            match clicks.first().copied() {
+                                Some(0) => this.select_engine(DuEngine::Portable, cx),
+                                Some(1) => this.select_engine(DuEngine::FastNtfs, cx),
+                                _ => {}
+                            }
+                        })),
+                )
+            })
+            .child(
+                Button::new("du-size-apparent")
+                    .small()
+                    .icon(Icon::empty().path("icons/file/generic.svg"))
+                    .selected(self.size_mode == SizeMode::Apparent)
+                    .tooltip(tr!("Apparent size"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_size_mode(SizeMode::Apparent, cx)
+                    })),
+            )
+            .child(
+                Button::new("du-size-allocated")
+                    .small()
+                    .icon(Icon::empty().path("icons/file/disk.svg"))
+                    .selected(self.size_mode == SizeMode::Allocated)
+                    .tooltip(tr!("Allocated size on disk"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_size_mode(SizeMode::Allocated, cx)
+                    })),
+            )
+            .when(cfg!(target_os = "macos"), |this| {
+                this.child(
+                    Button::new("du-packages")
+                        .small()
+                        .icon(Icon::empty().path("icons/nav/package.svg"))
+                        .selected(self.descend_packages)
+                        .disabled(scanning)
+                        .tooltip(tr!("Scan package folders as containers"))
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_packages(cx))),
+                )
+            })
+            .when_some(dock_button, |this, button| this.child(button))
+            .child(
+                Button::new("du-up")
+                    .small()
+                    .icon(Icon::empty().path("icons/arrow-up.svg"))
+                    .tooltip(tr!("Zoom out"))
+                    .disabled(self.zoom_path.is_empty())
+                    .on_click(cx.listener(|this, _, _, cx| this.zoom_out(cx))),
+            )
+            .child(scan_button)
+            .child(
+                Button::new("du-topn")
+                    .small()
+                    .icon(Icon::empty().path(if self.topn_visible {
+                        "icons/panel-right-close.svg"
+                    } else {
+                        "icons/panel-right-open.svg"
+                    }))
+                    .tooltip(if self.topn_visible {
+                        tr!("Hide largest-files panel")
+                    } else {
+                        tr!("Show largest-files panel")
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.topn_visible = !this.topn_visible;
+                        cx.notify();
+                    })),
+            );
+
+        v_flex()
+            .w_full()
             .px_4()
             .py_2()
             .border_b_1()
             .border_color(theme.border)
-            .child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_scale_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.foreground)
-                            .child(SharedString::from(title)),
-                    )
-                    .when_some(dock_button, |this, button| this.child(button))
-                    .child(
-                        Button::new("du-up")
-                            .small()
-                            .icon(Icon::empty().path("icons/arrow-up.svg"))
-                            .tooltip(tr!("Zoom out"))
-                            .disabled(self.zoom_path.is_empty())
-                            .on_click(cx.listener(|this, _, _, cx| this.zoom_out(cx))),
-                    )
-                    .child(scan_button)
-                    .child(
-                        Button::new("du-topn")
-                            .small()
-                            .icon(Icon::empty().path(if self.topn_visible {
-                                "icons/panel-right-close.svg"
-                            } else {
-                                "icons/panel-right-open.svg"
-                            }))
-                            .tooltip(if self.topn_visible {
-                                tr!("Hide largest-files panel")
-                            } else {
-                                tr!("Show largest-files panel")
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.topn_visible = !this.topn_visible;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_scale_xs()
-                            .text_color(summary_color)
-                            .child(SharedString::from(summary)),
-                    )
-                    .when(
-                        cfg!(target_os = "macos")
-                            && self.stats.permission_denied_dirs > 0,
-                        |this| {
-                            this.child(
-                                Button::new("du-full-disk-access")
-                                    .small()
-                                    .label(tr!("Full Disk Access"))
-                                    .tooltip(tr!(
-                                        "Include folders protected by macOS in future scans"
-                                    ))
-                                    .on_click(cx.listener(|_, _, window, cx| {
-                                        use gpui_component::notification::Notification;
-                                        if let Some(path) =
-                                            crate::platform_shell::app_bundle_path()
-                                        {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(path));
-                                            window.push_notification(
-                                                Notification::info(tr!(
-                                                    "Ferail's path is copied. Add it in Full Disk Access, then relaunch Ferail."
-                                                ))
-                                                .autohide(false),
-                                                cx,
-                                            );
-                                        }
-                                        cx.background_spawn(async move {
-                                            crate::platform_shell::open_url(
-                                                crate::shell::FULL_DISK_ACCESS_SETTINGS_URL,
-                                            );
-                                        })
-                                        .detach();
-                                    })),
-                            )
-                        },
-                    )
-                    .when(cfg!(target_os = "windows"), |this| {
-                        let fast_tooltip = match self.fast_eligibility {
-                            FastEligibility::Checking => {
-                                tr!("Checking Fast NTFS availability…")
-                            }
-                            FastEligibility::Eligible => tr!(
-                                "Read NTFS metadata with a temporary administrator helper"
-                            ),
-                            FastEligibility::Ineligible => {
-                                tr!("Fast NTFS requires a local fixed NTFS volume")
-                            }
-                        };
-                        this.child(
-                            ButtonGroup::new("du-engine")
-                                .small()
-                                .outline()
-                                .compact()
-                                .child(
-                                    Button::new("du-engine-portable")
-                                        .label(tr!("Portable"))
-                                        .selected(self.engine == DuEngine::Portable),
-                                )
-                                .child(
-                                    Button::new("du-engine-fast-ntfs")
-                                        .label(tr!("Fast NTFS"))
-                                        .tooltip(fast_tooltip)
-                                        .disabled(
-                                            self.fast_eligibility != FastEligibility::Eligible,
-                                        )
-                                        .selected(self.engine == DuEngine::FastNtfs),
-                                )
-                                .on_click(cx.listener(
-                                    |this, clicks: &Vec<usize>, _, cx| match clicks.first().copied()
-                                    {
-                                        Some(0) => this.select_engine(DuEngine::Portable, cx),
-                                        Some(1) => this.select_engine(DuEngine::FastNtfs, cx),
-                                        _ => {}
-                                    },
-                                )),
-                        )
-                    })
-                    .child(
-                        ButtonGroup::new("du-size-mode")
-                            .small()
-                            .outline()
-                            .compact()
-                            .child(
-                                Button::new("du-size-apparent")
-                                    .label(tr!("Apparent"))
-                                    .selected(self.size_mode == SizeMode::Apparent),
-                            )
-                            .child(
-                                Button::new("du-size-allocated")
-                                    .label(tr!("Allocated"))
-                                    .selected(self.size_mode == SizeMode::Allocated),
-                            )
-                            .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
-                                match clicks.first().copied() {
-                                    Some(0) => this.toggle_size_mode(SizeMode::Apparent, cx),
-                                    Some(1) => this.toggle_size_mode(SizeMode::Allocated, cx),
-                                    _ => {}
-                                }
-                            })),
-                    )
-                    // Package-descend toggle controls a macOS-specific
-                    // concept (.app/.bundle/.framework directories) —
-                    // Windows has no equivalent, so hide the button
-                    // there to avoid offering a meaningless toggle.
-                    .when(cfg!(target_os = "macos"), |this| {
-                        this.child(
-                            Button::new("du-packages")
-                                .small()
-                                .icon(Icon::empty().path("icons/nav/package.svg"))
-                                .selected(self.descend_packages)
-                                .disabled(scanning)
-                                .tooltip(tr!("Scan package folders as containers"))
-                                .on_click(cx.listener(|this, _, _, cx| this.toggle_packages(cx))),
-                        )
-                    }),
-            );
-        // Volume capacity bar — "X.X GB free of Y.Y GB" with the
-        // used portion filled in muted_foreground.
-        if let Some(v) = &self.volume {
-            if let (Some(total), Some(avail)) = (v.total_bytes, v.available_bytes) {
-                if total > 0 {
-                    let shown_total = crate::private_mode::present_bytes(0x4455_544f, total);
-                    let shown_avail =
-                        crate::private_mode::present_bytes(0x4455_4156, avail).min(shown_total);
-                    let used = shown_total.saturating_sub(shown_avail);
-                    let frac = (used as f32 / shown_total.max(1) as f32).clamp(0.0, 1.0);
-                    let bar_w = px(280.0);
-                    let fill_w = bar_w * frac;
-                    let track_bg = theme.muted_foreground.opacity(0.25);
-                    let fill_bg = theme.muted_foreground.opacity(0.85);
-                    let label = tr!(
-                        "{free} free of {total} on {volume}",
-                        free = humanize_bytes(shown_avail),
-                        total = humanize_bytes(shown_total),
-                        volume = crate::private_mode::present_label(&v.name)
-                    );
-                    col = col.child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
-                            .pt_1()
-                            .child(
-                                div()
-                                    .w(bar_w)
-                                    .h(px(4.0))
-                                    .rounded(px(2.0))
-                                    .bg(track_bg)
-                                    .child(div().h_full().w(fill_w).rounded(px(2.0)).bg(fill_bg)),
-                            )
-                            .child(
-                                div()
-                                    .text_scale_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(label),
-                            ),
-                    );
-                }
-            }
-        }
-        col
+            .child(row)
     }
 
     /// Right-side Top-N panel: scrollable list of the largest files
@@ -2490,7 +2432,9 @@ impl Render for DiskUsageView {
             .host_size
             .unwrap_or((viewport.width.as_f32(), viewport.height.as_f32()));
         let side_width = if topn_visible { TOPN_PANEL_WIDTH } else { 0.0 };
-        let header_height = if self.volume.is_some() { 118.0 } else { 88.0 };
+        // One row at normal widths, with room for its deliberate wrap on a
+        // compact window. This is only the treemap's layout estimate.
+        let header_height = if host_w < 900.0 { 78.0 } else { 52.0 };
         let footer_height = 34.0;
         let treemap_width = (host_w - side_width - 32.0).max(260.0);
         let treemap_height = (host_h - header_height - footer_height).max(220.0);
@@ -2630,6 +2574,7 @@ fn run_fast_scan_worker(
     // the user's credential-entry time out of the reported scan duration.
     let mut fast_started = None;
     let mut fast_elapsed = None;
+    install_helper_attestation();
     let result =
         ferail_ntfs_win32::run_fast_ntfs(fast_request, &request.cancel, |event| match event {
             ferail_ntfs_win32::FastNtfsEvent::Ready => {
@@ -2753,11 +2698,51 @@ fn run_portable_scan(
     let _ = push_scan_msg(queue, cancel, ScanMsg::Done(err));
 }
 
+/// The Fast NTFS helper identity baked in by `build.rs`, as
+/// `Some((salt_hex, digest_hex))` in a packaged release and `None` in a
+/// development tree. Wrapped in a module because `include!` expands to items
+/// and so cannot appear inside a function body.
+// Read only by the Windows launch path and by the well-formedness test, so a
+// non-Windows release build legitimately has no consumer.
+#[allow(dead_code)]
+mod helper_attestation {
+    include!(concat!(env!("OUT_DIR"), "/helper_attestation.rs"));
+}
+
+/// Hand `ferail-ntfs-win32` the helper identity this build was packaged with,
+/// so it can verify the binary before elevating it. The values come from
+/// `build.rs`; an unpackaged development tree has none, and the launch path
+/// then runs unattested rather than refusing to work.
+///
+/// Called immediately before each scan rather than at boot: the underlying
+/// `set` is idempotent, and this way the check cannot be defeated by a change
+/// to startup ordering.
+#[cfg(target_os = "windows")]
+fn install_helper_attestation() {
+    let Some((salt, digest)) = helper_attestation::HELPER_ATTESTATION else {
+        return;
+    };
+    // build.rs already validated the shape, so a parse failure here means the
+    // generated constant was corrupted. Install an attestation that cannot
+    // match rather than skipping installation: skipping would downgrade to
+    // "unattested" and launch the helper anyway, which is precisely backwards.
+    let attestation = match (
+        ferail_ntfs_win32::parse_hex32(salt),
+        ferail_ntfs_win32::parse_hex32(digest),
+    ) {
+        (Some(salt), Some(digest)) => ferail_ntfs_win32::HelperAttestation::new(salt, digest),
+        _ => ferail_ntfs_win32::HelperAttestation::UNMATCHABLE,
+    };
+    ferail_ntfs_win32::set_helper_attestation(attestation);
+}
+
 #[cfg(target_os = "windows")]
 fn fast_fallback_reason(error: &ferail_ntfs_win32::ClientError) -> FastFallbackReason {
     match error {
         ferail_ntfs_win32::ClientError::UacCancelled => FastFallbackReason::ElevationDeclined,
         ferail_ntfs_win32::ClientError::HelperMissing => FastFallbackReason::HelperMissing,
+        ferail_ntfs_win32::ClientError::HelperUntrusted
+        | ferail_ntfs_win32::ClientError::HelperUnreadable => FastFallbackReason::HelperUntrusted,
         ferail_ntfs_win32::ClientError::Helper(ferail_ntfs::FailureCode::Unsupported)
         | ferail_ntfs_win32::ClientError::Platform("probe") => FastFallbackReason::Unsupported,
         _ => FastFallbackReason::Failed,
@@ -3232,5 +3217,26 @@ mod path_arena_tests {
             super::humanize_duration(std::time::Duration::from_secs(125)),
             "2 min 5 s"
         );
+    }
+
+    /// The Fast NTFS helper attestation constant is generated by `build.rs`
+    /// and consumed inside a `cfg(windows)` function, so nothing would catch a
+    /// malformed one on a macOS or Linux build. Compile and inspect it here on
+    /// every platform instead: a half-written or non-hex constant fails the
+    /// test suite rather than a Windows release.
+    #[test]
+    fn generated_helper_attestation_is_well_formed() {
+        // `None` is the correct, expected value in a development tree; only
+        // the packaging script sets the environment that fills it in.
+        if let Some((salt, digest)) = super::helper_attestation::HELPER_ATTESTATION {
+            for (label, value) in [("salt", salt), ("digest", digest)] {
+                assert_eq!(value.len(), 64, "{label} must be 64 hex characters");
+                assert!(
+                    value.bytes().all(|b| b.is_ascii_hexdigit()),
+                    "{label} must be hex"
+                );
+            }
+            assert_ne!(salt, digest, "salt and digest must not be the same value");
+        }
     }
 }

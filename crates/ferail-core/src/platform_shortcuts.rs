@@ -10,13 +10,13 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
-use crate::NodeId;
 use crate::platform_namespace::PlatformLocation;
 pub use crate::revision_cache::FileRevision;
 use crate::revision_cache::RevisionCache;
+use crate::NodeId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShortcutTargetKind {

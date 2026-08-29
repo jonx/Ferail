@@ -24,7 +24,7 @@ members = [
 version = "0.7.4"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.97"
 repository = "https://github.com/jonx/Ferail"
 homepage = "https://github.com/jonx/Ferail"
 authors = ["John Knipper <code@jkn.me>"]
@@ -113,7 +113,7 @@ filetime    = "0.2"
 # "crashes" were that assert firing at quit). Dev/test builds get it back
 # through ferail-gpui's default `screenshot-harness` feature; packaging
 # builds pass --no-default-features to strip it.
-gpui = { git = "https://github.com/zed-industries/zed" }
+gpui = { git = "https://github.com/zed-industries/zed", features = ["profiler"] }
 # wayland + x11 enable gpui_linux's compositor backends (gpui_platform's
 # wayland/x11 features pull gpui_linux/wayland|x11). Without them the Linux
 # build compiles but panics at startup — guess_compositor() returns "Wayland"
@@ -130,8 +130,8 @@ reqwest_client = { git = "https://github.com/zed-industries/zed" }
 # the preview pane's TextView highlights fenced code blocks (and
 # markdown code) for every language (docs/features/PREVIEW.md). Each
 # grammar is a C-compiled crate — a real but one-time build cost.
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "6d7847e33ef3b8e043d1fcea82eb7e1b7f919d8b", features = ["tree-sitter-languages"] }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "6d7847e33ef3b8e043d1fcea82eb7e1b7f919d8b" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781", features = ["tree-sitter-languages"] }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781" }
 
 # Zed-source patches allowed here are **in-repo** paths, committed and therefore
 # present in every clone and on CI.
@@ -163,30 +163,36 @@ gpui_windows = { path = "vendor/gpui_windows" }
 # platform and stays in the shared manifest. See vendor/tar/README.md.
 [patch.crates-io]
 tar = { path = "vendor/tar" }
+# The legacy Objective-C `block` crate still sits below cocoa/metal in GPUI's
+# macOS graph. Its empty-enum declaration for `_NSConcreteStackBlock` triggers
+# Rust's `uninhabited_static` future error. This byte-for-byte API-compatible
+# copy uses block2's inhabited ABI model; see vendor/block/README.md.
+block = { path = "vendor/block" }
 
 # Same story, same reason — upstream has no AROS arm and the crate does not
 # compile for the target. Both are copies of zed-aros/vendor-aros (whose AROS
 # work these are), kept here so Ferail's build does not depend on a sibling
 # checkout for something every platform links.
 #
-# These are patched **globally** rather than from packaging/aros/aros-patches.toml
-# on purpose. A version-differing patch that is only present for AROS
+# `filetime` is patched **globally** rather than only from the AROS config on
+# purpose. A version-differing patch that is only present for AROS
 # invocations goes silently inert the moment any host `cargo` command
 # re-resolves the lock to a newer registry version — cargo will not downgrade
 # to a patch, it just drops it — and the AROS build then fails with the
 # original "no libc for this target" errors. Patching here means the vendored
-# copy is the only stacker/filetime any build can see, on any target.
+# copy is the only filetime any build can see, on any target.
 #
-# stacker: stack-growth probe is libc mmap/mprotect/sysconf; the AROS arm makes
-# growth a no-op. filetime (via notify): unix/windows/wasm arms only; the AROS
-# arm reads times from std Metadata and reports set-times unsupported.
-stacker = { path = "vendor/stacker" }
+# `stacker` is no longer in the standard GPUI graph. The older AROS GPUI fork
+# still needs its no-op AROS implementation, supplied by the AROS-only cargo
+# config, so normal builds should not carry an unused global patch for it.
+# filetime (via notify): unix/windows/wasm arms only; the AROS arm reads times
+# from std Metadata and reports set-times unsupported.
 filetime = { path = "vendor/filetime" }
 
 # NOTE — the AROS `[patch]` entries deliberately do NOT live here.
 #
 # The AROS port needs four source overrides (gpui, gpui_platform,
-# gpui-component[-assets], and vendored stacker/filetime) that resolve to
+# gpui-component[-assets], plus AROS-only source shims) that resolve to
 # **sibling checkouts** — `../zed-aros`, `../gpui-component-aros`. Unlike the
 # in-repo path above, a *sibling* path in this shared manifest is a hard
 # requirement on every machine that builds the repo: cargo resolves `[patch]`

@@ -59,6 +59,10 @@ pub enum TableEvent {
         modifiers: Modifiers,
         click_count: usize,
     },
+    /// A selected row's Name label received a later plain single click.
+    /// The delegate emits this separately so ordinary row selection and
+    /// double-click Open remain owned by the table primitive.
+    RenameRequested(usize),
     /// Keyboard or programmatic row movement changed the lead row.
     LeadMoved { row_ix: usize, modifiers: Modifiers },
     /// OS file paths were dropped onto a row. Fork addition
@@ -504,6 +508,61 @@ where
         let body_top = self.bounds.origin.y + header_height;
         let y = body_top + (self.bounds.bottom() - body_top) / 2.;
         Some(gpui::point(self.bounds.center().x, y))
+    }
+
+    /// True when `position` lies inside the laid-out scrolling row body
+    /// (below the header and outside no part of the table).  Hosts use this
+    /// to start background gestures without mistaking a header press for a
+    /// click below the final row.
+    pub fn body_contains(&self, position: Point<Pixels>) -> bool {
+        let body = self.vertical_scroll_handle.0.borrow().base_handle.bounds();
+        body.size.width > Pixels::ZERO
+            && body.size.height > Pixels::ZERO
+            && body.contains(&position)
+    }
+
+    /// Real row under a window-space pointer, if any. Fake stripe-filler
+    /// rows deliberately return `None`, making the area below the listing a
+    /// proper background target for rubber-band selection.
+    pub fn row_at_position(&self, position: Point<Pixels>, cx: &App) -> Option<usize> {
+        if !self.body_contains(position) {
+            return None;
+        }
+        let scroll = self.vertical_scroll_handle.0.borrow();
+        let body = scroll.base_handle.bounds();
+        let content_y = position.y - body.origin.y - scroll.base_handle.offset().y;
+        if content_y < Pixels::ZERO {
+            return None;
+        }
+        let row = (content_y / self.options.size.table_row_height()).floor() as usize;
+        (row < self.delegate.rows_count(cx)).then_some(row)
+    }
+
+    /// Half-open range of real rows intersected by a window-space vertical
+    /// marquee. Geometry is analytic, so selecting across a few visible rows
+    /// never scans a million-entry model.
+    pub fn rows_intersecting_y(&self, first: Pixels, second: Pixels, cx: &App) -> Range<usize> {
+        let scroll = self.vertical_scroll_handle.0.borrow();
+        let body = scroll.base_handle.bounds();
+        let top = first.min(second).max(body.origin.y);
+        let bottom = first.max(second).min(body.origin.y + body.size.height);
+        if bottom <= top || body.size.height <= Pixels::ZERO {
+            return 0..0;
+        }
+        let offset = scroll.base_handle.offset().y;
+        let row_height = self.options.size.table_row_height();
+        let content_top = (top - body.origin.y - offset).max(Pixels::ZERO);
+        let content_bottom = (bottom - body.origin.y - offset).max(Pixels::ZERO);
+        let rows = self.delegate.rows_count(cx);
+        let start = ((content_top / row_height).floor() as usize).min(rows);
+        let end = ((content_bottom / row_height).ceil() as usize).min(rows);
+        start..end.max(start)
+    }
+
+    /// Last measured table bounds, used only to position non-layout overlays
+    /// such as the host's rubber-band rectangle.
+    pub fn table_bounds(&self) -> Bounds<Pixels> {
+        self.bounds
     }
 
     // Scroll to the column at the given index.
@@ -2115,7 +2174,7 @@ where
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let horizontal_scroll_handle = self.horizontal_scroll_handle.clone();
-        let is_stripe_row = self.options.stripe && row_ix % 2 != 0;
+        let is_stripe_row = self.options.stripe && !row_ix.is_multiple_of(2);
         let is_selected = self.selected_row == Some(row_ix);
         let view = cx.entity().clone();
         let row_height = self.options.size.table_row_height();

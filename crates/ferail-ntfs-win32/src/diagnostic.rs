@@ -2,9 +2,9 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use ferail_ntfs::{ByteReader as _, RecordParseOptions, TraversalOptions, parse_file_record};
+use ferail_ntfs::{parse_file_record, ByteReader as _, RecordParseOptions, TraversalOptions};
 
-use crate::{RawVolumeReader, file_identity, probe_fast_ntfs, scan_mft};
+use crate::{file_identity, probe_fast_ntfs, scan_mft, RawVolumeReader};
 
 pub fn run_diagnostic(path: &OsStr) -> i32 {
     match report(Path::new(path)) {

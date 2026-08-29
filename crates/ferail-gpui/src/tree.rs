@@ -155,6 +155,7 @@ pub struct TreeSection {
     rows: Vec<TreeRowSpec>,
     shell: WeakEntity<Shell>,
     icons: Rc<RefCell<IconCache>>,
+    icon_px: f32,
     collapsed: bool,
     section: crate::sidebar_layout::SidebarSection,
     section_collapsed: bool,
@@ -166,6 +167,7 @@ impl TreeSection {
         rows: Vec<TreeRowSpec>,
         shell: WeakEntity<Shell>,
         icons: Rc<RefCell<IconCache>>,
+        icon_px: f32,
         section: crate::sidebar_layout::SidebarSection,
         section_collapsed: bool,
     ) -> Self {
@@ -174,6 +176,7 @@ impl TreeSection {
             rows,
             shell,
             icons,
+            icon_px,
             collapsed: false,
             section,
             section_collapsed,
@@ -507,6 +510,7 @@ impl SidebarItem for TreeSection {
         _window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
+        let icon_only = self.collapsed;
         let header = collapsible_section_header(
             self.label.clone(),
             self.section_collapsed,
@@ -517,22 +521,28 @@ impl SidebarItem for TreeSection {
 
         let shell = self.shell.clone();
         let icons = self.icons.clone();
+        let icon_px = self.icon_px;
         let rows = self
             .rows
             .into_iter()
-            .map(|spec| render_tree_row(spec, shell.clone(), icons.clone(), cx))
+            .map(|spec| render_tree_row(spec, shell.clone(), icons.clone(), icon_px, icon_only, cx))
             .collect::<Vec<AnyElement>>();
 
         v_flex()
             .w_full()
-            .child(header)
+            .when(!icon_only, |this| this.child(header))
             // Inset the tree rows with a small horizontal gutter so a
             // selected row's rounded highlight floats clear of the
             // sidebar edges (Finder-style) instead of running edge to
             // edge. The rows stay `w_full` inside the padded box, so no
             // row overflows and the connector guides shift with them.
-            .when(!self.section_collapsed, |this| {
-                this.child(v_flex().w_full().px(px(TREE_ROW_INSET)).children(rows))
+            .when(icon_only || !self.section_collapsed, |this| {
+                this.child(
+                    v_flex()
+                        .w_full()
+                        .when(!icon_only, |this| this.px(px(TREE_ROW_INSET)))
+                        .children(rows),
+                )
             })
     }
 }
@@ -547,6 +557,8 @@ fn render_tree_row(
     spec: TreeRowSpec,
     shell: WeakEntity<Shell>,
     icons: Rc<RefCell<IconCache>>,
+    icon_px: f32,
+    icon_only: bool,
     cx: &mut App,
 ) -> AnyElement {
     let _path_guard = ferail_core::path_guard::enter_render();
@@ -565,6 +577,7 @@ fn render_tree_row(
         ejectable,
     } = spec;
     let label = crate::private_mode::present_label(&label);
+    let collapsed_tooltip: SharedString = label.clone().into();
     let theme = cx.theme();
     let row_key: SharedString = format!("tree-row-{}", path.display()).into();
     let caret_key: SharedString = format!("tree-caret-{}", path.display()).into();
@@ -587,10 +600,9 @@ fn render_tree_row(
         .id(ElementId::Name(row_key))
         .relative()
         .w_full()
-        .pl(indent)
-        .pr_2()
         .py_1()
-        .gap_1()
+        .when(icon_only, |this| this.justify_center())
+        .when(!icon_only, |this| this.pl(indent).pr_2().gap_1())
         .items_center()
         .text_scale_sm()
         .rounded(theme.radius)
@@ -620,6 +632,11 @@ fn render_tree_row(
             Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
                 paths.paths().iter().cloned().map(|p| (p, true)),
             )))
+        })
+        .when(icon_only, |this| {
+            this.tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(collapsed_tooltip.clone()).build(window, cx)
+            })
         });
     if is_active {
         row = row.bg(theme.sidebar_accent);
@@ -756,55 +773,57 @@ fn render_tree_row(
     // math; each column centres its 1px line at x = 7. The corner /
     // tee elbow is a 16px-tall box (half the 32px row) whose left +
     // bottom borders draw the `└` shape ending at the caret column.
-    let line = theme.sidebar_border;
-    let guide_count = guides.len();
-    for (level, guide) in guides.iter().enumerate() {
-        if matches!(guide, TreeGuide::Blank) {
-            continue;
+    if !icon_only {
+        let line = theme.sidebar_border;
+        let guide_count = guides.len();
+        for (level, guide) in guides.iter().enumerate() {
+            if matches!(guide, TreeGuide::Blank) {
+                continue;
+            }
+            // The row's own connector (last level) normally hands off to
+            // the caret right where its column ends. Leaf rows have no
+            // caret, so extend the stub through the empty caret slot to
+            // where an arrow tip would end (~12px in) — connector lengths
+            // read consistently whether or not a row is expandable.
+            let stub_extra = if level + 1 == guide_count && !is_expandable {
+                12.0
+            } else {
+                0.0
+            };
+            let cell = div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(px(8.0 + 14.0 * level as f32))
+                .w(px(14.0 + stub_extra))
+                .flex()
+                .flex_col();
+            let elbow = || {
+                div()
+                    .ml(px(7.0))
+                    .w(px(7.0 + stub_extra))
+                    .h(px(16.0))
+                    .border_l_1()
+                    .border_b_1()
+                    .border_color(line)
+            };
+            let cell = match guide {
+                TreeGuide::Blank => cell,
+                TreeGuide::Vertical => cell.child(div().ml(px(7.0)).w(px(1.0)).h_full().bg(line)),
+                TreeGuide::Tee => cell
+                    .child(elbow())
+                    .child(div().ml(px(7.0)).w(px(1.0)).flex_1().bg(line)),
+                TreeGuide::Corner => cell.child(elbow()),
+            };
+            row = row.child(cell);
         }
-        // The row's own connector (last level) normally hands off to
-        // the caret right where its column ends. Leaf rows have no
-        // caret, so extend the stub through the empty caret slot to
-        // where an arrow tip would end (~12px in) — connector lengths
-        // read consistently whether or not a row is expandable.
-        let stub_extra = if level + 1 == guide_count && !is_expandable {
-            12.0
-        } else {
-            0.0
-        };
-        let cell = div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left(px(8.0 + 14.0 * level as f32))
-            .w(px(14.0 + stub_extra))
-            .flex()
-            .flex_col();
-        let elbow = || {
-            div()
-                .ml(px(7.0))
-                .w(px(7.0 + stub_extra))
-                .h(px(16.0))
-                .border_l_1()
-                .border_b_1()
-                .border_color(line)
-        };
-        let cell = match guide {
-            TreeGuide::Blank => cell,
-            TreeGuide::Vertical => cell.child(div().ml(px(7.0)).w(px(1.0)).h_full().bg(line)),
-            TreeGuide::Tee => cell
-                .child(elbow())
-                .child(div().ml(px(7.0)).w(px(1.0)).flex_1().bg(line)),
-            TreeGuide::Corner => cell.child(elbow()),
-        };
-        row = row.child(cell);
     }
 
     // Caret slot. Reserves the same width for non-expandable rows so
     // labels align across rows that don't have a caret — leaf
     // folders without subdirectories. `▼` / `▶` render larger than
     // the small `▾`/`▸` glyphs at our font size.
-    if is_expandable {
+    if !icon_only && is_expandable {
         let caret_node = node_id;
         let shell_for_caret = shell.clone();
         let caret = h_flex()
@@ -838,7 +857,7 @@ fn render_tree_row(
                 }
             });
         row = row.child(caret);
-    } else {
+    } else if !icon_only {
         row = row.child(div().flex_shrink_0().w(px(16.0)));
     }
 
@@ -854,38 +873,33 @@ fn render_tree_row(
     let icon_el = match icon {
         TreeRowIcon::Folder => {
             let icon = icons.borrow_mut().folder_icon_for(&path);
-            img(icon).icon_px(SIDEBAR_ICON_PX).into_any_element()
+            img(icon).icon_px(icon_px).into_any_element()
         }
         TreeRowIcon::Volume => svg()
             .path("icons/nav/drive.svg")
-            .icon_px(SIDEBAR_ICON_PX)
+            .icon_px(icon_px)
             .text_color(icon_color)
             .into_any_element(),
         TreeRowIcon::Network => svg()
             .path("icons/network.svg")
-            .icon_px(SIDEBAR_ICON_PX)
+            .icon_px(icon_px)
             .text_color(icon_color)
             .into_any_element(),
     };
-    row = row.child(
-        div()
-            .flex_shrink_0()
-            .icon_px(SIDEBAR_ICON_PX)
-            .child(icon_el),
-    );
+    row = row.child(div().flex_shrink_0().icon_px(icon_px).child(icon_el));
 
     let label_node = node_id;
     let shell_for_label = shell.clone();
-    row = row
-        .child(
+    if !icon_only {
+        row = row.child(
             div()
                 .flex_1()
                 .min_w_0()
                 .truncate()
                 .child(label)
                 .when(is_active, |this| this.font_weight(FontWeight::SEMIBOLD)),
-        )
-        .when(favorited, |this| {
+        );
+        row = row.when(favorited, |this| {
             // §5 favorited indicator: trailing accent star. Same
             // glyph used in the file list and breadcrumb so the
             // visual language is consistent across surfaces.
@@ -896,8 +910,8 @@ fn render_tree_row(
                     .text_color(cx.theme().primary)
                     .flex_shrink_0(),
             )
-        })
-        .when(ejectable, |this| {
+        });
+        row = row.when(ejectable, |this| {
             // Trailing eject affordance — Finder draws an ⏏ on every
             // removable/external volume row so a drive can be unmounted
             // without opening the context menu. Stops propagation so the
@@ -935,33 +949,34 @@ fn render_tree_row(
                         }
                     }),
             )
-        })
-        .on_click({
-            let path = path.clone();
-            move |event, window, cx| {
-                if let Some(shell) = shell_for_label.upgrade() {
-                    let modifiers = event.modifiers();
-                    let double = event.click_count() >= 2;
-                    let path = path.clone();
-                    shell.update(cx, |s, cx| {
-                        if modifiers.platform {
-                            s.open_path_in_new_tab(path, window, cx);
-                        } else if double && is_expandable {
-                            // Double-click a folder that has children:
-                            // toggle its fold state while keeping it the
-                            // selected/active row. The single-click that
-                            // opens the double already navigated to it, so
-                            // it stays highlighted; here we just fold or
-                            // unfold in place (the caret is the other way
-                            // to do this).
-                            s.toggle_tree_expand_node(label_node, cx);
-                        } else {
-                            s.navigate_node(label_node, cx);
-                        }
-                    });
-                }
-            }
         });
+    }
+    row = row.on_click({
+        let path = path.clone();
+        move |event, window, cx| {
+            if let Some(shell) = shell_for_label.upgrade() {
+                let modifiers = event.modifiers();
+                let double = event.click_count() >= 2;
+                let path = path.clone();
+                shell.update(cx, |s, cx| {
+                    if modifiers.platform {
+                        s.open_path_in_new_tab(path, window, cx);
+                    } else if double && is_expandable && !icon_only {
+                        // Double-click a folder that has children:
+                        // toggle its fold state while keeping it the
+                        // selected/active row. The single-click that
+                        // opens the double already navigated to it, so
+                        // it stays highlighted; here we just fold or
+                        // unfold in place (the caret is the other way
+                        // to do this).
+                        s.toggle_tree_expand_node(label_node, cx);
+                    } else {
+                        s.navigate_node(label_node, cx);
+                    }
+                });
+            }
+        }
+    });
 
     // Phase 6 (next-level): closure that adds the right-click menu
     // to whichever final element the row renders into (the row
@@ -1031,7 +1046,7 @@ fn render_tree_row(
     // Capacity bar for volume rows. Finder draws this as a thin
     // line under the volume name, with the used portion filled in
     // accent and the rest in muted grey.
-    if let Some((total, available)) = capacity {
+    if !icon_only && let Some((total, available)) = capacity {
         if total > 0 {
             let theme = cx.theme();
             let used_fraction =

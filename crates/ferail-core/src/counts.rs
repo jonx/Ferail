@@ -29,7 +29,7 @@ pub fn format_count(n: u64) -> String {
     let len = digits.len();
     let mut out = String::with_capacity(len + len / 3);
     for (index, ch) in digits.char_indices() {
-        if index > 0 && (len - index) % 3 == 0 {
+        if index > 0 && (len - index).is_multiple_of(3) {
             out.push('.');
         }
         out.push(ch);
@@ -65,7 +65,7 @@ pub fn group_digits(text: &str) -> String {
         }
         let digits = &text[start..cursor];
         for (index, digit) in digits.bytes().enumerate() {
-            if index > 0 && (digits.len() - index) % 3 == 0 {
+            if index > 0 && (digits.len() - index).is_multiple_of(3) {
                 out.push('.');
             }
             out.push(char::from(digit));

@@ -68,6 +68,11 @@ pub(super) enum DupeMsg {
     Done(Option<EnumerationError>),
 }
 
+/// Hashing can outrun GPUI when most files form tiny groups. Keep only a
+/// bounded train of already-built result batches; `send_blocking` then slows
+/// the scanner instead of allowing scan-local paths and thumbnails to pile up.
+const DUPE_CHANNEL_MESSAGES: usize = 16;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SimilarCriterion {
     Structure,
@@ -340,7 +345,7 @@ impl Shell {
                 DbHashCache::new(db, now)
             });
         let fs = self.process.fs.clone();
-        let (tx, rx) = async_channel::unbounded();
+        let (tx, rx) = async_channel::bounded(DUPE_CHANNEL_MESSAGES);
         cx.background_executor()
             .spawn(async move {
                 run_dupe_load(fs, opts, cache, root, cancel, tx);
@@ -422,6 +427,7 @@ impl Shell {
         notify_window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
+        let visible = idx == self.active;
         match msg {
             DupeMsg::Batch(batch) => self.apply_dupe_batch_in_tab(idx, batch, cx),
             DupeMsg::SimilarIndex { images, clusters } => {
@@ -453,7 +459,9 @@ impl Shell {
                         surfaced = self.process.tasks.borrow_mut().end_and_was_surfaced(id);
                     }
                     tab.load_cancel = None;
-                    cx.notify();
+                    if visible {
+                        cx.notify();
+                    }
                 }
                 if let Some(window) = notify_window {
                     if let Some(error) = error {
@@ -503,6 +511,7 @@ impl Shell {
         progress: DupeStats,
         cx: &mut Context<Self>,
     ) {
+        let visible = idx == self.active;
         let Some(tab) = self.tabs.get_mut(idx) else {
             return;
         };
@@ -531,7 +540,9 @@ impl Shell {
                 }
             }
         }
-        cx.notify();
+        if visible {
+            cx.notify();
+        }
     }
 
     /// Land the one scan-local perceptual index. Raw thumbnails become GPUI
@@ -579,6 +590,7 @@ impl Shell {
         clusters: Vec<SimilarityCluster>,
         cx: &mut Context<Self>,
     ) {
+        let visible = idx == self.active;
         let Some(tab) = self.tabs.get_mut(idx) else {
             return;
         };
@@ -607,7 +619,9 @@ impl Shell {
                 .map(DupeGroupView::reclaimable_bytes)
                 .sum();
         }
-        cx.notify();
+        if visible {
+            cx.notify();
+        }
     }
 
     /// Update one or both live criteria and debounce a pure, off-thread
@@ -761,6 +775,7 @@ impl Shell {
         mut batch: DupeBatch,
         cx: &mut Context<Self>,
     ) {
+        let visible = idx == self.active;
         if batch.entries.is_empty() && batch.groups.is_empty() {
             return;
         }
@@ -812,7 +827,9 @@ impl Shell {
         };
         tab.dupe_groups.extend(batch.groups);
         if panel_mode {
-            cx.notify();
+            if visible {
+                cx.notify();
+            }
             return;
         }
 
@@ -842,13 +859,17 @@ impl Shell {
                 heats,
                 favorites,
             );
-            state.refresh(cx);
+            if visible {
+                state.refresh(cx);
+            }
         });
         self.refresh_file_list_selection_in_tab(idx, cx);
         // Land any deferred selection (keyboard / screenshot seed) once
         // its row has streamed in — same as the directory load path.
         self.apply_pending_select_row_in_tab(idx, cx);
-        cx.notify();
+        if visible {
+            cx.notify();
+        }
     }
 
     /// Deterministic Similar Images state for the headless screenshot harness.

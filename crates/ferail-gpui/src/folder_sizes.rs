@@ -37,6 +37,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use ferail_core::{EntryKind, NodeId};
 use ferail_fs_native::{
@@ -69,6 +70,9 @@ fn aros_walker_enabled() -> bool {
 /// loaded again, off the UI thread — so a longer TTL trades a little
 /// staleness for fewer re-walks of big trees. Tune here, one place.
 const FOLDER_SIZE_TTL_SECS: i64 = 10 * 60;
+const SIZE_CHANNEL_BATCHES: usize = 8;
+const SIZE_ROWS_PER_BATCH: usize = 64;
+const SIZE_BATCH_MAX_LATENCY: Duration = Duration::from_millis(100);
 
 /// Process-wide master switch for the background folder-size walker
 /// (Settings → Performance). Recursively summing a directory tree is
@@ -92,6 +96,7 @@ pub fn folder_sizing_enabled(cx: &gpui::App) -> bool {
 /// Snapshot used to seed the worker — `Send` copies of the bits it
 /// needs, like `PrefetchSeed`.
 struct SizeSeed {
+    row_ix: usize,
     node: NodeId,
     path: PathBuf,
     /// The folder's own mtime at enumerate time; stored alongside
@@ -104,6 +109,7 @@ struct SizeSeed {
 /// item counts from the same walk so the apply can fill the folder's
 /// Description column ("N files · M folders") alongside the Size.
 struct SizeRow {
+    row_ix: usize,
     node: NodeId,
     size: u64,
     file_count: u64,
@@ -156,10 +162,12 @@ pub fn start(
         .delegate()
         .entries
         .iter()
-        .filter(|e| matches!(e.kind, EntryKind::Directory))
-        .filter_map(|e| {
+        .enumerate()
+        .filter(|(_, e)| matches!(e.kind, EntryKind::Directory))
+        .filter_map(|(row_ix, e)| {
             let path = fs.path_for(e.id)?;
             Some(SizeSeed {
+                row_ix,
                 node: e.id,
                 path,
                 mtime_unix: e.mtime_unix,
@@ -183,7 +191,7 @@ pub fn start(
         false,
     );
 
-    let (tx, rx) = async_channel::unbounded::<Vec<SizeRow>>();
+    let (tx, rx) = async_channel::bounded::<Vec<SizeRow>>(SIZE_CHANNEL_BATCHES);
     let worker_cancel = cancel.clone();
     cx.background_executor()
         .spawn(async move {
@@ -205,6 +213,7 @@ pub fn start(
                     if shell.tabs[idx].load_generation != generation {
                         return true;
                     }
+                    let visible = shell.active_tab().id == tab_id;
                     table_for_apply.update(cx, |state, cx| {
                         let delegate = state.delegate_mut();
                         apply_batch(delegate, batch);
@@ -216,9 +225,13 @@ pub fn start(
                         if let Some((SortColumn::Size, asc)) = delegate.current_sort {
                             delegate.apply_sort(SortColumn::Size, asc);
                         }
-                        state.refresh(cx);
+                        if visible {
+                            state.refresh(cx);
+                        }
                     });
-                    cx.notify();
+                    if visible {
+                        cx.notify();
+                    }
                     false
                 })
                 .unwrap_or(true);
@@ -271,6 +284,7 @@ fn run_worker(
                     && now.saturating_sub(rec.computed_at_unix) < FOLDER_SIZE_TTL_SECS =>
             {
                 hits.push(SizeRow {
+                    row_ix: seed.row_ix,
                     node: seed.node,
                     size: rec.size,
                     file_count: rec.file_count,
@@ -296,6 +310,8 @@ fn run_worker(
         return;
     }
 
+    let mut ready = Vec::with_capacity(SIZE_ROWS_PER_BATCH);
+    let mut last_flush = Instant::now();
     for seed in misses {
         if cancel.load(Ordering::Relaxed) {
             return;
@@ -323,17 +339,23 @@ fn run_worker(
                 });
             }
         }
-        if tx
-            .send_blocking(vec![SizeRow {
-                node: seed.node,
-                size,
-                file_count: files,
-                dir_count: dirs,
-            }])
-            .is_err()
-        {
-            return;
+        ready.push(SizeRow {
+            row_ix: seed.row_ix,
+            node: seed.node,
+            size,
+            file_count: files,
+            dir_count: dirs,
+        });
+        if ready.len() >= SIZE_ROWS_PER_BATCH || last_flush.elapsed() >= SIZE_BATCH_MAX_LATENCY {
+            if tx.send_blocking(std::mem::take(&mut ready)).is_err() {
+                return;
+            }
+            ready.reserve(SIZE_ROWS_PER_BATCH);
+            last_flush = Instant::now();
         }
+    }
+    if !ready.is_empty() {
+        let _ = tx.send_blocking(ready);
     }
 }
 
@@ -349,8 +371,29 @@ fn run_worker(
 fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<SizeRow>) {
     // Sizes change → the status bar's cached totals are stale.
     delegate.invalidate_drag_snapshot();
+    let needs_index = batch.iter().any(|row| {
+        delegate
+            .entries
+            .get(row.row_ix)
+            .is_none_or(|entry| entry.id != row.node)
+    });
+    let node_rows = needs_index.then(|| {
+        delegate
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.id, index))
+            .collect::<std::collections::HashMap<_, _>>()
+    });
     for row in batch {
-        if let Some(e) = delegate.entries.iter_mut().find(|e| e.id == row.node) {
+        let row_ix = if needs_index {
+            node_rows
+                .as_ref()
+                .and_then(|rows| rows.get(&row.node).copied())
+        } else {
+            Some(row.row_ix)
+        };
+        if let Some(e) = row_ix.and_then(|index| delegate.entries.get_mut(index)) {
             e.size = row.size;
             // "0 B" on an empty folder reads like a measurement
             // error; Finder-style "--" reads as "nothing in here".

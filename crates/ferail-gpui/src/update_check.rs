@@ -804,7 +804,10 @@ fn start_download(info: &ReleaseInfo, cx: &mut App) {
     };
     mutate(cx, |st| st.download = DownloadStatus::InProgress(None));
     let client = cx.http_client();
-    let (tx, rx) = async_channel::unbounded::<DlMsg>();
+    // Progress is producer-paced by this tiny queue. A fast connection must
+    // not enqueue one UI refresh per network chunk while the window is busy;
+    // the terminal Done/Failed message waits for the latest progress update.
+    let (tx, rx) = async_channel::bounded::<DlMsg>(2);
     cx.background_executor()
         .spawn(async move {
             let result = download_worker(client, &asset.url, &asset.name, &tx).await;

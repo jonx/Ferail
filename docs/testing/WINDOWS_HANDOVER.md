@@ -239,6 +239,45 @@ target\release\ferail-ntfs-helper.exe --diagnose "C:\path"
 target\release\ferail-ntfs-client-diag.exe "C:\path" 2
 ```
 
+## 2026-08-28 — GPUI/Zed dependency migration handover
+
+Desktop migration now targets gpui-component `e8f54eb` and Zed/GPUI
+`f66ed399` (Rust 1.97.1). The full macOS workspace check and test suite pass,
+and the deterministic properties/breadcrumb screenshot leak reproductions exit
+cleanly. Details and the post-bump local-patch audit are in
+[`docs/GPUI-MIGRATION-2026-08.md`](../GPUI-MIGRATION-2026-08.md).
+
+The vendored Windows backend was rebased to the same Zed revision. It now uses
+the upstream Windows `render_to_image` merged in Zed #63012 and retains only
+Ferail's outbound Shell/OLE drag delta. A macOS target check reaches the
+Windows crate but GPUI's resource build stops without `llvm-rc`/the Windows
+SDK, so this is not a native Windows compile claim.
+
+Before shipping this dependency bump on Windows:
+
+1. run `cargo check --workspace --all-targets` and the ordinary Windows test
+   suite from a clean checkout;
+2. run hidden `--screenshot` captures for the shell, properties, disk usage,
+   and an overlay-heavy state; confirm nonblank PNGs with no visible window,
+   taskbar item, Alt-Tab item, or focus theft;
+3. test dragging one file, one folder, and a mixed selection out to Explorer,
+   back into Ferail, and between Ferail windows; verify Ctrl/Shift/Alt effect
+   negotiation and no redraw storm during OLE DragOver;
+4. test filter token completion, Cmd+L path completion, Go to Folder, and the
+   filter clear X. These now use a decoration-free `EditorState`; no line-number
+   gutter, newline insertion, monospace font, or altered field height may appear;
+5. under the dev leak detector, close/Quit with the filter focused, Get Info
+   open, and a context menu open. The old per-paint input callback is gone
+   upstream, but Ferail intentionally retains its generic teardown containment;
+6. rerun the existing P0 preview 10k, multi-selection, Flat 4M, Open/Reveal,
+   native-menu and clean-Sandbox checks because the framework snapshot moved.
+
+Do not open a new upstream PR from this migration. Any remaining framework
+candidate must first reproduce on current upstream without Ferail, be reduced
+to a minimal tested patch, satisfy the repository's current submission rules,
+and be presented for approval. Three concurrent PRs is a hard maximum, not a
+queue to fill.
+
 `ferail-ntfs-helper.exe` is part of the public portable ZIP, so the first
 command works against the exact helper shipped with Ferail; `--help` prints
 the diagnostic syntax. `ferail-ntfs-client-diag.exe` is a developer binary
@@ -1982,4 +2021,110 @@ recorded in the 2026-08-27 section near the top of this handover. That newer
 section supersedes this pre-implementation audit. Keep Fast DU out of
 Flat/Search until the separate read-only adapter and million-entry memory
 gates are designed and qualified; do not share the elevated helper lifetime.
+
+## 2026-08-29 — inline rename, editable paths and list marquee
+
+Implemented in shared UI code on macOS (not yet qualified interactively on
+Windows):
+
+- file/folder Rename now swaps one persistent editor into the target row in
+  list or icon view. F2, the context menu and the one-item Bulk Rename fallback
+  share it; repeated F2 refocuses the same session instead of opening prompts;
+- files select their stem and preserve the final extension, directories select
+  the full name. Enter or focus loss commits on the background mutation lane,
+  Escape cancels, and validation/rename failures remain visible in place;
+- Cmd/Ctrl+L uses the same inline frame with the existing rich completion
+  editor. Every editable filesystem-path prefill (path bar and Go to Folder)
+  passes through `display_path`, so Windows' internal `\\?\`/`\\?\UNC\`
+  canonicalization is never offered as user text;
+- list view again supports Explorer-style rectangle selection beginning in the
+  empty body below the rows. Its hit test converts the rectangle directly to a
+  virtual row range and remembers the lead row, avoiding any whole-model pass
+  during or after a drag. Shift/Cmd/Ctrl makes the gesture additive.
+
+Host proof completed:
+
+- `cargo clippy -p ferail-gpui --lib -- -D warnings`;
+- `cargo test -p ferail-gpui --lib` (327 passed, one network test ignored);
+- bundled locale coverage and three headless UI captures: inline rename in
+  list/grid, plus path editing;
+- a full macOS-to-MSVC cross-check remains unavailable because this host lacks
+  `llvm-rc` and the Windows SDK C headers. This is a toolchain boundary, not a
+  Windows compile claim.
+
+Required real-Windows checks:
+
+1. In list and icon view rename a file with multiple dots, a folder, a Unicode
+   name and a long-path item. Confirm the intended selection range, Enter,
+   click-away, Escape and a collision error all behave inline.
+2. Hold F2 for several seconds and invoke Rename repeatedly from the menu.
+   Exactly one editor may exist and no modal/dialog may remain behind.
+3. Navigate a long-path-enabled item whose internal path is `\\?\C:\...`, then
+   inspect Ctrl+L, Go to Folder, tab/Recent labels and Get Info. No `\\?\` prefix
+   may be visible or editable; UNC must display as `\\server\share\...`.
+4. From empty space below a populated list, drag upward across rows; repeat
+   with Ctrl and Shift. Rows intersecting the rectangle must update live, and
+   dragging a file itself must still initiate file drag/drop rather than a
+   marquee.
+5. Repeat rectangle selection in a million-row Flat/Search surface while
+   watching CPU and redraw rate. Pointer movement must stay proportional to
+   the swept visible range, with no model-sized allocation or pause on release.
 ```
+
+## 2026-08-29 — bounded background-stream qualification
+
+The shared scheduler audit after the inline-edit fixes found that Flat and the
+Windows namespace already had finite worker/UI backpressure, but ordinary
+directory enumeration, recursive search, duplicate results and folder-size
+results still used unbounded channels. The shared code now:
+
+- caps ordinary listing/search at 64 producer batches, coalesces at most 16,384
+  rows into one foreground apply, then yields for 100 ms before the next slice;
+- caps duplicate result messages at 16 and folder-size result batches at 8;
+  cheap folder-size results coalesce by 64 or 100 ms, while a slow/deep folder
+  still appears promptly;
+- keeps generation checks and cooperative cancellation at every ownership
+  boundary. A full queue backpressures the worker and a dropped receiver makes
+  its next send cancel/stop the scan; it never truncates the result set;
+- gives text previews the same one-active/one-latest and active-cancellation
+  policy already used by native previews; and bounds bursty volume-watch and
+  update-download progress queues;
+- applies batches, final sorting, folder-size values and metadata to inactive
+  tab models without table/window notification. Activating a tab mirrors its
+  semantic selection, refreshes it once and warms only the visible viewport.
+
+Required Windows qualification (do this from the exact release candidate):
+
+1. Generate/open an ordinary directory with at least 500,000 direct children.
+   Let it finish, then repeat while resizing, scrolling and switching tabs.
+   Rows must all arrive, the UI heartbeat must not stall for 250 ms, memory
+   must plateau near the live model rather than grow with pending batches, and
+   redraw/CPU must settle after `Done`.
+2. Run a subtree search returning at least 1,000,000 rows. During the scan,
+   change query, navigate Back and close its tab while the producer queue is
+   full. The old worker must stop, no stale row may land in the replacement
+   surface, invisible batches must not increase redraw rate, and the new action
+   must become responsive immediately. Returning to the original tab must show
+   every result accumulated while it was hidden after one activation refresh.
+3. On a result-heavy exact-duplicate corpus, cancel and restart repeatedly;
+   then do the same for Similar Images. Confirm stable memory, one live task,
+   no stale group/card and complete final counts. Similar-image thumbnails must
+   retain their existing bounded provider concurrency.
+4. Open a directory containing thousands of child folders, first cold and then
+   warm from the folder-size cache. Sort by Size while results stream. Confirm
+   bounded memory, no per-folder redraw storm, correct final order/count
+   descriptions, and prompt cancellation on navigation.
+5. Hold Up/Down through `WCORPUS-MEDIA-10K`, mixing text/NFO, PDF/Office and
+   image/video rows. At most the active and latest text/native previews may be
+   scheduled; superseded reads must remain retryable, the last selected row
+   must win, and hostile native providers must remain isolated in the broker.
+6. While any test above runs, capture the task/activity diagnostics and a hang
+   report if a 250 ms heartbeat threshold is crossed. After stopping, wait ten
+   seconds and confirm zero active/pending provider/upload/apply work, normal
+   redraw rate and no lingering preview/helper process.
+
+Release responsibility remains split deliberately: the Windows workstation is
+for this interactive/native qualification and dump capture. Windows and Linux
+artifacts are built by GitHub Actions from the reviewed tag; macOS is built,
+signed, notarised and Gatekeeper-checked on the Mac. Do not publish a Windows
+artifact built ad hoc from the qualification checkout.

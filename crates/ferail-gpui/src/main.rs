@@ -7,8 +7,11 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
+use ferail_core::{EntryKind, FormatFlag, classify_format_fields};
 use ferail_disk_usage::{DiskUsageTree, NodeKind, build_layout_node};
-use ferail_fs_native::{DEFAULT_DU_BATCH, NativeFs, detect_magic};
+use ferail_fs_native::{
+    DEFAULT_DU_BATCH, NativeFs, describe_kind, detect_magic, detect_magic_info,
+};
 use ferail_gpui::screenshot;
 
 fn main() -> Result<()> {
@@ -135,6 +138,7 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
     };
     match cmd {
         "magic" => run_magic_cli(&args[1..]).map(Some),
+        "formats" => run_formats_cli(&args[1..]).map(Some),
         "du" | "disk-usage" => run_disk_usage_cli(&args[1..]).map(Some),
         "thumb" | "thumbnail" => run_thumb_cli(&args[1..]).map(Some),
         // Health check. `--doctor` is also accepted (it would otherwise fall
@@ -219,7 +223,7 @@ fn run_doctor_cli() -> i32 {
 
 fn print_cli_help() {
     println!(
-        "Ferail\n\nUsage:\n  ferail                 Open the GPUI file manager\n  ferail magic [path]...  Print magic-byte format (defaults to current directory; directories are listed shallow)\n  ferail du [options] <path>  Print disk-usage summary\n  ferail thumb <path> [--out <png>] [--size N] [--preview]  Extract a file's thumbnail/preview to a PNG\n  ferail doctor          Print a health check (config / storage / deps) and exit\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories\n\nThumb options:\n  --out <path>     Output PNG path (default: thumb.png)\n  --size <px>      Max edge in pixels (default: 512)\n  --preview        Fetch what the preview pane would show instead of the grid thumbnail\n                   (on Windows this allows the brokered preview-handler capture)"
+        "Ferail\n\nUsage:\n  ferail                 Open the GPUI file manager\n  ferail magic [path]...  Print magic-byte format (defaults to current directory; directories are listed shallow)\n  ferail formats [--recursive] [path]  Audit the file-list format policy as TSV\n  ferail du [options] <path>  Print disk-usage summary\n  ferail thumb <path> [--out <png>] [--size N] [--preview]  Extract a file's thumbnail/preview to a PNG\n  ferail doctor          Print a health check (config / storage / deps) and exit\n\nFormat audit options:\n  --recursive      Include every file below the supplied directories\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories\n\nThumb options:\n  --out <path>     Output PNG path (default: thumb.png)\n  --size <px>      Max edge in pixels (default: 512)\n  --preview        Fetch what the preview pane would show instead of the grid thumbnail\n                   (on Windows this allows the brokered preview-handler capture)"
     );
 }
 
@@ -262,6 +266,133 @@ fn print_magic_line(path: &Path) {
         .map(str::to_string)
         .unwrap_or_else(|| extension_fallback_label(path));
     println!("{}\t{}", path.display(), label);
+}
+
+/// Print the exact inputs and result of the file-list format policy. The TSV
+/// shape is intentionally plain so a large subtree can be redirected, sorted,
+/// or filtered without opening Ferail or growing its row model.
+fn run_formats_cli(args: &[String]) -> Result<i32> {
+    let mut recursive = false;
+    let mut roots = Vec::new();
+    for arg in args {
+        match arg.as_str() {
+            "--recursive" | "-r" => recursive = true,
+            "-h" | "--help" => {
+                println!("usage: ferail formats [--recursive] [path]...");
+                return Ok(0);
+            }
+            value if value.starts_with('-') => {
+                eprintln!("ferail formats: unknown option {value:?}");
+                return Ok(2);
+            }
+            value => roots.push(PathBuf::from(value)),
+        }
+    }
+    if roots.is_empty() {
+        roots.push(PathBuf::from("."));
+    }
+
+    let mut files = Vec::new();
+    let mut had_errors = false;
+    for root in roots {
+        collect_format_paths(&root, recursive, &mut files, &mut had_errors);
+    }
+    files.sort();
+    files.dedup();
+
+    println!("PATH\tEXTENSION\tFORMAT\tDESCRIPTION\tSTATUS");
+    for path in files {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let kind = describe_kind(EntryKind::File, name);
+        let info = detect_magic_info(&path);
+        let magic = info
+            .as_ref()
+            .map(|value| value.magic_type.display_name())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("");
+        let description = info
+            .as_ref()
+            .map(|value| value.description())
+            .unwrap_or_default();
+        let status = match classify_format_fields(&kind, magic, &description) {
+            FormatFlag::None => "ok",
+            FormatFlag::Notice => "notice",
+            FormatFlag::Alert => "alert",
+        };
+        println!(
+            "{}\t{}\t{}\t{}\t{}",
+            tsv_field(&path.to_string_lossy()),
+            tsv_field(&kind),
+            tsv_field(magic),
+            tsv_field(&description),
+            status
+        );
+    }
+    Ok(i32::from(had_errors))
+}
+
+fn collect_format_paths(
+    root: &Path,
+    recursive: bool,
+    files: &mut Vec<PathBuf>,
+    had_errors: &mut bool,
+) {
+    if root.is_file() {
+        files.push(root.to_path_buf());
+        return;
+    }
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) => {
+                eprintln!("ferail formats: {}: {error}", dir.display());
+                *had_errors = true;
+                continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    eprintln!("ferail formats: {}: {error}", dir.display());
+                    *had_errors = true;
+                    continue;
+                }
+            };
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    eprintln!("ferail formats: {}: {error}", entry.path().display());
+                    *had_errors = true;
+                    continue;
+                }
+            };
+            if file_type.is_file() {
+                files.push(entry.path());
+            } else if recursive && file_type.is_dir() {
+                pending.push(entry.path());
+            }
+            // Symlinks are deliberately not followed: an audit of one subtree
+            // must stay in that subtree and cannot loop through directory links.
+        }
+        if !recursive {
+            break;
+        }
+    }
+}
+
+fn tsv_field(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            '\t' | '\n' | '\r' => ' ',
+            other => other,
+        })
+        .collect()
 }
 
 fn run_disk_usage_cli(args: &[String]) -> Result<i32> {

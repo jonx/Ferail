@@ -83,7 +83,8 @@ disguised whitespace are rendered as visible chips instead of letting a name lie
 ![Filename hazards](docs/images/tour-filename-hazards.png)
 
 **The same binary is a command-line toolbox** — `ferail magic` prints what
-files really are (bytes, not extensions), `ferail du` a disk-usage summary,
+files really are (bytes, not extensions), `ferail formats --recursive` audits
+that recognition policy across a tree as TSV, `ferail du` a disk-usage summary,
 `ferail thumb` extracts any file's thumbnail to a PNG, and `ferail doctor`
 runs a config/storage/dependency health check:
 

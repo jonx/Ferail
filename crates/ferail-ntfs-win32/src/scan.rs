@@ -1,6 +1,6 @@
 use ferail_ntfs::{
-    ByteReader as _, CompactNtfsIndex, ErrorKind, IndexBuilder, NtfsError, Progress,
-    RecordParseOptions, ScanPhase, bootstrap_mft, parse_file_record_in_place,
+    bootstrap_mft, parse_file_record_in_place, ByteReader as _, CompactNtfsIndex, ErrorKind,
+    IndexBuilder, NtfsError, Progress, RecordParseOptions, ScanPhase,
 };
 use rayon::prelude::*;
 

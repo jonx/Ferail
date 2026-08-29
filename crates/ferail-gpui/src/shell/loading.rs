@@ -17,6 +17,44 @@ pub(crate) struct LoadBatch {
     pub paths: HashMap<NodeId, PathBuf>,
 }
 
+impl LoadBatch {
+    pub(super) fn append(&mut self, other: Self) {
+        self.entries.extend(other.entries);
+        self.paths.extend(other.paths);
+    }
+}
+
+/// A normal directory can be just as large as a Flat result. Keep the worker
+/// a finite number of enumeration batches ahead of the UI and coalesce those
+/// batches before touching GPUI. This is backpressure, not a result cap.
+pub(super) const LISTING_CHANNEL_BATCHES: usize = 64;
+pub(super) const LISTING_UI_ROWS_PER_TICK: usize = 16 * 1024;
+pub(super) const LISTING_UI_TICK_MS: u64 = 100;
+
+#[derive(Default)]
+pub(super) struct LoadUiUpdate {
+    pub batch: Option<LoadBatch>,
+    pub done: Option<(Option<EnumerationError>, HiddenSummary, FilterSummary)>,
+}
+
+impl LoadUiUpdate {
+    pub(super) fn rows(&self) -> usize {
+        self.batch.as_ref().map_or(0, |batch| batch.entries.len())
+    }
+
+    pub(super) fn absorb(&mut self, msg: LoadMsg) {
+        match msg {
+            LoadMsg::Batch(next) => match &mut self.batch {
+                Some(batch) => batch.append(next),
+                None => self.batch = Some(next),
+            },
+            LoadMsg::Done(error, hidden, filtered) => {
+                self.done = Some((error, hidden, filtered));
+            }
+        }
+    }
+}
+
 /// Aggregate of the entries the hidden filter dropped from a load —
 /// what the status bar shows ("N hidden · X B") when *show hidden* is
 /// off, so hidden content is discoverable without unhiding it. Zero

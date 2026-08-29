@@ -41,6 +41,13 @@ we leave ours unpinned too (both float onto one source; the committed
 when it pins, we mirror the rev. Same invariant either way — one gpui source
 in the graph.
 
+**Update (2026-08-28, bump `6d7847e` → `e8f54eb`):** the component remains
+unpinned. Ferail moved the one shared Zed source to `f66ed399`, the exact Zed
+revision exercised by gpui-component's own lockfile at `e8f54eb`. The committed
+Ferail lock contains one Zed source and one gpui-component source; do not add a
+`rev` query to only one dependency, because Cargo treats that as a distinct
+source even when the commit hash is identical.
+
 **What upstream could do:**
 - gpui-component could re-export the `gpui` it builds against (e.g.
   `pub use gpui;`) so consumers depend on *its* gpui transitively instead of
@@ -245,76 +252,28 @@ previews is already in.
 - Document/expose wheel scroll-chaining behavior so nested scroll containers
   bubble at the boundary predictably.
 
-## 7. `gpui_windows` has no `Window::render_to_image` — headless capture needs a workaround
+## 7. Windows `Window::render_to_image` — RESOLVED upstream
 
-**PR opened 2026-08-21:** [zed#63012](https://github.com/zed-industries/zed/pull/63012).
+**Merged 2026-08-26:** [zed#63012](https://github.com/zed-industries/zed/pull/63012).
 
-**Hit during:** Windows port — the `--screenshot` CLI harness
-(`ferail-gpui/src/screenshot.rs`).
+The original Windows backend had no offscreen readback, so Ferail's hidden
+`--screenshot` window could not use the same `Window::render_to_image` path as
+macOS. The merged implementation renders into the existing DirectX target,
+copies through a CPU-readable staging texture, and converts BGRA to RGBA without
+showing the window.
 
-`gpui_macos` implements `Window::render_to_image` (MetalRenderer samples an
-offscreen target, so a *hidden* window can be captured). `gpui_windows` does
-**not** implement it — the method returns `Err("render_to_image not implemented
-for this platform")`. So the unified `capture_window()` the macOS side wrote
-(assuming both platforms had `render_to_image`) panics on Windows. A stale code
-comment referenced a `gpui-windows-render-to-image` `[patch]` that was never
-actually wired into the root `Cargo.toml`.
+Ferail now pins Zed `f66ed399`, which contains the merged change. Our vendored
+`gpui_windows` is based on that exact revision and carries only the separate
+outbound Shell/OLE drag delta documented in its README; it does not carry a
+second render-to-image implementation. The historical patch file remains only
+as review provenance and is not applied by Cargo.
 
-**IMPLEMENTED (local patch, PR-ready).** We implemented `render_to_image` in
-`gpui_windows` and run against it via a `[patch]` to a local zed clone:
-
-- `DirectXRenderer::render_to_image(scene, bg)` — draws the scene into the
-  existing render target (created at window construction, so no window need be
-  shown), copies it into a `D3D11_USAGE_STAGING` texture, `Map`s it, and
-  converts BGRA → RGBA — the Windows analogue of `gpui_macos`'s offscreen Metal
-  path. The clear, scene upload and batch encoding are factored into a shared
-  `render()` so `draw` (which then presents) and `render_to_image` (which
-  reads the target back instead) cannot drift. Gated on
-  `cfg(any(test, feature = "test-support"))` to match the trait method.
-- `WindowsWindow::render_to_image` overrides the `PlatformWindow` trait default.
-- The diff is captured at [`patches/gpui-windows-render-to-image.patch`](../patches/gpui-windows-render-to-image.patch)
-  — ready to open as a zed PR. Once merged upstream, bump the gpui rev in the
-  root `Cargo.toml` and drop the `[patch]` + the PrintWindow fallback.
-- **2026-08-21: rebased onto zed main `075520b9`** (branch
-  `ferail/render-to-image-windows` in `~/Source/zed-reference`, commit
-  message written for the PR; the patch file above is the regenerated diff).
-  Two upstream drifts absorbed: the trait became
-  `render_to_image(&self, scene)` (background appearance no longer a
-  parameter — the window impl reads it from state), and `draw` grew
-  `skip_draws` device-lost recovery + per-batch debug annotations (both live
-  in the shared `render()`; `render_to_image` bails during device-lost).
-  Cross-checked from macOS with `cargo check -p gpui_windows
-  --no-default-features --features test-support --target
-  x86_64-pc-windows-msvc` (clang-cl/llvm-lib + xwin headers in `~/.xwin` —
-  regenerate with `xwin --accept-license splat --output ~/.xwin
-  --cache-dir /tmp/xwin-cache`; without `--cache-dir`, xwin drops a ~1 GB
-  download cache in the *current directory*;
-  `--no-default-features` skips only the `windows-manifest` embed-resource
-  step, irrelevant to the change).
-- **2026-08-23: revised on review feedback** (branch force-pushed to
-  `9f70fef0`; the patch file above is the regenerated diff). The earlier
-  factoring extracted only the batch loop as `draw_batches`, which left the
-  clear-colour `match` on `WindowBackgroundAppearance` duplicated between
-  `draw` and `render_to_image` — exactly the drift the factoring claimed to
-  prevent. It is now a single `render(scene, background_appearance)` covering
-  clear + upload + batch encoding. Also added: a SAFETY comment on the
-  staging-texture row copy, and the real justification for the `skip_draws`
-  guard (a pending device-lost recovery leaves the atlas holding tile
-  references from the previous device, and drawing before the forced
-  re-render rebuilds them panics in `DirectXAtlasState::texture`). The PR
-  body was rewritten onto zed's actual PR template, including the
-  `Release Notes:` block their Danger rule requires.
-- **Do not expect fork CI to validate this.** Every job in zed's workflows is
-  gated on `if: github.repository_owner == 'zed-industries' || 'zed-extensions'`,
-  so pushing the branch to a fork we own runs nothing — every job skips. A
-  native Windows build of a given revision has to come from the Windows box or
-  from a hand-written `windows-latest` workflow on a scratch branch (zed's own
-  jobs use `namespace-profile-*` runners we do not have).
-
-With the patch active, the screenshot harness opens the window with
-`show: false` and captures via `render_to_image` — **truly headless, no flash**.
-The PrintWindow path (`ferail_shell_win32::capture_window_rgba` + off-screen
-move) remains as the fallback for builds without the patch.
+The macOS host can compile the ordinary workspace but cannot complete the
+Windows GPUI build-script without the Windows resource compiler/SDK. Native
+Windows CI or the Windows development box must therefore keep the no-flash
+acceptance check: hidden window, nonblank PNG, no taskbar/Alt-Tab entry. The
+old `PrintWindow` implementation remains emergency/debug fallback code, not the
+normal screenshot path.
 
 ## 8. gpui grew a *direct* GPL-3.0 `ztracing` dependency
 
@@ -482,7 +441,7 @@ external payload API.
 For same-process cross-window drags, restore the original typed payload in any
 GPUI destination window rather than only the source window.
 
-## 12. gpui-component `Input` paint leaks strong handles under a second window; the leak assert shipped to users
+## 12. gpui-component `Input` paint leaked strong handles — upstream shape fixed, teardown containment retained
 
 **Hit during:** the 2026-08-24 Windows session, chasing the 0.6.5 tester's
 "crash on quit" reports (`Exited with leaked handles: … InputState`).
@@ -539,6 +498,17 @@ before the entity-map assertion. Repros with a focused edited filter, preview,
 and a context menu still open all exit 0 under `LEAK_BACKTRACE=1`. This remains
 teardown containment for upstream strong captures, not a claim that their
 normal-render ownership disappeared.
+
+**2026-08-28 migration follow-up (`gpui-component` `e8f54eb`):** the old
+per-paint `window.on_next_frame` closure is gone. Input kinds now share the
+`gpui-base` engine, and the UI layer synchronizes `Root::focused_input` only
+with the actual focus state. Ferail's deterministic
+`LEAK_BACKTRACE=1 --screenshot --properties` reproduction exits cleanly after
+the bump, as does the full workspace test suite. We retain the generic
+focus/root/frame teardown sequence because it also protects current overlay and
+platform-handler ownership, and it must be revalidated on a native Windows
+close before any simplification. There is no upstream PR candidate here unless
+a new minimal reproducer demonstrates a remaining framework leak.
 
 **What upstream could do:** capture `WeakEntity<InputState>` in the
 `on_next_frame` reset closure and in `Root.focused_input`, or drain

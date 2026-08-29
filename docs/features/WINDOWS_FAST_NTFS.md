@@ -28,7 +28,9 @@ memory/performance gates remain hardware qualification, not claims inferred
 from unit tests. Authenticode qualification is also still open: the current
 portable helper is unsigned, so a same-publisher signature check at launch
 cannot yet distinguish it from a replacement in the user-writable package
-directory.
+directory. An interim salted-digest check now stands in its place — see
+[Interim helper attestation](#interim-helper-attestation) for what it does and
+does not cover.
 
 The 0.7.1 integration is for Disk Usage only. Flat View and Search still use
 their portable recursive walker; sharing the fast transport with them requires
@@ -57,6 +59,49 @@ incremental refresh is a later feature, not part of v1.
 - Closing, cancelling or refreshing Disk Usage drops that request's raw
   reader, compact index, queued batches and GUI result arena. The idle helper
   remains connected for later requests and exits when Ferail disconnects.
+
+## Interim helper attestation
+
+Until the package is signed, `crates/ferail-ntfs-win32/src/attest.rs` stands in
+for the same-publisher signature check. `scripts/package-win.ps1` draws a fresh
+32-byte salt per release, hashes the **staged and signed** helper as
+`SHA-256(salt ‖ file ‖ salt)`, and rebuilds `Ferail.exe` with both values baked
+into its constant data. Before elevating, the launcher opens the helper denying
+other writers and deleters, hashes it through that handle, and holds the handle
+across `ShellExecuteExW`.
+
+Be precise about what this is worth:
+
+- **A closed check-to-launch window is a real guarantee.** The deny-write hold
+  means nothing can substitute the file between the hash and the elevation.
+- **Mundane failures fail closed.** A stale helper from an older version, a
+  half-extracted ZIP, an interrupted update, or a helper replaced on its own
+  all fall back to Portable with a distinct banner.
+- **Against a local attacker it buys cost, not immunity.** Anyone who can write
+  the helper can usually write `Ferail.exe` and patch the expected digest out.
+  The salt means they must reverse the binary instead of searching it for a
+  known 32-byte hash, so a scripted swap stops working and a determined one
+  does not.
+
+Only Authenticode closes the last point, because the signal is then enforced by
+Windows rather than by our own code: UAC names the publisher, so a substituted
+helper prompts as an unknown one where the user can see it. Do not describe the
+digest check as that boundary in release notes or documentation.
+
+A self-binding variant (folding the parent's own hash into the expected value,
+so patching the parent invalidates it) was considered and rejected: Authenticode
+signing rewrites the parent after the build, which would break the binding at
+exactly the moment signing starts.
+
+Ordering constraints the packaging script must keep:
+
+- The digest is taken **after** signtool has run on the helper. Signing rewrites
+  the file, so a digest taken earlier describes bytes that no longer exist.
+- The attestation rebuild selects only `ferail-gpui`, so the hashed helper is
+  not relinked. The script re-hashes the staged helper afterwards and fails if
+  it moved.
+- A `-SkipBuild` run cannot bake a digest. The script says so and marks the
+  artifact unpublishable.
 
 ## Architecture boundary
 
@@ -308,6 +353,12 @@ Also verify:
   without regressing ordinary listings, OneDrive no-hydration, WSL, 10k media,
   Flat 4M or macOS;
 - packaged helper discovery and signatures work in a clean Windows Sandbox;
+- the interim attestation behaves: a packaged build runs Fast NTFS normally; a
+  helper replaced or truncated after packaging falls back to Portable with the
+  "does not match this build" banner; and holding the helper with
+  `FILE_SHARE_READ` across `ShellExecuteExW` does not itself provoke a sharing
+  violation on any supported Windows version — this last one is unverified from
+  a macOS development host and must be exercised on real hardware;
 - logs, reports, metadata DB and crash bundles contain no requested path,
   filename, raw record, pipe identifier or protocol payload.
 

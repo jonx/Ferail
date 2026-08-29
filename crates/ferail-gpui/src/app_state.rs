@@ -153,8 +153,8 @@ pub struct AppState {
     /// Whether the sidebar is collapsed to icons-only. None == the
     /// user has never expressed a preference (defaults to expanded).
     pub sidebar_collapsed: Option<bool>,
-    /// Whether the sidebar uses the fixed compact text width. Kept separate
-    /// from `sidebar_width` so returning to normal restores the user's width.
+    /// Legacy three-state sidebar preference. Parsed so older settings remain
+    /// readable, then omitted the next time current code saves the state.
     pub sidebar_compact: Option<bool>,
     /// Stable comma-separated sidebar section IDs in user order.
     pub sidebar_section_order: Option<String>,
@@ -415,7 +415,7 @@ fn load_from_disk() -> AppState {
                     .trim()
                     .parse::<f32>()
                     .ok()
-                    .map(|n| n.clamp(160.0, 400.0));
+                    .map(|n| n.clamp(180.0, 520.0));
             }
             "preview_width" => {
                 out.preview_width = val
@@ -619,9 +619,6 @@ fn serialize(state: &AppState) -> String {
     if let Some(b) = state.sidebar_collapsed {
         s.push_str(&format!("sidebar_collapsed={b}\n"));
     }
-    if let Some(b) = state.sidebar_compact {
-        s.push_str(&format!("sidebar_compact={b}\n"));
-    }
     if let Some(value) = &state.sidebar_section_order {
         s.push_str(&format!("sidebar_section_order={value}\n"));
     }
@@ -717,11 +714,13 @@ mod tests {
 
     #[test]
     fn privacy_sensitive_defaults_are_conservative() {
-        assert!(!DEFAULT_UPDATE_CHECK, "automatic network checks are opt-in");
-        assert!(
-            DEFAULT_REDACT_DIAGNOSTICS,
-            "shareable diagnostics hide user paths by default"
-        );
+        const {
+            assert!(!DEFAULT_UPDATE_CHECK, "automatic network checks are opt-in");
+            assert!(
+                DEFAULT_REDACT_DIAGNOSTICS,
+                "shareable diagnostics hide user paths by default"
+            );
+        }
         let fresh = AppState::default();
         assert_eq!(fresh.update_check, None);
         assert_eq!(fresh.redact_diagnostics, None);
@@ -748,7 +747,6 @@ mod tests {
     #[test]
     fn sidebar_layout_state_serializes() {
         let state = AppState {
-            sidebar_compact: Some(true),
             sidebar_section_order: Some("volumes,locations,browse".into()),
             sidebar_collapsed_sections: Some("locations,browse".into()),
             ..AppState::default()
@@ -756,7 +754,6 @@ mod tests {
         assert_eq!(
             serialize(&state),
             concat!(
-                "sidebar_compact=true\n",
                 "sidebar_section_order=volumes,locations,browse\n",
                 "sidebar_collapsed_sections=locations,browse\n"
             )

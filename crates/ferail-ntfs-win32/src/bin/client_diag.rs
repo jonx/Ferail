@@ -5,7 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::time::{Duration, Instant};
 
     use ferail_ntfs::SizingMode;
-    use ferail_ntfs_win32::{FastNtfsEvent, FastNtfsRequest, run_fast_ntfs};
+    use ferail_ntfs_win32::{run_fast_ntfs, FastNtfsEvent, FastNtfsRequest};
 
     let mut args = std::env::args_os();
     let _exe = args.next();

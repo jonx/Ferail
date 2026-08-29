@@ -18,6 +18,16 @@ pub(crate) enum TransferMode {
 /// cancellation so a workbench can always leave its busy state.
 pub type ArchiveOpSettled = Box<dyn FnOnce(bool, &mut Shell, &mut Context<Shell>) + 'static>;
 
+/// Selection Zed/Finder/Explorer use when rename starts: a directory selects
+/// its whole name; a file leaves the final extension in place.  Byte offsets
+/// are intentional — gpui-component's selection API is UTF-8-byte based.
+fn inline_name_selection_end(name: &str, is_dir: bool) -> usize {
+    if is_dir {
+        return name.len();
+    }
+    name.rfind('.').filter(|dot| *dot > 0).unwrap_or(name.len())
+}
+
 pub(crate) struct ArchiveSaveRequest {
     pub archive: PathBuf,
     pub stamp: ferail_fs_native::ArchiveStamp,
@@ -472,7 +482,7 @@ impl Shell {
                         window.pop_front();
                     }
                     ticks = ticks.wrapping_add(1);
-                    if ticks % 10 == 0 {
+                    if ticks.is_multiple_of(10) {
                         shown_rate = trimmed_window_rate(&window);
                         shown_eta = if shown_rate > 1.0 && bytes_total > bytes_done {
                             Some(round_eta(
@@ -3355,6 +3365,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         crate::trail::command("Rename");
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
         let Some(row) = self.target_row(cx) else {
             return;
         };
@@ -3369,56 +3382,222 @@ impl Shell {
         else {
             return;
         };
-        let Some(old_path) = self.path_for_row(row, cx) else {
+        self.begin_inline_name_edit(entry, window, cx);
+    }
+
+    /// Enter Explorer/Finder-style inline rename for one row.  A repeated F2
+    /// on the same target merely refocuses the persistent editor, which is the
+    /// structural fix for the old stack of rename dialogs.
+    fn begin_inline_name_edit(
+        &mut self,
+        entry: ferail_core::FileEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = crate::inline_edit::FileNameEditTarget {
+            tab_id: self.active_tab().id.0,
+            node_id: entry.id,
+        };
+        if self.inline_name_edit.is_target(&target) {
+            self.inline_name_input
+                .read(cx)
+                .focus_handle(cx)
+                .focus(window, cx);
+            return;
+        }
+
+        let name = entry.display_name.to_string();
+        let selection_end = inline_name_selection_end(
+            &name,
+            matches!(entry.kind, ferail_core::EntryKind::Directory),
+        );
+        self.inline_name_edit.begin(target, name.clone());
+        self.inline_name_input.update(cx, |state, cx| {
+            state.set_value(name, window, cx);
+            state.set_selected_range(0..selection_end, cx);
+        });
+        self.refresh_inline_name_surface(target, cx);
+
+        // Mount first, focus on the next frame.  This is the same ordering
+        // Zed uses for its project-panel filename editor; focusing an entity
+        // before the virtualized row contains it does not stick on Windows.
+        let input = self.inline_name_input.clone();
+        window.on_next_frame(move |window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+        });
+    }
+
+    /// Start inline rename for an explicit visible row. Used by the delayed
+    /// second-click gesture; unlike `target_row`, this does not consume a
+    /// context-menu target left by an unrelated operation.
+    pub(super) fn begin_inline_name_edit_at_row(
+        &mut self,
+        row: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = self
+            .active_tab()
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .get(row)
+            .cloned();
+        if let Some(entry) = entry {
+            self.begin_inline_name_edit(entry, window, cx);
+        }
+    }
+
+    pub(super) fn cancel_inline_name_edit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let target = self
+            .inline_name_edit
+            .snapshot()
+            .map(|session| session.target);
+        if !self.inline_name_edit.clear() {
+            return false;
+        }
+        if let Some(target) = target {
+            self.refresh_inline_name_surface(target, cx);
+        }
+        self.focus_handle.focus(window, cx);
+        true
+    }
+
+    pub(super) fn validate_inline_name(&mut self, value: &str, cx: &mut Context<Self>) {
+        let Some(target) = self
+            .inline_name_edit
+            .snapshot()
+            .map(|session| session.target)
+        else {
             return;
         };
-        let parent = self.active_tab().current_dir.clone();
-        self.open_text_prompt(
-            tr!("Rename"),
-            tr!("New name"),
-            // Pre-fill the name the user sees (display leaf, macOS `:` → `/`);
-            // `on_disk_leaf` below maps any edit back to on-disk bytes, so an
-            // unchanged value round-trips to a no-op.
-            entry.display_name.to_string(),
-            move |this, new_name, window, cx| {
-                // Finder parity: a typed `/` stores a `:` on disk (macOS), and
-                // the rename target stays a single leaf — no accidental move
-                // into a sibling directory from a `/` in the typed name.
-                let disk = ferail_fs_native::paths::on_disk_leaf(&new_name).into_owned();
-                let mut new_path = old_path.clone();
-                new_path.set_file_name(&disk);
-                let op_old_path = old_path.clone();
-                let op_new_path = new_path.clone();
-                this.spawn_file_op(
-                    parent.clone(),
-                    move || {
-                        std::fs::rename(&op_old_path, &op_new_path).map_err(|e| e.to_string())?;
-                        // Report the result so the renamed entry is re-
-                        // selected in place (its NodeId changes with the
-                        // path, so plain selection preservation loses it).
-                        Ok(vec![op_new_path])
-                    },
-                    ferail_core::msgid!("Rename"),
-                    None,
-                    FileOpSuccessToast::None,
-                    FileOpUndo::Rename {
-                        current: new_path,
-                        original: old_path.clone(),
-                    },
-                    window,
-                    cx,
-                );
+        let validation = if value.trim().is_empty() {
+            crate::inline_edit::InlineEditValidation::Error(tr!("A name can’t be empty."))
+        } else {
+            let disk = ferail_fs_native::paths::on_disk_leaf(value);
+            match ferail_fs_native::paths::validate_leaf(&disk) {
+                Ok(()) => crate::inline_edit::InlineEditValidation::Valid,
+                Err(message) => crate::inline_edit::InlineEditValidation::Error(message.into()),
+            }
+        };
+        self.inline_name_edit.update(&target, |session| {
+            session.validation = validation;
+        });
+        self.refresh_inline_name_surface(target, cx);
+    }
+
+    pub(super) fn commit_inline_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.inline_name_edit.snapshot() else {
+            return;
+        };
+        if session.phase == crate::inline_edit::InlineEditPhase::Committing {
+            return;
+        }
+        let new_name = self.inline_name_input.read(cx).value().to_string();
+        self.validate_inline_name(&new_name, cx);
+        if self.inline_name_edit.snapshot().is_some_and(|session| {
+            matches!(
+                session.validation,
+                crate::inline_edit::InlineEditValidation::Error(_)
+            )
+        }) {
+            return;
+        }
+        if new_name == session.original.as_ref() {
+            self.cancel_inline_name_edit(window, cx);
+            return;
+        }
+
+        let Some(tab_ix) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id.0 == session.target.tab_id)
+        else {
+            self.inline_name_edit.clear();
+            return;
+        };
+        let (old_path, parent) = {
+            let tab = &self.tabs[tab_ix];
+            let table = tab.table.read(cx);
+            let delegate = table.delegate();
+            let Some(path) = delegate.path_for_entry(session.target.node_id) else {
+                self.inline_name_edit.clear();
+                return;
+            };
+            (path, tab.current_dir.clone())
+        };
+
+        let disk = ferail_fs_native::paths::on_disk_leaf(&new_name).into_owned();
+        let mut new_path = old_path.clone();
+        new_path.set_file_name(&disk);
+        if new_path == old_path {
+            self.cancel_inline_name_edit(window, cx);
+            return;
+        }
+
+        self.inline_name_edit.update(&session.target, |session| {
+            session.phase = crate::inline_edit::InlineEditPhase::Committing;
+        });
+        self.refresh_inline_name_surface(session.target, cx);
+
+        let op_old_path = old_path.clone();
+        let op_new_path = new_path.clone();
+        let target = session.target;
+        self.spawn_file_op_with_settled(
+            parent,
+            move || {
+                std::fs::rename(&op_old_path, &op_new_path).map_err(|e| e.to_string())?;
+                Ok(vec![op_new_path])
             },
+            ferail_core::msgid!("Rename"),
+            None,
+            FileOpSuccessToast::None,
+            FileOpUndo::Rename {
+                current: new_path,
+                original: old_path,
+            },
+            Some(Box::new(move |this, error, cx| {
+                if error.is_none() {
+                    if this.inline_name_edit.is_target(&target) {
+                        this.inline_name_edit.clear();
+                    }
+                } else if let Some(error) = error {
+                    this.inline_name_edit.update(&target, |session| {
+                        session.phase = crate::inline_edit::InlineEditPhase::Editing;
+                        session.validation = crate::inline_edit::InlineEditValidation::Error(tr!(
+                            "Rename failed: {detail}",
+                            detail = error
+                        ));
+                    });
+                }
+                this.refresh_inline_name_surface(target, cx);
+            })),
             window,
             cx,
         );
+    }
+
+    fn refresh_inline_name_surface(
+        &mut self,
+        target: crate::inline_edit::FileNameEditTarget,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(tab) = self.tabs.iter().find(|tab| tab.id.0 == target.tab_id) {
+            tab.table.update(cx, |state, cx| state.refresh(cx));
+        }
+        cx.notify();
     }
 
     /// Bulk rename over the resolved multi-selection
     /// (docs/features/BULK_RENAME.md). Snapshots the selection once —
     /// `(path, display name, mtime)` triples, model/cache-only — and
     /// opens the pattern-rule dialog over it. With fewer than two
-    /// targets this degrades to the single-rename prompt (one) or a
+    /// targets this degrades to inline rename (one) or a
     /// no-op (none), so palette/menu dispatch is always sensible.
     pub(super) fn on_bulk_rename_selected(
         &mut self,
@@ -3428,7 +3607,7 @@ impl Shell {
     ) {
         crate::trail::command("Bulk Rename");
         // Peek the target count without consuming `context_row`: the
-        // single-rename fallback below resolves its own target from it.
+        // inline-rename fallback below resolves its own target from it.
         let count = self.resolve_targets(self.context_row, cx).len();
         if count < 2 {
             if count == 1 {
@@ -4114,7 +4293,7 @@ impl Shell {
                         window.pop_front();
                     }
                     ticks = ticks.wrapping_add(1);
-                    if ticks % 10 == 0 {
+                    if ticks.is_multiple_of(10) {
                         shown_rate = trimmed_window_rate(&window);
                         shown_eta = if shown_rate > 1.0 && bytes_total > bytes_done {
                             Some(round_eta(
@@ -5087,5 +5266,23 @@ mod transfer_rate_tests {
         assert_eq!(round_eta(121), 130); // 10s steps
         assert_eq!(round_eta(3_081), 3_120); // whole minutes
         assert_eq!(round_eta(3_120), 3_120); // already on a step
+    }
+}
+
+#[cfg(test)]
+mod inline_name_tests {
+    use super::inline_name_selection_end;
+
+    #[test]
+    fn files_select_the_stem_and_directories_select_everything() {
+        assert_eq!(inline_name_selection_end("report.final.pdf", false), 12);
+        assert_eq!(inline_name_selection_end("report.final.pdf", true), 16);
+        assert_eq!(inline_name_selection_end("README", false), 6);
+    }
+
+    #[test]
+    fn dotfiles_and_unicode_produce_utf8_byte_ranges() {
+        assert_eq!(inline_name_selection_end(".gitignore", false), 10);
+        assert_eq!(inline_name_selection_end("café.txt", false), "café".len());
     }
 }

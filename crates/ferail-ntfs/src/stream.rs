@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::{
-    AttributeList, ByteReader, DataRun, ErrorKind, FileRecord, FileReference, NtfsError,
-    NtfsGeometry, RecordParseOptions, Result, parse_attribute_list_entries, parse_file_record,
+    parse_attribute_list_entries, parse_file_record, AttributeList, ByteReader, DataRun, ErrorKind,
+    FileRecord, FileReference, NtfsError, NtfsGeometry, RecordParseOptions, Result,
 };
 
 const ATTRIBUTE_DATA: u32 = 0x80;

@@ -4,6 +4,7 @@
 //! [`RawVolumeReader`] is a separate explicit operation expected to fail with
 //! access denied until the dedicated helper is elevated.
 
+mod attest;
 #[cfg(windows)]
 mod client;
 #[cfg(windows)]
@@ -17,16 +18,20 @@ mod raw;
 #[cfg(windows)]
 mod scan;
 
+pub use attest::{
+    digest_bytes, helper_attestation_configured, last_helper_trust, parse_hex32,
+    set_helper_attestation, HelperAttestation, HelperTrust,
+};
 #[cfg(windows)]
-pub use client::{ClientError, FastNtfsEvent, FastNtfsRequest, run_fast_ntfs};
+pub use client::{run_fast_ntfs, ClientError, FastNtfsEvent, FastNtfsRequest};
 #[cfg(windows)]
 pub use diagnostic::run_diagnostic;
 #[cfg(windows)]
 pub use helper::helper_main;
 #[cfg(windows)]
 pub use raw::{
-    FastNtfsProbe, RawNtfsGeometry, RawVolumeError, RawVolumeReader, Result, file_identity,
-    probe_fast_ntfs,
+    file_identity, probe_fast_ntfs, FastNtfsProbe, RawNtfsGeometry, RawVolumeError,
+    RawVolumeReader, Result,
 };
 #[cfg(windows)]
-pub use scan::{RawScanSummary, scan_mft};
+pub use scan::{scan_mft, RawScanSummary};

@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{AsyncApp, SharedString};
 
@@ -58,6 +59,7 @@ pub struct TextPreviewCache {
     by_path: HashMap<PathBuf, TextPreviewState>,
     order: Vec<PathBuf>,
     requests: LatestRequestQueue<PathBuf>,
+    active_cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Default for TextPreviewCache {
@@ -72,6 +74,7 @@ impl TextPreviewCache {
             by_path: HashMap::new(),
             order: Vec::new(),
             requests: LatestRequestQueue::default(),
+            active_cancel: None,
         }
     }
 
@@ -111,11 +114,33 @@ impl TextPreviewCache {
     }
 
     fn enqueue_request(&mut self, path: PathBuf) -> Enqueue {
-        self.requests.enqueue(path)
+        let outcome = self.requests.enqueue(path);
+        if matches!(outcome, Enqueue::Queued)
+            && let Some(cancel) = &self.active_cancel
+        {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        outcome
+    }
+
+    fn begin_active_request(&mut self) -> Arc<AtomicBool> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.active_cancel = Some(cancel.clone());
+        cancel
     }
 
     fn complete_request(&mut self, path: &PathBuf) -> Option<PathBuf> {
-        self.requests.complete(path)
+        let was_active = self.requests.is_active(path);
+        let next = self.requests.complete(path);
+        if was_active {
+            self.active_cancel = None;
+        }
+        next
+    }
+
+    fn remove(&mut self, path: &Path) {
+        self.by_path.remove(path);
+        self.order.retain(|cached| cached != path);
     }
 }
 
@@ -145,11 +170,11 @@ pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) 
 }
 
 fn start_request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) {
-    shell
-        .process
-        .text_preview_cache
-        .borrow_mut()
-        .insert(path.clone(), TextPreviewState::Pending);
+    let cancel = {
+        let mut cache = shell.process.text_preview_cache.borrow_mut();
+        cache.insert(path.clone(), TextPreviewState::Pending);
+        cache.begin_active_request()
+    };
 
     let weak = cx.weak_entity();
     let process = shell.process.clone();
@@ -157,9 +182,12 @@ fn start_request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>
         let p = path.clone();
         let result = cx
             .background_executor()
-            .spawn(async move { read_text_preview(&p) })
+            .spawn({
+                let cancel = cancel.clone();
+                async move { read_text_preview_cancellable(&p, &cancel) }
+            })
             .await;
-        apply_result(weak, process, path, result, cx).await;
+        apply_result(weak, process, path, result, cancel, cx).await;
     })
     .detach();
 }
@@ -167,10 +195,24 @@ fn start_request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>
 /// Read up to [`MAX_BYTES`], decide text-vs-binary, and return the
 /// line-capped text. `Ok(None)` = read fine but not text; `Err` =
 /// read failed. Worker-thread only.
+#[cfg(test)]
 fn read_text_preview(path: &Path) -> Result<Option<TextPreviewDocument>, ()> {
+    read_text_preview_cancellable(path, &AtomicBool::new(false))
+}
+
+fn read_text_preview_cancellable(
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<Option<TextPreviewDocument>, ()> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(());
+    }
     let mut f = std::fs::File::open(path).map_err(|_| ())?;
     let mut buf = vec![0u8; MAX_BYTES];
     let n = f.read(&mut buf).map_err(|_| ())?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(());
+    }
     buf.truncate(n);
     Ok(decode_text_preview_document(buf))
 }
@@ -304,6 +346,7 @@ async fn apply_result(
     process: std::rc::Rc<crate::process_state::ProcessState>,
     path: PathBuf,
     result: Result<Option<TextPreviewDocument>, ()>,
+    cancel: Arc<AtomicBool>,
     cx: &mut AsyncApp,
 ) {
     let state = match result {
@@ -313,7 +356,13 @@ async fn apply_result(
     };
     let next = {
         let mut cache = process.text_preview_cache.borrow_mut();
-        cache.insert(path.clone(), state);
+        if cancel.load(Ordering::Relaxed) {
+            // Supersession is not a read failure. Keep the old path
+            // retryable and move directly to the latest queued selection.
+            cache.remove(&path);
+        } else {
+            cache.insert(path.clone(), state);
+        }
         cache.complete_request(&path)
     };
     let Some(shell) = weak.upgrade() else { return };
@@ -568,5 +617,23 @@ mod tests {
             cache.get(&outside),
             Some(TextPreviewState::Failed)
         ));
+    }
+
+    #[test]
+    fn newer_selection_cancels_active_text_read() {
+        let first = PathBuf::from("first.txt");
+        let latest = PathBuf::from("latest.txt");
+        let mut cache = TextPreviewCache::new();
+
+        assert_eq!(cache.enqueue_request(first.clone()), Enqueue::Start);
+        cache.insert(first.clone(), TextPreviewState::Pending);
+        let cancel = cache.begin_active_request();
+        assert!(!cancel.load(Ordering::Relaxed));
+
+        assert_eq!(cache.enqueue_request(latest.clone()), Enqueue::Queued);
+        assert!(cancel.load(Ordering::Relaxed));
+        cache.remove(&first);
+        assert_eq!(cache.complete_request(&first), Some(latest));
+        assert!(cache.get(&first).is_none());
     }
 }

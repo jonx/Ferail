@@ -40,6 +40,34 @@ pub(super) enum SearchMsg {
     Done(Option<EnumerationError>),
 }
 
+const SEARCH_CHANNEL_BATCHES: usize = 64;
+const SEARCH_UI_ROWS_PER_TICK: usize = 16 * 1024;
+const SEARCH_UI_TICK_MS: u64 = 100;
+
+#[derive(Default)]
+struct SearchUiUpdate {
+    engine: Option<&'static str>,
+    batch: Option<LoadBatch>,
+    done: Option<Option<EnumerationError>>,
+}
+
+impl SearchUiUpdate {
+    fn rows(&self) -> usize {
+        self.batch.as_ref().map_or(0, |batch| batch.entries.len())
+    }
+
+    fn absorb(&mut self, msg: SearchMsg) {
+        match msg {
+            SearchMsg::Engine(engine) => self.engine = Some(engine),
+            SearchMsg::Batch(next) => match &mut self.batch {
+                Some(batch) => batch.append(next),
+                None => self.batch = Some(next),
+            },
+            SearchMsg::Done(error) => self.done = Some(error),
+        }
+    }
+}
+
 pub(super) enum FlatMsg {
     Root(PathBuf),
     Batch(LoadBatch),
@@ -561,12 +589,15 @@ impl Shell {
         notify_window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
+        let visible = idx == self.active;
         match msg {
             FlatMsg::Root(root) => {
                 let table = self.tabs[idx].table.clone();
                 table.update(cx, |state, cx| {
                     state.delegate_mut().set_flat_root(root);
-                    state.refresh(cx);
+                    if visible {
+                        state.refresh(cx);
+                    }
                 });
             }
             FlatMsg::Batch(batch) => {
@@ -580,7 +611,9 @@ impl Shell {
                     // batch; the outer shell notification is sufficient to
                     // update row count, scrollbar, and visible rows.
                 });
-                cx.notify();
+                if visible {
+                    cx.notify();
+                }
             }
             FlatMsg::Progress(stats) => {
                 if let Some(flat) = self.tabs[idx]
@@ -602,7 +635,9 @@ impl Shell {
                         .to_string(),
                     );
                 }
-                cx.notify();
+                if visible {
+                    cx.notify();
+                }
             }
             FlatMsg::Done(error) => {
                 let cancelled = self.tabs[idx]
@@ -612,7 +647,9 @@ impl Shell {
                 let table = self.tabs[idx].table.clone();
                 table.update(cx, |state, cx| {
                     state.delegate_mut().finish_flat();
-                    state.refresh(cx);
+                    if visible {
+                        state.refresh(cx);
+                    }
                 });
                 if let Some(flat) = self.tabs[idx]
                     .tool_result
@@ -634,7 +671,9 @@ impl Shell {
                         window.push_notification(Notification::error(message), cx);
                     });
                 }
-                cx.notify();
+                if visible {
+                    cx.notify();
+                }
             }
         }
     }
@@ -750,7 +789,7 @@ impl Shell {
         }
 
         let fs = self.process.fs.clone();
-        let (tx, rx) = async_channel::unbounded();
+        let (tx, rx) = async_channel::bounded(SEARCH_CHANNEL_BATCHES);
         cx.background_executor()
             .spawn(async move {
                 run_search_load(fs, config, root, needle, tag, cancel, tx);
@@ -759,7 +798,16 @@ impl Shell {
 
         cx.spawn(async move |this, cx| {
             while let Ok(msg) = rx.recv().await {
-                let done = matches!(msg, SearchMsg::Done(_));
+                let mut update = SearchUiUpdate::default();
+                update.absorb(msg);
+                while update.done.is_none() && update.rows() < SEARCH_UI_ROWS_PER_TICK {
+                    match rx.try_recv() {
+                        Ok(msg) => update.absorb(msg),
+                        Err(async_channel::TryRecvError::Empty) => break,
+                        Err(async_channel::TryRecvError::Closed) => break,
+                    }
+                }
+                let done = update.done.is_some();
                 let stale = this
                     .update(cx, |this, cx| {
                         let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) else {
@@ -768,13 +816,39 @@ impl Shell {
                         if this.tabs[idx].load_generation != generation {
                             return true;
                         }
-                        this.apply_search_msg_in_tab(idx, msg, notify_window, cx);
+                        if let Some(engine) = update.engine {
+                            this.apply_search_msg_in_tab(
+                                idx,
+                                SearchMsg::Engine(engine),
+                                notify_window,
+                                cx,
+                            );
+                        }
+                        if let Some(batch) = update.batch {
+                            this.apply_search_msg_in_tab(
+                                idx,
+                                SearchMsg::Batch(batch),
+                                notify_window,
+                                cx,
+                            );
+                        }
+                        if let Some(error) = update.done {
+                            this.apply_search_msg_in_tab(
+                                idx,
+                                SearchMsg::Done(error),
+                                notify_window,
+                                cx,
+                            );
+                        }
                         false
                     })
                     .unwrap_or(true);
                 if stale || done {
                     break;
                 }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(SEARCH_UI_TICK_MS))
+                    .await;
             }
         })
         .detach();
@@ -787,6 +861,7 @@ impl Shell {
         notify_window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
+        let visible = idx == self.active;
         match msg {
             SearchMsg::Engine(label) => {
                 // Worker-resolved engine (it owns the mdfind probe).
@@ -798,7 +873,9 @@ impl Shell {
                     .and_then(|surface| surface.search_mode_mut())
                 {
                     mode.engine_label = label;
-                    cx.notify();
+                    if visible {
+                        cx.notify();
+                    }
                 }
             }
             SearchMsg::Batch(batch) => self.apply_search_batch_in_tab(idx, batch, cx),
@@ -842,6 +919,7 @@ impl Shell {
     }
 
     fn apply_search_batch_in_tab(&mut self, idx: usize, batch: LoadBatch, cx: &mut Context<Self>) {
+        let visible = idx == self.active;
         for (id, path) in &batch.paths {
             self.process
                 .node_store
@@ -874,13 +952,17 @@ impl Shell {
                 heats,
                 favorites,
             );
-            state.refresh(cx);
+            if visible {
+                state.refresh(cx);
+            }
         });
         self.refresh_file_list_selection_in_tab(idx, cx);
         // Land any deferred selection (keyboard / screenshot seed) once
         // its row has streamed in — same as the directory load path.
         self.apply_pending_select_row_in_tab(idx, cx);
-        cx.notify();
+        if visible {
+            cx.notify();
+        }
     }
 
     /// Leave search mode and reload the tab's directory. Called when the

@@ -6,42 +6,23 @@
 
 use std::collections::HashSet;
 
-/// Icon-only sidebar geometry. The ordinary strip is deliberately narrower
-/// than gpui-component's fixed 48-DIP default, and can surrender another
-/// eight DIPs as the application window becomes exceptionally narrow.
+/// Geometry for the icon-only sidebar. Values are effective DIPs after UI
+/// zoom, while icon renderers still receive their unscaled rem-relative size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CollapsedSidebarGeometry {
+    pub outer_margin: f32,
+    pub row_margin: f32,
     pub width: f32,
-    /// Negative horizontal offset applied to gpui-component's fixed-width
-    /// inner sidebar so Ferail's nested row gutters do not become a large
-    /// blank margin before the icon.
-    pub content_shift: f32,
 }
 
-const COLLAPSED_NOMINAL_WIDTH: f32 = 40.0;
-const COLLAPSED_MIN_WIDTH: f32 = 32.0;
-const COLLAPSED_MAX_VIEWPORT_FRACTION: f32 = 0.10;
-// In the unshifted component, a 24-DIP Location icon is centred at x=34:
-// 8 DIPs from gpui-component's content inset, 6 from Ferail's section inset,
-// 8 from its row padding, then half the icon. Shifting this centre to half the
-// effective panel width keeps the glyph centred while the window is resized.
-const COLLAPSED_SOURCE_ICON_CENTER: f32 = 34.0;
-
-/// Compute icon-only sidebar geometry from the current viewport on every
-/// render. It stays 40 DIPs in ordinary windows, scales down over the
-/// 320–400-DIP range, and never squeezes a 24-DIP glyph below four DIPs of
-/// space on either side.
-pub fn collapsed_sidebar_geometry(viewport_width: f32) -> CollapsedSidebarGeometry {
-    let viewport_width = if viewport_width.is_finite() {
-        viewport_width.max(0.0)
-    } else {
-        COLLAPSED_NOMINAL_WIDTH / COLLAPSED_MAX_VIEWPORT_FRACTION
-    };
-    let width = (viewport_width * COLLAPSED_MAX_VIEWPORT_FRACTION)
-        .clamp(COLLAPSED_MIN_WIDTH, COLLAPSED_NOMINAL_WIDTH);
+pub fn collapsed_sidebar_geometry(icon_px_at_base: f32, ui_scale: f32) -> CollapsedSidebarGeometry {
+    let scale = ui_scale.clamp(0.6, 2.0);
+    let outer_margin = 4.0 * scale;
+    let row_margin = 4.0 * scale;
     CollapsedSidebarGeometry {
-        width,
-        content_shift: COLLAPSED_SOURCE_ICON_CENTER - width / 2.0,
+        outer_margin,
+        row_margin,
+        width: icon_px_at_base * scale + 2.0 * (outer_margin + row_margin),
     }
 }
 
@@ -188,39 +169,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_only_geometry_tracks_narrow_window_resizes() {
-        assert_eq!(
-            collapsed_sidebar_geometry(1_000.0),
-            CollapsedSidebarGeometry {
-                width: 40.0,
-                content_shift: 14.0,
-            }
-        );
-        assert_eq!(
-            collapsed_sidebar_geometry(360.0),
-            CollapsedSidebarGeometry {
-                width: 36.0,
-                content_shift: 16.0,
-            }
-        );
-        assert_eq!(
-            collapsed_sidebar_geometry(200.0),
-            CollapsedSidebarGeometry {
-                width: 32.0,
-                content_shift: 18.0,
-            }
-        );
-    }
-
-    #[test]
-    fn icon_only_geometry_handles_invalid_viewport_width() {
-        assert_eq!(
-            collapsed_sidebar_geometry(f32::NAN),
-            collapsed_sidebar_geometry(1_000.0)
-        );
-    }
-
-    #[test]
     fn persisted_order_is_reconciled() {
         let layout = SidebarLayout::from_persisted(
             Some("volumes,unknown,locations,volumes"),
@@ -241,5 +189,19 @@ mod tests {
         assert_eq!(layout.order[0], SidebarSection::Volumes);
         layout.reset_order();
         assert_eq!(layout.order, DEFAULT_ORDER);
+    }
+
+    #[test]
+    fn compact_geometry_tracks_ui_scale_without_double_scaling_icons() {
+        let base = collapsed_sidebar_geometry(24.0, 1.0);
+        assert_eq!(base.width, 40.0);
+        assert_eq!(base.outer_margin, 4.0);
+        assert_eq!(base.row_margin, 4.0);
+
+        let large = collapsed_sidebar_geometry(24.0, 1.6);
+        assert!((large.width - 64.0).abs() < f32::EPSILON);
+        // The glyph itself remains a 24px-at-base rem value; only the layout
+        // needs its effective 38.4-DIP footprint.
+        assert!((large.width - 24.0 * 1.6 - 2.0 * (6.4 + 6.4)).abs() < 0.001);
     }
 }

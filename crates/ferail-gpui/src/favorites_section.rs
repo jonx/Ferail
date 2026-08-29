@@ -9,10 +9,12 @@
 use crate::text::{IconScale as _, TextScale as _};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
 use ferail_core::favorites::{Favorite, FavoriteId, FavoriteKind, FavoriteState, FavoriteTarget};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     Animation, AnimationExt as _, AnyElement, Context, Entity, FocusHandle, WeakEntity, div,
 };
@@ -94,6 +96,11 @@ pub struct FavoritesSection {
     shell: WeakEntity<Shell>,
     #[allow(dead_code)]
     icons: Rc<RefCell<IconCache>>,
+    icon_px: f32,
+    /// Snapshot supplied by `Shell` while it is already rendering. Reading
+    /// the Shell entity from `SidebarItem::render` double-leases the entity
+    /// when the compact strip renders items directly.
+    active_path: PathBuf,
     /// Keyboard-focused favorite (§11.4) — drives the focus ring.
     focused: Option<FavoriteId>,
     /// Focus handle the section tracks so `FAVORITES_CONTEXT` bindings
@@ -115,6 +122,8 @@ impl FavoritesSection {
         section_collapsed: bool,
         shell: WeakEntity<Shell>,
         icons: Rc<RefCell<IconCache>>,
+        icon_px: f32,
+        active_path: PathBuf,
         focused: Option<FavoriteId>,
         focus_handle: FocusHandle,
         appear: HashSet<FavoriteId>,
@@ -127,6 +136,8 @@ impl FavoritesSection {
             section_collapsed,
             shell,
             icons,
+            icon_px,
+            active_path,
             focused,
             focus_handle,
             appear,
@@ -292,13 +303,15 @@ impl SidebarItem for FavoritesSection {
                 .menu(tr!("Sort by Kind"), Box::new(SortFavoritesByKind))
             });
 
-        if section_collapsed || self.icon_only {
+        if section_collapsed && !self.icon_only {
             return v_flex().w_full().child(header).into_any_element();
         }
 
         let favorites_model = self.favorites.read(cx);
         let favorites = favorites_model.entries();
-        let body: AnyElement = if favorites.is_empty() {
+        let body: AnyElement = if favorites.is_empty() && self.icon_only {
+            div().into_any_element()
+        } else if favorites.is_empty() {
             // §11.7 empty state. Muted, slightly indented so it reads
             // as guidance rather than a clickable row. It is ALSO the
             // drop target the text advertises: with no rows there are no
@@ -337,9 +350,7 @@ impl SidebarItem for FavoritesSection {
         } else {
             let icons = self.icons.clone();
             let shell = self.shell.clone();
-            let active_path = shell
-                .upgrade()
-                .map(|s| s.read(cx).active_tab().current_dir.clone());
+            let active_path = self.active_path.clone();
             // Snapshot per-row availability state. Reads from the
             // cached map on the entity — render never touches the
             // filesystem (Prime Directive).
@@ -372,7 +383,9 @@ impl SidebarItem for FavoritesSection {
                 } else {
                     RowAnim::None
                 };
-                elements.push(render_drop_gap(i, before, after, shell.clone(), cx));
+                if !self.icon_only {
+                    elements.push(render_drop_gap(i, before, after, shell.clone(), cx));
+                }
                 elements.push(render_favorite_row(
                     i,
                     f,
@@ -381,7 +394,9 @@ impl SidebarItem for FavoritesSection {
                     anim,
                     &icons,
                     shell.clone(),
-                    active_path.as_deref(),
+                    Some(active_path.as_path()),
+                    self.icon_px,
+                    self.icon_only,
                     cx,
                 ));
             }
@@ -391,13 +406,15 @@ impl SidebarItem for FavoritesSection {
             } else {
                 favorites[n - 1].sort_index
             };
-            elements.push(render_drop_gap(
-                n,
-                last_idx,
-                f64::INFINITY,
-                shell.clone(),
-                cx,
-            ));
+            if !self.icon_only {
+                elements.push(render_drop_gap(
+                    n,
+                    last_idx,
+                    f64::INFINITY,
+                    shell.clone(),
+                    cx,
+                ));
+            }
             v_flex().w_full().children(elements).into_any_element()
         };
 
@@ -410,7 +427,7 @@ impl SidebarItem for FavoritesSection {
             .key_context(FAVORITES_CONTEXT)
             .track_focus(&self.focus_handle)
             .w_full()
-            .child(header)
+            .when(!self.icon_only, |this| this.child(header))
             .child(body)
             .into_any_element()
     }
@@ -430,6 +447,8 @@ fn render_favorite_row(
     icons: &Rc<RefCell<IconCache>>,
     shell: WeakEntity<Shell>,
     active_path: Option<&std::path::Path>,
+    icon_px: f32,
+    icon_only: bool,
     cx: &App,
 ) -> AnyElement {
     // Row builders can run during layout/prepaint, outside the scope of
@@ -440,6 +459,7 @@ fn render_favorite_row(
     let _render_guard = ferail_core::path_guard::enter_render();
     let theme = cx.theme();
     let label = crate::private_mode::present_label(&fav.effective_label());
+    let collapsed_tooltip: SharedString = label.clone().into();
     let row_key: SharedString = format!("fav-row-{index}").into();
     let path_for_click = match &fav.target {
         FavoriteTarget::Path(p) => Some(p.clone()),
@@ -456,23 +476,21 @@ fn render_favorite_row(
     let icon_el: AnyElement = match (&fav.custom_icon, &fav.target) {
         (Some(ferail_core::favorites::FavoriteIcon::Lucide(name)), _) => svg()
             .path(format!("icons/{name}.svg"))
-            .icon_px(crate::tree::SIDEBAR_ICON_PX)
+            .icon_px(icon_px)
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
         (None, FavoriteTarget::Path(p)) => {
             let icon = icons.borrow_mut().folder_icon_for(p);
-            img(icon)
-                .icon_px(crate::tree::SIDEBAR_ICON_PX)
-                .into_any_element()
+            img(icon).icon_px(icon_px).into_any_element()
         }
         (None, FavoriteTarget::SavedSearch(_)) => svg()
             .path("icons/nav/search.svg")
-            .icon_px(crate::tree::SIDEBAR_ICON_PX)
+            .icon_px(icon_px)
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
         (None, FavoriteTarget::Tag(_)) => svg()
             .path("icons/nav/tag.svg")
-            .icon_px(crate::tree::SIDEBAR_ICON_PX)
+            .icon_px(icon_px)
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
     };
@@ -489,9 +507,9 @@ fn render_favorite_row(
     let mut row = h_flex()
         .id(ElementId::Name(row_key))
         .w_full()
-        .px_2()
         .py_1()
-        .gap_2()
+        .when(icon_only, |this| this.justify_center())
+        .when(!icon_only, |this| this.px_2().gap_2())
         .items_center()
         .text_scale_sm()
         .rounded(theme.radius)
@@ -508,7 +526,12 @@ fn render_favorite_row(
                 label: label_for_drag,
             },
             |payload, _offset, _window, cx| cx.new(|_| payload.clone()),
-        );
+        )
+        .when(icon_only, |this| {
+            this.tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(collapsed_tooltip.clone()).build(window, cx)
+            })
+        });
     if is_active {
         row = row.bg(theme.sidebar_accent);
     }
@@ -541,41 +564,38 @@ fn render_favorite_row(
     } else {
         gpui::transparent_black()
     });
-    row = row.child(
-        div()
-            .flex_shrink_0()
-            .icon_px(crate::tree::SIDEBAR_ICON_PX)
-            .child(icon_el),
-    );
-    row = row.child(
-        div()
-            .flex_1()
-            .min_w_0()
-            .truncate()
-            .child(SharedString::from(label)),
-    );
-    // §8 state affordance: warning glyph for Missing, offline for
-    // Unmounted, plain star for Available.
-    let trailing_icon = match state {
-        FavoriteState::Available => "icons/nav/star.svg",
-        // Missing (file-not-found) keeps the warning triangle — it's a
-        // genuine error. Unmounted (volume offline) uses circle-x so it
-        // reads as "disconnected/unavailable" rather than "broken"; a
-        // dedicated eject glyph can replace circle-x in a later pass.
-        FavoriteState::Unmounted => "icons/circle-x.svg",
-        FavoriteState::Missing => "icons/triangle-alert.svg",
-    };
-    let trailing_color = match state {
-        FavoriteState::Available => theme.primary,
-        FavoriteState::Unmounted | FavoriteState::Missing => theme.muted_foreground,
-    };
-    row = row.child(
-        svg()
-            .path(trailing_icon)
-            .icon_px(11.0)
-            .text_color(trailing_color)
-            .flex_shrink_0(),
-    );
+    row = row.child(div().flex_shrink_0().icon_px(icon_px).child(icon_el));
+    if !icon_only {
+        row = row.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child(SharedString::from(label)),
+        );
+        // §8 state affordance: warning glyph for Missing, offline for
+        // Unmounted, plain star for Available.
+        let trailing_icon = match state {
+            FavoriteState::Available => "icons/nav/star.svg",
+            // Missing (file-not-found) keeps the warning triangle — it's a
+            // genuine error. Unmounted (volume offline) uses circle-x so it
+            // reads as "disconnected/unavailable" rather than "broken"; a
+            // dedicated eject glyph can replace circle-x in a later pass.
+            FavoriteState::Unmounted => "icons/circle-x.svg",
+            FavoriteState::Missing => "icons/triangle-alert.svg",
+        };
+        let trailing_color = match state {
+            FavoriteState::Available => theme.primary,
+            FavoriteState::Unmounted | FavoriteState::Missing => theme.muted_foreground,
+        };
+        row = row.child(
+            svg()
+                .path(trailing_icon)
+                .icon_px(11.0)
+                .text_color(trailing_color)
+                .flex_shrink_0(),
+        );
+    }
 
     // §11.5 drop a file/folder *onto* a favorite row = move/copy into
     // that folder (distinct from dropping *between* rows, which the

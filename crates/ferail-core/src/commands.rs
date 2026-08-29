@@ -393,7 +393,7 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId("view.cycle_sidebar_size"),
-        title: msgid!("Cycle Sidebar Size"),
+        title: msgid!("Toggle Sidebar"),
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift("B")],
     },

@@ -6,10 +6,10 @@
 pub mod asset_work;
 pub mod commands;
 pub mod counts;
-pub mod private_presentation;
 pub mod entry_info;
 pub mod favorites;
 pub mod filter_expr;
+pub mod private_presentation;
 #[macro_use]
 pub mod i18n;
 pub mod media;
@@ -237,12 +237,18 @@ fn formats_compatible(kind: &str, magic: &str) -> bool {
     if k == m || m.contains(&k) || k.contains(&m) {
         return true;
     }
+    // Linker objects are named after their container on each platform.
+    // `.o` / `.obj` and "Mach-O object" / "ELF relocatable" / "COFF
+    // object" are the same claim, not a disguised executable.
+    if matches!(k.as_str(), "o" | "obj") && (m.contains("object") || m.contains("relocatable")) {
+        return true;
+    }
     // Textual extensions all live happily under "plain text" / "ascii text" / "utf-8".
     let textual = [
         "txt", "md", "markdown", "rst", "log", "json", "yaml", "toml", "ini", "csv", "tsv", "xml",
         "html", "css", "scss", "rs", "py", "js", "ts", "go", "rb", "c", "cpp", "h", "hpp", "java",
-        "kt", "swift", "sh", "bash", "zsh", "vim", "lua", "sql", "graphql", "proto", "tex", "el",
-        "svg", "nfo", "diz", "sfv", "md5", "sha1", "sha224", "sha256", "sha384", "sha512",
+        "d", "kt", "swift", "sh", "bash", "zsh", "vim", "lua", "sql", "graphql", "proto", "tex",
+        "el", "svg", "nfo", "diz", "sfv", "md5", "sha1", "sha224", "sha256", "sha384", "sha512",
     ];
     if (m.contains("text") || m.contains("script") || m.contains("source"))
         && textual.iter().any(|t| k.contains(t))
@@ -371,7 +377,7 @@ fn ext_class(kind: &str) -> ExtClass {
         "wsf", "wsh", "hta", "msi", "msix", "msp", "appx", "app", "pkg", "run", "jar", "apk",
         "class", "jnlp", "gadget", "sh", "bash", "zsh", "fish", "ksh", "csh", "command", "py",
         "pyw", "rb", "pl", "pm", "lua", "tcl", "ahk", "js", "mjs", "cjs", "ts", "lnk", "url",
-        "desktop",
+        "desktop", "o", "obj",
     ];
     const OFFICE_MACRO: &[&str] = &[
         "docm", "dotm", "xlsm", "xltm", "xlam", "pptm", "potm", "ppam", "ppsm",
@@ -412,6 +418,7 @@ fn ext_class(kind: &str) -> ExtClass {
         "plist",
         "properties",
         "env",
+        "d",
         "nfo",
         "diz",
         "sfv",
@@ -496,6 +503,13 @@ fn classify_format(kind: &str, magic: &str, description: &str) -> FormatFlag {
             }
         }
     }
+}
+
+/// Grade an extension-derived kind and a content-derived format without
+/// constructing a [`FileEntry`]. Kept public for Ferail's diagnostic CLI so
+/// the tool reports exactly the same policy as the file list.
+pub fn classify_format_fields(kind: &str, magic: &str, description: &str) -> FormatFlag {
+    classify_format(kind, magic, description)
 }
 
 /// Normalize a format label for comparison. Strips common qualifier
@@ -760,6 +774,7 @@ mod format_label_tests {
     #[test]
     fn json_vs_plain_text_is_none() {
         assert_eq!(flag("JSON", "Plain text"), FormatFlag::None);
+        assert_eq!(flag("D", "Plain text"), FormatFlag::None);
     }
 
     #[test]
@@ -808,6 +823,8 @@ mod format_label_tests {
         assert_eq!(flag("PY", "Python script"), FormatFlag::None);
         assert_eq!(flag("SH", "Shell script"), FormatFlag::None);
         assert_eq!(flag("LNK", "Windows shortcut"), FormatFlag::None);
+        assert_eq!(flag("O", "Mach-O object"), FormatFlag::None);
+        assert_eq!(flag("OBJ", "COFF object"), FormatFlag::None);
     }
 
     #[test]

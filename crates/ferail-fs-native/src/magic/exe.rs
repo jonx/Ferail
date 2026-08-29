@@ -118,7 +118,11 @@ fn sniff_macho(buf: &[u8]) -> MagicInfo {
 
     let magic = &buf[0..4];
     let is_64bit = matches!(magic, &[0xfe, 0xed, 0xfa, 0xcf] | &[0xcf, 0xfa, 0xed, 0xfe]);
-    let is_swapped = matches!(magic, &[0xce, 0xfa, 0xed, 0xfe] | &[0xcf, 0xfa, 0xed, 0xfe]);
+    // `ce fa ed fe` / `cf fa ed fe` are the byte sequences produced by a
+    // little-endian Mach-O header. The old `is_swapped` naming had this
+    // backwards and happened to classify ordinary files from palindromic-ish
+    // low file-type values as the default executable.
+    let is_little_endian = matches!(magic, &[0xce, 0xfa, 0xed, 0xfe] | &[0xcf, 0xfa, 0xed, 0xfe]);
     let is_fat = magic == [0xca, 0xfe, 0xba, 0xbe];
 
     if is_fat {
@@ -129,10 +133,10 @@ fn sniff_macho(buf: &[u8]) -> MagicInfo {
     info.is_64bit = Some(is_64bit);
 
     if buf.len() >= 8 {
-        let cputype = if is_swapped {
-            u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]])
-        } else {
+        let cputype = if is_little_endian {
             u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]])
+        } else {
+            u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]])
         };
         info.arch = match cputype & 0xff {
             7 => {
@@ -155,12 +159,13 @@ fn sniff_macho(buf: &[u8]) -> MagicInfo {
     }
 
     if buf.len() >= 16 {
-        let filetype = if is_swapped {
-            u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]])
-        } else {
+        let filetype = if is_little_endian {
             u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]])
+        } else {
+            u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]])
         };
         info.magic_type = match filetype {
+            0x1 => MagicType::ObjMac,   // MH_OBJECT
             0x2 => MagicType::ExeMac,   // MH_EXECUTE
             0x6 => MagicType::DylibMac, // MH_DYLIB
             0x8 => MagicType::DylibMac, // MH_BUNDLE — treat as dylib

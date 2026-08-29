@@ -1,18 +1,18 @@
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt as _;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ferail_ntfs::{
-    Completion, DuMessage, ErrorKind, FailureCode, PROTOCOL_VERSION, Progress, ScanPhase,
-    StartRequest, TraversalOptions, decode_frame, encode_frame,
+    decode_frame, encode_frame, Completion, DuMessage, ErrorKind, FailureCode, Progress, ScanPhase,
+    StartRequest, TraversalOptions, PROTOCOL_VERSION,
 };
 use windows::Win32::System::Threading::GetCurrentProcessId;
 
-use crate::pipe::{Pipe, connect_client, never_cancelled};
-use crate::{RawVolumeError, RawVolumeReader, file_identity, probe_fast_ntfs, scan_mft};
+use crate::pipe::{connect_client, never_cancelled, Pipe};
+use crate::{file_identity, probe_fast_ntfs, scan_mft, RawVolumeError, RawVolumeReader};
 
 const START_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);

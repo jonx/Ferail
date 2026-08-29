@@ -1,4 +1,4 @@
-use crate::{DataRun, ErrorKind, NtfsError, Result, parse_mapping_pairs};
+use crate::{parse_mapping_pairs, DataRun, ErrorKind, NtfsError, Result};
 
 const FILE_SIGNATURE: &[u8; 4] = b"FILE";
 const ATTRIBUTE_END: u32 = 0xffff_ffff;
@@ -191,7 +191,7 @@ pub fn parse_file_record_in_place(
     }
     if options.bytes_per_sector < 512
         || !options.bytes_per_sector.is_power_of_two()
-        || fixed.len() % options.bytes_per_sector != 0
+        || !fixed.len().is_multiple_of(options.bytes_per_sector)
     {
         return Err(error(
             ErrorKind::InvalidGeometry,

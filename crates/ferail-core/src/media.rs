@@ -303,7 +303,7 @@ fn format_khz(hz: u32) -> String {
     // Round to the nearest 100 Hz first so 44100 → 44.1 rather than a noisy
     // 44.099…; audio sample rates are always multiples of at least 100 Hz.
     let tenths = (hz + 50) / 100; // hz in units of 0.1 kHz
-    if tenths % 10 == 0 {
+    if tenths.is_multiple_of(10) {
         format!("{} kHz", tenths / 10)
     } else {
         format!("{}.{} kHz", tenths / 10, tenths % 10)
@@ -347,13 +347,11 @@ mod tests {
         assert_eq!(ImageMeta::default().dimensions_label(), "");
         assert_eq!(ImageMeta::default().exposure_label(), "");
         // GPS presence alone keeps the section alive.
-        assert!(
-            !ImageMeta {
-                gps_present: true,
-                ..Default::default()
-            }
-            .is_empty()
-        );
+        assert!(!ImageMeta {
+            gps_present: true,
+            ..Default::default()
+        }
+        .is_empty());
     }
 
     #[test]
@@ -478,26 +476,20 @@ mod tests {
     #[test]
     fn empty_and_metadata_predicates() {
         assert!(MediaTags::default().is_empty());
-        assert!(
-            !MediaTags {
-                codec: "MP3".into(),
-                ..Default::default()
-            }
-            .is_empty()
-        );
-        assert!(
-            !MediaTags {
-                codec: "MP3".into(),
-                ..Default::default()
-            }
-            .has_metadata()
-        );
-        assert!(
-            MediaTags {
-                title: "Song".into(),
-                ..Default::default()
-            }
-            .has_metadata()
-        );
+        assert!(!MediaTags {
+            codec: "MP3".into(),
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(!MediaTags {
+            codec: "MP3".into(),
+            ..Default::default()
+        }
+        .has_metadata());
+        assert!(MediaTags {
+            title: "Song".into(),
+            ..Default::default()
+        }
+        .has_metadata());
     }
 }

@@ -9,6 +9,9 @@ description = "Windows raw-volume reader and helper boundary for Ferail Fast NTF
 
 [dependencies]
 ferail-ntfs.workspace = true
+# Helper attestation (src/attest.rs) — kept out of the cfg(windows) block so
+# the digest logic stays unit-testable on macOS/Linux.
+sha2.workspace = true
 uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]

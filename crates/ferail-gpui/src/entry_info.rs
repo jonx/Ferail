@@ -1494,44 +1494,257 @@ impl EntryInfoView {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct HazardRenderPiece {
+    text: String,
+    hazard: Option<HazardKind>,
+    label: Option<String>,
+}
+
+impl HazardRenderPiece {
+    fn display_len(&self) -> usize {
+        self.text.chars().count()
+    }
+}
+
+fn hazard_render_pieces(name: &str) -> Vec<HazardRenderPiece> {
+    let mut pieces = Vec::new();
+    for segment in name_hazards::analyze(name) {
+        if let Some(kind) = segment.hazard {
+            pieces.push(HazardRenderPiece {
+                text: segment.render.unwrap_or(segment.text),
+                hazard: Some(kind),
+                label: segment.label,
+            });
+        } else {
+            // Plain characters may be cut individually. Hazard stand-ins stay
+            // atomic so an elision never shows half of "<U+200B>".
+            pieces.extend(segment.text.chars().map(|ch| HazardRenderPiece {
+                text: ch.to_string(),
+                hazard: None,
+                label: None,
+            }));
+        }
+    }
+    pieces
+}
+
+fn prefix_end(pieces: &[HazardRenderPiece], budget: usize) -> usize {
+    let mut used = 0;
+    pieces
+        .iter()
+        .take_while(|piece| {
+            let next = used + piece.display_len();
+            if next <= budget {
+                used = next;
+                true
+            } else {
+                false
+            }
+        })
+        .count()
+}
+
+fn suffix_start(pieces: &[HazardRenderPiece], budget: usize) -> usize {
+    let mut used = 0;
+    let count = pieces
+        .iter()
+        .rev()
+        .take_while(|piece| {
+            let next = used + piece.display_len();
+            if next <= budget {
+                used = next;
+                true
+            } else {
+                false
+            }
+        })
+        .count();
+    pieces.len() - count
+}
+
+fn centered_range(
+    pieces: &[HazardRenderPiece],
+    low: usize,
+    high: usize,
+    budget: usize,
+) -> (usize, usize) {
+    if low >= high || budget == 0 {
+        return (low, low);
+    }
+    let total: usize = pieces[low..high]
+        .iter()
+        .map(HazardRenderPiece::display_len)
+        .sum();
+    let midpoint = total / 2;
+    let mut crossed = 0;
+    let centre = (low..high)
+        .find(|&index| {
+            crossed += pieces[index].display_len();
+            crossed > midpoint
+        })
+        .unwrap_or(low);
+    let centre_width = pieces[centre].display_len();
+    if centre_width > budget {
+        return (centre, centre);
+    }
+    let (mut start, mut end, mut used) = (centre, centre + 1, centre_width);
+    loop {
+        let mut grew = false;
+        if start > low {
+            let width = pieces[start - 1].display_len();
+            if used + width <= budget {
+                start -= 1;
+                used += width;
+                grew = true;
+            }
+        }
+        if end < high {
+            let width = pieces[end].display_len();
+            if used + width <= budget {
+                end += 1;
+                used += width;
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    (start, end)
+}
+
+fn hidden_ellipsis(hidden: &[HazardRenderPiece]) -> HazardRenderPiece {
+    let hazards: Vec<&HazardRenderPiece> = hidden
+        .iter()
+        .filter(|piece| piece.hazard.is_some())
+        .collect();
+    let picked = hazards
+        .iter()
+        .copied()
+        .find(|piece| !piece.hazard.is_some_and(is_amber_hazard))
+        .or_else(|| hazards.first().copied());
+    let Some(picked) = picked else {
+        return HazardRenderPiece {
+            text: "…".into(),
+            hazard: None,
+            label: None,
+        };
+    };
+    let mut labels = Vec::new();
+    for piece in hazards {
+        let label = piece
+            .label
+            .clone()
+            .unwrap_or_else(|| piece.hazard.unwrap().summary().to_string());
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
+    }
+    HazardRenderPiece {
+        text: "…".into(),
+        hazard: picked.hazard,
+        label: Some(labels.join(" · ")),
+    }
+}
+
+fn elide_hazard_pieces(pieces: &[HazardRenderPiece], max_chars: usize) -> Vec<HazardRenderPiece> {
+    let total: usize = pieces.iter().map(HazardRenderPiece::display_len).sum();
+    if total <= max_chars || max_chars < 4 {
+        return pieces.to_vec();
+    }
+    if total <= max_chars.saturating_mul(2) {
+        let content = max_chars - 1;
+        let prefix = prefix_end(pieces, content / 2);
+        let suffix = suffix_start(pieces, content - content / 2).max(prefix);
+        let mut out = pieces[..prefix].to_vec();
+        out.push(hidden_ellipsis(&pieces[prefix..suffix]));
+        out.extend_from_slice(&pieces[suffix..]);
+        return out;
+    }
+
+    let content = max_chars - 2;
+    let prefix_budget = content / 3;
+    let centre_budget = content / 3;
+    let suffix_budget = content - prefix_budget - centre_budget;
+    let prefix = prefix_end(pieces, prefix_budget);
+    let suffix = suffix_start(pieces, suffix_budget).max(prefix);
+    let (centre_start, centre_end) = centered_range(pieces, prefix, suffix, centre_budget);
+    if centre_start == centre_end {
+        let mut out = pieces[..prefix].to_vec();
+        out.push(hidden_ellipsis(&pieces[prefix..suffix]));
+        out.extend_from_slice(&pieces[suffix..]);
+        return out;
+    }
+    let mut out = pieces[..prefix].to_vec();
+    out.push(hidden_ellipsis(&pieces[prefix..centre_start]));
+    out.extend_from_slice(&pieces[centre_start..centre_end]);
+    out.push(hidden_ellipsis(&pieces[centre_end..suffix]));
+    out.extend_from_slice(&pieces[suffix..]);
+    out
+}
+
+fn is_amber_hazard(kind: HazardKind) -> bool {
+    matches!(
+        kind,
+        HazardKind::LeadingSpace | HazardKind::TrailingSpace | HazardKind::UnusualWhitespace
+    )
+}
+
 /// Render a filename with deceptive characters highlighted: leading/trailing
 /// or unusual whitespace, zero-width / control / bidi characters, and
 /// homoglyphs. Invisible characters are shown via a visible stand-in; each
 /// flagged span carries a tooltip naming the hazard. `id_prefix` keeps the
 /// per-span element ids unique when the name renders in more than one place.
 pub(crate) fn name_hazard_element(name: &str, id_prefix: impl Into<SharedString>) -> AnyElement {
+    name_hazard_element_elided(name, id_prefix, usize::MAX)
+}
+
+/// Single-line variant for constrained filename cells. Omitted hazardous
+/// characters transfer their warning colour and tooltip to the ellipsis, so
+/// narrowing a column can never make a deceptive name look clean.
+pub(crate) fn name_hazard_element_elided(
+    name: &str,
+    id_prefix: impl Into<SharedString>,
+    max_chars: usize,
+) -> AnyElement {
     let id_prefix = id_prefix.into();
-    let segments = name_hazards::analyze(name);
-    if segments.iter().all(|s| s.hazard.is_none()) {
-        return div().child(name.to_string()).into_any_element();
+    let pieces = hazard_render_pieces(name);
+    if pieces.iter().all(|piece| piece.hazard.is_none()) {
+        return div()
+            .truncate_middle()
+            .child(elide_label(name, max_chars))
+            .into_any_element();
     }
-    let mut row = h_flex().flex_wrap().items_center();
-    for (i, seg) in segments.into_iter().enumerate() {
-        match seg.hazard {
-            None => row = row.child(div().child(seg.text)),
+    let pieces = elide_hazard_pieces(&pieces, max_chars);
+    let mut row = h_flex()
+        .flex_1()
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .items_center();
+    for (i, piece) in pieces.into_iter().enumerate() {
+        match piece.hazard {
+            None => row = row.child(div().flex_shrink_0().child(piece.text)),
             Some(kind) => {
-                // Whitespace tricks are amber; reordering / invisible /
-                // look-alike characters are the dangerous red.
-                let amber = matches!(
-                    kind,
-                    HazardKind::LeadingSpace
-                        | HazardKind::TrailingSpace
-                        | HazardKind::UnusualWhitespace
-                );
-                let bg = if amber { rgb(0xF59E0B) } else { rgb(0xDC2626) };
-                let shown = seg.render.unwrap_or(seg.text);
-                let label: SharedString = seg
+                let bg = if is_amber_hazard(kind) {
+                    rgb(0xF59E0B)
+                } else {
+                    rgb(0xDC2626)
+                };
+                let label: SharedString = piece
                     .label
                     .unwrap_or_else(|| kind.summary().to_string())
                     .into();
                 row = row.child(
                     div()
                         .id(ElementId::Name(format!("{id_prefix}-haz-{i}").into()))
+                        .flex_shrink_0()
                         .px_0p5()
                         .rounded_sm()
                         .bg(bg)
                         .text_color(gpui::white())
-                        .child(shown)
+                        .child(piece.text)
                         .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx)),
                 );
             }
@@ -1558,4 +1771,46 @@ pub(crate) fn name_hazard_warning(name: &str) -> Option<String> {
         .map(|k| crate::i18n::tr_static(k).to_string())
         .collect();
     Some(tr!("Deceptive name: {kinds}", kinds = kinds.join(", ")).to_string())
+}
+
+#[cfg(test)]
+mod hazard_elision_tests {
+    // Do not glob-import the parent's `gpui::*`: GPUI exports its own `test`
+    // attribute, which would recursively re-expand Rust's `#[test]` here.
+    use super::{HazardKind, elide_hazard_pieces, hazard_render_pieces};
+
+    #[test]
+    fn hidden_hazard_colours_the_ellipsis() {
+        let pieces = hazard_render_pieces("prefix-long-\u{200b}-suffix-long.txt");
+        let shown = elide_hazard_pieces(&pieces, 12);
+        assert!(
+            shown.iter().any(|piece| {
+                piece.text == "…" && piece.hazard == Some(HazardKind::ZeroWidth)
+            })
+        );
+    }
+
+    #[test]
+    fn clean_hidden_text_keeps_a_plain_ellipsis() {
+        let pieces = hazard_render_pieces("a-very-long-but-clean-filename.txt");
+        let shown = elide_hazard_pieces(&pieces, 12);
+        assert!(shown.iter().any(|piece| piece.text == "…"));
+        assert!(
+            shown
+                .iter()
+                .filter(|piece| piece.text == "…")
+                .all(|piece| piece.hazard.is_none())
+        );
+    }
+
+    #[test]
+    fn visible_hazard_stays_atomic() {
+        let pieces = hazard_render_pieces("ab\u{200b}cd");
+        let shown = elide_hazard_pieces(&pieces, 32);
+        let hazard = shown
+            .iter()
+            .find(|piece| piece.hazard == Some(HazardKind::ZeroWidth))
+            .expect("visible zero-width marker");
+        assert!(hazard.text.chars().count() > 1);
+    }
 }

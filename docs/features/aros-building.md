@@ -12,6 +12,12 @@ why).
 > process* — `darwin-aarch64` hosted AROS. Nothing here targets real Amiga
 > hardware, and several trees are moving research code, not releases.
 
+> **Dependency migration checkpoint (2026-08-28).** Desktop Ferail now uses
+> Zed `f66ed399` and gpui-component `e8f54eb`. The sibling AROS forks still
+> need to be rebased and revalidated before this recipe is current again; see
+> [the migration handover](../GPUI-MIGRATION-2026-08.md#aros). Do not treat a
+> host macOS build as proof that the AROS source overrides still interoperate.
+
 ---
 
 ## 0. What you end up with
@@ -71,7 +77,7 @@ sibling paths**, so all five repos must sit next to each other.
 ├── Ferail/                branch main           (this repo — the AROS work
 │                                                 merged; `aros-port` is dead)
 ├── zed-aros/              branch aros-platform  (zed fork + gpui_aros backend)
-├── gpui-component-aros/   branch aros-port      (gpui-component @ pinned rev c112e7b, smol→async-channel)
+├── gpui-component-aros/   branch aros-port      (to recreate at e8f54eb, narrow smol→async-channel delta)
 ├── rust-aros/                                   (Rust std library fork with the AROS pal)
 └── aros-aarch64/                                (the hosted-AROS OS project: graft/, hosted/rust/, aros-ctl)
     └── (built against) ~/Source/aros-upstream   branch crash-containment (AROS OS source)
@@ -141,15 +147,16 @@ The condensed shape:
 
 ## 5. The GPUI stack
 
-- **`zed-aros`** (branch `aros-platform`): zed pinned at the exact rev
-  Ferail uses (`1d217ee`) plus the port: `crates/gpui_aros` (Intuition
+- **`zed-aros`** (branch `aros-platform`): rebase target is the exact rev
+  Ferail uses (`f66ed399`) plus the port: `crates/gpui_aros` (Intuition
   C glue, tiny-skia CPU renderer, std-thread dispatcher, rawkey keyboard,
   clipboard.device), small cfg-gated core fixes (proptest off-AROS,
   `Background::as_linear_gradient`), and `vendor-aros/` (stacker and
   filetime with AROS arms). Ferail's root `Cargo.toml` `[patch]`
   redirects `gpui`/`gpui_platform` here.
-- **`gpui-component-aros`** (branch `aros-port`): the pinned
-  gpui-component rev with one delta — `smol::channel` → `async-channel` —
+- **`gpui-component-aros`** (branch `aros-port`): rebase target is
+  gpui-component `e8f54eb`, with one conceptual delta — `smol::channel` →
+  `async-channel` across the new base/UI split —
   keeping the async-io/rustix reactor (no AROS arm) out of the graph.
 - The backend has a **host-runnable porting conformance suite**
   (`cargo test -p gpui_aros`, from `~/Source/zed-aros`) — run it on any
@@ -176,9 +183,11 @@ What the AROS port consists of:
   (gpui, gpui_platform, gpui-component[-assets]), passed via `--config` so they
   never touch a host build. **Paths in it resolve relative to `packaging/`, not
   to the file's own directory** — cargo's rule for config files.
-- `vendor/tar`, `vendor/stacker`, `vendor/filetime` — crates with no upstream
-  AROS arm, patched from the **workspace manifest** so every target sees the
-  same copy. That placement is load-bearing: a version-differing patch that is
+- `vendor/tar` and `vendor/filetime` — crates with no upstream AROS arm,
+  patched from the **workspace manifest** so every target sees the same copy.
+  The older AROS GPUI fork's `stacker` shim is now scoped to the AROS Cargo
+  config because standard GPUI no longer enables that edge. The global
+  placement of filetime remains load-bearing: a version-differing patch that is
   only visible to AROS invocations goes silently inert as soon as a host
   `cargo` command re-resolves the lock to a newer registry version (cargo does
   not downgrade to a patch, it drops it), and the next AROS build fails with
@@ -269,7 +278,7 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
 | sqlite: `sys/ioctl.h not found` | Compat include dir missing. |
 | `errno`/`rustix`/`polling` fail to build ("target OS is not yet supported") | The async-io reactor is back in the graph. Ferail never calls it — gpui takes `http_client` with `default-features = false`, which drops `github_download` and util's smol half. Check that zed-aros still has that (root manifest note on `http_client`) and that no new crate pulls `smol`/`async-std` directly. Do **not** fix this by mirroring zed's ~35 vendored reactor crates. |
 | `[patch]` not applied — gpui resolves from github | `--config packaging/aros/aros-patches.toml` missing from the cargo invocation, or a sibling checkout is missing / on the wrong branch. Verify with `cargo tree -i gpui`: it must print a path, not a git URL. |
-| stacker `libc::mmap` / filetime `os::unix` errors | The vendored copy is not being used. `cargo tree -i stacker` must print `vendor/stacker`; if it prints a registry version, the lock drifted past the vendored one — `cargo update -p stacker --precise 0.1.23` (or `filetime` / `0.2.26`). Cargo silently ignores a patch it would have to downgrade to. |
+| stacker `libc::mmap` / filetime `os::unix` errors | The AROS patch is not being used. With the AROS `--config`, `cargo tree -i stacker` must resolve to `zed-aros/vendor-aros/stacker` while the old fork still needs it; `filetime` must resolve to Ferail's `vendor/filetime`. Keep lock versions at stacker 0.1.23 / filetime 0.2.26 until the rebase proves otherwise. |
 | `tar` fails with 15 errors in `header.rs` | Same thing for `vendor/tar` — `cargo tree -i tar` must print the vendor path. See `vendor/tar/README.md`. |
 | lzma-sys: `pthread_sigmask` undeclared | The AROS build tree predates the `pthread_sigmask` implementation. It was a stub — unimplemented, absent from `compiler/pthread/mmakefile.src`, undeclared in `pthread.h` — so liblzma could not compile. Rebuild the OS side: `make linklibs-pthread` in the configured tree. |
 | lzma-sys: `unresolved imports \`libc::c_char\`` | The vendored libc patch is inert. `cargo tree -i libc` (with the AROS `--config`) must print `zed-aros/vendor-aros/libc`; if it prints a registry version, re-pin: `cargo update -p libc --precise 0.2.186`. |

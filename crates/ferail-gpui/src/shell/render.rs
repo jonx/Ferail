@@ -1,6 +1,7 @@
 use super::*;
 use crate::text::IconScale as _;
 use gpui_component::ElementExt as _;
+use gpui_component::scroll::ScrollableElement as _;
 
 /// Minimum width for rendered-markdown preview content, so its prose
 /// reads as a column instead of folding to slivers in the narrow preview
@@ -301,6 +302,8 @@ impl Shell {
             self.favorites_section_collapsed,
             weak,
             self.process.icons.clone(),
+            crate::tree::SIDEBAR_ICON_PX,
+            self.active_tab().current_dir.clone(),
             self.focused_favorite,
             self.favorites_focus.clone(),
             self.fav_appear.clone(),
@@ -327,6 +330,8 @@ impl Shell {
                 self.process.recents_section_collapsed.get(),
                 weak,
                 self.process.icons.clone(),
+                crate::tree::SIDEBAR_ICON_PX,
+                self.active_tab().current_dir.clone(),
             ),
         ))
     }
@@ -969,11 +974,56 @@ impl Shell {
             return vm.view.clone().into_any_element();
         }
         match self.active_tab().view_mode {
-            crate::grid::ViewMode::List => DataTable::new(&self.active_tab().table)
-                .bordered(false)
-                .stripe(true)
-                .small()
-                .into_any_element(),
+            crate::grid::ViewMode::List => {
+                let table = self.active_tab().table.clone();
+                let marquee_rect = self
+                    .active_tab()
+                    .marquee
+                    .as_ref()
+                    .filter(|m| m.moved && m.surface == super::tab::MarqueeSurface::List)
+                    .map(|m| {
+                        let origin = table.read(cx).table_bounds().origin;
+                        let left = m.start.x.min(m.current.x) - origin.x;
+                        let top = m.start.y.min(m.current.y) - origin.y;
+                        let width = (m.start.x - m.current.x).abs();
+                        let height = (m.start.y - m.current.y).abs();
+                        (left, top, width, height)
+                    });
+                let fill = crate::selection_colors::fill(cx);
+                let border = crate::selection_colors::strong(cx);
+                div()
+                    .relative()
+                    .size_full()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(Self::on_list_marquee_down),
+                    )
+                    .on_mouse_move(cx.listener(Self::on_list_marquee_move))
+                    .on_mouse_up(
+                        gpui::MouseButton::Left,
+                        cx.listener(Self::on_list_marquee_up),
+                    )
+                    .on_mouse_up_out(
+                        gpui::MouseButton::Left,
+                        cx.listener(Self::on_list_marquee_up),
+                    )
+                    .child(DataTable::new(&table).bordered(false).stripe(true).small())
+                    .when_some(marquee_rect, |container, (left, top, width, height)| {
+                        container.child(
+                            div()
+                                .absolute()
+                                .left(left)
+                                .top(top)
+                                .w(width)
+                                .h(height)
+                                .bg(fill)
+                                .border_1()
+                                .border_color(border)
+                                .rounded(px(2.0)),
+                        )
+                    })
+                    .into_any_element()
+            }
             crate::grid::ViewMode::Grid => self.grid_body(cx),
         }
     }
@@ -1004,6 +1054,7 @@ impl Shell {
         let gap = crate::grid::cell_gap(cx);
         let cell_w = crate::grid::cell_width(icon_px, gap);
         let cell_h = crate::grid::cell_height(icon_px, gap);
+        let grid_name_budget = ((cell_w - gap * 2.0 - 10.0) / 8.0).floor().max(10.0) as usize;
 
         let pane_w = f32::from(self.active_tab().grid_pane_width).max(cell_w);
         let cols = crate::grid::cols_per_row(pane_w, icon_px, gap);
@@ -1095,15 +1146,34 @@ impl Shell {
                     )
                     .into();
                     let tooltip_name: SharedString = name.clone();
-                    let grid_label: AnyElement =
-                        if entry.name_has_hazards && !crate::private_mode::enabled() {
-                            crate::entry_info::name_hazard_element(
-                                &name,
-                                SharedString::from(format!("grid-name-{i}")),
-                            )
-                        } else {
-                            name.clone().into_any_element()
-                        };
+                    let inline_session = shell.inline_name_edit.snapshot().filter(|session| {
+                        session.target
+                            == crate::inline_edit::FileNameEditTarget {
+                                tab_id: tab.id.0,
+                                node_id: id,
+                            }
+                    });
+                    let is_editing = inline_session.is_some();
+                    let grid_label: AnyElement = if let Some(session) = inline_session {
+                        crate::inline_edit::InlineEditor::new(
+                            ("inline-grid-name", id.as_raw()),
+                            crate::inline_edit::InlineEditInput::Text(
+                                shell.inline_name_input.clone(),
+                            ),
+                            crate::inline_edit::InlineEditLayout::Grid,
+                            &session,
+                            tr!("File name"),
+                        )
+                        .into_any_element()
+                    } else if entry.name_has_hazards && !crate::private_mode::enabled() {
+                        crate::entry_info::name_hazard_element_elided(
+                            &name,
+                            SharedString::from(format!("grid-name-{i}")),
+                            grid_name_budget,
+                        )
+                    } else {
+                        name.clone().into_any_element()
+                    };
 
                     // Per-cell adornments, read from the same parallel
                     // delegate vecs the list row consumes (see
@@ -1116,11 +1186,12 @@ impl Shell {
                     let is_cut = del.cut_marker.borrow().iter().any(|c| c == &path);
                     // §5 favorite star — folder cells whose path is in the
                     // favorites index. Star is crowding-prone, so gated.
-                    let show_star = adorn_visible
+                    let show_star = !is_editing
+                        && adorn_visible
                         && cell_is_dir
                         && del.is_favorited.get(i).copied().unwrap_or(false);
                     // Finder colour tags → coloured dots, capped at 7.
-                    let cell_tags: SmallVec<[gpui::Rgba; 7]> = if adorn_visible {
+                    let cell_tags: SmallVec<[gpui::Rgba; 7]> = if adorn_visible && !is_editing {
                         del.tags
                             .get(i)
                             .map(|ts| {
@@ -1279,6 +1350,7 @@ impl Shell {
                     let label_pill = if is_lead { blue } else { blue.opacity(0.82) };
 
                     let weak_cell = weak.clone();
+                    let weak_label_rename = weak.clone();
                     let weak_menu = weak.clone();
                     let weak_native_menu = weak.clone();
                     let weak_drop = weak.clone();
@@ -1362,15 +1434,37 @@ impl Shell {
                         )
                         .child(
                             div()
+                                .id(("grid-label", i))
                                 .max_w_full()
+                                .when(is_editing, |d| d.w_full())
                                 .px(px(5.0))
                                 .py(px(1.0))
                                 .rounded(px(4.0))
                                 .text_scale_xs()
                                 .text_center()
-                                .truncate()
-                                .when(selected, |d| d.bg(label_pill).text_color(pill_fg))
-                                .when(!selected, |d| d.text_color(muted))
+                                .when(!is_editing, |d| d.truncate())
+                                .when(selected && !is_editing, |d| {
+                                    d.bg(label_pill).text_color(pill_fg)
+                                })
+                                .when(!selected && !is_editing, |d| d.text_color(muted))
+                                .on_click(move |event: &ClickEvent, window, app| {
+                                    let modifiers = event.modifiers();
+                                    let modified = modifiers.platform
+                                        || modifiers.control
+                                        || modifiers.alt
+                                        || modifiers.shift;
+                                    if crate::inline_edit::should_begin_click_rename(
+                                        selected,
+                                        is_editing,
+                                        event.click_count(),
+                                        modified,
+                                    ) {
+                                        app.stop_propagation();
+                                        let _ = weak_label_rename.update(app, |this, cx| {
+                                            this.begin_inline_name_edit_at_row(i, window, cx);
+                                        });
+                                    }
+                                })
                                 .child(grid_label),
                         );
                     // Wrap the highlighted content in a fixed-size cell box
@@ -1395,9 +1489,11 @@ impl Shell {
                         .child(inner)
                         // The label is `.truncate()`d, so surface the full
                         // name on hover (mirrors the list row's tooltip).
-                        .tooltip(move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(tooltip_name.clone())
-                                .build(window, cx)
+                        .when(!is_editing, |this| {
+                            this.tooltip(move |window, cx| {
+                                gpui_component::tooltip::Tooltip::new(tooltip_name.clone())
+                                    .build(window, cx)
+                            })
                         })
                         .on_click(move |ev: &ClickEvent, window, app| {
                             let mods = ev.modifiers();
@@ -2376,6 +2472,81 @@ impl Shell {
             "icons/sort-descending.svg"
         };
         let show_hidden = self.show_hidden;
+        let filter_input = self.active_tab().filter_input.clone();
+        let filter_has_value = !filter_input.read(cx).value().is_empty();
+        let filter_tab_id = self.active_tab().id;
+        let filter_suggestions = self.active_tab().filter_suggestions.clone();
+        let weak_filter_escape = cx.weak_entity();
+        let filter_completion_menu = if filter_suggestions.is_open() {
+            let mut menu = v_flex()
+                .w_full()
+                .max_h(px(240.0))
+                .overflow_y_scrollbar()
+                .rounded(cx.theme().radius)
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().popover)
+                .shadow_md()
+                .p_1();
+            for (index, suggestion) in filter_suggestions.items().iter().take(10).enumerate() {
+                let weak = cx.weak_entity();
+                let selected = index == filter_suggestions.selected_index();
+                let label = suggestion.label.clone();
+                let detail = suggestion.detail.clone();
+                menu = menu.child(
+                    h_flex()
+                        .id(("filter-completion", index))
+                        .w_full()
+                        .min_w_0()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .rounded(cx.theme().radius)
+                        .text_scale_sm()
+                        .when(selected, |this| this.bg(cx.theme().accent.opacity(0.18)))
+                        .hover(|this| this.bg(cx.theme().accent.opacity(0.12)))
+                        .child(div().flex_1().min_w_0().truncate().child(label))
+                        .when_some(detail, |this, detail| {
+                            this.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_scale_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(detail),
+                            )
+                        })
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            let _ = weak.update(cx, |this, cx| {
+                                this.accept_filter_completion(
+                                    filter_tab_id,
+                                    Some(index),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }),
+                );
+            }
+            Some(
+                deferred(
+                    div()
+                        .absolute()
+                        .top(px(30.0))
+                        .left_0()
+                        .w_full()
+                        .occlude()
+                        .child(menu),
+                )
+                .with_priority(10)
+                .into_any_element(),
+            )
+        } else {
+            None
+        };
         // Show Desktop is a private-symbol feature: the button only
         // exists when `ferail-shell-mac` resolved the Dock notification
         // on a supported macOS. Cached after first resolve, so this is a
@@ -2513,7 +2684,7 @@ impl Shell {
                             cx.stop_propagation();
                         })
                         .tooltip(|window, cx| {
-                            gpui_component::tooltip::Tooltip::new(tr!("Cycle Sidebar Size"))
+                            gpui_component::tooltip::Tooltip::new(tr!("Toggle Sidebar"))
                                 .action(&CycleSidebarSize, Some(SHELL_CONTEXT))
                                 .build(window, cx)
                         })
@@ -2622,12 +2793,10 @@ impl Shell {
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
-                        // `cleanable` draws the ✕ inside the field once
-                        // there is text to clear. Clicking it runs the
-                        // input's own `clean`, which emits `Change` like
-                        // any edit — so the filter subscription drops the
-                        // filter and reloads the directory through the
-                        // normal path, no second clearing seam.
+                        // Keep the input's inline clear affordance.
+                        // `clean` emits Change like any edit, so the existing
+                        // subscription drops the filter and reloads through
+                        // the normal path, with no second clearing seam.
                         .child(if crate::private_mode::enabled() {
                             div()
                                 .h(px(28.0))
@@ -2643,9 +2812,78 @@ impl Shell {
                                 .child(tr!("Private"))
                                 .into_any_element()
                         } else {
-                            Input::new(&self.active_tab().filter_input)
-                                .small()
-                                .cleanable(true)
+                            div()
+                                .relative()
+                                .w_full()
+                                .on_action({
+                                    let weak = cx.weak_entity();
+                                    move |_: &gpui_component::input::MoveUp, _window, cx| {
+                                        let handled = weak
+                                            .update(cx, |this, cx| {
+                                                this.move_filter_completion(-1, cx)
+                                            })
+                                            .unwrap_or(false);
+                                        if handled {
+                                            cx.stop_propagation();
+                                        }
+                                    }
+                                })
+                                .on_action({
+                                    let weak = cx.weak_entity();
+                                    move |_: &gpui_component::input::MoveDown, _window, cx| {
+                                        let handled = weak
+                                            .update(cx, |this, cx| {
+                                                this.move_filter_completion(1, cx)
+                                            })
+                                            .unwrap_or(false);
+                                        if handled {
+                                            cx.stop_propagation();
+                                        }
+                                    }
+                                })
+                                .on_action(move |_: &gpui_component::input::Escape, window, cx| {
+                                    let _ = weak_filter_escape.update(cx, |this, cx| {
+                                        this.on_clear_filter(
+                                            &crate::shell::ClearFilter,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                    cx.stop_propagation();
+                                })
+                                .child(
+                                    Input::new(&filter_input)
+                                        .xsmall()
+                                        .h(px(28.0))
+                                        .when(filter_has_value, |this| this.pr_7()),
+                                )
+                                .when(filter_has_value, |this| {
+                                    let filter_input = filter_input.clone();
+                                    this.child(
+                                        div()
+                                            .absolute()
+                                            .right_0()
+                                            .top_0()
+                                            .h(px(28.0))
+                                            .flex()
+                                            .items_center()
+                                            .child(
+                                                Button::new("filter-clear")
+                                                    .xsmall()
+                                                    .ghost()
+                                                    .icon(
+                                                        gpui_component::Icon::empty()
+                                                            .path("icons/close.svg"),
+                                                    )
+                                                    .on_click(move |_, window, cx| {
+                                                        filter_input.update(cx, |state, cx| {
+                                                            state.clean(window, cx);
+                                                        });
+                                                    }),
+                                        ),
+                                    )
+                                })
+                                .when_some(filter_completion_menu, |this, menu| this.child(menu))
                                 .into_any_element()
                         }),
                 )
@@ -3133,8 +3371,8 @@ impl Shell {
 
     /// Build the breadcrumb row from `current_dir`. Each ancestor is
     /// clickable and navigates the pane to that level. The root `/`
-    /// gets its own leading segment. When `breadcrumb_editing` is
-    /// set (Cmd+L) the row swaps in an Input field instead — Enter
+    /// gets its own leading segment. When a breadcrumb inline-edit session
+    /// is active (Cmd+L) the row swaps in an Input field instead — Enter
     /// commits the path, Blur cancels.
     /// Host the preview panel, pointing it at whatever this tab has selected.
     fn preview_pane(&mut self, cx: &mut Context<Self>) -> Div {
@@ -3267,7 +3505,11 @@ impl Shell {
             }
             return row;
         }
-        if self.breadcrumb_editing {
+        let breadcrumb_session = self
+            .breadcrumb_edit
+            .snapshot()
+            .filter(|session| session.target == self.active_tab().id);
+        if let Some(breadcrumb_session) = breadcrumb_session {
             if crate::private_mode::enabled() {
                 return h_flex()
                     .w_full()
@@ -3281,6 +3523,59 @@ impl Shell {
                         crate::private_mode::present_path(&self.active_tab().current_dir),
                     ));
             }
+            let path_suggestions = self.breadcrumb_suggestions.clone();
+            let completion_menu = if path_suggestions.is_open() {
+                let mut menu = v_flex()
+                    .w_full()
+                    .max_h(px(260.0))
+                    .overflow_y_scrollbar()
+                    .rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().popover)
+                    .shadow_md()
+                    .p_1();
+                for (index, suggestion) in path_suggestions.items().iter().take(12).enumerate() {
+                    let weak = cx.weak_entity();
+                    let selected = index == path_suggestions.selected_index();
+                    menu = menu.child(
+                        h_flex()
+                            .id(("path-completion", index))
+                            .w_full()
+                            .px_2()
+                            .py_1()
+                            .rounded(cx.theme().radius)
+                            .text_scale_sm()
+                            .when(selected, |this| this.bg(cx.theme().accent.opacity(0.18)))
+                            .hover(|this| this.bg(cx.theme().accent.opacity(0.12)))
+                            .child(suggestion.label.clone())
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.accept_breadcrumb_completion(Some(index), window, cx);
+                                });
+                            }),
+                    );
+                }
+                Some(
+                    deferred(
+                        div()
+                            .absolute()
+                            .left(px(16.0))
+                            .right(px(16.0))
+                            .top(px(36.0))
+                            .occlude()
+                            .child(menu),
+                    )
+                    .with_priority(10)
+                    .into_any_element(),
+                )
+            } else {
+                None
+            };
             // Key routing for the autocomplete menu. Two upstream
             // quirks would otherwise leak keystrokes to the Shell
             // keymap (moving the FILE LIST cursor / opening rows
@@ -3302,9 +3597,9 @@ impl Shell {
             //     run at all when that leak re-propagates past the
             //     input's own handler (menu-open case), so normal
             //     PressEnter commit / Escape blur are unaffected.
-            let input_for_up = self.breadcrumb_input.clone();
-            let input_for_down = self.breadcrumb_input.clone();
+            let weak_escape = cx.weak_entity();
             return h_flex()
+                .relative()
                 .w_full()
                 .items_center()
                 .gap_1()
@@ -3312,29 +3607,49 @@ impl Shell {
                 .py_1()
                 .border_b_1()
                 .border_color(cx.theme().border)
-                .on_action(move |a: &gpui_component::input::MoveUp, window, cx| {
-                    input_for_up.update(cx, |state, cx| {
-                        state.handle_action_for_context_menu(Box::new(a.clone()), window, cx);
-                    });
-                    cx.stop_propagation();
+                .on_action({
+                    let weak = cx.weak_entity();
+                    move |_: &gpui_component::input::MoveUp, _window, cx| {
+                        let handled = weak
+                            .update(cx, |this, cx| this.move_breadcrumb_completion(-1, cx))
+                            .unwrap_or(false);
+                        if handled {
+                            cx.stop_propagation();
+                        }
+                    }
                 })
-                .on_action(move |a: &gpui_component::input::MoveDown, window, cx| {
-                    input_for_down.update(cx, |state, cx| {
-                        state.handle_action_for_context_menu(Box::new(a.clone()), window, cx);
-                    });
-                    cx.stop_propagation();
+                .on_action({
+                    let weak = cx.weak_entity();
+                    move |_: &gpui_component::input::MoveDown, _window, cx| {
+                        let handled = weak
+                            .update(cx, |this, cx| this.move_breadcrumb_completion(1, cx))
+                            .unwrap_or(false);
+                        if handled {
+                            cx.stop_propagation();
+                        }
+                    }
                 })
                 .on_action(move |_: &gpui_component::input::Enter, _window, cx| {
                     cx.stop_propagation();
                 })
-                .on_action(move |_: &gpui_component::input::Escape, _window, cx| {
+                .on_action(move |_: &gpui_component::input::Escape, window, cx| {
+                    let _ = weak_escape.update(cx, |this, cx| {
+                        if this.breadcrumb_edit.clear() {
+                            this.breadcrumb_suggestions.clear();
+                            this.focus_handle.focus(window, cx);
+                            cx.notify();
+                        }
+                    });
                     cx.stop_propagation();
                 })
-                .child(
-                    div()
-                        .flex_1()
-                        .child(Input::new(&self.breadcrumb_input).small()),
-                );
+                .child(div().flex_1().child(crate::inline_edit::InlineEditor::new(
+                    "inline-path-editor",
+                    crate::inline_edit::InlineEditInput::Text(self.breadcrumb_input.clone()),
+                    crate::inline_edit::InlineEditLayout::AddressBar,
+                    &breadcrumb_session,
+                    tr!("Path"),
+                )))
+                .when_some(completion_menu, |this, menu| this.child(menu));
         }
         let segments = path_segments(&self.active_tab().current_dir);
         // Warm each segment's child-folder list off-thread so the "Go to
@@ -3845,7 +4160,7 @@ impl Render for Shell {
                     tr!("Locations"),
                     locations_rows,
                     weak.clone(),
-                    crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
+                    crate::tree::SIDEBAR_ICON_PX,
                     collapsed(SidebarSection::Locations),
                 )),
             ),
@@ -3857,6 +4172,7 @@ impl Render for Shell {
                     browse_rows,
                     weak.clone(),
                     self.process.icons.clone(),
+                    crate::tree::SIDEBAR_ICON_PX,
                     SidebarSection::Browse,
                     collapsed(SidebarSection::Browse),
                 )),
@@ -3868,7 +4184,7 @@ impl Render for Shell {
             ShellSidebarItem::windows_namespace(
                 crate::locations_section::WindowsNamespaceSection::new(
                     weak.clone(),
-                    crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
+                    crate::tree::SIDEBAR_ICON_PX,
                     collapsed(SidebarSection::Windows),
                 ),
             ),
@@ -3881,7 +4197,7 @@ impl Render for Shell {
                         tr!("Linux"),
                         platform_location_rows,
                         weak.clone(),
-                        crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
+                        crate::tree::SIDEBAR_ICON_PX,
                         collapsed(SidebarSection::Linux),
                     ),
                 ),
@@ -3898,6 +4214,7 @@ impl Render for Shell {
                     volumes_rows,
                     weak.clone(),
                     self.process.icons.clone(),
+                    crate::tree::SIDEBAR_ICON_PX,
                     SidebarSection::Volumes,
                     collapsed(SidebarSection::Volumes),
                 )),
@@ -3911,30 +4228,58 @@ impl Render for Shell {
                 .unwrap_or(usize::MAX)
         });
 
-        let collapsed_sidebar = crate::sidebar_layout::collapsed_sidebar_geometry(
-            window.viewport_size().width.as_f32(),
+        // gpui-component's icon-collapse has a fixed 48-DIP width and adds
+        // padding around every custom section. That cannot represent Ferail's
+        // zoom-scaled 24-DIP icons without either clipping or dead space. Keep
+        // the official Sidebar for the full resizable mode; the icon-only
+        // strip renders the same SidebarItem implementations directly with a
+        // geometry derived from the effective icon size.
+        let collapsed_geometry = crate::sidebar_layout::collapsed_sidebar_geometry(
+            crate::tree::SIDEBAR_ICON_PX,
+            self.ui_scale,
         );
-        let mut sidebar = Sidebar::new("shell-sidebar")
-            .collapsible(gpui_component::sidebar::SidebarCollapsible::Icon)
-            .collapsed(self.sidebar_collapsed)
-            // gpui-component currently fixes icon-collapse at 48 DIPs. Keep
-            // using its behaviour, but clip and recenter that inner strip in
-            // Ferail's narrower responsive panel. Removing its own right
-            // border lets the panel draw the border at the actual edge.
-            .when(self.sidebar_collapsed, |this| {
-                this.ml(px(-collapsed_sidebar.content_shift)).border_r_0()
-            })
-            .w_full();
-        for (section_id, section) in sections {
-            sidebar = sidebar
+        let collapsed_outer_margin = collapsed_geometry.outer_margin;
+        let collapsed_sidebar_width = collapsed_geometry.width;
+        let sidebar = if self.sidebar_collapsed {
+            let section_rows = sections
+                .into_iter()
+                .enumerate()
+                .map(|(index, (_, section))| {
+                    let section = gpui_component::Collapsible::collapsed(section, true);
+                    div()
+                        .w_full()
+                        .when(index > 0, |this| this.mt(px(4.0 * self.ui_scale)))
+                        .child(
+                            gpui_component::sidebar::SidebarItem::render(
+                                section, index, window, cx,
+                            )
+                            .into_any_element(),
+                        )
+                })
+                .collect::<Vec<_>>();
+            v_flex()
+                .id("shell-sidebar-icons")
+                .size_full()
+                .overflow_y_scroll()
+                .px(px(collapsed_outer_margin))
+                .pt(px(8.0 * self.ui_scale))
+                .children(section_rows)
+                .into_any_element()
+        } else {
+            let mut sidebar = Sidebar::new("shell-sidebar").w_full();
+            for (section_id, section) in sections {
+                sidebar = sidebar
+                    .child(ShellSidebarItem::section_gap(
+                        crate::tree::SidebarSectionGap::new(Some(section_id), weak.clone()),
+                    ))
+                    .child(section);
+            }
+            sidebar
                 .child(ShellSidebarItem::section_gap(
-                    crate::tree::SidebarSectionGap::new(Some(section_id), weak.clone()),
+                    crate::tree::SidebarSectionGap::new(None, weak.clone()),
                 ))
-                .child(section);
-        }
-        sidebar = sidebar.child(ShellSidebarItem::section_gap(
-            crate::tree::SidebarSectionGap::new(None, weak.clone()),
-        ));
+                .into_any_element()
+        };
 
         let tabstrip = self.tabstrip(cx);
         // Phase 8: status-bar density. Compute selected count / size,
@@ -4523,26 +4868,17 @@ impl Render for Shell {
                 // `.size(...)` — they survive across launches because
                 // they're written through `on_resize` to app_state
                 // (debounced via SPLITTER_PERSIST_INTERVAL below).
-                // Icon-only width is recomputed from the current viewport,
-                // so an outer-window resize can reclaim space instead of
-                // retaining gpui-component's fixed 48-DIP strip. The drag
-                // handle hides implicitly because the range is fixed to the
-                // effective width for this frame.
                 let sidebar_width_px = if self.sidebar_collapsed {
-                    px(collapsed_sidebar.width)
-                } else if self.sidebar_compact {
-                    px(SIDEBAR_COMPACT_WIDTH)
+                    px(collapsed_sidebar_width)
                 } else {
                     px(self.sidebar_width)
                 };
                 let preview_width_px = px(self.preview_width);
                 let weak = cx.weak_entity();
                 let sidebar_collapsed = self.sidebar_collapsed;
-                let sidebar_fixed = self.sidebar_collapsed || self.sidebar_compact;
+                let sidebar_fixed = self.sidebar_collapsed;
                 let sidebar_width_before = if sidebar_collapsed {
-                    collapsed_sidebar.width
-                } else if self.sidebar_compact {
-                    SIDEBAR_COMPACT_WIDTH
+                    collapsed_sidebar_width
                 } else {
                     self.sidebar_width
                         .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
@@ -4598,10 +4934,6 @@ impl Render for Shell {
                     .child(
                         resizable_panel()
                             .size(sidebar_width_px)
-                            // The component's inner icon strip remains 48 DIPs
-                            // wide; clip it to the responsive panel, fill the
-                            // exposed edge with the sidebar colour and put the
-                            // separator on the true panel boundary.
                             .when(self.sidebar_collapsed, |this| {
                                 this.overflow_hidden()
                                     .bg(cx.theme().sidebar)
@@ -4614,15 +4946,10 @@ impl Render for Shell {
                             // toggle is the one way back to expanded.
                             .when(self.sidebar_collapsed, |this| {
                                 this.size_range(
-                                    px(collapsed_sidebar.width)..px(collapsed_sidebar.width),
+                                    px(collapsed_sidebar_width)..px(collapsed_sidebar_width),
                                 )
                             })
-                            .when(self.sidebar_compact, |this| {
-                                this.size_range(
-                                    px(SIDEBAR_COMPACT_WIDTH)..px(SIDEBAR_COMPACT_WIDTH),
-                                )
-                            })
-                            .when(!self.sidebar_collapsed && !self.sidebar_compact, |this| {
+                            .when(!self.sidebar_collapsed, |this| {
                                 this.size_range(px(SIDEBAR_MIN_WIDTH)..px(SIDEBAR_MAX_WIDTH))
                             })
                             .child(sidebar),

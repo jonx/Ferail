@@ -77,8 +77,8 @@ actions!(
         /// find/replace (literal or regex with $1..$9), case
         /// transforms, and a {name}/{ext}/{n}/{date} template, with a
         /// live before→after preview (docs/features/BULK_RENAME.md).
-        /// With fewer than two resolved targets it degrades to the
-        /// single-rename prompt (one) or a no-op (none).
+        /// With fewer than two resolved targets it degrades to inline
+        /// rename (one) or a no-op (none).
         BulkRenameSelected,
         NewTab,
         CloseTab,
@@ -334,9 +334,8 @@ actions!(
         /// undo), the keyboard twin of the context-menu remove (§3.1).
         DeleteFavorite,
         /// Rename the favorite under `favorites_context_path` via the
-        /// shared gpui text-prompt modal (§6) — the same surface every
-        /// other naming flow uses, so it's consistent and cross-platform
-        /// (no native text prompt exists on Windows).
+        /// shared gpui text-prompt modal (§6). Sidebar labels remain modal;
+        /// filesystem rows use the reusable inline editor.
         RenameFavorite,
         /// "Locate…" (§8.2 / §8.3) — open a folder picker and repoint
         /// the favorite under `favorites_context_path` at the chosen

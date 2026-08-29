@@ -1,9 +1,10 @@
 # gpui_windows (Ferail patch)
 
 This is Zed's Apache-2.0 `gpui_windows` crate at commit
-`38ca9106c5306ef93e52c35643df015a27f15b72`, copied verbatim except for the
+`f66ed399cdde86092af8af3dc7b418abf45f37f8`, copied verbatim except for the
 small outbound file-drag patch documented below and a standalone Cargo
-manifest.
+manifest. This base includes upstream Windows `render_to_image` support from
+Zed PR #63012; Ferail carries no separate implementation of that feature.
 
 GPUI core already promotes an internal drag through
 `PlatformWindow::{can_start_external_drag,start_external_drag}`, and its macOS

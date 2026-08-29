@@ -139,7 +139,7 @@ pub fn format_uptime(secs: u64) -> String {
 pub fn start_sampler(cx: &mut App) {
     // Frame tracing feeds the rps figure. Cheap: one 40-byte ring
     // push per drawn frame, nothing at all while idle.
-    gpui::profiler::set_frame_trace_enabled(true);
+    gpui::profiler::set_trace_enabled(true);
 
     let pid = match sysinfo::get_current_pid() {
         Ok(pid) => pid,
@@ -216,8 +216,8 @@ fn sample(
     // landing in the microseconds between drain and re-enable is
     // dropped — an off-by-one nobody can see in an rps figure.
     let frames = collector.collect_unseen();
-    gpui::profiler::set_frame_trace_enabled(false);
-    gpui::profiler::set_frame_trace_enabled(true);
+    gpui::profiler::set_trace_enabled(false);
+    gpui::profiler::set_trace_enabled(true);
     *collector = gpui::profiler::FrameTimingCollector::new();
 
     // Redraw count per window over the window's actual duration. A
@@ -226,8 +226,10 @@ fn sample(
     // called "fps".
     let secs = elapsed.as_secs_f32().max(0.001);
     let mut rps: HashMap<WindowId, f32> = HashMap::new();
-    for timing in &frames {
-        *rps.entry(timing.window_id).or_insert(0.0) += 1.0;
+    for event in &frames {
+        if let gpui::profiler::FrameEvent::Draw(timing) = event {
+            *rps.entry(timing.window_id).or_insert(0.0) += 1.0;
+        }
     }
     for count in rps.values_mut() {
         *count /= secs;

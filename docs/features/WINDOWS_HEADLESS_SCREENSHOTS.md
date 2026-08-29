@@ -15,48 +15,38 @@ capture path calls `Window::render_to_image()` on an invisible GPUI window.
 That is the right architecture for no-flash screenshots because it samples the
 renderer output instead of asking Windows to capture an onscreen HWND.
 
-Windows support depends on a GPUI backend patch:
-
-- [`patches/gpui-windows-render-to-image.patch`](../../patches/gpui-windows-render-to-image.patch)
-  adds `gpui_windows` D3D11 staging-texture readback.
-- Root [`Cargo.toml`](../../Cargo.toml) currently wires this through a local
-  `[patch."https://github.com/zed-industries/zed"]` path to
-  `../zed-ferail-patch`.
-- [`docs/GPUI-UPSTREAM.md`](../GPUI-UPSTREAM.md) tracks the upstream issue and
-  patch details.
-
-That local path is fine for proving the feature on one workstation, but it is
-not a portable final state for the branch.
+Windows support is upstream as of Zed PR
+[#63012](https://github.com/zed-industries/zed/pull/63012). Ferail pins Zed
+`f66ed399`, which contains that merge. The in-repo `gpui_windows` fork is based
+on the same revision and differs only for outbound Shell/OLE file dragging; it
+does not duplicate the DirectX readback implementation. The historical patch
+under `patches/` is review provenance and is not wired into Cargo.
 
 ## Work to finish
 
-1. Move the GPUI Windows `render_to_image` patch out of a local sibling path.
-   Prefer an upstream Zed PR. If that is not ready, use a Ferail-owned fork
-   pinned by `git` + `rev` so a fresh checkout resolves without local files.
-
-2. Keep `gpui_platform`'s `test-support` feature connected to
+1. Keep `gpui_platform`'s `test-support` feature connected to
    `gpui_windows/test-support`. The trait method is available only behind the
    same support feature used by the macOS path.
 
-3. Keep the screenshot window hidden in
+2. Keep the screenshot window hidden in
    [`screenshot.rs`](../../crates/ferail-gpui/src/screenshot.rs):
    `WindowOptions { show: false, focus: false, ... }`. Do not show, move, or
    minimize the window in the primary capture path.
 
-4. Keep `Window::render_to_image()` as the only normal Windows screenshot
+3. Keep `Window::render_to_image()` as the only normal Windows screenshot
    backend. It should render into GPUI's DirectX target, copy to a staging
    texture, map CPU-readable pixels, convert BGRA to RGBA, and return an
    `image::RgbaImage`.
 
-5. Treat [`capture_window_rgba`](../../crates/ferail-shell-win32/src/capture.rs)
+4. Treat [`capture_window_rgba`](../../crates/ferail-shell-win32/src/capture.rs)
    and `PrintWindow` as emergency fallback/debugging code only. `PrintWindow`
    captures HWND contents and is tied to compositor/window visibility behavior;
    it can require showing or moving a window and is exactly the path that risks
    the visible flash.
 
-6. Once the upstream/fork dependency is in place, remove or update comments that
-   describe the local `../zed-ferail-patch` setup as required. The branch
-   should document one reproducible dependency path.
+5. Re-run the native Windows acceptance checks whenever the Zed snapshot or
+   the vendored Windows backend moves. A macOS cross-check cannot execute the
+   Windows resource compiler and is not a substitute for that run.
 
 ## Acceptance checks
 

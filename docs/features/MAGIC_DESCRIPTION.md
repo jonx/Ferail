@@ -501,6 +501,9 @@ Unit:
 - `formats_compatible` in `ferail-core` is unchanged.
 
 Integration:
+- Run `ferail formats --recursive <path>` to inspect, sort or filter the exact
+  extension/format/description/policy tuple used by the file list. Directory
+  symlinks are not followed, and the default directory scan is shallow.
 - Open the repo's `target/` directory; verify executables show
   `… · 64-bit · x86-64 · console` (or similar).
 - Open `~/Pictures`; verify images show `… · 1920×1080`.

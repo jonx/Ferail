@@ -1,39 +1,28 @@
 //! Breadcrumb (Cmd+L) path autocomplete.
 //!
-//! Implements gpui-component's LSP-flavoured `CompletionProvider` for
-//! filesystem paths: as the user types, a background worker lists the
+//! As the user types, a background worker lists the
 //! parent directory of the typed prefix and offers matching folder
 //! names in the input's completion menu (Up/Down to pick, Enter to
 //! accept — the menu owns the keys while it's open). Accepting a
 //! suggestion replaces only the partial segment and appends a
 //! separator so the user can keep drilling down.
 //!
-//! Prime directive: `completions` returns a `Task` whose directory
-//! enumeration runs entirely on the background executor — the input
-//! handler itself never touches the filesystem.
+//! Prime directive: callers run directory enumeration on the background
+//! executor — the input handler itself never touches the filesystem.
 
 use std::path::PathBuf;
-
-use gpui::{Context, Task, Window};
-use gpui_component::input::{CompletionProvider, InputState, Rope};
-use lsp_types::{
-    CompletionContext, CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit,
-    Position, Range as LspRange, TextEdit,
-};
 
 /// Cap on suggestions per keystroke — a directory with thousands of
 /// children must not flood the menu (or the worker's sort).
 const MAX_SUGGESTIONS: usize = 50;
 
-pub struct PathCompletionProvider;
-
 /// Split the typed text (up to the cursor) at its last path separator
-/// into `(directory to enumerate, partial segment to match, UTF-16
-/// column where the segment starts)`. `~` expands for the lookup but
+/// into `(directory to enumerate, partial segment to match, UTF-8 byte
+/// offset where the segment starts)`. `~` expands for the lookup but
 /// the replacement range only covers the segment, so the visible text
 /// keeps whatever prefix the user typed. Returns `None` when there's
 /// no separator yet — without one we don't know the base directory.
-fn split_for_completion(typed: &str) -> Option<(PathBuf, String, u32)> {
+fn split_for_completion(typed: &str) -> Option<(PathBuf, String, usize)> {
     let sep_idx = typed.rfind(['/', '\\'])?;
     let (dir_str, partial) = typed.split_at(sep_idx + 1);
     let dir = if let Some(rest) = dir_str.strip_prefix('~') {
@@ -46,7 +35,7 @@ fn split_for_completion(typed: &str) -> Option<(PathBuf, String, u32)> {
     } else {
         PathBuf::from(dir_str)
     };
-    let seg_start = dir_str.encode_utf16().count() as u32;
+    let seg_start = dir_str.len();
     Some((dir, partial.to_string(), seg_start))
 }
 
@@ -82,58 +71,35 @@ fn folder_matches(dir: &PathBuf, partial: &str) -> Vec<String> {
     names
 }
 
-impl CompletionProvider for PathCompletionProvider {
-    fn completions(
-        &self,
-        text: &Rope,
-        offset: usize,
-        _trigger: CompletionContext,
-        _window: &mut Window,
-        cx: &mut Context<InputState>,
-    ) -> Task<anyhow::Result<CompletionResponse>> {
-        let full = text.to_string();
-        let upto = full.get(..offset).unwrap_or(&full).to_string();
-        let Some((dir, partial, seg_start)) = split_for_completion(&upto) else {
-            return Task::ready(Ok(CompletionResponse::Array(Vec::new())));
-        };
-        let cursor_col = upto.encode_utf16().count() as u32;
-        cx.background_executor().spawn(async move {
-            let items = folder_matches(&dir, &partial)
-                .into_iter()
-                .map(|name| CompletionItem {
-                    label: name.clone(),
-                    kind: Some(CompletionItemKind::FOLDER),
-                    // The menu highlights the first `filter_text.len()`
-                    // bytes of the label — i.e. the prefix the user
-                    // already typed.
-                    filter_text: Some(partial.clone()),
-                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                        range: LspRange {
-                            start: Position::new(0, seg_start),
-                            end: Position::new(0, cursor_col),
-                        },
-                        // Trailing separator so accepting a folder
-                        // immediately positions the user to complete
-                        // the next segment.
-                        new_text: format!("{name}{}", std::path::MAIN_SEPARATOR),
-                    })),
-                    ..Default::default()
-                })
-                .collect();
-            Ok(CompletionResponse::Array(items))
+/// Build path suggestions for Ferail's ordinary single-line address input.
+/// This function performs directory I/O and must therefore only be called on
+/// a background executor. Replacement ranges use UTF-8 bytes, as InputState
+/// does.
+pub fn single_line_suggestions(
+    value: &str,
+    cursor: usize,
+) -> Vec<crate::single_line_complete::SingleLineSuggestion> {
+    let cursor = cursor.min(value.len());
+    if !value.is_char_boundary(cursor) {
+        return Vec::new();
+    }
+    let upto = &value[..cursor];
+    let Some((dir, partial, _)) = split_for_completion(upto) else {
+        return Vec::new();
+    };
+    let replacement_start = upto
+        .rfind(['/', '\\'])
+        .map(|index| index + 1)
+        .unwrap_or(cursor);
+    folder_matches(&dir, &partial)
+        .into_iter()
+        .map(|name| crate::single_line_complete::SingleLineSuggestion {
+            label: name.clone().into(),
+            detail: None,
+            replacement: replacement_start..cursor,
+            insertion: format!("{name}{}", std::path::MAIN_SEPARATOR).into(),
         })
-    }
-
-    fn is_completion_trigger(
-        &self,
-        _offset: usize,
-        _new_text: &str,
-        _cx: &mut Context<InputState>,
-    ) -> bool {
-        // Every edit re-queries; an empty result set hides the menu,
-        // so there's no point gating on specific trigger characters.
-        true
-    }
+        .collect()
 }
 
 #[cfg(test)]

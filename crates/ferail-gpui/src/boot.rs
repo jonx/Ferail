@@ -100,6 +100,10 @@ pub fn run_gui(args: screenshot::Args) {
         // `ferail_core::path_guard::assert_off_ui_thread`.
         ferail_core::path_guard::mark_ui_thread();
         gpui_component::init(cx);
+        // Ferail's dense panes contain clipped/virtualized surfaces. Keep the
+        // accessible focus-coloured border, but drop the component library's
+        // outer ring so it cannot appear as a cut-off shadow.
+        gpui_component::Theme::global_mut(cx).focus_ring = false;
         crate::text::install_platform_font_families(cx);
         // gpui boots with a NullHttpClient (every request errors); give
         // `cx.http_client()` a real TLS-capable client so the update
@@ -453,7 +457,7 @@ fn retire_dev_window_owners(window: &mut Window, cx: &mut App) {
     // First draw the real root without focus. gpui-component's Input blur
     // listener updates `Root`, so replacing it before the focus transition has
     // completed would violate that invariant and panic during teardown.
-    window.disable_focus();
+    window.disable_focus(cx);
     window.draw(cx).clear(cx);
     let mut drained = drain_dev_next_frame_callbacks(window, cx);
 
@@ -679,7 +683,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
         TogglePreview,
     ));
     view_items.push(MenuItem::action(
-        title("view.cycle_sidebar_size", "Cycle Sidebar Size"),
+        title("view.cycle_sidebar_size", "Toggle Sidebar"),
         CycleSidebarSize,
     ));
     view_items.push(MenuItem::action(

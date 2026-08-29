@@ -406,9 +406,26 @@ fallback). Remaining is the UX the system explorers have and we don't:
   ancestor chains on a cross-directory move (`spawn_file_op` reloads a single
   `reload_path` today); and reuse the same model for the next recursive
   aggregates (item counts, APFS clone-aware sizing) rather than a parallel one.
-- Add **cancellation tokens** consistently for enumeration, preview, thumbnails,
-  disk usage, search, copy/move, and duplicate finding (most register tasks
-  now, but several still drop stale results at apply rather than cancelling).
+- ✅ **Cancellation/backpressure baseline (2026-08-29):** directory and Flat
+  enumeration, search, duplicate finding, image/text preview, thumbnails,
+  folder sizing, Disk Usage and copy/move now cancel cooperatively or retire by
+  generation. Streaming directory/search/duplicate/folder-size channels are
+  finite; ordinary listing and search coalesce a bounded number of rows then
+  yield to GPUI just like Flat, so a fast producer cannot build an unbounded
+  result train or monopolise the event loop. Remaining work is qualification,
+  not another scheduler: inactive tabs now apply without table/window notify
+  and refresh/warm their visible viewport on activation. Add hostile
+  slow-provider/network/cloud tests, expose
+  aggregate lane counts/cancellations in diagnostics, and migrate any new
+  recursive tool to these primitives instead of adding a private queue.
+- **Two bounded-work follow-ups found in the 2026-08-29 audit:** Similar Images
+  still hands its complete scan-local image/signature index to one foreground
+  conversion pass at scan completion; slice that conversion/apply before
+  qualifying libraries with hundreds of thousands of images. The viewer's
+  next-slide `preview::warm` also bypasses the one-active/one-latest Shell
+  preview queue; route it through a small process-owned speculative lane so
+  very rapid slideshow navigation cannot accumulate provider calls. Neither
+  path touches ordinary listing/Flat/Search scalability.
 - Move remaining expensive metadata reads off synchronous UI paths (preview
   generation, large-folder bookkeeping).
 - **Prime Directive — known remaining UI-thread I/O** (from the 2026-07 audit;
@@ -431,9 +448,11 @@ fallback). Remaining is the UX the system explorers have and we don't:
   keep resolution behind the filesystem / native-shell boundaries.
 - Add slow-path tests or fixtures for slow folders, network volumes, cloud
   placeholders, permission failures, and stale worker results.
-- Streaming-enumeration tests: delayed batches, cancellation, stale generation
-  delivery, and partial-error delivery; surface partial enumeration errors in
-  the task/notification UI instead of logging only.
+- Streaming-enumeration tests: add delayed/full-channel cancellation, stale
+  generation delivery, UI-slice limits and partial-error delivery for ordinary
+  listing/search (Flat already covers the bounded million-row shape); surface
+  partial enumeration errors in the task/notification UI instead of logging
+  only.
 - Platform fast-walk follow-up: macOS `getattrlistbulk` plus bounded APFS
   parallelism now serve ordinary listings, Flat View, recursive search and Disk
   Usage. Add an opt-in elevated NTFS MFT backend on Windows (isolated helper,

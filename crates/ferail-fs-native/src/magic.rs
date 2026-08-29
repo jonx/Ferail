@@ -43,7 +43,7 @@ pub use types::{CpuArch, ElfOs, MagicInfo, MagicType, PeSubsystem};
 /// the current detector. Without the stamp, a label cached by an older
 /// build shadows the better answer forever — cache rows only invalidate
 /// on file mtime, and files don't change when Ferail does.
-pub const MAGIC_REVISION: u32 = 3;
+pub const MAGIC_REVISION: u32 = 4;
 
 const HEADER_BYTES: usize = 4096;
 
@@ -518,6 +518,23 @@ mod tests {
         assert_eq!(
             info.description(),
             "ELF \u{b7} 64-bit \u{b7} relocatable \u{b7} ARM64 \u{b7} AROS"
+        );
+    }
+
+    #[test]
+    fn macho_64bit_object_is_not_an_executable() {
+        let mut buf = vec![0u8; 32];
+        // MH_MAGIC_64, native little-endian; CPU_TYPE_ARM64; MH_OBJECT.
+        buf[..4].copy_from_slice(&[0xcf, 0xfa, 0xed, 0xfe]);
+        buf[4..8].copy_from_slice(&0x0100_000cu32.to_le_bytes());
+        buf[12..16].copy_from_slice(&1u32.to_le_bytes());
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::ObjMac);
+        assert_eq!(info.is_64bit, Some(true));
+        assert_eq!(info.arch, CpuArch::Arm64);
+        assert_eq!(
+            info.description(),
+            "Mach-O \u{b7} 64-bit \u{b7} object \u{b7} ARM64"
         );
     }
 

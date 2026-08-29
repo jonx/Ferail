@@ -233,8 +233,10 @@ page with a privacy-redacted "copy report" for bug reports.
 ![Ferail CLI](images/tour-cli.png)
 
 The app binary doubles as a small toolbox: `ferail magic [path]...`
-prints magic-byte formats (a directory is listed shallow), `ferail du
-[--top N] <path>` a disk-usage summary, `ferail thumb <path>` extracts a
+prints magic-byte formats (a directory is listed shallow), `ferail formats
+[--recursive] [path]...` emits path, extension, detected format, description
+and the file-list policy verdict as TSV, `ferail du [--top N] <path>` a
+disk-usage summary, `ferail thumb <path>` extracts a
 file's thumbnail/preview to a PNG, and `ferail doctor` checks config,
 storage and dependencies. Same engines as the UI — the magic table, the
 disk-usage walker, the thumbnail pipeline — scriptable from a shell.

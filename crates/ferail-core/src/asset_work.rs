@@ -7,12 +7,12 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-use crate::NodeId;
 use crate::platform_namespace::PlatformItemId;
 use crate::revision_cache::FileRevision;
+use crate::NodeId;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AssetIdentity {

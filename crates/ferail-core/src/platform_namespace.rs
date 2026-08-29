@@ -9,8 +9,8 @@
 use std::fmt;
 use std::num::NonZeroU64;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 /// Maximum number of rows accepted in one provider emission. Providers may
 /// emit any number of batches, but each UI apply remains predictably bounded.

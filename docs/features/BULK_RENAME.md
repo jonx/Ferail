@@ -12,7 +12,7 @@ the shared dialog surface, the task registry, and the undo stack.
 - **Entry points.** File-list context menu "Rename N Items…" (shown when
   the resolved target set has 2+ items — the multi-selection twin of the
   SingleOnly "Rename…"), and the `BulkRenameSelected` action. With one
-  resolved target the action degrades to the single-rename prompt; with
+  resolved target the action degrades to the shared inline filename editor; with
   none it's a no-op. No default keybinding in v1.
 - **The modal.** Find/Replace inputs (literal or regex via a toggle), a
   case-transform button group (None / lower / UPPER / Title), a template

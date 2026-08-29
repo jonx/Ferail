@@ -7,8 +7,8 @@
 //! and retained only in a bounded process-memory cache.
 
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use crate::platform_namespace::LocationTarget;
 use crate::revision_cache::RevisionCache;
@@ -148,8 +148,8 @@ pub type PlatformPropertiesCache<K, R> = RevisionCache<K, R, PlatformProperties>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::NodeId;
     use crate::revision_cache::FileRevision;
+    use crate::NodeId;
     use std::path::PathBuf;
 
     fn private_properties() -> PlatformProperties {
@@ -189,17 +189,15 @@ mod tests {
         };
         cache.insert(1.into(), revision, private_properties());
         assert!(cache.get(1.into(), revision).is_some());
-        assert!(
-            cache
-                .get(
-                    1.into(),
-                    FileRevision {
-                        byte_len: 11,
-                        modified_ns: Some(2),
-                    },
-                )
-                .is_none()
-        );
+        assert!(cache
+            .get(
+                1.into(),
+                FileRevision {
+                    byte_len: 11,
+                    modified_ns: Some(2),
+                },
+            )
+            .is_none());
         assert!(cache.is_empty());
     }
 }

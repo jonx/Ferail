@@ -6,20 +6,20 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use ferail_ntfs::{
-    Completion, DuMessage, FailureCode, NeutralRow, PROTOCOL_VERSION, Progress, SizingMode,
-    StartRequest, decode_frame, encode_frame,
+    decode_frame, encode_frame, Completion, DuMessage, FailureCode, NeutralRow, Progress,
+    SizingMode, StartRequest, PROTOCOL_VERSION,
 };
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
 use windows::Win32::System::Threading::{GetProcessId, TerminateProcess, WaitForSingleObject};
 use windows::Win32::UI::Shell::{
-    SEE_MASK_NO_CONSOLE, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
-    ShellExecuteExW,
+    ShellExecuteExW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SEE_MASK_NO_CONSOLE,
+    SHELLEXECUTEINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
-use windows::core::PCWSTR;
 
-use crate::pipe::{PipeError, PipeServer, never_cancelled};
+use crate::pipe::{never_cancelled, PipeError, PipeServer};
 use crate::{file_identity, probe_fast_ntfs};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -52,6 +52,14 @@ pub enum ClientError {
     Cancelled,
     UacCancelled,
     HelperMissing,
+    /// The helper is present but is not the binary this build shipped with —
+    /// a stale copy from an older version, a partial update, or a
+    /// substitution. Fails closed into the Portable engine. See
+    /// [`crate::attest`].
+    HelperUntrusted,
+    /// The helper is present but could not be opened for verification (an
+    /// unreadable file, or something holding it against our read).
+    HelperUnreadable,
     Timeout(&'static str),
     Protocol(&'static str),
     Helper(FailureCode),
@@ -64,6 +72,10 @@ impl fmt::Display for ClientError {
             Self::Cancelled => f.write_str("Fast NTFS cancelled"),
             Self::UacCancelled => f.write_str("Fast NTFS elevation was declined"),
             Self::HelperMissing => f.write_str("Fast NTFS helper is missing"),
+            Self::HelperUntrusted => f.write_str("Fast NTFS helper failed its integrity check"),
+            Self::HelperUnreadable => {
+                f.write_str("Fast NTFS helper could not be opened for verification")
+            }
             Self::Timeout(phase) => write!(f, "Fast NTFS timed out during {phase}"),
             Self::Protocol(phase) => write!(f, "Fast NTFS protocol error during {phase}"),
             Self::Helper(code) => write!(f, "Fast NTFS helper failed: {code:?}"),
@@ -315,6 +327,18 @@ impl ChildProcess {
         if !helper.is_file() {
             return Err(ClientError::HelperMissing);
         }
+        // Verify the helper we are about to elevate, and keep its handle open
+        // across ShellExecuteExW: the open denies writers and deleters, so
+        // the bytes Windows maps are provably the bytes we just hashed. This
+        // is the part of `attest` that is a real guarantee rather than a cost
+        // increase, so the guard must outlive the launch call below.
+        let held = match crate::attest::open_verified(&helper) {
+            Ok(held) => held,
+            Err(crate::attest::AttestError::Mismatch) => return Err(ClientError::HelperUntrusted),
+            Err(crate::attest::AttestError::Unreadable(_)) => {
+                return Err(ClientError::HelperUnreadable);
+            }
+        };
         let parameters = format!("{} {}", PROTOCOL_VERSION, pipe_name);
         let helper_w: Vec<u16> = helper.as_os_str().encode_wide().chain(Some(0)).collect();
         let parameters_w: Vec<u16> = parameters.encode_utf16().chain(Some(0)).collect();
@@ -338,6 +362,10 @@ impl ChildProcess {
         if info.hProcess.is_invalid() {
             return Err(ClientError::Platform("missing helper process handle"));
         }
+        // Windows has mapped the image by now, so the deny-write hold has
+        // done its job. Released explicitly rather than at end of scope so the
+        // ordering against ShellExecuteExW above stays visible.
+        drop(held);
         let pid = unsafe { GetProcessId(info.hProcess) };
         if pid == 0 {
             unsafe {
@@ -481,10 +509,8 @@ mod tests {
             best_effort_live: false,
         };
         assert!(validator.accept_complete(valid).is_ok());
-        assert!(
-            validator
-                .accept_complete(Completion { rows: 3, ..valid })
-                .is_err()
-        );
+        assert!(validator
+            .accept_complete(Completion { rows: 3, ..valid })
+            .is_err());
     }
 }

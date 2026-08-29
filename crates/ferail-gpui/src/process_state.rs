@@ -660,7 +660,9 @@ pub fn install(cx: &mut App, process: Rc<ProcessState>) {
 /// sidebar repaints. Call once at startup, after the ProcessState
 /// global is set.
 pub fn start_volume_watch(cx: &mut App) {
-    let (tx, rx) = async_channel::unbounded::<()>();
+    // Volume notifications are level-triggered for us: one pending refresh is
+    // enough no matter how many mount callbacks arrive in the same burst.
+    let (tx, rx) = async_channel::bounded::<()>(1);
     crate::platform_shell::start_volume_observer(Box::new(move || {
         let _ = tx.try_send(());
     }));
@@ -737,7 +739,9 @@ pub fn fill_volumes_once(cx: &mut App) {
 /// the foreground drain.
 pub fn start_power_watch(cx: &mut App) {
     use ferail_core::power::PowerEvent;
-    let (tx, rx) = async_channel::unbounded::<PowerEvent>();
+    // Sleep/wake is rare but OS callbacks must still have a finite footprint.
+    // Keep a short sequence rather than coalescing it to one level event.
+    let (tx, rx) = async_channel::bounded::<PowerEvent>(8);
     crate::platform_shell::start_power_observer(Box::new(move |event| {
         let _ = tx.try_send(event);
     }));

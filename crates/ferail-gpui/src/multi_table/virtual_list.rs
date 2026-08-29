@@ -60,6 +60,10 @@ impl AsRef<ScrollHandle> for VirtualListScrollHandle {
 }
 
 impl ScrollbarHandle for VirtualListScrollHandle {
+    fn viewport_bounds(&self) -> Bounds<Pixels> {
+        self.base_handle.bounds()
+    }
+
     fn offset(&self) -> Point<Pixels> {
         self.base_handle.offset()
     }

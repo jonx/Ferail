@@ -127,6 +127,9 @@ pub enum MagicType {
     // Executables — macOS
     ExeMac,
     DylibMac,
+    /// A Mach-O `MH_OBJECT` linker object. It shares the Mach-O container
+    /// with executables, but is not directly runnable.
+    ObjMac,
     // Universal binary (Mach-O fat / Java class — disambiguated only
     // by where they're typically found).
     MachOFat,
@@ -254,6 +257,7 @@ impl MagicType {
             MagicType::SoLinux => "ELF executable",
             MagicType::ExeMac => "Mach-O executable",
             MagicType::DylibMac => "Mach-O dylib",
+            MagicType::ObjMac => "Mach-O object",
             MagicType::MachOFat => "Mach-O fat / Java class",
 
             // Scripts — keep "script" in the string for the
@@ -512,7 +516,7 @@ impl MagicInfo {
                     parts.push(os.into());
                 }
             }
-            MagicType::ExeMac | MagicType::DylibMac => {
+            MagicType::ExeMac | MagicType::DylibMac | MagicType::ObjMac => {
                 parts.push("Mach-O".into());
                 if let Some(is_64) = self.is_64bit {
                     parts.push(if is_64 {
@@ -521,10 +525,10 @@ impl MagicInfo {
                         "32-bit".into()
                     });
                 }
-                parts.push(if matches!(self.magic_type, MagicType::DylibMac) {
-                    "dylib".into()
-                } else {
-                    "executable".into()
+                parts.push(match self.magic_type {
+                    MagicType::DylibMac => "dylib".into(),
+                    MagicType::ObjMac => "object".into(),
+                    _ => "executable".into(),
                 });
                 let arch = self.arch.as_str();
                 if !arch.is_empty() {

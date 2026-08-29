@@ -178,7 +178,10 @@ A favorite's `display_name` is independent of the underlying folder's name. Rena
 
 - **Trigger:** context menu → "Rename…", or `Enter` with the favorite selected.
 - **Behavior:** a small modal text-prompt opens pre-filled with the current name, selected for overtype. `Enter` commits, `Esc` cancels.
-  - *Implementation note:* Ferail renames through the **shared gpui text-prompt modal** — the one surface every naming flow (file/folder rename, new folder) uses — rather than an in-row editable label. This is deliberate: it keeps one consistent, accessible naming surface and is cross-platform (Windows has no native text prompt), and it sidesteps per-view inline-edit plumbing in the non-virtualized sidebar. The spec's original "inline text field" wording predates that decision; the modal is the supported path.
+  - *Implementation note:* Favorites keep the compact gpui text prompt because
+    this non-virtualized sidebar operation edits a shortcut label. Filesystem
+    rows use Ferail's shared inline editor instead; both remain cross-platform
+    and share the same keyboard semantics.
 - **Empty name:** rejected — the commit is a no-op, leaving the previous name (or the folder basename if there was no custom name).
 - **"Reset name":** context menu offers "Reset to Original Name," which clears `display_name` back to tracking the folder basename.
 - Renaming the favorite does **not** rename the folder on disk. Make this unambiguous — if there's any doubt in testing, add a tooltip or a one-time hint.

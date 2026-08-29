@@ -3,11 +3,10 @@ name = "ferail-gpui"
 version.workspace = true
 license.workspace = true
 repository.workspace = true
-# GPUI requires edition 2024 (and Rust >= 1.85). The rest of the
-# workspace is on 2021 / 1.78 — we keep the new crate's edition
-# explicit so the rest of the workspace doesn't have to bump.
+# GPUI requires edition 2024. Keep the edition explicit while sharing the
+# workspace's compiler floor, which follows the pinned Zed snapshot.
 edition = "2024"
-rust-version = "1.85"
+rust-version.workspace = true
 publish = false
 
 # "aros" is a custom-JSON target (branch aros-port); register its target_os
@@ -25,6 +24,10 @@ check-cfg = ['cfg(target_os, values("aros"))']
 # justification. Run `cargo clippy -p ferail-gpui` before finishing.
 [lints.clippy]
 disallowed_methods = "deny"
+# Rust 1.97 broadened this style lint to 60+ existing, unrelated UI paths.
+# Keep dependency migrations reviewable; collapse those branches only when
+# the surrounding code is otherwise being changed and its control flow tested.
+collapsible_if = "allow"
 
 [features]
 default = ["screenshot-harness"]
@@ -107,11 +110,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # gpui::Window (which implements HasWindowHandle). Same major as
 # gpui's transitive use so we stay single-copy in the graph.
 raw-window-handle = "0.6"
-# Breadcrumb path autocomplete implements gpui-component's
-# LSP-flavoured CompletionProvider, whose item types come from
-# lsp-types. Same version as gpui-component's so the trait's types
-# unify (it only re-exports Position).
-lsp-types = "0.97.0"
 # Bulk-rename find/replace rules (docs/features/BULK_RENAME.md).
 regex.workspace = true
 sha2.workspace = true

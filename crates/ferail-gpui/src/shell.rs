@@ -67,8 +67,9 @@ mod verify;
 pub use actions::*;
 pub use dock::{DockEdge, DockState, ScreenFrame};
 use loading::{
-    LoadBatch, LoadMsg, dir_has_subdir, error_copy, middle_truncate_path,
-    run_directory_load_streaming, run_tree_children_load,
+    LISTING_CHANNEL_BATCHES, LISTING_UI_ROWS_PER_TICK, LISTING_UI_TICK_MS, LoadBatch, LoadMsg,
+    LoadUiUpdate, dir_has_subdir, error_copy, middle_truncate_path, run_directory_load_streaming,
+    run_tree_children_load,
 };
 pub use path::{
     canonicalize_for_identity, parse_breadcrumb_path, parse_pasted_path, path_segments,
@@ -109,6 +110,10 @@ enum FileOpUndo {
     DeleteFolder(PathBuf),
     RemoveCreatedResult,
 }
+
+/// Optional UI-thread completion hook for the small number of mutations that
+/// keep an inline surface mounted while their worker runs.
+type FileOpSettled = Box<dyn FnOnce(&mut Shell, Option<String>, &mut Context<Shell>) + 'static>;
 
 impl FileOpUndo {
     fn push(self, shell: &mut Shell, created: Vec<PathBuf>) {
@@ -994,15 +999,22 @@ pub struct Shell {
     /// are deterministic (the real sampler never runs on the
     /// screenshot path).
     pub simulated_stats: bool,
-    /// Cmd+L breadcrumb edit (Stage 9.b): when true the breadcrumb
-    /// renders an Input field pre-filled with the active tab's
-    /// current_dir instead of the clickable segments. Enter commits
-    /// (canonicalise + navigate); Blur cancels.
-    pub breadcrumb_editing: bool,
-    /// `InputState` for the breadcrumb edit field. Constructed once
-    /// at Shell creation; visible only while
-    /// `breadcrumb_editing == true`.
+    /// Generic inline-edit lifecycle for Cmd+L's path field.  The target is
+    /// the owning tab, so switching tabs cannot accidentally mount a stale
+    /// path editor.
+    pub breadcrumb_edit: crate::inline_edit::InlineEditModel<TabId>,
+    /// Compact single-line input mounted through the same `InlineEditor`
+    /// chrome as filename editing.
     pub breadcrumb_input: Entity<InputState>,
+    pub breadcrumb_suggestions: crate::single_line_complete::SingleLineSuggestions,
+    breadcrumb_completion_generation: u64,
+    /// One persistent filename editor and one shared lifecycle across every
+    /// tab in this window.  List/grid renderers mount it only at the target
+    /// `NodeId`, following Zed's project-panel design without importing Zed's
+    /// heavyweight editor crate.
+    pub inline_name_edit:
+        crate::inline_edit::InlineEditModel<crate::inline_edit::FileNameEditTarget>,
+    pub inline_name_input: Entity<InputState>,
     /// Stage 9.b: keyboard-shortcuts help overlay. `Some(filter)`
     /// while visible — the string is the live filter text shown in
     /// the modal's search input.
@@ -1116,9 +1128,6 @@ pub struct Shell {
     /// `app_state::sidebar_collapsed` so the choice survives
     /// restarts.
     pub sidebar_collapsed: bool,
-    /// Fixed compact-text mode. Mutually exclusive with icon-only mode;
-    /// `sidebar_width` keeps the user's normal resizable width intact.
-    pub sidebar_compact: bool,
     /// Persisted section ordering/disclosure model. Platform-conditional
     /// sections remain represented even when absent on this machine.
     pub sidebar_layout: crate::sidebar_layout::SidebarLayout,
@@ -1769,9 +1778,8 @@ const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 /// would flash a skeleton on every ordinary navigation.
 const SLOW_LOAD_INDICATOR_DELAY: Duration = Duration::from_millis(300);
 
-const SIDEBAR_COMPACT_WIDTH: f32 = 176.0;
-const SIDEBAR_MIN_WIDTH: f32 = 160.0;
-const SIDEBAR_MAX_WIDTH: f32 = 400.0;
+const SIDEBAR_MIN_WIDTH: f32 = 180.0;
+const SIDEBAR_MAX_WIDTH: f32 = 520.0;
 const FILE_PANE_MIN_WIDTH: f32 = 360.0;
 const PREVIEW_MIN_WIDTH: f32 = 260.0;
 const PREVIEW_MAX_WIDTH: f32 = 640.0;
@@ -1927,6 +1935,38 @@ impl Shell {
         // shell.
         focus_handle.focus(window, cx);
 
+        let inline_name_edit = crate::inline_edit::InlineEditModel::default();
+        let inline_name_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .submit_on_enter(true)
+                .placeholder(tr!("New name"))
+        });
+        let inline_name_subscription = cx.subscribe_in(
+            &inline_name_input,
+            window,
+            move |this, state, ev: &InputEvent, window, cx| match ev {
+                InputEvent::Change => {
+                    let value = state.read(cx).value().to_string();
+                    this.validate_inline_name(&value, cx);
+                }
+                InputEvent::PressEnter { .. } => {
+                    this.commit_inline_name(window, cx);
+                }
+                InputEvent::Blur
+                    if window.is_window_active()
+                        && this.inline_name_edit.snapshot().is_some_and(|session| {
+                            session.phase == crate::inline_edit::InlineEditPhase::Editing
+                        }) =>
+                {
+                    // Explorer/Zed semantics: clicking elsewhere accepts a
+                    // valid rename. Escape clears the session before moving
+                    // focus, so its ensuing Blur cannot commit.
+                    this.commit_inline_name(window, cx);
+                }
+                _ => {}
+            },
+        );
+
         // Stage 9.b: shortcuts-help filter Input. Subscribed for
         // Change so typing updates `shortcuts_help_filter` live.
         let shortcuts_help_input =
@@ -1969,29 +2009,62 @@ impl Shell {
         // provider gives Cmd+L folder autocomplete: matching child
         // folders pop up as you type (background-enumerated; see
         // `crate::path_complete`).
+        let breadcrumb_edit = crate::inline_edit::InlineEditModel::default();
         let breadcrumb_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder(tr!("/path/to/folder"));
-            state.lsp.completion_provider =
-                Some(Rc::new(crate::path_complete::PathCompletionProvider));
-            state
+            InputState::new(window, cx)
+                .submit_on_enter(true)
+                .placeholder(tr!("/path/to/folder"))
         });
         // Same as above: read through the `state` parameter, never a
         // captured strong clone of the subscribed entity.
         let breadcrumb_subscription = cx.subscribe_in(
             &breadcrumb_input,
             window,
-            move |this, state, ev: &InputEvent, _window, cx| match ev {
+            move |this, state, ev: &InputEvent, window, cx| match ev {
+                InputEvent::Change if this.breadcrumb_edit.is_active() => {
+                    let value = state.read(cx).value().to_string();
+                    let cursor = state.read(cx).selected_range().end;
+                    this.breadcrumb_completion_generation =
+                        this.breadcrumb_completion_generation.wrapping_add(1);
+                    let generation = this.breadcrumb_completion_generation;
+                    cx.spawn(async move |weak, cx| {
+                        let worker_value = value.clone();
+                        let items = cx
+                            .background_executor()
+                            .spawn(async move {
+                                crate::path_complete::single_line_suggestions(&worker_value, cursor)
+                            })
+                            .await;
+                        let _ = weak.update(cx, |this, cx| {
+                            let still_current = this.breadcrumb_edit.is_active()
+                                && this.breadcrumb_completion_generation == generation
+                                && this.breadcrumb_input.read(cx).value().as_ref() == value;
+                            if still_current {
+                                this.breadcrumb_suggestions.replace(items);
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .detach();
+                }
                 InputEvent::PressEnter { .. } => {
+                    if !this.breadcrumb_edit.is_active() {
+                        return;
+                    }
+                    if this.accept_breadcrumb_completion(None, window, cx) {
+                        return;
+                    }
                     let raw = state.read(cx).value().to_string();
                     crate::log_info!(90, "breadcrumb: commit {raw:?}");
                     let path = parse_breadcrumb_path(&raw);
-                    this.breadcrumb_editing = false;
+                    this.breadcrumb_edit.clear();
                     // External boundary: typed input canonicalizes on
                     // a worker before navigation registers identity.
                     this.navigate_external(path, cx);
                 }
-                InputEvent::Blur if this.breadcrumb_editing => {
-                    this.breadcrumb_editing = false;
+                InputEvent::Blur if this.breadcrumb_edit.is_active() => {
+                    this.breadcrumb_edit.clear();
+                    this.breadcrumb_suggestions.clear();
                     cx.notify();
                 }
                 _ => {}
@@ -2108,6 +2181,10 @@ impl Shell {
             start.clone(),
             start_id,
             focus_handle.clone(),
+            crate::file_list::InlineNameEditResources {
+                model: inline_name_edit.clone(),
+                input: inline_name_input.clone(),
+            },
             window,
             cx,
         );
@@ -2137,8 +2214,12 @@ impl Shell {
             task_panel_open: false,
             simulated_progress: None,
             simulated_stats: false,
-            breadcrumb_editing: false,
+            breadcrumb_edit,
             breadcrumb_input,
+            breadcrumb_suggestions: Default::default(),
+            breadcrumb_completion_generation: 0,
+            inline_name_edit,
+            inline_name_input,
             shortcuts_help_filter: None,
             shortcuts_help_input,
             // Default off: the preview pane eats ~250-300px on the
@@ -2173,8 +2254,6 @@ impl Shell {
             preview_thumb_drag: None,
             splitter_save_scheduled: false,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
-            sidebar_compact: !persisted.sidebar_collapsed.unwrap_or(false)
-                && persisted.sidebar_compact.unwrap_or(false),
             sidebar_layout: crate::sidebar_layout::SidebarLayout::from_persisted(
                 persisted.sidebar_section_order.as_deref(),
                 persisted.sidebar_collapsed_sections.as_deref(),
@@ -2200,9 +2279,37 @@ impl Shell {
             similar_structure_track: Bounds::default(),
             similar_detail_track: Bounds::default(),
             similar_criteria_dragging: None,
-            _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
+            _subscriptions: vec![
+                breadcrumb_subscription,
+                inline_name_subscription,
+                shortcuts_help_subscription,
+            ],
         };
         shell.process.register_shell(cx.weak_entity());
+        // gpui-component's focused Input resolves its own, more-specific
+        // Escape action before the Shell keymap, and action bubbling does not
+        // cross the input entity boundary. Intercept the raw keystroke before
+        // action resolution, scoped to this Shell's window and active inline
+        // session (or its focused filter field).
+        let weak_shell = cx.weak_entity();
+        let shell_window = window.window_handle();
+        let inline_escape_subscription = cx.intercept_keystrokes(move |event, window, app| {
+            if event.keystroke.key != "escape" || window.window_handle() != shell_window {
+                return;
+            }
+            let handled =
+                match weak_shell.update(app, |this, cx| this.intercept_inline_escape(window, cx)) {
+                    Ok(handled) => handled,
+                    Err(error) => {
+                        crate::log_warn!(90, "inline Escape interception failed: {error}");
+                        false
+                    }
+                };
+            if handled {
+                app.stop_propagation();
+            }
+        });
+        shell._subscriptions.push(inline_escape_subscription);
         // Seed the theme base font size from the persisted/CLI zoom so
         // the very first `Root::render` lays out at the right rem size.
         shell.apply_ui_zoom(cx);
@@ -2482,11 +2589,12 @@ impl Shell {
         at: PathBuf,
         node_id: NodeId,
         shell_focus: FocusHandle,
+        inline_name: crate::file_list::InlineNameEditResources,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Tab {
         let tab_id = process.mint_tab_id();
-        let delegate = FileListDelegate::new(
+        let mut delegate = FileListDelegate::new(
             process.fs.clone(),
             process.icons.clone(),
             process.thumbnails.clone(),
@@ -2495,6 +2603,11 @@ impl Shell {
             process.list_sort.clone(),
             shell_focus,
         );
+        delegate.inline_name_edit = Some(crate::file_list::InlineNameEditBinding {
+            tab_id: tab_id.0,
+            model: inline_name.model,
+            input: inline_name.input,
+        });
         let table = cx.new(|cx| {
             TableState::new(delegate, window, cx)
                 .col_selectable(false)
@@ -2517,6 +2630,9 @@ impl Shell {
                         row_ix, modifiers, ..
                     } => {
                         this.apply_row_click_gesture(*row_ix, *modifiers, cx);
+                    }
+                    TableEvent::RenameRequested(row_ix) => {
+                        this.begin_inline_name_edit_at_row(*row_ix, window, cx);
                     }
                     // Column layout is a process-wide preference: a
                     // reorder or resize on any tab writes through and
@@ -2662,13 +2778,9 @@ impl Shell {
             let placeholder = tr!("Filter \u{2026}  Enter to search subfolders");
             #[cfg(not(target_os = "aros"))]
             let placeholder = tr!("Filter \u{2026}  \u{23CE} to search subfolders");
-            let mut state = InputState::new(window, cx).placeholder(placeholder);
-            // Token autocomplete (`size:`, `mod:`, `locked:`, …) — a
-            // static-table lookup, no I/O (filter_complete.rs).
-            state.lsp.completion_provider = Some(std::rc::Rc::new(
-                crate::filter_complete::FilterCompletionProvider,
-            ));
-            state
+            InputState::new(window, cx)
+                .submit_on_enter(true)
+                .placeholder(placeholder)
         });
         // Read through the `state` parameter — a captured strong clone of the
         // subscribed entity is a self-cycle that leaks the input past quit
@@ -2680,8 +2792,12 @@ impl Shell {
                 match ev {
                     InputEvent::Change => {
                         let value = state.read(cx).value().to_string();
+                        let cursor = state.read(cx).selected_range().end;
                         if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
                             this.tabs[idx].filter_text = value.clone();
+                            this.tabs[idx].filter_suggestions.replace(
+                                crate::filter_complete::single_line_suggestions(&value, cursor),
+                            );
                             // Flat is an explicit recursive snapshot. Typing
                             // must not destroy it or launch another million-row
                             // walk per keystroke; Enter remains the deliberate
@@ -2712,8 +2828,17 @@ impl Shell {
                     // recursive / global search of the current folder
                     // and below (docs/features/SEARCH.md).
                     InputEvent::PressEnter { .. } => {
+                        if this.accept_filter_completion(tab_id, None, window, cx) {
+                            return;
+                        }
                         let value = state.read(cx).value().to_string();
                         this.start_subtree_search(tab_id, value, Some(window.window_handle()), cx);
+                    }
+                    InputEvent::Blur => {
+                        if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
+                            this.tabs[idx].filter_suggestions.clear();
+                            cx.notify();
+                        }
                     }
                     _ => {}
                 }
@@ -2745,6 +2870,10 @@ impl Shell {
             at,
             node_id,
             self.focus_handle.clone(),
+            crate::file_list::InlineNameEditResources {
+                model: self.inline_name_edit.clone(),
+                input: self.inline_name_input.clone(),
+            },
             window,
             cx,
         )
@@ -3359,7 +3488,84 @@ impl Shell {
             .focus(window, cx);
     }
 
+    fn move_filter_completion(&mut self, delta: isize, cx: &mut Context<Self>) -> bool {
+        let suggestions = &mut self.active_tab_mut().filter_suggestions;
+        if !suggestions.is_open() {
+            return false;
+        }
+        suggestions.move_by(delta);
+        cx.notify();
+        true
+    }
+
+    fn accept_filter_completion(
+        &mut self,
+        tab_id: TabId,
+        index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(tab_index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return false;
+        };
+        let suggestion = index
+            .and_then(|index| self.tabs[tab_index].filter_suggestions.items().get(index))
+            .or_else(|| self.tabs[tab_index].filter_suggestions.selected())
+            .cloned();
+        let Some(suggestion) = suggestion else {
+            return false;
+        };
+        self.tabs[tab_index].filter_suggestions.clear();
+        let input = self.tabs[tab_index].filter_input.clone();
+        crate::single_line_complete::apply_suggestion(&input, &suggestion, window, cx);
+        true
+    }
+
+    fn move_breadcrumb_completion(&mut self, delta: isize, cx: &mut Context<Self>) -> bool {
+        if !self.breadcrumb_suggestions.is_open() {
+            return false;
+        }
+        self.breadcrumb_suggestions.move_by(delta);
+        cx.notify();
+        true
+    }
+
+    fn accept_breadcrumb_completion(
+        &mut self,
+        index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let suggestion = index
+            .and_then(|index| self.breadcrumb_suggestions.items().get(index))
+            .or_else(|| self.breadcrumb_suggestions.selected())
+            .cloned();
+        let Some(suggestion) = suggestion else {
+            return false;
+        };
+        self.breadcrumb_suggestions.clear();
+        crate::single_line_complete::apply_suggestion(
+            &self.breadcrumb_input,
+            &suggestion,
+            window,
+            cx,
+        );
+        true
+    }
+
     fn on_clear_filter(&mut self, _: &ClearFilter, window: &mut Window, cx: &mut Context<Self>) {
+        // Escape belongs to whichever inline editor owns focus.  The input
+        // primitive deliberately propagates Escape when it has no completion
+        // menu/IME to close, so the Shell is the single cancellation point.
+        if self.cancel_inline_name_edit(window, cx) {
+            return;
+        }
+        if self.breadcrumb_edit.clear() {
+            self.breadcrumb_suggestions.clear();
+            self.focus_handle.focus(window, cx);
+            cx.notify();
+            return;
+        }
         // This fires only when the filter field owns focus (Esc in the
         // shell pane routes to ClearSelection instead). When the field
         // has text or the tab is showing a results view, Esc clears the
@@ -3371,6 +3577,7 @@ impl Shell {
         let has_text = !self.active_tab().filter_text.is_empty();
         let in_results = self.active_tab().tool_result.is_some();
         if has_text || in_results {
+            self.active_tab_mut().filter_suggestions.clear();
             let filter_input = self.active_tab().filter_input.clone();
             filter_input.update(cx, |state, cx| {
                 state.set_value("", window, cx);
@@ -3387,6 +3594,29 @@ impl Shell {
             self.clear_active_selection(cx);
             self.focus_handle.focus(window, cx);
         }
+    }
+
+    fn intercept_inline_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // The session itself is authoritative. The persistent Input is
+        // focused on the frame after it is mounted, leaving a small interval
+        // where an immediate Escape must still cancel the visible editor.
+        let name_focused = self.inline_name_edit.is_active();
+        let path_focused = self.breadcrumb_edit.is_active();
+        let filter_focused = self
+            .active_tab()
+            .filter_input
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window);
+        if !crate::inline_edit::should_capture_inline_escape(
+            name_focused,
+            path_focused,
+            filter_focused,
+        ) {
+            return false;
+        }
+        self.on_clear_filter(&ClearFilter, window, cx);
+        true
     }
 
     /// Cmd+Shift+H — navigate the active tab to the home directory.
@@ -3420,40 +3650,19 @@ impl Shell {
         use gpui_component::dialog::DialogFooter;
 
         crate::trail::command("Go to Folder");
-        let current = self.active_tab().current_dir.to_string_lossy().into_owned();
-        let input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder(tr!("/path/to/folder"));
-            state.lsp.completion_provider =
-                Some(Rc::new(crate::path_complete::PathCompletionProvider));
-            state
+        let current = ferail_fs_native::paths::display_path(&self.active_tab().current_dir);
+        let shell = cx.weak_entity();
+        let prompt = cx.new(|cx| {
+            crate::go_to_folder_prompt::GoToFolderPrompt::new(
+                shell, current, in_new_tab, window, cx,
+            )
         });
-        input.update(cx, |state, cx| {
-            state.set_value(current, window, cx);
-        });
-        // One commit path shared by Enter (the dialog's `on_ok`) and the
-        // Go button, so the two can't drift.
-        let shell = cx.entity();
-        let commit = {
-            let input = input.clone();
-            Rc::new(move |window: &mut Window, cx: &mut App| {
-                let raw = input.read(cx).value().to_string();
-                if raw.trim().is_empty() {
-                    // Nothing typed: close without navigating.
-                    return;
-                }
-                shell.update(cx, |this, cx| {
-                    this.go_to_pasted_path(raw, in_new_tab, window, cx);
-                });
-            })
-        };
-        let dialog_input = input.clone();
+        let dialog_prompt = prompt.clone();
         window.open_dialog(cx, move |dialog, _window, _cx| {
-            let input = dialog_input.clone();
-            let commit_enter = commit.clone();
-            let commit_click = commit.clone();
+            let prompt_for_go = dialog_prompt.clone();
             dialog
                 .title(tr!("Go to Folder"))
-                .child(Input::new(&input).small())
+                .child(dialog_prompt.clone())
                 // A `Dialog` only draws buttons it's given a footer for;
                 // `button_props` alone renders nothing. Cancel first,
                 // Go primary — Esc and Enter are the keyboard twins.
@@ -3471,22 +3680,18 @@ impl Shell {
                                 .primary()
                                 .small()
                                 .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    commit_click(window, cx);
+                                    prompt_for_go.update(cx, |prompt, cx| {
+                                        prompt.commit(window, cx);
+                                    });
                                 }),
                         ),
                 )
-                .on_ok(move |_, window, cx: &mut App| {
-                    commit_enter(window, cx);
-                    true
-                })
         });
         // Focus + select-all on the next frame, once the dialog and its
         // input are mounted — doing it synchronously wouldn't stick.
         // Same shape as `open_text_prompt`.
         window.on_next_frame(move |window, cx| {
-            input.read(cx).focus_handle(cx).focus(window, cx);
-            window.dispatch_action(Box::new(gpui_component::input::SelectAll), cx);
+            prompt.update(cx, |prompt, cx| prompt.focus_and_select_all(window, cx));
         });
     }
 
@@ -3540,10 +3745,22 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.breadcrumb_editing = true;
-        let current = self.active_tab().current_dir.to_string_lossy().into_owned();
+        let target = self.active_tab().id;
+        if self.breadcrumb_edit.is_target(&target) {
+            self.breadcrumb_input
+                .read(cx)
+                .focus_handle(cx)
+                .focus(window, cx);
+            return;
+        }
+        let current = ferail_fs_native::paths::display_path(&self.active_tab().current_dir);
+        self.breadcrumb_edit.begin(target, current.clone());
+        self.breadcrumb_suggestions.clear();
+        self.breadcrumb_completion_generation =
+            self.breadcrumb_completion_generation.wrapping_add(1);
         self.breadcrumb_input.update(cx, |state, cx| {
-            state.set_value(current, window, cx);
+            state.set_value(current.clone(), window, cx);
+            state.set_selected_range(0..current.len(), cx);
         });
         self.breadcrumb_input
             .read(cx)
@@ -4142,20 +4359,12 @@ impl Shell {
     }
 
     fn cycle_sidebar_size(&mut self, cx: &mut Context<Self>) {
-        match (self.sidebar_collapsed, self.sidebar_compact) {
-            (false, false) => self.sidebar_compact = true,
-            (false, true) => {
-                self.sidebar_compact = false;
-                self.sidebar_collapsed = true;
-            }
-            (true, _) => {
-                self.sidebar_collapsed = false;
-                self.sidebar_compact = false;
-            }
-        }
+        self.sidebar_collapsed = !self.sidebar_collapsed;
         let mut state = app_state::load();
         state.sidebar_collapsed = Some(self.sidebar_collapsed);
-        state.sidebar_compact = Some(self.sidebar_compact);
+        // Drop the legacy intermediate compact-text preference whenever
+        // current code writes the sidebar state.
+        state.sidebar_compact = None;
         app_state::save(&state);
         cx.notify();
     }
@@ -4682,7 +4891,7 @@ impl Shell {
         let fs = self.process.fs.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         self.tabs[tab_index].load_cancel = Some(cancel.clone());
-        let (tx, rx) = async_channel::unbounded();
+        let (tx, rx) = async_channel::bounded(LISTING_CHANNEL_BATCHES);
         let worker_path = path.clone();
         cx.background_executor()
             .spawn(async move {
@@ -4692,7 +4901,16 @@ impl Shell {
 
         cx.spawn(async move |this, cx| {
             while let Ok(msg) = rx.recv().await {
-                let done = matches!(msg, LoadMsg::Done(..));
+                let mut update = LoadUiUpdate::default();
+                update.absorb(msg);
+                while update.done.is_none() && update.rows() < LISTING_UI_ROWS_PER_TICK {
+                    match rx.try_recv() {
+                        Ok(msg) => update.absorb(msg),
+                        Err(async_channel::TryRecvError::Empty) => break,
+                        Err(async_channel::TryRecvError::Closed) => break,
+                    }
+                }
+                let done = update.done.is_some();
                 let stale = this
                     .update(cx, |this, cx| {
                         // Find the loading tab by id — its index may
@@ -4713,13 +4931,25 @@ impl Shell {
                         // apply (e.g. the favorites subscription) read
                         // `active_tab()` and saw the loading tab
                         // instead of the user's.
-                        this.apply_directory_load_msg_in_tab(idx, msg, cx);
+                        if let Some(batch) = update.batch {
+                            this.apply_directory_load_msg_in_tab(idx, LoadMsg::Batch(batch), cx);
+                        }
+                        if let Some((error, hidden, filtered)) = update.done {
+                            this.apply_directory_load_msg_in_tab(
+                                idx,
+                                LoadMsg::Done(error, hidden, filtered),
+                                cx,
+                            );
+                        }
                         false
                     })
                     .unwrap_or(true);
                 if stale || done {
                     break;
                 }
+                cx.background_executor()
+                    .timer(Duration::from_millis(LISTING_UI_TICK_MS))
+                    .await;
             }
         })
         .detach();
@@ -4757,7 +4987,7 @@ impl Shell {
                     .map(|n| {
                         ferail_fs_native::paths::display_leaf(&n.to_string_lossy()).into_owned()
                     })
-                    .unwrap_or_else(|| tab.current_dir.to_string_lossy().into_owned());
+                    .unwrap_or_else(|| ferail_fs_native::paths::display_path(&tab.current_dir));
                 this.tabs[idx].table.update(cx, |state, cx| {
                     state.delegate_mut().slow_load = Some(label.into());
                     state.refresh(cx);
@@ -4828,6 +5058,7 @@ impl Shell {
         };
         let first_batch = tab.load_pending_first_batch;
         tab.load_pending_first_batch = false;
+        let visible = idx == self.active;
         let table = tab.table.clone();
         table.update(cx, |state, cx| {
             if first_batch {
@@ -4839,7 +5070,9 @@ impl Shell {
                 heats,
                 favorites,
             );
-            state.refresh(cx);
+            if visible {
+                state.refresh(cx);
+            }
         });
         // Spec §2.6 streaming arrival passes:
         //   1. Mirror current selection state into the delegate so
@@ -4855,7 +5088,9 @@ impl Shell {
         // Consume any queued screenshot-driver row select now that
         // the model has data.
         self.apply_pending_select_row_in_tab(idx, cx);
-        cx.notify();
+        if visible {
+            cx.notify();
+        }
     }
 
     /// Recompute the file list's per-row `is_favorited` parallel vec
@@ -4875,6 +5110,7 @@ impl Shell {
             return;
         };
         let favs = self.process.favorites().clone();
+        let visible = idx == self.active;
         let table = tab.table.clone();
         let favs_ref = favs.read(cx);
         // Pre-collect each row's path so the table-update closure
@@ -4903,7 +5139,9 @@ impl Shell {
                     *slot = b;
                 }
             }
-            state.refresh(cx);
+            if visible {
+                state.refresh(cx);
+            }
         });
     }
 
@@ -4966,10 +5204,11 @@ impl Shell {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                let Some(tab) = this.tabs.iter().find(|t| t.id == tab_id) else {
+                let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) else {
                     return;
                 };
-                let table = tab.table.clone();
+                let visible = idx == this.active;
+                let table = this.tabs[idx].table.clone();
                 table.update(cx, |state, cx| {
                     let mut by_id: std::collections::HashMap<
                         NodeId,
@@ -4987,7 +5226,7 @@ impl Shell {
                             changed = true;
                         }
                     }
-                    if changed {
+                    if changed && visible {
                         state.refresh(cx);
                     }
                 });
@@ -5004,6 +5243,7 @@ impl Shell {
         filtered: crate::shell::loading::FilterSummary,
         cx: &mut Context<Self>,
     ) {
+        let visible = idx == self.active;
         let Some(tab) = self.tabs.get_mut(idx) else {
             return;
         };
@@ -5036,7 +5276,9 @@ impl Shell {
                 state
                     .delegate_mut()
                     .replace_entries(staged.entries, staged.paths, heats);
-                state.refresh(cx);
+                if visible {
+                    state.refresh(cx);
+                }
             });
             self.refresh_file_list_favorited_in_tab(idx, cx);
             self.refresh_file_list_selection_in_tab(idx, cx);
@@ -5048,7 +5290,9 @@ impl Shell {
             let table = self.tabs[idx].table.clone();
             table.update(cx, |state, cx| {
                 state.delegate_mut().clear();
-                state.refresh(cx);
+                if visible {
+                    state.refresh(cx);
+                }
             });
         } else {
             // Streaming appends stay in raw enumeration order so every batch
@@ -5058,7 +5302,9 @@ impl Shell {
             let table = self.tabs[idx].table.clone();
             table.update(cx, |state, cx| {
                 state.delegate_mut().apply_effective_sort();
-                state.refresh(cx);
+                if visible {
+                    state.refresh(cx);
+                }
             });
         }
         // The listing is final: queued post-op names that didn't resolve
@@ -5156,7 +5402,9 @@ impl Shell {
         // visible range matches the previous one's.
         self.warm_loaded_viewport_in_tab(idx, cx);
         self.refresh_volume_info_in_tab(idx, cx);
-        cx.notify();
+        if visible {
+            cx.notify();
+        }
     }
 
     /// Refresh the cached free-space / volume-name pair for one tab,
@@ -5206,7 +5454,9 @@ impl Shell {
                     this.tabs[idx].volume_free_bytes = free;
                     this.tabs[idx].volume_name = name;
                     this.tabs[idx].volume_read_only = read_only;
-                    cx.notify();
+                    if idx == this.active {
+                        cx.notify();
+                    }
                 }
             })
             .ok();
@@ -5776,6 +6026,35 @@ impl Shell {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
+        self.spawn_file_op_with_settled(
+            reload_path,
+            op,
+            failure_label,
+            task_label,
+            success_toast,
+            undo,
+            None,
+            window,
+            cx,
+        );
+    }
+
+    // Same worker/reload/undo path as `spawn_file_op`, with an optional
+    // in-memory UI completion hook.  Kept separate so ordinary operations pay
+    // no callback ceremony and inline rename does not fork mutation logic.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_file_op_with_settled(
+        &mut self,
+        reload_path: PathBuf,
+        op: impl FnOnce() -> Result<Vec<PathBuf>, String> + Send + 'static,
+        failure_label: &'static str,
+        task_label: Option<String>,
+        success_toast: FileOpSuccessToast,
+        undo: FileOpUndo,
+        settled: Option<FileOpSettled>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         let process = self.process.clone();
         let win = window.window_handle();
         let weak = cx.weak_entity();
@@ -5821,6 +6100,9 @@ impl Shell {
                             .collect();
                         this.queue_select_names_if_current(&dir, names);
                         undo.push(this, created_for_undo);
+                    }
+                    if let Some(settled) = settled {
+                        settled(this, error.clone(), cx);
                     }
                     cx.notify();
                     surfaced
@@ -6236,9 +6518,8 @@ impl Shell {
             .entry_by_id(id)
             .map(|f| f.effective_label())
             .unwrap_or_default();
-        // Same gpui rename modal the file list uses (renaming the
-        // shortcut's label, not the folder on disk) — consistent
-        // surface and cross-platform, unlike the old native prompt.
+        // A compact modal is still appropriate here: this edits a sidebar
+        // shortcut label, not a virtualized filesystem row.
         // A favorite's label is not a filesystem name, so skip filename
         // validation (it may legitimately contain `:`, trailing dots, etc.).
         self.open_named_prompt(
@@ -6764,6 +7045,8 @@ impl Shell {
             return;
         }
         self.active = (self.active + 1) % self.tabs.len();
+        self.refresh_file_list_selection_in_tab(self.active, cx);
+        self.warm_loaded_viewport_in_tab(self.active, cx);
         cx.notify();
     }
 
@@ -6773,6 +7056,8 @@ impl Shell {
             return;
         }
         self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
+        self.refresh_file_list_selection_in_tab(self.active, cx);
+        self.warm_loaded_viewport_in_tab(self.active, cx);
         cx.notify();
     }
 
@@ -6784,6 +7069,8 @@ impl Shell {
             return;
         }
         self.active = idx;
+        self.refresh_file_list_selection_in_tab(self.active, cx);
+        self.warm_loaded_viewport_in_tab(self.active, cx);
         cx.notify();
     }
 

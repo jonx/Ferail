@@ -6,7 +6,7 @@ repository.workspace = true
 # Edition 2024 to match ferail-gpui (and the `unsafe(no_mangle)` /
 # `unsafe extern` syntax used in lib.rs).
 edition = "2024"
-rust-version = "1.85"
+rust-version.workspace = true
 publish = false
 
 # The AROS entry point: a staticlib the collect-aros link script combines
