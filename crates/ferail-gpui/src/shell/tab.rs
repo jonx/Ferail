@@ -690,6 +690,10 @@ pub struct Tab {
     /// prevents a pre-sort row index from pointing at a different item after
     /// `Done`.
     pub pending_reveal: Option<NodeId>,
+    /// Fresh directory navigation selects its first visible row once the
+    /// streamed listing has reached its final sorted order. Refresh leaves
+    /// this false; Back/Forward and Parent keep their semantic target.
+    pub pending_select_first: bool,
     /// Live filter text for *this* tab. Spec §3.1: each tab owns its
     /// own filter. Switching tabs swaps the visible filter input
     /// to this tab's `filter_input`; typing only re-enumerates
@@ -810,6 +814,7 @@ impl Tab {
             pending_select_rows: Vec::new(),
             pending_select_names: Vec::new(),
             pending_reveal: None,
+            pending_select_first: true,
             filter_text: String::new(),
             filter_input,
             filter_suggestions: Default::default(),

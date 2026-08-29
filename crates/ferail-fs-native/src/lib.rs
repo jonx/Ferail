@@ -62,8 +62,8 @@ pub use volumes::list_volumes;
 #[cfg(not(target_os = "macos"))]
 pub use volumes::volume_info_for_path;
 pub use xattr_info::{
-    clear_quarantine, details_from as quarantine_details_from, fetch_quarantine_info,
-    QuarantineInfo,
+    clear_quarantine, clear_quarantine_tree, details_from as quarantine_details_from,
+    fetch_quarantine_info, ClearQuarantineTreeSummary, QuarantineInfo,
 };
 
 const ROOT_NODE_RAW: u64 = 1;

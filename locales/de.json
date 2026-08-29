@@ -183,6 +183,7 @@
     "Clear Recents…": "„Zuletzt benutzt“ leeren …",
     "Clear Tags": "Tags entfernen",
     "Clear quarantine": "Quarantäne aufheben",
+    "Clearing quarantine…": "Quarantäne wird aufgehoben…",
     "Click the video to sample a colour.": "Klicke ins Video, um eine Farbe aufzunehmen.",
     "Cloning {n} duplicate": {
       "one": "{n} Duplikat wird geklont",
@@ -237,7 +238,6 @@
     "Convert this archive to another format": "Dieses Archiv in ein anderes Format konvertieren",
     "Converted {archive} to {format}": "{archive} wurde in {format} konvertiert",
     "Converting {archive} to {format}": "{archive} wird in {format} konvertiert",
-    "Convert…": "Konvertieren …",
     "Copied list of {n} item to clipboard": {
       "one": "Liste mit {n} Objekt in die Zwischenablage kopiert",
       "other": "Liste mit {n} Objekten in die Zwischenablage kopiert"
@@ -731,6 +731,7 @@
     "No matching files yet": "Noch keine passenden Dateien",
     "No notes were written for this release.": "Für diese Version wurden keine Hinweise verfasst.",
     "No preview available": "Keine Vorschau verfügbar",
+    "No quarantine marks found": "Keine Quarantänemarkierungen gefunden",
     "No process is holding these files anymore": "Kein Prozess hält diese Dateien mehr offen",
     "No program is locking this.": "Kein Programm blockiert dieses Element.",
     "No release notes were written for this version.": "Für diese Version wurden keine Versionshinweise verfasst.",
@@ -872,7 +873,6 @@
     "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.": "Aktualisiere den Ordner und versuche es erneut. Schlägt es weiterhin fehl, prüfe das Objekt in deinem Dateimanager.",
     "Regex": "Regex",
     "Reload": "Neu laden",
-    "Remove": "Entfernen",
     "Remove from Archive": "Aus Archiv entfernen",
     "Remove from Favorites": "Aus Favoriten entfernen",
     "Remove from Recents": "Aus „Zuletzt benutzt“ entfernen",

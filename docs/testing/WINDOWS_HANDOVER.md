@@ -19,7 +19,7 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 ## Current resume point
 
 - Branch: `main`
-- Last published baseline: `v0.7.4` (all-platform private-presentation/setup release)
+- Last published baseline: `v0.7.5` (all-platform direct-editing/reliability release)
 - Fast NTFS implementation and qualification series: `d0c0a0b` through
   `9c832fc`, 0.7.0 release commit `3eda9ce`, corrective commits `3cf95e5`
   through `8dca494`, 0.7.1 release commit `1e8e64e`, native enumeration audit
@@ -27,7 +27,7 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
   `c92a532`, and 0.7.4 release commit `65cc442`. Use
   `git rev-parse HEAD` after pulling rather than assuming an abbreviated hash
   in this document.
-- Current release: `0.7.4` on Windows, macOS and Linux.
+- Current release: `0.7.5` on Windows, macOS and Linux.
 - Published artifacts: signed/notarized/stapled macOS DMG; unsigned Windows
   x64 per-user setup EXE and portable ZIP, both containing the sibling Fast
   NTFS helper, plus the matching three-PDB symbols ZIP; Ubuntu
@@ -41,6 +41,24 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
   **Linux** locations, adapted from the pinned Ferail-Win32 reference. Registry,
   `wsl.exe`, UNC and symlink behavior still requires real-Windows qualification
   (WIN-017/WTEST-130–139).
+
+### 2026-08-29 — final 0.7.5 integration after the Windows return
+
+The native Windows continuation above returned cleanly to `main`. The final
+cross-platform integration adds four small shared fixes: Enter is contained by
+the inline-name editor after commit (so it cannot open the old Windows path),
+archive activation previews rather than permanently extracts, fresh navigation
+selects the first sorted row without overriding Back/Forward/Parent/Refresh,
+and Clear Quarantine walks real directory descendants on macOS and Windows
+without following symlinks/reparse points. The archive menu now offers
+content-probed Open as Archive for any single file; probing remains off-thread.
+
+Automated workspace checks and tests cover the shared logic on macOS and the
+release workflows rebuild Windows/Linux from the exact tag. On the next native
+Windows session, retain a short smoke result for: rename+Enter without an
+old-path popup, archive Enter/double-click preview, and recursive removal of
+`Zone.Identifier` from a small directory containing a nested file and a
+junction (the junction target must remain untouched).
 
 User acceptance reported on 2026-08-25 against the current Windows work:
 

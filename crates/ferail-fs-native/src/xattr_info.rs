@@ -11,7 +11,10 @@
 //!
 //! `kMDItemWhereFroms` is a binary plist holding an array of NSString URLs.
 
-use std::path::Path;
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use ferail_core::QuarantineDetails;
 
@@ -167,7 +170,13 @@ pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
 /// prefetch doesn't resurrect the badge from cache.
 #[cfg(target_os = "macos")]
 pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
+    clear_quarantine_status(path).map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn clear_quarantine_status(path: &Path) -> std::io::Result<bool> {
     let mut result = Ok(());
+    let mut removed = false;
     for attr in [
         "com.apple.quarantine",
         "com.apple.metadata:kMDItemWhereFroms",
@@ -177,20 +186,27 @@ pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
         if let Ok(Some(_)) = xattr::get(path, attr) {
             if let Err(e) = xattr::remove(path, attr) {
                 result = Err(e);
+            } else {
+                removed = true;
             }
         }
     }
-    result
+    result.map(|()| removed)
 }
 
 #[cfg(windows)]
 pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
+    clear_quarantine_status(path).map(|_| ())
+}
+
+#[cfg(windows)]
+fn clear_quarantine_status(path: &Path) -> std::io::Result<bool> {
     let mut ads_path = path.as_os_str().to_os_string();
     ads_path.push(":Zone.Identifier");
     match std::fs::remove_file(&ads_path) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(true),
         // No stream == nothing to clear; idempotent success.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e),
     }
 }
@@ -199,21 +215,123 @@ pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
 /// Best-effort and idempotent — a missing attribute is success.
 #[cfg(target_os = "linux")]
 pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
+    clear_quarantine_status(path).map(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+fn clear_quarantine_status(path: &Path) -> std::io::Result<bool> {
+    let mut removed = false;
     for attr in ["user.xdg.origin.url", "user.xdg.referrer.url"] {
         match xattr::remove(path, attr) {
-            Ok(()) => {}
+            Ok(()) => removed = true,
             // Missing attr (ENODATA/ENOATTR) or unsupported FS — nothing to do.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => {}
         }
     }
-    Ok(())
+    Ok(removed)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub fn clear_quarantine(_path: &Path) -> std::io::Result<()> {
     // No quarantine concept on this platform.
     Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+fn clear_quarantine_status(_path: &Path) -> std::io::Result<bool> {
+    Ok(false)
+}
+
+/// Result of a recursive Mark-of-the-Web removal. Failures are retained so
+/// the caller can present the same per-item report as other file operations;
+/// no successful path is accumulated, keeping memory bounded for deep trees.
+#[derive(Debug, Default)]
+pub struct ClearQuarantineTreeSummary {
+    pub visited: u64,
+    pub cleared: u64,
+    pub failure_count: u64,
+    pub failures: Vec<(PathBuf, std::io::Error)>,
+    pub cancelled: bool,
+}
+
+impl ClearQuarantineTreeSummary {
+    fn record_failure(&mut self, path: PathBuf, error: std::io::Error) {
+        self.failure_count = self.failure_count.saturating_add(1);
+        // A damaged or permission-hostile tree must not turn an error report
+        // into another unbounded result stream.
+        if self.failures.len() < 256 {
+            self.failures.push((path, error));
+        }
+    }
+}
+
+/// Clear quarantine metadata from `root` and, when it is a real directory,
+/// every descendant. Symlinks and Windows reparse points are skipped rather
+/// than followed; macOS packages are ordinary directories here by design.
+///
+/// `on_cleared` is invoked only when a mark was actually removed, allowing
+/// metadata caches to be scrubbed in bounded batches without retaining
+/// millions of clean paths.
+pub fn clear_quarantine_tree(
+    root: &Path,
+    cancel: &AtomicBool,
+    mut on_cleared: impl FnMut(&Path),
+) -> ClearQuarantineTreeSummary {
+    let mut summary = ClearQuarantineTreeSummary::default();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        if cancel.load(Ordering::Relaxed) {
+            summary.cancelled = true;
+            break;
+        }
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                summary.record_failure(path, error);
+                continue;
+            }
+        };
+        if metadata.file_type().is_symlink() || is_windows_reparse_point(&metadata) {
+            continue;
+        }
+        summary.visited = summary.visited.saturating_add(1);
+        match clear_quarantine_status(&path) {
+            Ok(true) => {
+                summary.cleared = summary.cleared.saturating_add(1);
+                on_cleared(&path);
+            }
+            Ok(false) => {}
+            Err(error) => summary.record_failure(path.clone(), error),
+        }
+        if !metadata.is_dir() {
+            continue;
+        }
+        match std::fs::read_dir(&path) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(entry) => pending.push(entry.path()),
+                        Err(error) => summary.record_failure(path.clone(), error),
+                    }
+                }
+            }
+            Err(error) => summary.record_failure(path, error),
+        }
+    }
+    summary
+}
+
+#[cfg(windows)]
+fn is_windows_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt as _;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_windows_reparse_point(_metadata: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// Parsed view of a `Zone.Identifier` ADS body. Compiled on every
@@ -503,6 +621,37 @@ mod tests {
         // Idempotent on an already-clean file.
         clear_quarantine(&file).unwrap();
         std::fs::remove_file(&file).unwrap();
+    }
+
+    #[test]
+    fn recursive_clear_walks_real_directories_and_is_cancellable() {
+        let root = std::env::temp_dir().join(format!(
+            "ferail-quarantine-tree-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let nested = root.join("Package.app").join("Contents");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("payload.bin"), b"payload").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let mut visited = Vec::new();
+        let summary =
+            clear_quarantine_tree(&root, &cancel, |path| visited.push(path.to_path_buf()));
+        assert!(!summary.cancelled);
+        assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+        assert_eq!(summary.visited, 4); // root, Package.app, Contents, payload
+        assert_eq!(summary.cleared, 0);
+        assert!(visited.is_empty());
+
+        let cancelled = AtomicBool::new(true);
+        let summary = clear_quarantine_tree(&root, &cancelled, |_| {});
+        assert!(summary.cancelled);
+        assert_eq!(summary.cleared, 0);
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

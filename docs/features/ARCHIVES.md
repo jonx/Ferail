@@ -65,9 +65,11 @@ together; views must not grow independent hard-coded format lists.
 
 ## Opening and browsing
 
-**Open as Archive** reads the table of contents on the background executor and
-opens the workbench docked in the current tab. It can be popped into its own
-window and docked again.
+**Open as Archive** is offered for every single regular file. It reads and
+probes the table of contents on the background executor, then opens the
+workbench docked in the current tab. This keeps menu construction free of I/O
+while allowing extensionless and ZIP-based package files to work. The
+workbench can be popped into its own window and docked again.
 
 The workbench uses Ferail's normal virtualized data table rather than a bespoke
 list. Archive paths are indexed into an `ArchiveTree`; implied directories are
@@ -80,7 +82,7 @@ The workbench provides:
 - sortable Name, Size, Format, and Modified columns;
 - filtering without extracting;
 - multi-selection and subtree-aware folder selection;
-- preview through a private scratch extraction;
+- Enter/double-click preview through memory or one private scratch file;
 - Extract Selected, Extract To…, and Extract All;
 - a packed-size → unpacked-size summary;
 - a read-only lock badge whenever edits cannot be committed.
@@ -91,9 +93,10 @@ mixed-script look-alikes are rendered as explicit highlighted spans with
 tooltips. The display treatment never rewrites the stored path: extraction and
 selection continue to use the literal member name after safety validation.
 
-Narrow or docked layouts replace long action labels with distinct icons and
-translated tooltips. The filter appears only when enough width remains for the
-archive identity and primary actions.
+Primary actions use distinct icons with translated tooltips at every width.
+The filter appears only when enough width remains for the archive identity and
+primary actions. Extracting a lasting copy always requires an explicit Extract
+command; row activation only expands or previews.
 
 ## Entry metadata
 

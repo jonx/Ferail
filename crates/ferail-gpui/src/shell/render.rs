@@ -1,5 +1,5 @@
 use super::*;
-use crate::text::IconScale as _;
+use crate::text::{IconScale as _, TruncateMiddle as _};
 use gpui_component::ElementExt as _;
 use gpui_component::scroll::ScrollableElement as _;
 
@@ -3459,6 +3459,8 @@ impl Shell {
         if let Some(session) = self.active_tab().platform_namespace.as_ref() {
             let mut row = h_flex()
                 .w_full()
+                .min_w_0()
+                .overflow_hidden()
                 .items_center()
                 .gap_1()
                 .px_4()
@@ -3675,6 +3677,8 @@ impl Shell {
         }
         let mut row = h_flex()
             .w_full()
+            .min_w_0()
+            .overflow_hidden()
             .items_center()
             .gap_1()
             .px_4()
@@ -3742,6 +3746,8 @@ impl Shell {
             let favorited = self.process.favorites().read(cx).contains_path(&path);
             let crumb = div()
                 .id(ElementId::Name(format!("crumb-{i}").into()))
+                .min_w_0()
+                .overflow_hidden()
                 .px_2()
                 .py_1()
                 .rounded(cx.theme().radius)
@@ -3775,7 +3781,7 @@ impl Shell {
                         }
                     }
                 })
-                .child(label)
+                .child(div().min_w_0().truncate_middle().child(label))
                 .when(favorited, |this| {
                     this.child(
                         svg()
@@ -4957,9 +4963,16 @@ impl Render for Shell {
                     .child(
                         resizable_panel()
                             .size_range(px(FILE_PANE_MIN_WIDTH)..Pixels::MAX)
+                            // A narrow center pane must clip its own breadcrumb
+                            // and tool controls at the splitter boundary.  A
+                            // child painting outside here used to cover the
+                            // archive preview pane to its right.
+                            .overflow_hidden()
                             .child(
                                 v_flex()
                                     .size_full()
+                                    .min_w_0()
+                                    .overflow_hidden()
                                     .child(tabstrip)
                                     .child(breadcrumb)
                                     .child(file_body_wrapped),

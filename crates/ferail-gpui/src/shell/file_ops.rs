@@ -1,5 +1,32 @@
 use super::*;
 
+/// Scrub cached quarantine fields in bounded batches. The recursive walker
+/// may visit millions of entries; neither the UI task nor this bridge retains
+/// the full path set.
+fn scrub_quarantine_cache(
+    db: &Option<Arc<Mutex<ferail_meta::MetadataDb>>>,
+    paths: &mut Vec<PathBuf>,
+) {
+    if paths.is_empty() {
+        return;
+    }
+    if let Some(db) = db.as_ref()
+        && let Ok(guard) = db.lock()
+    {
+        for path in paths.iter() {
+            let key = path.to_string_lossy().into_owned();
+            if let Ok(Some(mut rec)) = guard.get_file(&key) {
+                rec.quarantined = Some(false);
+                rec.quarantine_agent = None;
+                rec.quarantine_iso = None;
+                rec.quarantine_where_from = None;
+                let _ = guard.upsert_file(&rec);
+            }
+        }
+    }
+    paths.clear();
+}
+
 /// Copy vs move for [`Shell::spawn_transfer_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TransferMode {
@@ -4943,93 +4970,127 @@ impl Shell {
         );
     }
 
-    /// Strip the Mark-of-the-Web (and the where-from provenance that
-    /// rides with it) from every quarantined file in the current
-    /// action target set. The xattr/ADS removal and the metadata-DB
-    /// scrub run on a worker — the scrub matters because the prefetch
-    /// pipeline caches quarantine state per path and would otherwise
-    /// resurrect the badge from cache on the next visit. Rows update
-    /// in place on completion (matched by NodeId across all tabs).
+    /// Strip the Mark-of-the-Web (and where-from provenance) from selected
+    /// files and recursively from selected directories. The walk, xattr/ADS
+    /// removal and bounded metadata-cache scrub all run on a worker.
     pub(super) fn on_clear_quarantine(
         &mut self,
         _: &ClearQuarantine,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let targets: Vec<(ferail_core::NodeId, PathBuf)> = self
+        let targets: Vec<(ferail_core::NodeId, PathBuf, bool)> = self
             .action_entries_visible_order(cx)
             .into_iter()
-            .filter(|(_, entry, _)| entry.is_quarantined)
-            .map(|(_, entry, path)| (entry.id, path))
+            .filter(|(_, entry, _)| {
+                entry.is_quarantined || matches!(entry.kind, EntryKind::Directory)
+            })
+            .map(|(_, entry, path)| (entry.id, path, matches!(entry.kind, EntryKind::Directory)))
             .collect();
         if targets.is_empty() {
             return;
         }
+        let roots = targets.clone();
         let db = self.process.db_snapshot();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let task_id = self.process.tasks.borrow_mut().begin_with_cancel(
+            crate::tasks::TaskKind::FileOp,
+            tr!("Clearing quarantine…"),
+            cancel.clone(),
+        );
         cx.spawn_in(window, async move |this, cx| {
-            let (cleared, failures) = cx
+            let (cleared, failures, cancelled) = cx
                 .background_executor()
                 .spawn(async move {
-                    let mut cleared: Vec<ferail_core::NodeId> = Vec::new();
+                    let mut cleared = 0_u64;
                     let mut failures: Vec<ferail_fs_native::file_ops::FileOpError> = Vec::new();
-                    for (id, path) in targets {
-                        match ferail_fs_native::clear_quarantine(&path) {
-                            Ok(()) => {
-                                if let Some(db) = db.as_ref() {
-                                    if let Ok(guard) = db.lock() {
-                                        let key = path.to_string_lossy().into_owned();
-                                        if let Ok(Some(mut rec)) = guard.get_file(&key) {
-                                            rec.quarantined = Some(false);
-                                            rec.quarantine_agent = None;
-                                            rec.quarantine_iso = None;
-                                            rec.quarantine_where_from = None;
-                                            let _ = guard.upsert_file(&rec);
-                                        }
-                                    }
+                    let mut cache_batch = Vec::with_capacity(256);
+                    let mut cancelled = false;
+                    for (_, path, _) in targets {
+                        let summary = ferail_fs_native::clear_quarantine_tree(
+                            &path,
+                            &cancel,
+                            |cleared_path| {
+                                cache_batch.push(cleared_path.to_path_buf());
+                                if cache_batch.len() >= 256 {
+                                    scrub_quarantine_cache(&db, &mut cache_batch);
                                 }
-                                cleared.push(id);
-                            }
-                            Err(e) => {
-                                crate::log_warn!(
-                                    90,
-                                    "clear_quarantine failed for {}: {e}",
-                                    path.display()
-                                );
-                                failures.push(ferail_fs_native::file_ops::FileOpError::from_io(
-                                    &e, &path,
-                                ));
-                            }
+                            },
+                        );
+                        cleared = cleared.saturating_add(summary.cleared);
+                        cancelled |= summary.cancelled;
+                        if summary.failure_count > summary.failures.len() as u64 {
+                            crate::log_warn!(
+                                90,
+                                "clear_quarantine retained {} of {} failures",
+                                summary.failures.len(),
+                                summary.failure_count
+                            );
+                        }
+                        for (failed_path, error) in summary.failures {
+                            crate::log_warn!(
+                                90,
+                                "clear_quarantine failed for {}: {error}",
+                                failed_path.display()
+                            );
+                            failures.push(ferail_fs_native::file_ops::FileOpError::from_io(
+                                &error,
+                                &failed_path,
+                            ));
+                        }
+                        if cancelled {
+                            break;
                         }
                     }
-                    (cleared, failures)
+                    scrub_quarantine_cache(&db, &mut cache_batch);
+                    (cleared, failures, cancelled)
                 })
                 .await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.apply_quarantine_cleared(&cleared, &failures, window, cx);
+                this.process.tasks.borrow_mut().end(task_id);
+                this.apply_quarantine_cleared(&roots, cleared, &failures, cancelled, window, cx);
             });
         })
         .detach();
     }
 
-    /// Foreground half of `on_clear_quarantine`: flip the cached row
-    /// state for every cleared NodeId (in every tab — the same file
-    /// can be visible twice) and report the outcome.
+    /// Foreground half: update every visible row beneath one of the selected
+    /// roots without retaining one NodeId per descendant.
     fn apply_quarantine_cleared(
         &mut self,
-        cleared: &[ferail_core::NodeId],
+        roots: &[(ferail_core::NodeId, PathBuf, bool)],
+        cleared: u64,
         failures: &[ferail_fs_native::file_ops::FileOpError],
+        cancelled: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        if !cleared.is_empty() {
+        if cleared > 0 && failures.is_empty() && !cancelled {
             for tab in &self.tabs {
                 tab.table.update(cx, |state, cx| {
                     let mut touched = false;
                     let delegate = state.delegate_mut();
+                    let affected: HashSet<ferail_core::NodeId> = delegate
+                        .entries
+                        .iter()
+                        .filter_map(|entry| {
+                            let path = delegate.path_for_entry(entry.id)?;
+                            roots
+                                .iter()
+                                .any(|(_, root, recursive)| {
+                                    if *recursive {
+                                        path.starts_with(root)
+                                    } else {
+                                        path == *root
+                                    }
+                                })
+                                .then_some(entry.id)
+                        })
+                        .collect();
                     let mut quarantine_cleared = 0usize;
                     for e in delegate.entries.iter_mut() {
-                        if cleared.contains(&e.id) {
+                        if affected.contains(&e.id) {
                             if e.is_quarantined {
                                 quarantine_cleared += 1;
                             }
@@ -5045,16 +5106,21 @@ impl Shell {
                 });
             }
             cx.notify();
-            let msg = if cleared.len() == 1 {
+            let msg = if cleared == 1 {
                 tr!("Mark of the Web cleared")
             } else {
                 trn!(
                     "Mark of the Web cleared from {n} file",
                     "Mark of the Web cleared from {n} files",
-                    cleared.len()
+                    cleared
                 )
             };
             window.push_notification(Notification::success(msg), cx);
+        }
+        // With partial failures, leave visible badges conservative until
+        // Refresh re-reads them instead of claiming the entire subtree won.
+        if cleared == 0 && failures.is_empty() && !cancelled {
+            window.push_notification(Notification::info(tr!("No quarantine marks found")), cx);
         }
         if !failures.is_empty() {
             // Per-item failures through the same structured report the
@@ -5063,7 +5129,7 @@ impl Shell {
             window.push_notification(
                 super::error_notification(crate::shell::file_op_failure_report(
                     &tr!("Clear quarantine"),
-                    cleared.len(),
+                    usize::try_from(cleared).unwrap_or(usize::MAX),
                     0,
                     failures,
                 )),

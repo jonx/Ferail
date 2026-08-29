@@ -139,6 +139,7 @@
     "Clear Recents…": "Clear Recents…",
     "Clear Tags": "Clear Tags",
     "Clear quarantine": "Clear quarantine",
+    "Clearing quarantine…": "Clearing quarantine…",
     "Click the video to sample a colour.": "Click the video to sample a colour.",
     "Cloning {n} duplicate": {
       "one": "Cloning {n} duplicate",
@@ -193,7 +194,6 @@
     "Convert this archive to another format": "Convert this archive to another format",
     "Converted {archive} to {format}": "Converted {archive} to {format}",
     "Converting {archive} to {format}": "Converting {archive} to {format}",
-    "Convert…": "Convert…",
     "Copied list of {n} item to clipboard": {
       "one": "Copied list of {n} item to clipboard",
       "other": "Copied list of {n} items to clipboard"
@@ -713,6 +713,7 @@
     "No preview available": "No preview available",
     "No process is holding these files anymore": "No process is holding these files anymore",
     "No program is locking this.": "No program is locking this.",
+    "No quarantine marks found": "No quarantine marks found",
     "No release notes were written for this version.": "No release notes were written for this version.",
     "No selection": "No selection",
     "No similar images found.": "No similar images found.",
@@ -867,7 +868,6 @@
     "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.": "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.",
     "Regex": "Regex",
     "Reload": "Reload",
-    "Remove": "Remove",
     "Remove from Archive": "Remove from Archive",
     "Remove from Favorites": "Remove from Favorites",
     "Remove from Recents": "Remove from Recents",

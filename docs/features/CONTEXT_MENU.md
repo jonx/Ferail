@@ -68,7 +68,9 @@ Slow operations run on workers and report back through
   tar.xz; extracts all of those plus gzip/bzip2/xz single members. The GPUI
   shell no longer shells out to `/usr/bin/ditto`, so every platform shares one
   path. Extract is offered only for archive rows (lexical extension check,
-  precomputed at right-click); "Extract Here" targets the current folder and
+  precomputed at right-click); **Open as Archive** is broader and appears for
+  every single file, with the authoritative content probe deferred to its
+  worker. "Extract Here" targets the current folder and
   "Extract To…" a native folder picker (run inside a spawned task so its nested
   run-loop holds no `App` borrow). Both pick a smart destination off-thread —
   extract in place when the archive has a single root folder, otherwise a
@@ -182,7 +184,8 @@ only in how the *handler* treats the group. `SingleOnly` gates on
 `MenuTargets::is_single()`; `When` is the per-command callback the menu
 asked for. Clear Quarantine is `When(avail_any_quarantined)`, matching
 `Shell::on_clear_quarantine`, which strips the Mark-of-the-Web from the
-quarantined subset — so right-clicking the clean file in a mixed selection
+quarantined subset and recursively beneath a directory anchor — so
+right-clicking the clean file in a mixed selection
 still offers it.
 
 To gate a new command, pick `SingleOnly` or write a `When` closure; to

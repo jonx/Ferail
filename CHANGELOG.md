@@ -92,6 +92,26 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   row without repeating the volume free-space meter already shown in the
   status bar.
 
+- **The archive workbench now behaves like a browser, not an extractor.** Its
+  actions are compact icons with translated tooltips; Enter and double-click
+  expand an internal folder or open the selected file in the private preview
+  path, while permanent extraction remains an explicit command. “Open as
+  Archive” is offered for any single file and probes content off-thread, so
+  Office documents, JAR/APK packages, extensionless archives and misleading
+  names remain inspectable. Narrow result breadcrumbs are clipped at their
+  splitter instead of painting over the preview pane.
+
+- **Fresh folder navigation now selects the first sorted row.** Back, Forward,
+  Parent and Refresh retain their stronger semantic-selection rules. Accepting
+  a Windows inline rename no longer lets the same Enter key fall through and
+  try to open the file's previous path.
+
+- **Quarantine removal is recursive for directories on macOS and Windows.**
+  The cancellable worker removes Gatekeeper provenance or `Zone.Identifier`
+  throughout the selected tree, includes macOS packages, never follows
+  symlinks or Windows reparse points, and scrubs cached metadata in bounded
+  batches.
+
 ## 0.7.4 — 2026-08-28
 
 - **Audio detection is content-capable without mistaking executables for

@@ -229,6 +229,11 @@ impl RenderOnce for InlineEditor {
             // gesture sitting above it.
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(|_, _, cx| cx.stop_propagation())
+            // gpui-component emits PressEnter to the Input subscriber, but
+            // the matching Enter action can continue through the entity
+            // boundary afterwards.  Stop it here so accepting an inline
+            // rename cannot also reach Shell::OpenSelected with the old path.
+            .on_action(|_: &gpui_component::input::Enter, _, cx| cx.stop_propagation())
             .child(input)
             .when_some(error, |this, message| {
                 this.tooltip(move |window, cx| Tooltip::new(message.clone()).build(window, cx))

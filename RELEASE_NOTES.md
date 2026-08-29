@@ -41,6 +41,10 @@ when folders, searches and background results become very large.
   adapt more cleanly as the window is resized.
 - Ferail's public privacy policy documents local processing, diagnostics,
   update checks and how to remove saved application data.
+- Archive browsing uses compact icon actions, content-based opening for
+  extensionless and ZIP-based package files, and preview-on-Enter/double-click
+  without silently extracting a permanent copy. Directory quarantine removal
+  is recursive, cancellable and does not follow links or reparse points.
 
 ## Windows reliability
 

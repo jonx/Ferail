@@ -438,11 +438,11 @@ impl Availability {
     }
 }
 
-/// Capability: at least one target carries the Mark-of-the-Web. The
-/// handler (`Shell::on_clear_quarantine`) strips it from the quarantined
-/// subset, so "any" is the right quantifier.
+/// Capability: a target carries the Mark-of-the-Web, or the anchor is a
+/// directory whose descendants can carry it. Directory recursion is explicit
+/// demand and remains discoverable even when the folder row itself is clean.
 fn avail_any_quarantined(t: &MenuTargets) -> bool {
-    t.any_quarantined()
+    t.any_quarantined() || matches!(t.anchor.map(|cap| cap.kind), Some(EntryKind::Directory))
 }
 
 /// Bulk rule: at least one target is an archive file — offer Extract, which
@@ -3492,6 +3492,7 @@ impl TableDelegate for FileListDelegate {
         let show_clear_quarantine = Availability::When(avail_any_quarantined).allows(t);
         let show_extract = Availability::When(avail_any_archive).allows(t);
         let show_single_only = Availability::SingleOnly.allows(t);
+        let show_single_file = show_single_only && Availability::When(avail_anchor_file).allows(t);
         // Bulk complement of the SingleOnly Rename: pattern rename over
         // the whole resolved set (docs/features/BULK_RENAME.md).
         let bulk_rename_count = t.len();
@@ -3507,7 +3508,7 @@ impl TableDelegate for FileListDelegate {
         if show_new_tab {
             menu = menu.menu(tr!("Open in New Tab"), Box::new(OpenInNewTab));
         }
-        if show_single_only && Availability::When(avail_anchor_file).allows(t) {
+        if show_single_file {
             let label = if cfg!(target_os = "macos") {
                 tr!("Edit in TextEdit")
             } else if cfg!(windows) {
@@ -3607,12 +3608,17 @@ impl TableDelegate for FileListDelegate {
                 m.menu(tr!("Extract Here"), Box::new(Extract))
                     .menu(tr!("Extract To\u{2026}"), Box::new(ExtractTo))
             });
-            menu = menu
-                .item(PopupMenuItem::submenu(tr!("Extract"), extract_submenu))
-                .menu(tr!("Open as Archive"), Box::new(OpenAsArchive));
+            menu = menu.item(PopupMenuItem::submenu(tr!("Extract"), extract_submenu));
             if show_single_only {
                 menu = menu.menu(tr!("Convert Archive…"), Box::new(ConvertArchive));
             }
+        }
+        if show_single_file {
+            // This command is intentionally broader than the Extract menu.
+            // The backend probes bytes off-thread, so OOXML/JAR/APK files and
+            // extensionless or misnamed archives remain browsable without
+            // adding synchronous sniffing to context-menu construction.
+            menu = menu.menu(tr!("Open as Archive"), Box::new(OpenAsArchive));
         }
         if show_clear_quarantine {
             // Capability command (docs/features/CONTEXT_MENU.md): show when
@@ -4834,6 +4840,7 @@ mod menu_targets_tests {
         let quar = Availability::When(avail_any_quarantined);
         assert!(quar.allows(&targets(vec![cap(false), cap(true)])));
         assert!(!quar.allows(&targets(vec![cap(false), cap(false)])));
+        assert!(quar.allows(&with_anchor(dir_cap())));
 
         assert!(Availability::When(avail_anchor_dir).allows(&with_anchor(dir_cap())));
         assert!(!Availability::When(avail_anchor_dir).allows(&with_anchor(cap(false))));

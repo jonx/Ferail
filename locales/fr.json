@@ -183,6 +183,7 @@
     "Clear Recents…": "Effacer les récents…",
     "Clear Tags": "Retirer les tags",
     "Clear quarantine": "Lever la quarantaine",
+    "Clearing quarantine…": "Levée de la quarantaine…",
     "Click the video to sample a colour.": "Cliquez sur la vidéo pour échantillonner une couleur.",
     "Cloning {n} duplicate": {
       "one": "Clonage de {n} doublon",
@@ -237,7 +238,6 @@
     "Convert this archive to another format": "Convertir cette archive dans un autre format",
     "Converted {archive} to {format}": "{archive} a été convertie au format {format}",
     "Converting {archive} to {format}": "Conversion de {archive} au format {format}",
-    "Convert…": "Convertir…",
     "Copied list of {n} item to clipboard": {
       "one": "Liste de {n} élément copiée dans le presse-papiers",
       "other": "Liste de {n} éléments copiée dans le presse-papiers"
@@ -731,6 +731,7 @@
     "No matching files yet": "Aucun fichier correspondant pour l'instant",
     "No notes were written for this release.": "Aucune note n’a été rédigée pour cette version.",
     "No preview available": "Aucun aperçu disponible",
+    "No quarantine marks found": "Aucune marque de quarantaine trouvée",
     "No process is holding these files anymore": "Aucun processus ne détient plus ces fichiers",
     "No program is locking this.": "Aucun programme ne verrouille cet élément.",
     "No release notes were written for this version.": "Aucune note de version n’a été rédigée pour cette version.",
@@ -872,7 +873,6 @@
     "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.": "Actualisez le dossier et réessayez. S'il continue d'échouer, inspectez l'élément dans votre gestionnaire de fichiers.",
     "Regex": "Expression régulière",
     "Reload": "Recharger",
-    "Remove": "Retirer",
     "Remove from Archive": "Retirer de l’archive",
     "Remove from Favorites": "Supprimer des favoris",
     "Remove from Recents": "Supprimer des Récents",

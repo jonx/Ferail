@@ -4728,6 +4728,7 @@ impl Shell {
             tab.anchor = snapshot.anchor;
             tab.lead = snapshot.lead;
             tab.pending_reveal = snapshot.lead;
+            tab.pending_select_first = false;
             tab.filtered_out.clear();
             tab.range_live = false;
         }
@@ -5315,6 +5316,26 @@ impl Shell {
         // apply passes are active-tab-scoped).
         if idx == self.active {
             self.tabs[idx].pending_select_names.clear();
+        }
+        let select_first = std::mem::take(&mut self.tabs[idx].pending_select_first)
+            && !self.tabs[idx].selection_all
+            && self.tabs[idx].selection.is_empty()
+            && self.tabs[idx].pending_reveal.is_none()
+            && self.tabs[idx].pending_select_names.is_empty();
+        if select_first {
+            let first = self.tabs[idx]
+                .table
+                .read(cx)
+                .delegate()
+                .entries
+                .first()
+                .map(|entry| entry.id);
+            if let Some(first) = first {
+                self.tabs[idx].selection.insert(first);
+                self.tabs[idx].anchor = Some(first);
+                self.tabs[idx].lead = Some(first);
+                self.refresh_file_list_selection_in_tab(idx, cx);
+            }
         }
         // Tell the table how many rows the filter took away, so its
         // empty state says "filtered out" instead of "this folder is
@@ -7023,6 +7044,7 @@ impl Shell {
         tab.selection_all = false;
         tab.anchor = closed.anchor;
         tab.lead = closed.lead;
+        tab.pending_select_first = false;
         let filter_input = tab.filter_input.clone();
         filter_input.update(cx, |state, cx| {
             state.set_value(closed.filter_text, window, cx);
@@ -7613,6 +7635,7 @@ impl Shell {
             .get(tab.history_index)
             .map(|e| e.path == path)
             .unwrap_or(false);
+        tab.pending_select_first = !same_path;
         if !same_path {
             tab.history.truncate(tab.history_index + 1);
             tab.history.push(HistoryEntry::new(path.clone()));

@@ -42,7 +42,7 @@ use ferail_fs_native::ArchiveError;
 
 use crate::file_list::FileListDelegate;
 use crate::multi_table::{DataTable, TableEvent, TableState};
-use crate::shell::Shell;
+use crate::shell::{OpenSelected, Shell};
 use crate::text::{IconScale as _, TextScale as _, TruncateMiddle as _};
 use crate::tool_results::{ToolHostContext, ToolHostEvent};
 
@@ -53,7 +53,6 @@ pub type ArchiveDockOwner = std::rc::Rc<dyn Fn(PathBuf, Entity<ArchiveView>, &mu
 /// Narrower than this and the header hides its filter box so the archive's
 /// name keeps a usable share of the row.
 const FILTER_MIN_WIDTH: f32 = 1180.0;
-const COMPACT_ACTIONS_WIDTH: f32 = 900.0;
 
 /// Above this, previewing asks first. An archive entry has to be written out
 /// before Quick Look can read it (it is an OS service that takes a file URL),
@@ -191,26 +190,17 @@ impl ArchiveView {
                     modifiers,
                     click_count,
                 } => {
-                    if *click_count >= 2 {
-                        // Double-click opens a folder rather than "opening" a
-                        // file that has no path on disk.
-                        let path = table
-                            .read(cx)
-                            .delegate()
-                            .archive_path_for_row(*row_ix)
-                            .map(str::to_string);
-                        if let Some(path) = path {
-                            this.toggle_expanded(&path, cx);
-                            return;
-                        }
-                    }
                     let modifiers = *modifiers;
                     let row_ix = *row_ix;
                     table.update(cx, |t, cx| {
                         t.delegate_mut().apply_click_gesture(row_ix, modifiers);
                         cx.notify();
                     });
-                    this.preview_selection(_window, cx);
+                    if *click_count >= 2 {
+                        this.activate_row(row_ix, _window, cx);
+                    } else {
+                        this.preview_selection(_window, cx);
+                    }
                     cx.notify();
                 }
                 TableEvent::LeadMoved { row_ix, modifiers } => {
@@ -407,6 +397,46 @@ impl ArchiveView {
         let Some(row) = self.single_selected_file(cx) else {
             return;
         };
+        self.preview_row(row, window, cx);
+    }
+
+    /// Activate one archive row without performing a permanent extraction.
+    /// Folders expand in place; files open the existing privacy-preserving
+    /// preview path (memory when possible, one private scratch file otherwise).
+    fn activate_row(&mut self, row_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let row = self.table.read(cx).delegate().archive_row(row_ix).cloned();
+        let Some(row) = row else {
+            return;
+        };
+        if row.is_dir {
+            self.toggle_expanded(&row.path, cx);
+            return;
+        }
+        self.preview_enabled = true;
+        if let Some(shell) = self.shell.clone() {
+            let _ = shell.update(cx, |shell, cx| {
+                shell.preview_visible = true;
+                cx.notify();
+            });
+        }
+        self.preview_row(row, window, cx);
+        cx.notify();
+    }
+
+    fn activate_lead(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let row_ix = {
+            let table = self.table.read(cx);
+            let delegate = table.delegate();
+            delegate
+                .lead
+                .and_then(|lead| delegate.entries.iter().position(|entry| entry.id == lead))
+        };
+        if let Some(row_ix) = row_ix {
+            self.activate_row(row_ix, window, cx);
+        }
+    }
+
+    fn preview_row(&mut self, row: TreeRow, window: &mut Window, cx: &mut Context<Self>) {
         if self.previewed.as_deref() == Some(row.path.as_str()) {
             return; // already staged
         }
@@ -1557,74 +1587,47 @@ impl ArchiveView {
         let loaded = matches!(self.load, ArchiveLoad::Loaded(_));
         let changes = self.edits.change_count();
         let editable = self.can_stage_edits();
-        let compact_actions = self
-            .host_width
-            .is_some_and(|width| width < COMPACT_ACTIONS_WIDTH);
         let extract_selected_label = if selected > 0 {
             tr!("Extract {selected} Selected", selected = selected)
         } else {
             tr!("Extract Selected")
         };
 
-        let remove_button = Button::new("archive-remove-selected").small();
-        let remove_button = if compact_actions {
-            remove_button
-                .icon(gpui_component::Icon::empty().path("icons/trash.svg"))
-                .tooltip(tr!("Remove the selection when changes are saved"))
-        } else {
-            remove_button.label(tr!("Remove"))
-        };
+        let remove_button = Button::new("archive-remove-selected")
+            .small()
+            .icon(gpui_component::Icon::empty().path("icons/trash.svg"))
+            .tooltip(tr!("Remove the selection when changes are saved"));
 
-        let extract_selected_button = Button::new("archive-extract-selected").small();
-        let extract_selected_button = if compact_actions {
-            extract_selected_button
-                .icon(gpui_component::Icon::empty().path("icons/file/archive.svg"))
-                .tooltip(extract_selected_label.clone())
-        } else {
-            extract_selected_button.label(extract_selected_label)
-        };
+        let extract_selected_button = Button::new("archive-extract-selected")
+            .small()
+            .icon(gpui_component::Icon::empty().path("icons/file/archive.svg"))
+            .tooltip(extract_selected_label);
 
-        let extract_to_button = Button::new("archive-extract-to").small();
-        let extract_to_button = if compact_actions {
-            extract_to_button
-                .icon(gpui_component::Icon::empty().path("icons/nav/folder.svg"))
-                .tooltip(tr!("Extract to a folder you choose (selection, or all)"))
-        } else {
-            extract_to_button
-                .label(tr!("Extract To\u{2026}"))
-                .tooltip(tr!("Extract to a folder you choose (selection, or all)"))
-        };
+        let extract_to_button = Button::new("archive-extract-to")
+            .small()
+            .icon(gpui_component::Icon::empty().path("icons/nav/folder.svg"))
+            .tooltip(tr!("Extract to a folder you choose (selection, or all)"));
 
-        let extract_all_button = Button::new("archive-extract-all").small();
-        let extract_all_button = if compact_actions {
-            extract_all_button
-                .icon(gpui_component::Icon::empty().path("icons/nav/downloads.svg"))
-                .tooltip(tr!("Extract All"))
-        } else {
-            extract_all_button.label(tr!("Extract All"))
-        };
+        let extract_all_button = Button::new("archive-extract-all")
+            .small()
+            .icon(gpui_component::Icon::empty().path("icons/nav/downloads.svg"))
+            .tooltip(tr!("Extract All"));
 
         let convert_tooltip = if changes > 0 {
             tr!("Save or revert archive changes before converting.")
         } else {
             tr!("Convert this archive to another format")
         };
-        let convert_button = Button::new("archive-convert").small();
-        let convert_button = if compact_actions {
-            convert_button
-                .icon(gpui_component::Icon::empty().path("icons/redo.svg"))
-                .tooltip(convert_tooltip.clone())
-        } else {
-            convert_button
-                .label(tr!("Convert…"))
-                .tooltip(convert_tooltip.clone())
-        };
+        let convert_button = Button::new("archive-convert")
+            .small()
+            .icon(gpui_component::Icon::empty().path("icons/redo.svg"))
+            .tooltip(convert_tooltip.clone());
 
         h_flex()
             .w_full()
-            .px_3()
+            .px_2()
             .py_2()
-            .gap_2()
+            .gap_1()
             .items_center()
             .border_b_1()
             .border_color(theme.border)
@@ -1633,7 +1636,7 @@ impl ArchiveView {
                     .flex_1()
                     // Floor the name's share: with four controls to its right
                     // an unbounded flex child collapses to a couple of glyphs.
-                    .min_w(px(140.0))
+                    .min_w(px(112.0))
                     // Filenames truncate in the middle (house style — keeps the
                     // start and the extension); the subtitle is free-form, so
                     // its tail is expendable. Without these the text wrapped a
@@ -2014,6 +2017,10 @@ impl Render for ArchiveView {
         let content = v_flex()
             .track_focus(&self.focus_handle)
             .key_context(ARCHIVE_CONTEXT)
+            .on_action(cx.listener(|this, _: &OpenSelected, window, cx| {
+                this.activate_lead(window, cx);
+                cx.stop_propagation();
+            }))
             .size_full()
             .bg(bg)
             .on_prepaint(move |bounds, _, cx| {
