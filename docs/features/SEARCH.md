@@ -56,7 +56,7 @@ enforces identical semantics.
 
 | Token | Values | Notes |
 |---|---|---|
-| `kind:` | `folder` `file` `link` | entry kind |
+| `kind:` / `type:` | `folder` `file` `link` | entry kind; `type:` is a friendly alias |
 | `ext:` | `ext:rs`, `ext:pdf` | extension, case-insensitive, no dot |
 | `size:` | `>10mb` `<=1gb` `1mb..100mb` `100` | 1024-based units matching the Size column; bare number = bytes, bare value means ≥ |
 | `mod:` / `created:` | `today` `yesterday` `week` `month` `year` `>2026-01-01` `2026-01-01..2026-06-30` | local-midnight day boundaries; `>` excludes the named day, `>=` includes it; ranges inclusive |
@@ -78,13 +78,14 @@ Grammar rules, all deliberate:
 - Dates resolve against a `DateCtx` (now + local zone offset) built per
   load on the worker, so parsing is pure and testable.
 
-**Autocomplete** (`filter_complete.rs`): the filter input carries a
-`CompletionProvider` over `filter_expr::TOKEN_HELP` — typing a key prefix
-offers the keys with a one-line description, accepting a key chains into
-its example values, and an empty field lists the whole token set as a
-cheat-sheet. Static table lookup only, `Task::ready`, no I/O; parser
-tests round-trip `TOKEN_HELP` so the menu can't advertise syntax the
-parser rejects.
+**Autocomplete** (`filter_complete.rs`): the compact filter input renders a
+small completion menu over `filter_expr::TOKEN_HELP` — typing a key prefix
+offers keys with a one-line description, accepting a key chains into its
+example values, and an empty field lists the whole token set as a cheat-sheet.
+After a plain-name term the menu stays available and appends a chosen token,
+so adding a criterion never replaces the search already typed. Static table
+lookup only, no I/O; parser tests round-trip `TOKEN_HELP` so the menu can't
+advertise syntax the parser rejects.
 
 **Cheat sheet** (`filter_help.rs`): a (?) button to the right of the filter
 field opens a `Dialog` listing every `TOKEN_HELP` entry with its examples

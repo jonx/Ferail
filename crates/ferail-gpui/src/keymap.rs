@@ -24,7 +24,7 @@ use crate::shell::{
     self, ClearFilter, CloseTab, CloseToolResult, CloseWindow, CopyFiles, CopyPath, CursorDown,
     CursorDownExtend, CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp,
     CursorUpExtend, CutFiles, CycleSidebarSize, DeleteImmediately, EditBreadcrumb, EmptyTrash,
-    FindDuplicates, FindSimilarImages, FocusFilter, GetInfo, GoHome, GoToFolder, GridDown,
+    EditFile, FindDuplicates, FindSimilarImages, FocusFilter, GetInfo, GoHome, GoToFolder, GridDown,
     GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp, GridUpExtend,
     MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
     NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown,
@@ -188,6 +188,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
         "file.move_paste" => bind!(MovePasteFiles, ctx),
         "file.reveal_in_finder" => bind!(RevealInFinder, ctx),
         "file.refresh" => bind!(Refresh, ctx),
+        "file.edit" => bind!(EditFile, ctx),
 
         // -- View -------------------------------------------------
         "view.search" => bind!(FocusFilter, ctx),
@@ -471,6 +472,93 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("ctrl-right", ViewerNext, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", ViewerDismiss, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", EntryInfoDismiss, Some(ENTRY_INFO_CONTEXT)),
+        // Built-in text editor window (docs/features/TEXT_EDITOR.md).
+        // Esc / Cmd+W close through the unsaved-changes guard; Cmd+S
+        // saves. Not in the catalogue: they only exist inside this
+        // window's key context.
+        KeyBinding::new(
+            "secondary-s",
+            crate::text_editor::EditorSave,
+            Some(crate::text_editor::TEXT_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "escape",
+            crate::text_editor::EditorDismiss,
+            Some(crate::text_editor::TEXT_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary-w",
+            crate::text_editor::EditorDismiss,
+            Some(crate::text_editor::TEXT_EDITOR_CONTEXT),
+        ),
+        // Text zoom: the shell's own Cmd+= / Cmd+- / Cmd+0 chords, scoped
+        // to this window so they scale the document, not the whole UI.
+        KeyBinding::new(
+            "secondary-=",
+            crate::text_editor::EditorZoomIn,
+            Some(crate::text_editor::TEXT_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary--",
+            crate::text_editor::EditorZoomOut,
+            Some(crate::text_editor::TEXT_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary-0",
+            crate::text_editor::EditorZoomReset,
+            Some(crate::text_editor::TEXT_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary-r",
+            crate::text_editor::EditorRevealFile,
+            Some(crate::text_editor::TEXT_EDITOR_CONTEXT),
+        ),
+        // Built-in image editor window (docs/features/IMAGE_EDITOR.md).
+        KeyBinding::new(
+            "secondary-s",
+            crate::image_edit::ImageSaveCopy,
+            Some(crate::image_edit::IMAGE_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary-shift-s",
+            crate::image_edit::ImageOverwrite,
+            Some(crate::image_edit::IMAGE_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary-z",
+            crate::image_edit::ImageUndo,
+            Some(crate::image_edit::IMAGE_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "escape",
+            crate::image_edit::ImageEditorDismiss,
+            Some(crate::image_edit::IMAGE_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary-w",
+            crate::image_edit::ImageEditorDismiss,
+            Some(crate::image_edit::IMAGE_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary-=",
+            crate::image_edit::ImageZoomIn,
+            Some(crate::image_edit::IMAGE_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary--",
+            crate::image_edit::ImageZoomOut,
+            Some(crate::image_edit::IMAGE_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary-0",
+            crate::image_edit::ImageZoomReset,
+            Some(crate::image_edit::IMAGE_EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "secondary-r",
+            crate::image_edit::ImageRevealFile,
+            Some(crate::image_edit::IMAGE_EDITOR_CONTEXT),
+        ),
         KeyBinding::new("space", ViewerTogglePlay, Some(VIEWER_CONTEXT)),
         KeyBinding::new("secondary-=", ViewerZoomIn, Some(VIEWER_CONTEXT)),
         KeyBinding::new("secondary--", ViewerZoomOut, Some(VIEWER_CONTEXT)),

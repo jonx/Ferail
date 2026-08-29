@@ -10,7 +10,7 @@
 //! Supported tokens (also the source of truth for the filter box's
 //! autocomplete — see [`TOKEN_HELP`]):
 //!
-//! - `kind:folder|file|link` — entry kind.
+//! - `kind:folder|file|link` (or the `type:` alias) — entry kind.
 //! - `ext:rs` — file extension, case-insensitive, no dot.
 //! - `size:>10mb` / `size:<1gb` / `size:1mb..100mb` — sizes use the
 //!   same 1024-based units the Size column displays.
@@ -32,7 +32,7 @@
 //! directive; a metadata value the filesystem didn't provide
 //! (`created_unix == None`) quietly fails the predicate.
 
-use crate::{msgid, EntryKind, FileEntry};
+use crate::{EntryKind, FileEntry, msgid};
 
 /// Clock + zone context for resolving dates. `now_unix` is the current
 /// unix time; `tz_offset_secs` is the local zone's offset from UTC in
@@ -151,6 +151,41 @@ impl FilterExpr {
         })
     }
 
+    /// Do all metadata terms accept a row described by loose parts,
+    /// rather than by a whole [`FileEntry`]?
+    ///
+    /// Surfaces that carry their own compact node type (Disk Usage's
+    /// tree, for one) can evaluate the same filter language without
+    /// synthesizing a `FileEntry` per node, which would allocate once
+    /// per row on a multi-million-node scan. Terms the surface cannot
+    /// answer are declined by passing `None`: an unanswerable term
+    /// fails the match rather than silently passing, so `locked:yes`
+    /// on a surface with no lock state hides everything instead of
+    /// pretending every row qualifies.
+    pub fn metadata_matches_parts(&self, parts: &FilterParts<'_>) -> bool {
+        self.terms.iter().all(|t| match t {
+            Term::Text(_) => true,
+            Term::Kind(kind) => parts.kind == Some(*kind),
+            Term::Ext(ext) => {
+                parts.kind != Some(EntryKind::Directory)
+                    && parts
+                        .name
+                        .rsplit_once('.')
+                        .is_some_and(|(stem, e)| !stem.is_empty() && e.eq_ignore_ascii_case(ext))
+            }
+            Term::Locked(want) => parts.locked == Some(*want),
+            Term::Size { min, max } => parts.size.is_some_and(|size| {
+                min.is_none_or(|lo| size >= lo) && max.is_none_or(|hi| size <= hi)
+            }),
+            Term::Modified { min, max } => parts.mtime_unix.is_some_and(|m| {
+                m != 0 && min.is_none_or(|lo| m >= lo) && max.is_none_or(|hi| m <= hi)
+            }),
+            Term::Created { min, max } => parts
+                .created_unix
+                .is_some_and(|c| min.is_none_or(|lo| c >= lo) && max.is_none_or(|hi| c <= hi)),
+        })
+    }
+
     /// Full Tier-0 evaluation: text terms search the name plus the
     /// visible Format label (so "zip archive" still hits rows where
     /// the magic-detected text is the only match), metadata terms read
@@ -167,6 +202,33 @@ impl FilterExpr {
             true
         };
         text_ok && self.metadata_matches(entry)
+    }
+}
+
+/// A row described in loose parts, for surfaces that do not carry a
+/// [`FileEntry`] (see [`FilterExpr::metadata_matches_parts`]). Every
+/// optional field means "this surface cannot answer that question", and
+/// a term that asks an unanswerable question fails rather than passes.
+pub struct FilterParts<'a> {
+    pub name: &'a str,
+    pub kind: Option<EntryKind>,
+    pub size: Option<u64>,
+    pub mtime_unix: Option<i64>,
+    pub created_unix: Option<i64>,
+    pub locked: Option<bool>,
+}
+
+impl<'a> FilterParts<'a> {
+    /// The minimum a surface can supply: a name and nothing else.
+    pub fn new(name: &'a str) -> Self {
+        Self {
+            name,
+            kind: None,
+            size: None,
+            mtime_unix: None,
+            created_unix: None,
+            locked: None,
+        }
     }
 }
 
@@ -202,7 +264,7 @@ fn parse_term(raw: &str, ctx: DateCtx) -> Term {
         return fallback();
     }
     match key.to_lowercase().as_str() {
-        "kind" => match value.to_lowercase().as_str() {
+        "kind" | "type" => match value.to_lowercase().as_str() {
             "folder" | "dir" | "directory" => Term::Kind(EntryKind::Directory),
             "file" => Term::Kind(EntryKind::File),
             "link" | "symlink" => Term::Kind(EntryKind::Symlink),
@@ -458,6 +520,12 @@ mod tests {
         let e = FilterExpr::parse("kind:folder", CTX);
         assert!(e.matches_entry(&entry("src", EntryKind::Directory, 0, 1)));
         assert!(!e.matches_entry(&entry("src.txt", EntryKind::File, 0, 1)));
+
+        // `type:` is the natural spelling many file-manager users try first;
+        // keep it as a parser/autocomplete alias of the canonical `kind:`.
+        let e = FilterExpr::parse("type:file", CTX);
+        assert!(e.matches_entry(&entry("src.txt", EntryKind::File, 0, 1)));
+        assert!(!e.matches_entry(&entry("src", EntryKind::Directory, 0, 1)));
 
         let e = FilterExpr::parse("ext:RS", CTX);
         assert!(e.matches_entry(&entry("main.rs", EntryKind::File, 1, 1)));

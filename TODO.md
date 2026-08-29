@@ -482,7 +482,10 @@ fallback). Remaining is the UX the system explorers have and we don't:
   the issue reporter (`report.rs`) that bundles diagnostics + trail + an
   optional screenshot into a `.zip` and reveals it. Remaining follow-ups:
   (a) the **in-app redaction modal** (drag-to-black-box over the screenshot
-  before bundling) — an unverifiable-headless UI, build it with visual testing;
+  before bundling) — an unverifiable-headless UI, build it with visual testing.
+  The stroke/composite core now exists: reuse `image_edit`'s Redact mode
+  ([docs/features/IMAGE_EDITOR.md](docs/features/IMAGE_EDITOR.md)) rather than
+  building a second canvas;
   (b) an **OS-level window capture** so the bundle's screenshot works on a clean
   Windows build (today it uses `render_to_image`, which needs the gpui_windows
   patch and is omitted gracefully otherwise); (c) move `run_checks()` off the

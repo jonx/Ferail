@@ -8,6 +8,54 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Disk Usage filters stay inside Disk Usage.** Typing or pressing Enter in
+  the shared filter field now filters the already-scanned treemap instead of
+  replacing it with a generic Search result. The full map remains available
+  with non-matches dimmed, while a new icon toggle redraws the treemap and
+  side list from matching files only. Filtering no longer restarts or waits
+  for a scan to finish: a bounded queue briefly holds incoming facts while a
+  debounced, cancellable background projection reads a stable snapshot, then
+  resumes the same scan. Pending projections show the current map dimmed
+  instead of an empty pane. The side list drops its redundant heading, and the
+  macOS Full Disk Access action is now a compact icon with a tooltip.
+
+- **Filter keyboard behavior is predictable again.** `type:` is accepted and
+  autocompleted as a friendly alias for `kind:`. Token suggestions now remain
+  available after a plain-name term and append the chosen criterion instead of
+  replacing the current search. Escape closes token suggestions before clearing
+  the query, and modal filter help receives Escape instead of the still-focused
+  field behind it. Clearing a Disk Usage filter keeps its scan and treemap alive.
+
+- **Nested Disk Usage labels no longer show through their children.** The
+  treemap layout now records the exact label strip reserved by each rendered
+  container, and both the live view and HTML export clip the parent name to
+  that strip instead of painting it beneath translucent child tiles.
+
+- **A built-in image editor for quick redaction and annotation.**
+  Right-click an image and choose **Edit Image** to black out sensitive
+  parts (rectangle or brush, always opaque) or annotate them (coloured
+  outlines and brush strokes, seven colours, three brush sizes), with
+  step-by-step undo. Cmd+S saves an "edited" copy beside the original —
+  the original is never touched by default — and Cmd+Shift+S overwrites
+  it after an explicit confirmation, keeping its Finder tags and
+  permissions. Edits always render at the image's full resolution, and
+  closing with unsaved edits asks first. Covers PNG, JPEG, BMP, TIFF and
+  WebP; GIF is excluded so animations can't be silently flattened.
+  It is also listed in the File menu, and its location button returns to the
+  exact Ferail source tab and reselects the image.
+
+- **A built-in text editor: open, fix, save, close.** Right-click a file
+  and choose **Edit** (or press Cmd+E) to edit it in a small dedicated
+  window — with undo, find, line numbers, and syntax highlighting by file
+  type — instead of round-tripping through TextEdit or Notepad. Cmd+S
+  saves; closing with unsaved changes asks Save / Don't Save / Cancel.
+  Saves keep the file's identity (Finder tags, permissions, creation date)
+  and its exact CRLF/BOM shape, and always write the new text durably to
+  disk before touching the original. Very large or non-text files are
+  politely refused with a one-click hand-off to the system editor; the
+  existing "Edit in TextEdit / Notepad" entry remains.
+  A location button returns to the exact source tab and reselects the file.
+
 - **List-view horizontal scrolling is back at the bottom of the table.** The
   updated scrollbar component no longer mistakes the fixed column header for
   the scrolling viewport, and keyboard column navigation now moves headers and

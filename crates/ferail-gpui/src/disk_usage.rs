@@ -15,7 +15,7 @@
 //! instead of growing the backlog. Cancellation is cooperative via
 //! `AtomicBool` (also checked inside the backpressure wait).
 
-use crate::text::TextScale as _;
+use crate::text::{TextScale as _, TruncateMiddle as _};
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -62,7 +62,8 @@ use ferail_core::{EnumerationError, NodeId};
 use ferail_disk_usage::classify_extension;
 use ferail_disk_usage::{
     DiskUsageFact, DiskUsageLayoutNode, DiskUsageStats, DiskUsageTree, FileCategory, SizeMode,
-    TreemapRect, build_layout_node_with_mode, compute_treemap,
+    TreemapRect, build_filtered_layout_node_with_mode, build_layout_node_with_mode,
+    compute_treemap,
 };
 use ferail_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
@@ -70,7 +71,9 @@ use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, ElementExt, Root, Selectable, Sizable, WindowExt as _,
     button::{Button, ButtonGroup},
-    h_flex, v_flex,
+    h_flex,
+    input::{Input, InputEvent, InputState},
+    v_flex,
 };
 
 use crate::tasks::{TaskId, TaskKind, TaskRegistry};
@@ -339,7 +342,11 @@ pub struct DiskUsageView {
     fs: Arc<NativeFs>,
     path_arena: DiskUsagePathArena,
 
-    tree: DiskUsageTree,
+    /// Immutable-by-default after the scan completes. Filter projections keep
+    /// an `Arc` snapshot and walk it off-thread without cloning millions of
+    /// nodes; streaming mutation uses `Arc::make_mut` while no projection is
+    /// allowed to retain a snapshot.
+    tree: Arc<DiskUsageTree>,
     stats: DiskUsageStats,
     scan_complete: bool,
     error: Option<EnumerationError>,
@@ -378,6 +385,25 @@ pub struct DiskUsageView {
     /// single-item detail and Zoom In targeting.
     lead: Option<NodeId>,
     category_filter: Option<FileCategory>,
+    /// Text filter over the scanned tree, in the same query language as
+    /// the file list's filter box (docs/features/DISK_USAGE.md). Parsed
+    /// once per keystroke, then evaluated per node with no allocation.
+    text_filter: String,
+    text_filter_expr: ferail_core::filter_expr::FilterExpr,
+    /// Context mode preserves the complete size map and dims misses. Results
+    /// mode asynchronously projects only matches plus their ancestor chain.
+    filter_results_only: bool,
+    filtered_layout: Option<DiskUsageLayoutNode>,
+    filter_generation: u64,
+    filter_pending: bool,
+    filter_cancel: Option<Arc<AtomicBool>>,
+    /// Non-zero while a background projection holds an immutable snapshot of
+    /// the streaming tree. The queue drain pauses mutations for that short
+    /// window, avoiding a huge `Arc::make_mut` clone on the UI thread.
+    filter_snapshot_gate: Arc<AtomicU64>,
+    /// The filter field, only when this view owns its window; docked in
+    /// a tab the shell's own toolbar filter drives us instead.
+    filter_input: Option<Entity<InputState>>,
     /// Weak handle to the owning Shell, when opened from one (always,
     /// in the real app; `None` in the screenshot harness). Lets the
     /// context menu open Get Info windows and reload affected tabs
@@ -443,8 +469,156 @@ struct TopFileEntry {
     size_bytes: u64,
 }
 
+struct FilterProjection {
+    layout: Option<DiskUsageLayoutNode>,
+    top_files: Vec<TopFileEntry>,
+}
+
 const TOPN_CAP: usize = 50;
 const TOPN_PANEL_WIDTH: f32 = 240.0;
+
+fn node_matches_text_filter(
+    expr: &ferail_core::filter_expr::FilterExpr,
+    node: &ferail_disk_usage::DiskUsageNode,
+    size_mode: SizeMode,
+) -> bool {
+    if expr.is_empty() {
+        return true;
+    }
+    let kind = match node.kind {
+        ferail_disk_usage::NodeKind::Container => ferail_core::EntryKind::Directory,
+        ferail_disk_usage::NodeKind::File => ferail_core::EntryKind::File,
+    };
+    let size = if matches!(node.kind, ferail_disk_usage::NodeKind::Container) {
+        match size_mode {
+            SizeMode::Apparent => node.descendant_size_bytes.max(node.size_bytes),
+            SizeMode::Allocated => node
+                .descendant_effective_allocated_bytes
+                .max(node.allocated_bytes)
+                .max(node.size_bytes),
+        }
+    } else {
+        size_for_mode(node.size_bytes, node.allocated_bytes, size_mode)
+    };
+    let parts = ferail_core::filter_expr::FilterParts {
+        name: &node.display_name,
+        kind: Some(kind),
+        size: Some(size),
+        mtime_unix: node.mtime.and_then(|mtime| {
+            mtime
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|duration| duration.as_secs() as i64)
+        }),
+        // The DU scanner does not retain these attributes. An unsupported
+        // predicate honestly matches nothing, just like FilterExpr promises.
+        created_unix: None,
+        locked: None,
+    };
+    let haystack = format!(
+        "{} {}",
+        node.display_name.to_lowercase(),
+        category_label(node.file_category).to_lowercase()
+    );
+    expr.text_matches(&haystack) && expr.metadata_matches_parts(&parts)
+}
+
+fn node_matches_projection(
+    expr: &ferail_core::filter_expr::FilterExpr,
+    category: Option<FileCategory>,
+    node: &ferail_disk_usage::DiskUsageNode,
+    size_mode: SizeMode,
+) -> bool {
+    if let Some(category) = category {
+        // Folders remain structural ancestors. Category chips describe file
+        // content, so an "Other" chip must not accidentally make every
+        // directory a direct match and restore its complete subtree.
+        if node.kind != ferail_disk_usage::NodeKind::File || node.file_category != category {
+            return false;
+        }
+    }
+    node_matches_text_filter(expr, node, size_mode)
+}
+
+fn build_filter_projection(
+    tree: &DiskUsageTree,
+    focus: NodeId,
+    expr: ferail_core::filter_expr::FilterExpr,
+    category: Option<FileCategory>,
+    size_mode: SizeMode,
+    cancel: &AtomicBool,
+) -> FilterProjection {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    #[derive(Clone, Copy, Eq, PartialEq)]
+    struct Candidate {
+        node_id: NodeId,
+        category: FileCategory,
+        size_bytes: u64,
+    }
+    impl Ord for Candidate {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            (self.size_bytes, self.node_id).cmp(&(other.size_bytes, other.node_id))
+        }
+    }
+    impl PartialOrd for Candidate {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    let layout = build_filtered_layout_node_with_mode(
+        tree,
+        focus,
+        DU_LAYOUT_DEPTH,
+        size_mode,
+        |node| node_matches_projection(&expr, category, node, size_mode),
+        || cancel.load(Ordering::Acquire),
+    );
+    let mut top = BinaryHeap::with_capacity(TOPN_CAP + 1);
+    if !cancel.load(Ordering::Acquire) {
+        for (&node_id, node) in &tree.nodes {
+            if cancel.load(Ordering::Acquire) {
+                break;
+            }
+            if node.kind != ferail_disk_usage::NodeKind::File
+                || !node_matches_projection(&expr, category, node, size_mode)
+            {
+                continue;
+            }
+            let size_bytes = size_for_mode(node.size_bytes, node.allocated_bytes, size_mode);
+            if size_bytes == 0 {
+                continue;
+            }
+            let candidate = Candidate {
+                node_id,
+                category: node.file_category,
+                size_bytes,
+            };
+            if top.len() < TOPN_CAP {
+                top.push(Reverse(candidate));
+            } else if top.peek().is_some_and(|smallest| candidate > smallest.0) {
+                top.pop();
+                top.push(Reverse(candidate));
+            }
+        }
+    }
+    let mut top: Vec<_> = top.into_iter().map(|entry| entry.0).collect();
+    top.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.size_bytes));
+    let top_files = top
+        .into_iter()
+        .filter_map(|entry| {
+            tree.nodes.get(&entry.node_id).map(|node| TopFileEntry {
+                node_id: entry.node_id,
+                category: entry.category,
+                name: node.display_name.clone(),
+                size_bytes: entry.size_bytes,
+            })
+        })
+        .collect();
+    FilterProjection { layout, top_files }
+}
 
 impl DiskUsageView {
     pub fn new(
@@ -512,7 +686,7 @@ impl DiskUsageView {
             root_id,
             fs: fs.clone(),
             path_arena,
-            tree: DiskUsageTree::new(root_id),
+            tree: Arc::new(DiskUsageTree::new(root_id)),
             stats: DiskUsageStats::default(),
             scan_complete: false,
             error: None,
@@ -537,6 +711,15 @@ impl DiskUsageView {
             selected: HashSet::new(),
             lead: None,
             category_filter: None,
+            text_filter: String::new(),
+            text_filter_expr: ferail_core::filter_expr::FilterExpr::default(),
+            filter_results_only: false,
+            filtered_layout: None,
+            filter_generation: 0,
+            filter_pending: false,
+            filter_cancel: None,
+            filter_snapshot_gate: Arc::new(AtomicU64::new(0)),
+            filter_input: None,
             shell: None,
             menu_rect_target: None,
             size_mode: SizeMode::Apparent,
@@ -666,6 +849,7 @@ impl DiskUsageView {
                 || self
                     .category_filter
                     .is_some_and(|cat| cat != node.file_category)
+                || !self.passes_text_filter(node)
             {
                 continue;
             }
@@ -763,12 +947,21 @@ impl DiskUsageView {
         // between drains. Doing 50× sorts of a million-node tree in a
         // single main-thread update is what was freezing the UI.
         let queue_for_drain = self.msg_queue.clone();
+        let filter_snapshot_gate = self.filter_snapshot_gate.clone();
         cx.spawn(async move |this, cx| {
             let mut last_topn_rebuild = Instant::now() - DU_TOPN_REBUILD_INTERVAL;
             let mut last_layout_rebuild = Instant::now() - DU_LAYOUT_REBUILD_INTERVAL;
             let mut interval = DU_DRAIN_INTERVAL_IDLE;
             loop {
                 cx.background_executor().timer(interval).await;
+                // A results-only worker briefly owns an immutable `Arc`
+                // snapshot. Leave incoming batches in the bounded queue until
+                // it releases that snapshot; mutating now would make
+                // `Arc::make_mut` clone the entire tree on this UI task.
+                if filter_snapshot_gate.load(Ordering::Acquire) != 0 {
+                    interval = DU_DRAIN_INTERVAL_BUSY;
+                    continue;
+                }
                 let (msgs, more_pending): (Vec<ScanMsg>, bool) = match queue_for_drain.lock() {
                     Ok(mut q) => {
                         let take = q.len().min(DU_MAX_MSGS_PER_TICK);
@@ -826,14 +1019,25 @@ impl DiskUsageView {
                             || last_layout_rebuild.elapsed()
                                 >= layout_rebuild_interval(v.tree.nodes.len());
                         if rebuild_layout {
-                            v.invalidate_layout();
-                            v.rebuild_layout_if_ready();
+                            if v.projection_filter_active() {
+                                // Preserve the last matching projection while
+                                // a same-query refresh incorporates newly
+                                // scanned facts. Only the ordinary fallback is
+                                // stale; replacing a useful filtered map with
+                                // the full dimmed map every few seconds would
+                                // visibly pulse throughout a long scan.
+                                v.layout_cache = None;
+                                v.schedule_filter_projection(cx);
+                            } else {
+                                v.invalidate_layout();
+                                v.rebuild_layout_if_ready();
+                            }
                             last_layout_rebuild = Instant::now();
                         }
                         let rebuild_topn = done
                             || last_topn_rebuild.elapsed()
                                 >= topn_rebuild_interval(v.tree.nodes.len());
-                        if rebuild_topn {
+                        if rebuild_topn && !v.projection_filter_active() {
                             v.rebuild_top_files();
                             last_topn_rebuild = Instant::now();
                         }
@@ -877,7 +1081,7 @@ impl DiskUsageView {
                     }
                 };
                 self.path_arena.apply_facts(&facts);
-                self.tree.apply_facts(&facts);
+                Arc::make_mut(&mut self.tree).apply_facts(&facts);
             }
             ScanMsg::Progress(p) => self.stats = p,
             #[cfg(target_os = "windows")]
@@ -887,7 +1091,7 @@ impl DiskUsageView {
                 let id_base = self.path_arena.id_base;
                 self.path_arena = DiskUsagePathArena::new(self.root_path.clone(), id_base);
                 self.root_id = self.path_arena.root_id();
-                self.tree = DiskUsageTree::new(self.root_id);
+                self.tree = Arc::new(DiskUsageTree::new(self.root_id));
                 self.stats = DiskUsageStats::default();
                 self.error = None;
                 self.active_engine = DuEngine::Portable;
@@ -912,14 +1116,35 @@ impl DiskUsageView {
             ScanMsg::Done(err) => {
                 self.scan_complete = true;
                 self.error = err;
-                self.tree.complete = self.error.is_none();
+                Arc::make_mut(&mut self.tree).complete = self.error.is_none();
             }
         }
     }
 
     fn invalidate_layout(&mut self) {
         self.layout_cache = None;
+        self.filtered_layout = None;
         self.rects_cache.clear();
+    }
+
+    fn projection_filter_active(&self) -> bool {
+        self.filter_results_only
+            && (!self.text_filter_expr.is_empty() || self.category_filter.is_some())
+    }
+
+    /// Cancel any results-only projection without touching the scan. The
+    /// ordinary treemap remains backed by `layout_cache`; its tiles are
+    /// dimmed directly from the current predicate and Top-N is rebuilt with
+    /// that same predicate.
+    fn leave_filter_projection(&mut self) {
+        if let Some(cancel) = self.filter_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.filter_generation = self.filter_generation.wrapping_add(1).max(1);
+        self.filter_pending = false;
+        self.filtered_layout = None;
+        self.rebuild_layout_if_ready();
+        self.rebuild_top_files();
     }
 
     fn rebuild_layout_if_ready(&mut self) {
@@ -931,13 +1156,26 @@ impl DiskUsageView {
         if node_count >= DU_LARGE_TREE_NODES {
             crate::obs::breadcrumb(format_args!("du/layout begin nodes={node_count}"));
         }
-        self.layout_cache = Some(build_layout_node_with_mode(
-            &self.tree,
-            self.focus_id(),
-            DU_LAYOUT_DEPTH,
-            self.size_mode,
-        ));
-        if let Some(layout) = &self.layout_cache {
+        // While a new projection is pending, keep the ordinary map visible
+        // and dim it with the current predicate. This is both useful feedback
+        // and a safe fallback during a still-running scan.
+        let use_projection = self.projection_filter_active()
+            && (!self.filter_pending || self.filtered_layout.is_some());
+        if !use_projection && self.layout_cache.is_none() {
+            self.layout_cache = Some(build_layout_node_with_mode(
+                &self.tree,
+                self.focus_id(),
+                DU_LAYOUT_DEPTH,
+                self.size_mode,
+            ));
+        }
+        let layout = if use_projection {
+            self.filtered_layout.as_ref()
+        } else {
+            self.layout_cache.as_ref()
+        };
+        self.rects_cache.clear();
+        if let Some(layout) = layout {
             self.rects_cache = compute_treemap(layout, (0.0, 0.0, w, h), DU_LAYOUT_DEPTH);
         }
         let elapsed = started.elapsed();
@@ -979,13 +1217,19 @@ impl DiskUsageView {
 
     fn restart_scan(&mut self, cx: &mut Context<Self>) {
         self.cancel.store(true, Ordering::Relaxed);
+        if let Some(cancel) = self.filter_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.filter_generation = self.filter_generation.wrapping_add(1).max(1);
+        self.filter_snapshot_gate.store(0, Ordering::Release);
+        self.filter_pending = self.projection_filter_active();
         if let Some(id) = self.task_id.take() {
             self.with_tasks(cx, |reg| reg.end(id));
         }
         let id_base = next_du_id_base();
         self.path_arena = DiskUsagePathArena::new(self.root_path.clone(), id_base);
         self.root_id = self.path_arena.root_id();
-        self.tree = DiskUsageTree::new(self.root_id);
+        self.tree = Arc::new(DiskUsageTree::new(self.root_id));
         self.stats = DiskUsageStats::default();
         self.scan_complete = false;
         self.error = None;
@@ -1031,6 +1275,9 @@ impl DiskUsageView {
         self.cancel.store(true, Ordering::Relaxed);
         self.scan_generation = self.scan_generation.wrapping_add(1);
         self.scan_complete = true;
+        if self.projection_filter_active() {
+            self.schedule_filter_projection(cx);
+        }
         if let Some(id) = self.task_id.take() {
             self.with_tasks(cx, |reg| reg.end(id));
         }
@@ -1106,8 +1353,154 @@ impl DiskUsageView {
         } else {
             Some(category)
         };
-        self.rebuild_top_files();
+        if self.projection_filter_active() {
+            self.filtered_layout = None;
+            self.schedule_filter_projection(cx);
+        } else {
+            self.leave_filter_projection();
+        }
         cx.notify();
+    }
+
+    /// Apply a text filter in the shared filter language. Called from the
+    /// view's own field when windowed, and forwarded from the shell's
+    /// toolbar filter when docked in a tab, so one code path serves both
+    /// hosts. Pure in-memory work over the already-scanned tree: no
+    /// rescan, no I/O.
+    pub fn apply_filter(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.text_filter == text {
+            return;
+        }
+        self.text_filter = text.to_string();
+        self.text_filter_expr = ferail_core::filter_expr::FilterExpr::parse(
+            text.trim(),
+            ferail_core::filter_expr::DateCtx {
+                now_unix: ferail_core::now_unix(),
+                tz_offset_secs: ferail_fs_native::stat_info::local_tz_offset_secs(),
+            },
+        );
+        if self.projection_filter_active() {
+            self.filtered_layout = None;
+            self.schedule_filter_projection(cx);
+        } else {
+            self.leave_filter_projection();
+        }
+        cx.notify();
+    }
+
+    fn toggle_filter_results_only(&mut self, cx: &mut Context<Self>) {
+        self.filter_results_only = !self.filter_results_only;
+        if self.projection_filter_active() {
+            self.schedule_filter_projection(cx);
+        } else {
+            self.leave_filter_projection();
+        }
+        cx.notify();
+    }
+
+    /// Deterministic hook for the headless visual-regression harness. Keeping
+    /// it here exercises the same toggle path as the real toolbar button.
+    pub(crate) fn set_filter_results_only_for_screenshot(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.filter_results_only != enabled {
+            self.toggle_filter_results_only(cx);
+        }
+    }
+
+    /// Debounced, cancellable projection for results-only mode. During a live
+    /// scan, the bounded queue drain pauses only while this worker owns its
+    /// immutable `Arc` snapshot. That keeps results live without restarting
+    /// the scan or triggering a multi-million-node copy-on-write clone on the
+    /// UI thread.
+    fn schedule_filter_projection(&mut self, cx: &mut Context<Self>) {
+        if let Some(cancel) = self.filter_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.filter_generation = self.filter_generation.wrapping_add(1).max(1);
+        let generation = self.filter_generation;
+        if !self.projection_filter_active() {
+            self.filter_pending = false;
+            self.filtered_layout = None;
+            self.rebuild_layout_if_ready();
+            return;
+        }
+        self.filter_pending = true;
+        // Show the current full map, dimmed with the new predicate, throughout
+        // the debounce/projection rather than flashing an empty surface.
+        self.rebuild_layout_if_ready();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.filter_cancel = Some(cancel.clone());
+        let expr = self.text_filter_expr.clone();
+        let category = self.category_filter;
+        let mode = self.size_mode;
+        let gate = self.filter_snapshot_gate.clone();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(120))
+                .await;
+            if cancel.load(Ordering::Acquire) {
+                return;
+            }
+            // Gate and snapshot in one foreground update. No queue mutation can
+            // interleave between the two operations.
+            let snapshot = this
+                .update(cx, |view, _| {
+                    if view.filter_generation != generation
+                        || !view.projection_filter_active()
+                        || cancel.load(Ordering::Acquire)
+                    {
+                        return None;
+                    }
+                    gate.store(generation, Ordering::Release);
+                    Some((view.tree.clone(), view.focus_id()))
+                })
+                .ok()
+                .flatten();
+            let Some((tree, focus)) = snapshot else {
+                return;
+            };
+            let worker_cancel = cancel.clone();
+            let projection = cx
+                .background_executor()
+                .spawn(async move {
+                    build_filter_projection(&tree, focus, expr, category, mode, &worker_cancel)
+                })
+                .await;
+            if cancel.load(Ordering::Acquire) {
+                let _ = gate.compare_exchange(generation, 0, Ordering::AcqRel, Ordering::Acquire);
+                return;
+            }
+            let _ = this.update(cx, |view, cx| {
+                if view.filter_generation != generation || !view.projection_filter_active() {
+                    return;
+                }
+                view.filtered_layout = projection.layout;
+                view.top_files = projection.top_files;
+                view.filter_pending = false;
+                view.rebuild_layout_if_ready();
+                cx.notify();
+            });
+            // An older cancelled generation must never reopen a newer job's
+            // gate, hence compare-exchange rather than an unconditional store.
+            let _ = gate.compare_exchange(generation, 0, Ordering::AcqRel, Ordering::Acquire);
+        })
+        .detach();
+    }
+
+    /// Current filter text, so a docked host can seed its own field.
+    pub fn filter_text(&self) -> &str {
+        &self.text_filter
+    }
+
+    /// Does this node pass the text filter? Cheap and allocation-free
+    /// apart from the lowercased name, evaluated per visible tile and
+    /// per Top-N candidate.
+    fn passes_text_filter(&self, node: &ferail_disk_usage::DiskUsageNode) -> bool {
+        node_matches_text_filter(&self.text_filter_expr, node, self.size_mode)
     }
 
     fn toggle_size_mode(&mut self, mode: SizeMode, cx: &mut Context<Self>) {
@@ -1117,7 +1510,11 @@ impl DiskUsageView {
         self.size_mode = mode;
         self.invalidate_layout();
         self.rebuild_layout_if_ready();
-        self.rebuild_top_files();
+        if self.projection_filter_active() {
+            self.schedule_filter_projection(cx);
+        } else {
+            self.rebuild_top_files();
+        }
         cx.notify();
     }
 
@@ -1383,7 +1780,7 @@ impl DiskUsageView {
                     this.child(
                         Button::new("du-full-disk-access")
                             .small()
-                            .label(tr!("Full Disk Access"))
+                            .icon(Icon::empty().path("icons/lock.svg"))
                             .tooltip(tr!("Include folders protected by macOS in future scans"))
                             .on_click(cx.listener(|_, _, window, cx| {
                                 use gpui_component::notification::Notification;
@@ -1443,6 +1840,32 @@ impl DiskUsageView {
                         })),
                 )
             })
+            // Filter over the scanned tree, same query language as the file
+            // list's filter box. Windowed only: docked in a tab, the shell's
+            // toolbar filter drives `apply_filter` instead of a second field.
+            .when_some(self.filter_input.clone(), |this, input| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .w(px(220.0))
+                        .child(Input::new(&input).xsmall()),
+                )
+            })
+            .child(
+                Button::new("du-filter-results-only")
+                    .small()
+                    .icon(Icon::empty().path("icons/view-list.svg"))
+                    .selected(self.filter_results_only)
+                    .tooltip(if self.filter_results_only {
+                        tr!("Show the full treemap and dim non-matches")
+                    } else {
+                        tr!("Show matching files only")
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_filter_results_only(cx)
+                    })),
+            )
             .child(
                 Button::new("du-size-apparent")
                     .small()
@@ -1593,17 +2016,6 @@ impl DiskUsageView {
             .border_l_1()
             .border_color(theme.border)
             .bg(theme.background)
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .text_scale_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.muted_foreground)
-                    .child(tr!("Largest files")),
-            )
             .child(
                 div()
                     .id("du-topn-scroll")
@@ -1883,12 +2295,23 @@ impl DiskUsageView {
                 r.node_id.as_raw(),
                 r.size_bytes,
             ));
-            let show_label = r.width >= 60.0 && r.height >= 24.0;
-            let show_size = r.width >= 80.0 && r.height >= 40.0;
+            let show_label = if r.lays_out_children {
+                r.label_strip_height > 0.0
+            } else {
+                r.width >= 60.0 && r.height >= 24.0
+            };
+            let show_size = !r.lays_out_children && r.width >= 80.0 && r.height >= 40.0;
             let selected = self.selected.contains(&node_id);
-            let dimmed = self
-                .category_filter
-                .is_some_and(|category| category != r.file_category);
+            let dimmed = (!self.filter_results_only
+                || (self.filter_pending && self.filtered_layout.is_none()))
+                && (self
+                    .category_filter
+                    .is_some_and(|category| category != r.file_category)
+                    || !self
+                        .tree
+                        .nodes
+                        .get(&r.node_id)
+                        .is_none_or(|node| self.passes_text_filter(node)));
             let mut rect = div()
                 .absolute()
                 .top(px(r.y))
@@ -1915,27 +2338,66 @@ impl DiskUsageView {
                 // propagation.
                 .occlude()
                 .when(dimmed, |this| this.opacity(0.26))
+                // A label must never escape its tile: without this, a long
+                // name wraps, pushes the size line past the bottom edge, and
+                // paints over the neighbouring tiles.
+                .overflow_hidden()
                 .hover(|this| this.border_color(cx.theme().selection));
+            // The full name and size, for the tooltip: a truncated tile
+            // label is only useful if the whole thing is one hover away.
+            let tooltip_text = SharedString::from(if show_size {
+                format!("{name}\n{size}")
+            } else {
+                format!("{name} · {size}")
+            });
+            rect = rect.tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip_text.clone()).build(window, cx)
+            });
             if show_label {
-                let inner = div()
-                    .size_full()
-                    .px_1()
-                    .py_1()
-                    .child(
-                        div()
-                            .text_scale_xs()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgba(0xFFFFFFEE))
-                            .child(SharedString::from(name)),
-                    )
-                    .when(show_size, |this| {
-                        this.child(
-                            div()
-                                .text_scale_xs()
-                                .text_color(rgba(0xFFFFFFAA))
-                                .child(SharedString::from(size)),
-                        )
-                    });
+                let name_label = div()
+                    .w_full()
+                    .min_w_0()
+                    // Middle ellipsis keeps the extension visible,
+                    // same treatment as the file list's name cell.
+                    .truncate_middle()
+                    .text_scale_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgba(0xFFFFFFEE))
+                    .child(SharedString::from(name));
+                let inner = if r.lays_out_children {
+                    // Match the layout's reserved strip exactly. Tile fills
+                    // are translucent, so allowing this label surface to
+                    // extend into the child area makes the parent's text show
+                    // through its descendants.
+                    h_flex()
+                        .w_full()
+                        .h(px(r.label_strip_height))
+                        .min_w_0()
+                        .items_center()
+                        .overflow_hidden()
+                        .px_1()
+                        .child(name_label)
+                        .into_any_element()
+                } else {
+                    v_flex()
+                        .size_full()
+                        .min_w_0()
+                        .px_1()
+                        .py_1()
+                        .child(name_label)
+                        .when(show_size, |this| {
+                            this.child(
+                                div()
+                                    .w_full()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_scale_xs()
+                                    .text_color(rgba(0xFFFFFFAA))
+                                    .child(SharedString::from(size)),
+                            )
+                        })
+                        .into_any_element()
+                };
                 rect = rect.child(inner);
             }
             // Single click selects (Cmd-click toggles, file-list
@@ -1993,6 +2455,9 @@ impl DiskUsageView {
         self.zoom_path.push(target);
         self.invalidate_layout();
         self.rebuild_layout_if_ready();
+        if self.projection_filter_active() {
+            self.schedule_filter_projection(cx);
+        }
         cx.notify();
     }
 
@@ -2002,6 +2467,9 @@ impl DiskUsageView {
         if self.zoom_path.pop().is_some() {
             self.invalidate_layout();
             self.rebuild_layout_if_ready();
+            if self.projection_filter_active() {
+                self.schedule_filter_projection(cx);
+            }
             cx.notify();
         }
     }
@@ -2444,6 +2912,10 @@ impl Drop for DiskUsageView {
     /// missing task naturally.
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
+        if let Some(cancel) = self.filter_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.filter_snapshot_gate.store(0, Ordering::Release);
         if let Some(id) = self.task_id.take() {
             if let Ok(mut reg) = self.tasks.try_borrow_mut() {
                 reg.end(id);
@@ -2459,6 +2931,25 @@ impl Render for DiskUsageView {
                 "Disk Usage — {path}",
                 path = crate::private_mode::present_path(&self.root_path)
             ));
+            // The filter field needs a `Window`, which the constructor
+            // doesn't get; build it on first paint of a windowed view.
+            // Docked, the shell's toolbar filter drives `apply_filter`
+            // and this stays `None` so there is only ever one field.
+            if self.filter_input.is_none() {
+                let input = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Filter…")));
+                if !self.text_filter.is_empty() {
+                    let value = self.text_filter.clone();
+                    input.update(cx, |state, cx| state.set_value(value, window, cx));
+                }
+                cx.subscribe(&input, |this: &mut Self, input, ev, cx| {
+                    if matches!(ev, InputEvent::Change) {
+                        let value = input.read(cx).value().to_string();
+                        this.apply_filter(&value, cx);
+                    }
+                })
+                .detach();
+                self.filter_input = Some(input);
+            }
         }
         let topn_visible = self.topn_visible;
         let viewport = window.viewport_size();
@@ -3044,12 +3535,22 @@ fn short_path(p: &std::path::Path) -> String {
 #[cfg(test)]
 mod path_arena_tests {
     use std::path::PathBuf;
-    use std::time::Duration;
+    use std::time::{Duration, UNIX_EPOCH};
 
     use ferail_core::NodeId;
-    use ferail_disk_usage::{DiskUsageFact, DiskUsageTree, FileCategory};
+    use ferail_disk_usage::{
+        DiskUsageFact, DiskUsageNode, DiskUsageTree, FileCategory, NodeKind, SizeMode,
+    };
 
-    use super::{DiskUsagePathArena, layout_rebuild_interval, topn_rebuild_interval};
+    use super::{
+        DiskUsagePathArena, layout_rebuild_interval, node_matches_projection,
+        node_matches_text_filter, topn_rebuild_interval,
+    };
+
+    const FILTER_CTX: ferail_core::filter_expr::DateCtx = ferail_core::filter_expr::DateCtx {
+        now_unix: 1_800_000_000,
+        tz_offset_secs: 0,
+    };
 
     #[test]
     fn million_node_refreshes_are_human_scale_not_frame_scale() {
@@ -3108,6 +3609,52 @@ mod path_arena_tests {
             Some(PathBuf::from("/scan-root/nested/report.txt"))
         );
         assert_eq!(arena.parents.len(), 3);
+    }
+
+    #[test]
+    fn du_filter_uses_the_shared_structured_expression_semantics() {
+        let mut node = DiskUsageNode::new(NodeId::from_raw(9).unwrap());
+        node.display_name = "Quarterly Report.PDF".into();
+        node.kind = NodeKind::File;
+        node.file_category = FileCategory::Document;
+        node.size_bytes = 2 * 1024 * 1024;
+        node.mtime = Some(UNIX_EPOCH + Duration::from_secs(1_799_999_000));
+
+        let expr = ferail_core::filter_expr::FilterExpr::parse(
+            "quarterly ext:pdf kind:file size:>1mb mod:week",
+            FILTER_CTX,
+        );
+        assert!(node_matches_text_filter(&expr, &node, SizeMode::Apparent));
+
+        let wrong_extension = ferail_core::filter_expr::FilterExpr::parse("ext:zip", FILTER_CTX);
+        assert!(!node_matches_text_filter(
+            &wrong_extension,
+            &node,
+            SizeMode::Apparent
+        ));
+        let unavailable_metadata =
+            ferail_core::filter_expr::FilterExpr::parse("locked:yes", FILTER_CTX);
+        assert!(!node_matches_text_filter(
+            &unavailable_metadata,
+            &node,
+            SizeMode::Apparent
+        ));
+    }
+
+    #[test]
+    fn category_projection_does_not_turn_structural_folders_into_matches() {
+        let mut folder = DiskUsageNode::new(NodeId::from_raw(10).unwrap());
+        folder.display_name = "Documents".into();
+        folder.kind = NodeKind::Container;
+        folder.file_category = FileCategory::Other;
+        let empty = ferail_core::filter_expr::FilterExpr::default();
+
+        assert!(!node_matches_projection(
+            &empty,
+            Some(FileCategory::Other),
+            &folder,
+            SizeMode::Apparent,
+        ));
     }
 
     #[cfg(target_os = "windows")]

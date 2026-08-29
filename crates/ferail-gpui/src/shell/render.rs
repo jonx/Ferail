@@ -2769,6 +2769,13 @@ impl Shell {
                         // folded, then it gives way so the tail of the bar
                         // stays on screen.
                         .w(px(filter_w))
+                        // Center the field in the title-bar row. Without
+                        // this the wrapper is a block div whose height is
+                        // whatever the input computes, so the field sat
+                        // slightly high against its `.small()` neighbours
+                        // (the private-mode twin below always had it).
+                        .flex()
+                        .items_center()
                         // Filter input — also lives inside TitleBar's
                         // drag region. Stop mouse-down propagation so
                         // Win32 doesn't capture the click as window
@@ -2847,8 +2854,11 @@ impl Shell {
                                         div()
                                             .absolute()
                                             .right_0()
+                                            // Stretch to the field instead of
+                                            // repeating its height: the X stays
+                                            // centered at any ui_scale.
                                             .top_0()
-                                            .h(px(28.0))
+                                            .bottom_0()
                                             .flex()
                                             .items_center()
                                             .child(
@@ -4638,6 +4648,8 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_with_slot_9))
             .on_action(cx.listener(Self::on_open_with_slot_10))
             .on_action(cx.listener(Self::on_open_with_slot_11))
+            .on_action(cx.listener(Self::on_edit_file))
+            .on_action(cx.listener(Self::on_edit_image))
             .on_action(cx.listener(Self::on_edit_text_file))
             .on_action(cx.listener(Self::on_undo_last_action))
             .on_action(cx.listener(Self::on_toggle_favorite_for_target))

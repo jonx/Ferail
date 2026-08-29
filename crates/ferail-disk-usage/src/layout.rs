@@ -22,6 +22,13 @@ pub struct TreemapRect {
     pub size_bytes: u64,
     pub scan_state: ScanState,
     pub has_children: bool,
+    /// True when descendants were actually laid out inside this rectangle.
+    /// This differs from `has_children` at the depth limit or when the tile is
+    /// too small to recurse.
+    pub lays_out_children: bool,
+    /// Height reserved exclusively for this container's label. Descendants
+    /// start below it, so renderers must clip the label to this exact strip.
+    pub label_strip_height: f32,
     pub kind: NodeKind,
     pub file_category: FileCategory,
     pub mtime: Option<SystemTime>,
@@ -37,6 +44,14 @@ impl TreemapRect {
 }
 
 /// Compute the rect list for `root` inside `bounds` `(x, y, w, h)`.
+/// Height of the label strip a labelled container reserves along its top
+/// edge, and the tile size below which it is not worth reserving one.
+/// The renderer's own label gating (`show_label`) uses the same minimums,
+/// so a tile either reserves a strip and draws in it, or does neither.
+pub const LABEL_STRIP_HEIGHT: f32 = 15.0;
+pub const LABEL_STRIP_MIN_HEIGHT: f32 = 44.0;
+pub const LABEL_STRIP_MIN_WIDTH: f32 = 60.0;
+
 /// `max_depth` controls recursion: 0 = root only, 1 = root + children, etc.
 pub fn compute_treemap(
     root: &DiskUsageLayoutNode,
@@ -59,6 +74,11 @@ pub fn compute_treemap(
         size_bytes: root.size_bytes,
         scan_state: root.scan_state,
         has_children: !root.children.is_empty(),
+        lays_out_children: !root.children.is_empty() && max_depth > 0,
+        // The root is already named by the view caption/header. Its children
+        // keep the complete treemap surface and the renderer must not paint a
+        // duplicate root label underneath them.
+        label_strip_height: 0.0,
         kind: root.kind,
         file_category: root.file_category,
         mtime: root.mtime,
@@ -198,11 +218,7 @@ fn aspect_ratio(a: f32, b: f32) -> f32 {
         return f32::MAX;
     }
     let r = a / b;
-    if r >= 1.0 {
-        r
-    } else {
-        1.0 / r
-    }
+    if r >= 1.0 { r } else { 1.0 / r }
 }
 
 fn add_node_rect(
@@ -216,6 +232,16 @@ fn add_node_rect(
     if w < 1.0 || h < 1.0 {
         return;
     }
+    let can_recurse = depth < max_depth && !node.children.is_empty();
+    let strip = if can_recurse && h >= LABEL_STRIP_MIN_HEIGHT && w >= LABEL_STRIP_MIN_WIDTH {
+        LABEL_STRIP_HEIGHT
+    } else {
+        0.0
+    };
+    let pad = 1.0;
+    let inner_w = (w - 2.0 * pad).max(0.0);
+    let inner_h = (h - 2.0 * pad - strip).max(0.0);
+    let lays_out_children = can_recurse && inner_w > 2.0 && inner_h > 2.0;
     out.push(TreemapRect {
         node_id: node.node_id,
         x,
@@ -226,24 +252,28 @@ fn add_node_rect(
         size_bytes: node.size_bytes,
         scan_state: node.scan_state,
         has_children: !node.children.is_empty(),
+        lays_out_children,
+        label_strip_height: if lays_out_children { strip } else { 0.0 },
         kind: node.kind,
         file_category: node.file_category,
         mtime: node.mtime,
     });
-    if depth < max_depth && !node.children.is_empty() {
-        let pad = 1.0;
-        let inner_w = (w - 2.0 * pad).max(0.0);
-        let inner_h = (h - 2.0 * pad).max(0.0);
-        if inner_w > 2.0 && inner_h > 2.0 {
-            layout_children(
-                &node.children,
-                node.size_bytes,
-                (x + pad, y + pad, inner_w, inner_h),
-                depth + 1,
-                max_depth,
-                out,
-            );
-        }
+    if lays_out_children {
+        // A container that is big enough to be labelled reserves a strip
+        // along its top edge and lays its children out *below* it.
+        // Without this the children cover the parent's own label, which
+        // reads as two names printed on top of each other. Sibling areas
+        // stay proportional to each other, so the size intuition holds;
+        // only the drawn area shrinks, and only for parents that show a
+        // label in the first place.
+        layout_children(
+            &node.children,
+            node.size_bytes,
+            (x + pad, y + pad + strip, inner_w, inner_h),
+            depth + 1,
+            max_depth,
+            out,
+        );
     }
 }
 
@@ -306,6 +336,34 @@ mod tests {
     }
 
     #[test]
+    fn nested_container_children_start_below_its_label_strip() {
+        let nested = dir(2, vec![file(3, 600), file(4, 400)]);
+        let root = dir(1, vec![nested]);
+        let rects = compute_treemap(&root, (0.0, 0.0, 200.0, 120.0), 4);
+        let root_rect = rects.iter().find(|r| r.node_id == nid(1)).unwrap();
+        let parent = rects.iter().find(|r| r.node_id == nid(2)).unwrap();
+        let child = rects.iter().find(|r| r.node_id == nid(3)).unwrap();
+
+        assert!(root_rect.lays_out_children);
+        assert_eq!(root_rect.label_strip_height, 0.0);
+        assert!(parent.lays_out_children);
+        assert_eq!(parent.label_strip_height, LABEL_STRIP_HEIGHT);
+        assert!(child.y >= parent.y + 1.0 + parent.label_strip_height);
+    }
+
+    #[test]
+    fn container_at_depth_limit_is_a_visual_leaf() {
+        let nested = dir(2, vec![file(3, 1000)]);
+        let root = dir(1, vec![nested]);
+        let rects = compute_treemap(&root, (0.0, 0.0, 200.0, 120.0), 1);
+        let parent = rects.iter().find(|r| r.node_id == nid(2)).unwrap();
+
+        assert!(parent.has_children);
+        assert!(!parent.lays_out_children);
+        assert_eq!(parent.label_strip_height, 0.0);
+    }
+
+    #[test]
     fn aspect_ratios_stay_squarish_for_uniform_sizes() {
         let kids: Vec<_> = (2..14u64).map(|i| file(i, 100)).collect();
         let n = dir(1, kids);
@@ -330,9 +388,11 @@ mod tests {
         let rects = compute_treemap(&root, (0.0, 0.0, 1920.0, 1080.0), 1);
         assert!(!rects.is_empty());
         assert!(rects.len() <= 50_001);
-        assert!(rects
-            .iter()
-            .all(|rect| rect.x.is_finite() && rect.y.is_finite()));
+        assert!(
+            rects
+                .iter()
+                .all(|rect| rect.x.is_finite() && rect.y.is_finite())
+        );
     }
 
     #[test]
@@ -348,6 +408,8 @@ mod tests {
             size_bytes: 100,
             scan_state: ScanState::Complete,
             has_children: true,
+            lays_out_children: true,
+            label_strip_height: LABEL_STRIP_HEIGHT,
             kind: NodeKind::Container,
             file_category: FileCategory::Other,
             mtime: None,
@@ -362,6 +424,8 @@ mod tests {
             size_bytes: 50,
             scan_state: ScanState::Complete,
             has_children: false,
+            lays_out_children: false,
+            label_strip_height: 0.0,
             kind: NodeKind::File,
             file_category: FileCategory::Other,
             mtime: None,
@@ -388,6 +452,8 @@ mod tests {
             size_bytes: 1000,
             scan_state: ScanState::Complete,
             has_children: false,
+            lays_out_children: false,
+            label_strip_height: 0.0,
             kind: NodeKind::File,
             file_category: FileCategory::Other,
             mtime: None,

@@ -37,6 +37,8 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "file.copy_file_list" => Box::new(CopyFileList),
         "file.reveal_in_finder" => Box::new(RevealInFinder),
         "file.refresh" => Box::new(Refresh),
+        "file.edit" => Box::new(EditFile),
+        "file.edit_image" => Box::new(EditImage),
         "file.open" | "selection.activate" => Box::new(OpenSelected),
         "file.duplicate" => Box::new(Duplicate),
         "file.make_alias" => Box::new(MakeAlias),

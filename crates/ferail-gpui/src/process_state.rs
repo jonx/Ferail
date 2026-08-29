@@ -123,6 +123,15 @@ impl Drop for BlockingProviderPermit {
     }
 }
 
+/// One secondary window, as the Window menu lists it. `label` is what the
+/// menu shows (already Private-Mode presented by the caller); the handle
+/// is what brings it back to front.
+#[derive(Clone)]
+pub struct AuxWindow {
+    pub handle: gpui::AnyWindowHandle,
+    pub label: String,
+}
+
 pub struct ProcessState {
     /// Shared filesystem backend. Already `Arc` because background
     /// workers hold their own clones.
@@ -302,6 +311,12 @@ pub struct ProcessState {
         )>,
     >,
 
+    /// Every secondary window open right now (viewers, Get Info, Disk
+    /// Usage, Settings, the built-in editors, …), in the order they were
+    /// opened, so the Window menu can list them and bring one back to
+    /// front. Pruned on read; see [`ProcessState::live_aux_windows`].
+    pub aux_windows: RefCell<Vec<AuxWindow>>,
+
     /// Paths marked by Cut (Cmd+X): the next plain Paste of exactly
     /// these items performs a Move instead of a Copy, then clears the
     /// mark. A fresh Copy/Cut overwrites it. Process-wide so a cut in
@@ -416,6 +431,7 @@ impl ProcessState {
             shells: RefCell::new(Vec::new()),
             closed_tabs: RefCell::new(VecDeque::new()),
             viewers: RefCell::new(Vec::new()),
+            aux_windows: RefCell::new(Vec::new()),
             cut_marker: Rc::new(RefCell::new(Vec::new())),
             system_stats: RefCell::new(None),
         })
@@ -563,6 +579,25 @@ impl ProcessState {
         let mut viewers = self.viewers.borrow_mut();
         viewers.retain(|(_, weak)| weak.upgrade().is_some());
         viewers.iter().map(|(_, weak)| weak.clone()).collect()
+    }
+
+    /// Register a secondary window in the Window menu's list
+    /// (`boot::install_app_menus`). The caller passes the handle it just
+    /// opened plus a display label; the entry drops out of the list once
+    /// the window closes. Every non-shell window Ferail opens should
+    /// register, so the menu is the one place to find them all again.
+    pub fn register_aux_window(&self, handle: gpui::AnyWindowHandle, label: String) {
+        self.aux_windows
+            .borrow_mut()
+            .push(AuxWindow { handle, label });
+    }
+
+    /// Live secondary windows, oldest first, with the dead ones pruned.
+    /// `cx` is only used to test whether each handle still resolves.
+    pub fn live_aux_windows(&self, cx: &mut gpui::App) -> Vec<AuxWindow> {
+        let mut windows = self.aux_windows.borrow_mut();
+        windows.retain(|w| w.handle.update(cx, |_, _, _| ()).is_ok());
+        windows.clone()
     }
 
     /// Push the snapshot of a tab the user just closed onto the

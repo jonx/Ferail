@@ -163,6 +163,13 @@ impl ToolResultSurface {
         }
     }
 
+    pub fn disk_usage_mode(&self) -> Option<&DiskUsageMode> {
+        match &self.mode {
+            ToolResultMode::DiskUsage(du) => Some(du),
+            _ => None,
+        }
+    }
+
     pub fn dupe_mode(&self) -> Option<&DupeViewMode> {
         match &self.mode {
             ToolResultMode::Duplicates(dupes) => Some(dupes),

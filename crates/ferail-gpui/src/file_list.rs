@@ -3365,7 +3365,8 @@ impl TableDelegate for FileListDelegate {
         use crate::shell::{
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
             CompressTarBz2, CompressTarGz, CompressTarXz, ConvertArchive, CopyPath,
-            CreateChecksumFile, DeleteImmediately, Duplicate, EditTextFile, Extract, ExtractTo,
+            CreateChecksumFile, DeleteImmediately, Duplicate, EditFile, EditImage, EditTextFile,
+            Extract, ExtractTo,
             GenerateSha256, GetInfo, MakeAlias, MoveToTrash, NewArchive, OpenAsArchive,
             OpenInNewTab, OpenSelected, OpenTerminalHere, QuickLook, RenameSelected,
             RevealInFinder, ShowLockHolders, SlideshowFromHere, ToggleFavoriteForTarget,
@@ -3485,6 +3486,20 @@ impl TableDelegate for FileListDelegate {
             menu = menu.menu(tr!("Open in New Tab"), Box::new(OpenInNewTab));
         }
         if show_single_file {
+            // Built-in lightweight editor first (docs/features/TEXT_EDITOR.md),
+            // then the explicit system-editor escape hatch. Image files the
+            // bundled codecs can round-trip also get the redaction/annotation
+            // editor (docs/features/IMAGE_EDITOR.md) — extension check only,
+            // over the already-cached row name.
+            menu = menu.menu(tr!("Edit"), Box::new(EditFile));
+            let anchor_editable_image = self
+                .entries
+                .get(row_ix)
+                .map(|e| crate::image_edit::editable_image_name(&e.name))
+                .unwrap_or(false);
+            if anchor_editable_image {
+                menu = menu.menu(tr!("Edit Image"), Box::new(EditImage));
+            }
             let label = if cfg!(target_os = "macos") {
                 tr!("Edit in TextEdit")
             } else if cfg!(windows) {

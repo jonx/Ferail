@@ -45,6 +45,19 @@ see [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) and "Still open" below.
 - **Top-N panel**: toggleable via `disk_usage.toggle_topn`. Shows the
   50 largest individual files anywhere in the scanned tree, sorted by
   size descending. Selection-synced with the treemap.
+- **Filter in place**: the normal toolbar filter keeps Disk Usage open and
+  applies the same free-text, extension, kind, size and modified-date
+  expression language as a file-list filter. Predicates the compact DU scan
+  does not collect (`created:` and `locked:`) honestly match nothing rather
+  than guessing. Pressing Enter does not replace the treemap with a Search
+  result. By default the complete map remains visible and non-matches are
+  dimmed; the list icon switches to a results-only projection that redraws the
+  map and Top-N panel from matching files. Projection is debounced, cancellable
+  and built on a background executor from a stable scan snapshot. It also works
+  before scanning finishes: the bounded fact queue pauses mutation briefly
+  while the snapshot is read, then resumes the same scan. During debounce the
+  full map stays visible with current non-matches dimmed; the surface never
+  blanks and filtering never launches a replacement scan.
 - **Descend into packages**: `disk_usage.toggle_packages`. By default
   `.app`, `.bundle`, `.framework`, `.plugin`, `.kext`, `.xcodeproj`
   are treated as opaque leaves, matching Finder. Toggling re-scans.
@@ -74,6 +87,11 @@ see [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) and "Still open" below.
   The category palette is canonical in that crate
   (`category_color_rgba`), shared by the GPUI view, so window and
   export can't drift.
+- **Nested labels share layout geometry**: containers that actually place
+  descendants reserve a one-line label strip first. `TreemapRect` carries
+  both that exact height and whether children were placed, so GPUI and HTML
+  clip the parent name to the same strip; translucent child fills never reveal
+  text painted underneath them.
 
 Selection (shipped): plain click replaces, `Cmd+Click` toggles; the
 footer shows the single item's name+size or "N selected · total".
@@ -126,8 +144,10 @@ the `disk_usage.*` ids in keymap.rs are still placeholders.)
    `mark_complete` path forces one final rebuild so the last batch's
    facts reach the screen.
 4. Layout is re-laid (and the Top-N heap re-sorted) on bounds change,
-   zoom-in/out, or tree epoch advance. Hover/selection do not
-   recompute layout — only repaint with different overlays.
+   zoom-in/out, or tree epoch advance. A results-only filter builds a
+   cancellable projection off-thread and swaps only the latest generation into
+   the view. Hover/selection do not recompute layout — only repaint with
+   different overlays.
 
 ### Worker contract
 
@@ -221,7 +241,8 @@ against a temp-dir fixture, with permission and cancellation cases).
   tinted on a cool→warm gradient by `mtime`. Two-year-old files land
   deep in the warm zone.
 - **Category legend chips** — click "Image"/"Video"/etc. above the
-  treemap to dim everything else. Click again or "All" to clear.
+  treemap to dim everything else. Click again or "All" to clear. The toolbar
+  projection toggle can instead remove non-matching tiles from the layout.
 - **Top-N panel polish** — scrollable, click-to-sort by Size / Name /
   Age, with the parent folder as a subtitle row.
 - **iCloud cloud glyph** — files under

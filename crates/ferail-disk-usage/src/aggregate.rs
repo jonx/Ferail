@@ -34,6 +34,151 @@ pub fn build_layout_node_with_mode(
     node
 }
 
+/// Build a treemap projection containing only nodes accepted by `matches` and
+/// the container chain needed to reach them. A matching container is treated
+/// as one complete result (its ordinary depth-limited subtree is retained),
+/// while a non-matching container contributes only matching descendants.
+///
+/// Unlike the normal builder this may inspect the whole scanned tree even
+/// though `max_depth` is small: a match below the visible depth still has to
+/// contribute its bytes to the collapsed ancestor tile. Callers should run it
+/// off the UI thread. `cancelled` is checked throughout the walk so an
+/// interactive filter can abandon a superseded query promptly.
+pub fn build_filtered_layout_node_with_mode<M, C>(
+    tree: &DiskUsageTree,
+    root: NodeId,
+    max_depth: u32,
+    mode: SizeMode,
+    matches: M,
+    cancelled: C,
+) -> Option<DiskUsageLayoutNode>
+where
+    M: Fn(&crate::model::DiskUsageNode) -> bool,
+    C: Fn() -> bool,
+{
+    let mut visited = HashSet::new();
+    let mut node = build_filtered_inner(
+        tree,
+        root,
+        max_depth,
+        mode,
+        &matches,
+        &cancelled,
+        &mut visited,
+        true,
+    )?;
+    if cancelled() {
+        return None;
+    }
+    node.sort_children_by_size();
+    Some(node)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_filtered_inner<M, C>(
+    tree: &DiskUsageTree,
+    id: NodeId,
+    remaining_depth: u32,
+    mode: SizeMode,
+    matches: &M,
+    cancelled: &C,
+    visited: &mut HashSet<NodeId>,
+    structural_root: bool,
+) -> Option<DiskUsageLayoutNode>
+where
+    M: Fn(&crate::model::DiskUsageNode) -> bool,
+    C: Fn() -> bool,
+{
+    if cancelled() || !visited.insert(id) {
+        return None;
+    }
+    let source = tree.nodes.get(&id)?;
+    let mut scan_state = source.scan_state;
+    if tree.complete && source.kind == NodeKind::Container {
+        scan_state = crate::model::ScanState::Complete;
+    }
+    let intrinsic = node_size(source, mode);
+
+    // The focus root is structural rather than a search result. Otherwise a
+    // `kind:folder` query would match it and immediately restore the complete
+    // unfiltered tree.
+    let direct_match = !structural_root && matches(source);
+    if direct_match && source.kind == NodeKind::Container {
+        let mut subtree = build_inner(tree, id, remaining_depth, mode, &mut HashSet::new());
+        subtree.sort_children_by_size();
+        return Some(subtree);
+    }
+    if source.kind != NodeKind::Container {
+        return direct_match.then(|| {
+            DiskUsageLayoutNode::with_mtime(
+                id,
+                intrinsic,
+                scan_state,
+                source.kind,
+                source.file_category,
+                source.mtime,
+                vec![],
+            )
+        });
+    }
+
+    let mut visible_children = Vec::new();
+    let mut filtered_total = 0u64;
+    if let Some(member_ids) = tree.containers.get(&id) {
+        if remaining_depth > 0 {
+            visible_children.reserve(member_ids.len().min(256));
+        }
+        for &child_id in member_ids {
+            if cancelled() {
+                return None;
+            }
+            let Some(child) = build_filtered_inner(
+                tree,
+                child_id,
+                remaining_depth.saturating_sub(1),
+                mode,
+                matches,
+                cancelled,
+                visited,
+                false,
+            ) else {
+                continue;
+            };
+            filtered_total = filtered_total.saturating_add(child.size_bytes);
+            if remaining_depth > 0 {
+                visible_children.push(child);
+            }
+        }
+    }
+    if filtered_total == 0 && visible_children.is_empty() {
+        return None;
+    }
+    let mut node = DiskUsageLayoutNode::with_mtime(
+        id,
+        filtered_total,
+        scan_state,
+        source.kind,
+        source.file_category,
+        source.mtime,
+        visible_children,
+    );
+    node.sort_children_by_size();
+    Some(node)
+}
+
+fn node_size(node: &crate::model::DiskUsageNode, mode: SizeMode) -> u64 {
+    match mode {
+        SizeMode::Apparent => node.size_bytes,
+        SizeMode::Allocated => {
+            if node.allocated_bytes > 0 {
+                node.allocated_bytes
+            } else {
+                node.size_bytes
+            }
+        }
+    }
+}
+
 fn build_inner(
     tree: &DiskUsageTree,
     id: NodeId,
@@ -217,6 +362,71 @@ mod tests {
         assert_eq!(
             tree.nodes[&nid(2)].scan_state,
             crate::model::ScanState::Unknown
+        );
+    }
+
+    #[test]
+    fn filtered_layout_keeps_ancestors_and_only_matching_file_bytes() {
+        let mut tree = DiskUsageTree::new(nid(1));
+        seed(&mut tree, nid(2), NodeKind::Container, 0);
+        seed(&mut tree, nid(3), NodeKind::File, 10);
+        seed(&mut tree, nid(4), NodeKind::File, 30);
+        link(&mut tree, nid(1), nid(2));
+        link(&mut tree, nid(2), nid(3));
+        link(&mut tree, nid(2), nid(4));
+
+        let layout = build_filtered_layout_node_with_mode(
+            &tree,
+            nid(1),
+            4,
+            SizeMode::Apparent,
+            |node| node.id == nid(4),
+            || false,
+        )
+        .unwrap();
+        assert_eq!(layout.size_bytes, 30);
+        assert_eq!(layout.children.len(), 1);
+        assert_eq!(layout.children[0].node_id, nid(2));
+        assert_eq!(layout.children[0].size_bytes, 30);
+        assert_eq!(layout.children[0].children[0].node_id, nid(4));
+    }
+
+    #[test]
+    fn matching_folder_keeps_its_complete_subtree() {
+        let mut tree = DiskUsageTree::new(nid(1));
+        seed(&mut tree, nid(2), NodeKind::Container, 0);
+        seed(&mut tree, nid(3), NodeKind::File, 12);
+        link(&mut tree, nid(1), nid(2));
+        link(&mut tree, nid(2), nid(3));
+
+        let layout = build_filtered_layout_node_with_mode(
+            &tree,
+            nid(1),
+            4,
+            SizeMode::Apparent,
+            |node| node.id == nid(2),
+            || false,
+        )
+        .unwrap();
+        assert_eq!(layout.size_bytes, 12);
+        assert_eq!(layout.children[0].children[0].node_id, nid(3));
+    }
+
+    #[test]
+    fn cancelled_filtered_layout_stops_without_a_projection() {
+        let mut tree = DiskUsageTree::new(nid(1));
+        seed(&mut tree, nid(2), NodeKind::File, 10);
+        link(&mut tree, nid(1), nid(2));
+        assert!(
+            build_filtered_layout_node_with_mode(
+                &tree,
+                nid(1),
+                4,
+                SizeMode::Apparent,
+                |_| true,
+                || true,
+            )
+            .is_none()
         );
     }
 }

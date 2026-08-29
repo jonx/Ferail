@@ -28,6 +28,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [FLAT_VIEW.md](FLAT_VIEW.md) | Shipped with follow-ups | Uncapped, cancellable recursive file snapshot on the existing virtualized table, with scan-local identity, compact path arena, relative Path column, progress, Refresh, and in-memory filtering; compact rows, async indexes and page-backed scale remain. |
 | [FRESHNESS.md](FRESHNESS.md) | Shipped with follow-ups | Keeps subtree-derived caches (folder sizes, Get Info "Calculate") honest via mtime + TTL validity, exact ancestor invalidation on in-app mutations, and a forced refresh when the window returns to the foreground; multi-parent moves and a live-watch upgrade path remain open. |
 | [ICONS.md](ICONS.md) | Reference | Complete icon inventory: source (NSWorkspace / local Lucide bundle / upstream), attribution, command→icon map, and the rules for adding new icons. Flags missing/weak/reused glyphs. |
+| [IMAGE_EDITOR.md](IMAGE_EDITOR.md) | Shipped | Built-in image redaction/annotation editor: rectangle + brush in Redact (opaque black) and Annotate (coloured) modes, undo, save-copy beside the original or confirmed in-place overwrite, off-thread compositing with a bounded preview buffer. |
 | [LAZY_METADATA.md](LAZY_METADATA.md) | Shipped with follow-ups | Shared NodeStore, path guard, cached row metadata, background prefetch, metadata DB, and process-owned caches ship; rename/move identity completion remains open. |
 | [LOCALIZATION.md](LOCALIZATION.md) | Shipped with follow-ups | English-as-key string catalog, JSON language packs (French and German bundled), live language switching, and an export → translate anywhere → import workflow in Settings › Appearance; backend error text, RTL and locale number formats remain open. |
 | [MAGIC_DESCRIPTION.md](MAGIC_DESCRIPTION.md) | Shipped | Format/Description columns, mismatch cues, quarantine badges, and structured descriptions ship. |
@@ -48,6 +49,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [STREAMING_ENUMERATION.md](STREAMING_ENUMERATION.md) | Shipped with follow-ups | Directory enumeration is worker-driven, batched, cancellable, and notification-based; slow-path/stale-result tests and partial-error UI remain open. |
 | [TARGET_PANEL.md](TARGET_PANEL.md) | Future | Design note only: a pinned, frozen second listing ("Pick as Target") that acts as source or destination for file operations, and the batched-transfer queue it enables. Nothing implemented. |
 | [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md) | Future | Debug-overlay design remains unimplemented beyond screenshot simulation hooks. |
+| [TEXT_EDITOR.md](TEXT_EDITOR.md) | Shipped | Built-in lightweight text editor: one window per file over gpui-component's Editor (undo, find, highlighting), UTF-8 with CRLF/BOM round-trip, in-place atomic-sibling saves, unsaved-changes guard, size/binary refusal states. |
 | [THEMES.md](THEMES.md) | Planned (Phase 0 shipped) | User-facing theming plan: the selection-accent override + color picker ship; bundled themes, a theme picker, a drop-in user themes folder, and a generalized override layer are scoped but unbuilt. |
 | [TOOL_RESULTS.md](TOOL_RESULTS.md) | Shipped with follow-ups | Shared tab-local result surface for Search, Duplicate Finder, and docked Disk Usage ships; pop-out/state migration remains open. |
 | [VIDEO-MPV.md](VIDEO-MPV.md) | Planned | Replace the mpv video backend with libmpv (live filters, alpha) and build an N-layer transparent-colour (chroma-key) compositor on top. Phase 0 spike gates it; nothing shipped yet. |
@@ -125,6 +127,10 @@ keep the UI off the I/O path.
   cancellation, collision policy, clipboard verbs.
 - [BULK_RENAME.md](BULK_RENAME.md) — pattern-rule bulk rename modal with
   live before→after preview and batch undo.
+- [TEXT_EDITOR.md](TEXT_EDITOR.md) — built-in lightweight text editor:
+  open, fix, save, close — with safe in-place saves and refusal states.
+- [IMAGE_EDITOR.md](IMAGE_EDITOR.md) — built-in image redaction/annotation
+  editor: rectangle + brush, save-copy or confirmed overwrite.
 - [DISK_USAGE.md](DISK_USAGE.md) — disk-usage window: scanning, treemap, and
   top-list views.
 

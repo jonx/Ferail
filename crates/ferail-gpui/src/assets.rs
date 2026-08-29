@@ -204,6 +204,17 @@ mod tests {
             "icons/volume-x.svg",
             "icons/volume-2.svg",
             "icons/wand-sparkles.svg",
+            // Built-in editors (docs/features/TEXT_EDITOR.md,
+            // docs/features/IMAGE_EDITOR.md)
+            "icons/save.svg",
+            "icons/replace.svg",
+            "icons/locate-fixed.svg",
+            "icons/undo.svg",
+            "icons/pencil.svg",
+            "icons/eraser.svg",
+            "icons/square.svg",
+            "icons/brush.svg",
+            "icons/a-large-small.svg",
         ];
         let assets = FeraAssets;
         for path in REFERENCED {

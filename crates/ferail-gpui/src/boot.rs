@@ -13,11 +13,12 @@ use crate::{
     settings::{SettingsView, category_from_arg},
     shell::{
         ClearRecents, CloseTab, CloseWindow, CopyPath, CreateChecksumFile, CycleSidebarSize,
-        DeleteImmediately, EmptyTrash, FindDuplicates, FindSimilarImages, FocusFilter,
-        GenerateSha256, GoHome, GoToFolder, MoveToTrash, NavigateBack, NavigateForward,
-        NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected, OpenSettings, Refresh,
-        RenameSelected, ResetSidebarOrder, RevealInFinder, Shell, ShowDesktop,
-        ToggleFavoriteForTarget, ToggleFlatView, ToggleHidden, TogglePreview, VerifyChecksums,
+        DeleteImmediately, EditFile, EditImage, EmptyTrash, FindDuplicates, FindSimilarImages,
+        FocusFilter, GenerateSha256, GoHome, GoToFolder, MoveToTrash, NavigateBack,
+        NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected,
+        OpenSettings, Refresh, RenameSelected, ResetSidebarOrder, RevealInFinder, Shell,
+        ShowDesktop, ToggleFavoriteForTarget, ToggleFlatView, ToggleHidden, TogglePreview,
+        VerifyChecksums,
     },
 };
 use ferail_core::commands::{CommandId, find};
@@ -42,6 +43,60 @@ actions!(
     app,
     [Quit, OpenAbout, CheckForUpdates, NewWindow, BringAllToFront]
 );
+
+/// Window ▸ <secondary window> slots. gpui's `actions!` only makes unit
+/// structs and a native `MenuItem` needs an `Action` type, so the menu's
+/// window list is backed by a fixed bank of slot actions indexed into
+/// `ProcessState::live_aux_windows` (the same shape the Open With submenu
+/// uses). Past the last slot the explicit list stops; on macOS AppKit
+/// still appends every window natively below it.
+macro_rules! aux_window_slots {
+    ($($name:ident => $index:expr),* $(,)?) => {
+        actions!(app, [$($name),*]);
+
+        fn install_aux_window_slot_actions(cx: &mut App) {
+            $(
+                cx.on_action(|_: &$name, cx: &mut App| activate_aux_window(cx, $index));
+            )*
+        }
+
+        fn aux_window_slot_action(index: usize) -> Option<Box<dyn gpui::Action>> {
+            match index {
+                $($index => Some(Box::new($name)),)*
+                _ => None,
+            }
+        }
+    };
+}
+
+aux_window_slots! {
+    ActivateAuxWindow0 => 0,
+    ActivateAuxWindow1 => 1,
+    ActivateAuxWindow2 => 2,
+    ActivateAuxWindow3 => 3,
+    ActivateAuxWindow4 => 4,
+    ActivateAuxWindow5 => 5,
+    ActivateAuxWindow6 => 6,
+    ActivateAuxWindow7 => 7,
+    ActivateAuxWindow8 => 8,
+    ActivateAuxWindow9 => 9,
+    ActivateAuxWindow10 => 10,
+    ActivateAuxWindow11 => 11,
+}
+
+/// Bring the `index`-th live secondary window to the front.
+fn activate_aux_window(cx: &mut App, index: usize) {
+    if crate::private_mode::blocks_normal_actions() {
+        return;
+    }
+    let process = crate::process_state::process_state(cx);
+    let Some(entry) = process.live_aux_windows(cx).into_iter().nth(index) else {
+        return;
+    };
+    let _ = entry
+        .handle
+        .update(cx, |_, window, _| window.activate_window());
+}
 
 pub fn run_gui(args: screenshot::Args) {
     // Windows shell: assign our own AppUserModelID so the taskbar
@@ -350,6 +405,7 @@ pub fn run_gui(args: screenshot::Args) {
             bring_all_to_front(cx);
         });
 
+        install_aux_window_slot_actions(cx);
         install_app_menus(cx);
 
         // Windows/Linux: quit the process when the last window closes.
@@ -657,6 +713,8 @@ pub(crate) fn install_app_menus(cx: &mut App) {
     // supported macOS. Resolving here also warms the cache before the
     // first render reads it (keeps the render-time check nonblocking).
     let show_desktop_available = crate::platform_shell::show_desktop_available();
+    // Built before `set_menus` borrows `cx` immutably for the whole call.
+    let window_items = window_menu_items(cx);
     let mut view_items = vec![
         MenuItem::action(title("view.search", "Find"), FocusFilter),
         MenuItem::action(
@@ -732,6 +790,8 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                 MenuItem::action(title("selection.rename", "Rename"), RenameSelected),
                 MenuItem::separator(),
                 MenuItem::action(title("selection.activate", "Open"), OpenSelected),
+                MenuItem::action(title("file.edit", "Edit File"), EditFile),
+                MenuItem::action(title("file.edit_image", "Edit Image"), EditImage),
                 MenuItem::action(
                     title("file.reveal_in_finder", ferail_core::commands::REVEAL_LABEL),
                     RevealInFinder,
@@ -814,13 +874,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
             // only the explicit items; the window list is a macOS
             // freebie until a cross-platform list is built by hand.
             name: tr!("Window"),
-            items: vec![
-                MenuItem::action(
-                    title("window.bring_all_to_front", "Bring All to Front"),
-                    BringAllToFront,
-                ),
-                MenuItem::separator(),
-            ],
+            items: window_items,
             disabled: false,
         },
     ]);
@@ -831,6 +885,48 @@ pub(crate) fn install_app_menus(cx: &mut App) {
     if let Some(menus) = cx.get_menus() {
         gpui_component::global_state::GlobalState::global_mut(cx).set_app_menus(menus);
     }
+}
+
+/// The Window menu's items: Bring All to Front, then an explicit list of
+/// every secondary window Ferail has open (viewers, Get Info, Disk Usage,
+/// Settings, the built-in editors), newest last, so they can be found and
+/// raised from one place on every platform. macOS also appends its own
+/// native window list below; this explicit list is what Windows and Linux
+/// get, and it carries better labels ("Edit: notes.txt") than a bare
+/// window title on all three.
+fn window_menu_items(cx: &mut App) -> Vec<MenuItem> {
+    let mut items = vec![
+        MenuItem::action(
+            title("window.bring_all_to_front", "Bring All to Front"),
+            BringAllToFront,
+        ),
+        MenuItem::separator(),
+    ];
+    let process = crate::process_state::process_state(cx);
+    for (index, entry) in process.live_aux_windows(cx).into_iter().enumerate() {
+        let Some(action) = aux_window_slot_action(index) else {
+            break;
+        };
+        items.push(MenuItem::Action {
+            name: entry.label.into(),
+            action,
+            os_action: None,
+            checked: false,
+            disabled: false,
+        });
+    }
+    items
+}
+
+/// Rebuild the menu bar so the Window list matches the windows that are
+/// actually open. Called when a secondary window opens or closes; a no-op
+/// while Private Mode owns the menu bar (it reinstalls the full menus on
+/// exit anyway).
+pub(crate) fn refresh_window_menu(cx: &mut App) {
+    if crate::private_mode::enabled() {
+        return;
+    }
+    install_app_menus(cx);
 }
 
 /// While Private Mode is active the native menu bar is reduced to the two

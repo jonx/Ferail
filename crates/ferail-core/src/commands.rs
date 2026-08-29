@@ -273,6 +273,15 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::File,
         shortcuts: &[Shortcut::primary("I")],
     },
+    // Built-in lightweight text editor (docs/features/TEXT_EDITOR.md) —
+    // distinct from the context menu's system-editor entry, which shells
+    // out to TextEdit / Notepad.
+    CommandSpec {
+        id: CommandId("file.edit"),
+        title: msgid!("Edit File"),
+        category: Category::File,
+        shortcuts: &[Shortcut::primary("E")],
+    },
     CommandSpec {
         id: CommandId("file.move_to_trash"),
         title: TRASH_LABEL,
@@ -808,6 +817,16 @@ const CATALOGUE: &[CommandSpec] = &[
         id: CommandId("file.quick_look"),
         title: msgid!("Quick Look"),
         category: Category::Context,
+        shortcuts: &[],
+    },
+    // Built-in image redaction/annotation editor
+    // (docs/features/IMAGE_EDITOR.md). The row context menu only shows it for
+    // compatible images; the File menu and palette keep it discoverable and
+    // the action safely declines incompatible selections.
+    CommandSpec {
+        id: CommandId("file.edit_image"),
+        title: msgid!("Edit Image"),
+        category: Category::File,
         shortcuts: &[],
     },
     CommandSpec {

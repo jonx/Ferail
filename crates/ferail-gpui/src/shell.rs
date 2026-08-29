@@ -1714,6 +1714,42 @@ pub fn reveal_path_in_app(cx: &mut App, path: PathBuf) {
     open_in_app(cx, dir, names);
 }
 
+/// Return from an auxiliary editor to the exact Shell/tab it was opened
+/// from, then select and centre the source file. If that tab or window no
+/// longer exists, fall back to the ordinary new-tab reveal policy.
+pub fn reselect_path_in_origin(
+    cx: &mut App,
+    origin: &WeakEntity<Shell>,
+    tab_id: TabId,
+    path: PathBuf,
+) {
+    let origin_id = origin.entity_id();
+    for handle in cx.windows() {
+        let Some(root) = handle.downcast::<gpui_component::Root>() else {
+            continue;
+        };
+        let selected = root
+            .update(cx, |root, window, cx| {
+                let Ok(shell) = root.view().clone().downcast::<Shell>() else {
+                    return false;
+                };
+                if shell.entity_id() != origin_id {
+                    return false;
+                }
+                shell.update(cx, |shell, cx| {
+                    shell.reselect_path_in_tab(tab_id, path.clone(), window, cx);
+                });
+                window.activate_window();
+                true
+            })
+            .unwrap_or(false);
+        if selected {
+            return;
+        }
+    }
+    reveal_path_in_app(cx, path);
+}
+
 /// Open the folder `dir` itself in a Ferail tab — the Settings window's
 /// Bug-reports folder buttons. Same window policy as
 /// [`reveal_path_in_app`] (new tab in a live Shell window, else a fresh
@@ -2787,6 +2823,21 @@ impl Shell {
                                 cx.notify();
                                 return;
                             }
+                            // A docked Disk Usage view filters its own
+                            // scanned tree in place, for the same reason
+                            // Flat does: the surface holds the data, so
+                            // dropping it to re-read the directory would
+                            // throw away a scan the user waited for.
+                            if let Some(du) = this.tabs[idx]
+                                .tool_result
+                                .as_ref()
+                                .and_then(|surface| surface.disk_usage_mode())
+                            {
+                                let view = du.view.clone();
+                                view.update(cx, |view, cx| view.apply_filter(&value, cx));
+                                cx.notify();
+                                return;
+                            }
                             // Editing the filter while showing a results
                             // view returns to the live directory, then
                             // applies the in-directory filter.
@@ -2803,6 +2854,23 @@ impl Shell {
                             return;
                         }
                         let value = state.read(cx).value().to_string();
+                        // Disk Usage owns a complete recursive snapshot
+                        // already. Enter must keep that surface alive and
+                        // apply the same expression there; launching the
+                        // generic subtree search used to replace DU with a
+                        // Search result tab.
+                        if let Some(du) = this
+                            .tabs
+                            .iter()
+                            .find(|tab| tab.id == tab_id)
+                            .and_then(|tab| tab.tool_result.as_ref())
+                            .and_then(|surface| surface.disk_usage_mode())
+                        {
+                            let view = du.view.clone();
+                            view.update(cx, |view, cx| view.apply_filter(&value, cx));
+                            cx.notify();
+                            return;
+                        }
                         this.start_subtree_search(tab_id, value, Some(window.window_handle()), cx);
                     }
                     InputEvent::Blur => {
@@ -3547,6 +3615,30 @@ impl Shell {
         // §2.5 selection-clear, which escapes out to the shell pane.
         let has_text = !self.active_tab().filter_text.is_empty();
         let in_results = self.active_tab().tool_result.is_some();
+        // Disk Usage is a long-lived scan surface, not a disposable Search
+        // result. Clearing its filter must leave the scan, tree and progress
+        // intact; with an already-empty field, Escape simply returns keyboard
+        // focus to the pane.
+        if let Some(du_view) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.disk_usage_mode())
+            .map(|du| du.view.clone())
+        {
+            self.active_tab_mut().filter_suggestions.clear();
+            if has_text {
+                let filter_input = self.active_tab().filter_input.clone();
+                filter_input.update(cx, |state, cx| state.set_value("", window, cx));
+                self.active_tab_mut().filter_text.clear();
+                du_view.update(cx, |view, cx| view.apply_filter("", cx));
+                self.focus_filter_input(window, cx);
+            } else {
+                self.focus_handle.focus(window, cx);
+                cx.notify();
+            }
+            return;
+        }
         if has_text || in_results {
             self.active_tab_mut().filter_suggestions.clear();
             let filter_input = self.active_tab().filter_input.clone();
@@ -3568,6 +3660,12 @@ impl Shell {
     }
 
     fn intercept_inline_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // Dialog owns Escape. The filter input can remain the platform's
+        // focused control behind the modal, so checking focus alone would
+        // steal Escape before gpui-component's Dialog context sees it.
+        if window.has_active_dialog(cx) {
+            return false;
+        }
         // The session itself is authoritative. The persistent Input is
         // focused on the frame after it is mounted, leaving a small interval
         // where an immediate Escape must still cancel the visible editor.
@@ -3585,6 +3683,11 @@ impl Shell {
             filter_focused,
         ) {
             return false;
+        }
+        if filter_focused && self.active_tab().filter_suggestions.is_open() {
+            self.active_tab_mut().filter_suggestions.clear();
+            cx.notify();
+            return true;
         }
         self.on_clear_filter(&ClearFilter, window, cx);
         true
@@ -3997,6 +4100,7 @@ impl Shell {
         let tasks = self.process.tasks.clone();
         let notify_owner = self.disk_usage_notify_owner(cx);
         let shell_weak = cx.weak_entity();
+        let initial_filter = self.active_tab().filter_text.clone();
         let view = cx.new(|cx| {
             let mut view = crate::disk_usage::DiskUsageView::new(
                 root.clone(),
@@ -4009,6 +4113,9 @@ impl Shell {
             // Lets the DU context menu open Get Info windows and
             // reload affected tabs after a trash.
             view.shell = Some(shell_weak);
+            if !initial_filter.is_empty() {
+                view.apply_filter(&initial_filter, cx);
+            }
             view
         });
         self.dock_disk_usage_view(root, view, cx);
@@ -7511,6 +7618,55 @@ impl Shell {
         self.open_path_in_new_tab(dir, window, cx);
         if !names.is_empty() {
             self.active_tab_mut().pending_select_names = names;
+        }
+        cx.notify();
+    }
+
+    /// Refocus an editor's source tab and reselect its original file. The tab
+    /// may have navigated or switched to a tool result while the editor was
+    /// open; in that case it is deliberately returned to the source folder.
+    fn reselect_path_in_tab(
+        &mut self,
+        tab_id: TabId,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            // The originating tab was closed but its Shell is still alive.
+            let (dir, names) = match (path.parent(), path.file_name()) {
+                (Some(parent), Some(name)) => (
+                    parent.to_path_buf(),
+                    vec![name.to_string_lossy().into_owned()],
+                ),
+                _ => (path, Vec::new()),
+            };
+            self.reveal_in_new_tab(dir, names, window, cx);
+            return;
+        };
+        self.select_tab(index, cx);
+        let (dir, name) = match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => {
+                (parent.to_path_buf(), name.to_string_lossy().into_owned())
+            }
+            _ => (path, String::new()),
+        };
+        let needs_reload = self.tabs[index].current_dir != dir
+            || self.tabs[index].tool_result.is_some()
+            || !self.tabs[index].filter_text.is_empty();
+        if needs_reload {
+            self.tabs[index].filter_text.clear();
+            let input = self.tabs[index].filter_input.clone();
+            input.update(cx, |state, cx| {
+                state.set_value(String::new(), window, cx);
+            });
+            self.load_path_for_tab(tab_id, dir, cx);
+        }
+        if !name.is_empty() {
+            self.tabs[index].pending_select_names = vec![name];
+            if !needs_reload {
+                self.apply_pending_select_names(cx);
+            }
         }
         cx.notify();
     }

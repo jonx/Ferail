@@ -169,6 +169,9 @@ pub struct Args {
     /// Open the Disk Usage window at this path and render its
     /// treemap headless. Lands in Stage 7.
     pub disk_usage: Option<PathBuf>,
+    /// With `--disk-usage` and `--filter`, render only matching DU tiles
+    /// instead of keeping the complete map and dimming non-matches.
+    pub du_results_only: bool,
     /// Open the archive workbench on this archive file and render its
     /// contents view headless.
     pub archive: Option<PathBuf>,
@@ -200,6 +203,13 @@ pub struct Args {
     pub viewer_rotate: u8,
     /// Screenshot-only: items to advance in the viewer (after any rotate).
     pub viewer_step: isize,
+    /// Open the built-in text editor window
+    /// (docs/features/TEXT_EDITOR.md) for this file instead of the shell.
+    pub text_editor: Option<PathBuf>,
+    /// Open the built-in image editor window
+    /// (docs/features/IMAGE_EDITOR.md) for this image instead of the
+    /// shell, with demo redaction/annotation strokes applied.
+    pub image_editor: Option<PathBuf>,
     /// Render the drag ghost ([`crate::file_list::DragBadge`]) for a
     /// drag of N items, in isolation, against a neutral backdrop —
     /// the only way to capture the cursor ghost headlessly (it never
@@ -342,6 +352,7 @@ pub fn parse_args() -> Args {
             "--sidebar-collapsed" => args.sidebar_collapsed = Some(true),
             "--sidebar-expanded" => args.sidebar_collapsed = Some(false),
             "--disk-usage" => args.disk_usage = iter.next().map(PathBuf::from),
+            "--du-results-only" => args.du_results_only = true,
             "--archive" => args.archive = iter.next().map(PathBuf::from),
             "--archive-preview-row" => {
                 args.archive_preview_row = iter.next().and_then(|s| s.parse().ok())
@@ -361,6 +372,8 @@ pub fn parse_args() -> Args {
                 args.settings = Some(iter.next().unwrap_or_default());
             }
             "--viewer" => args.viewer = iter.next().map(PathBuf::from),
+            "--text-editor" => args.text_editor = iter.next().map(PathBuf::from),
+            "--image-editor" => args.image_editor = iter.next().map(PathBuf::from),
             "--viewer-adjust" => args.viewer_adjust = true,
             "--viewer-adjust-video" => args.viewer_adjust_video = true,
             "--viewer-rotate" => {
@@ -436,6 +449,7 @@ OPTIONS
   --sidebar-collapsed      Render the icon-only sidebar without persisting it.
   --sidebar-expanded       Render the full sidebar without persisting it.
   --disk-usage <path>      Render disk-usage treemap. Lands in Stage 7.
+  --du-results-only        With --disk-usage/--filter, show matching tiles only.
   --archive <path>         Render the archive workbench for <path>.
   --archive-preview-row N  With --archive: select row N and show its preview.
   --archive-convert        With --archive: open the Convert Archive dialog.
@@ -451,6 +465,9 @@ OPTIONS
   --viewer-adjust          Open the viewer's colour/enhance panel for capture.
   --viewer-rotate <n>      Rotate the viewer n clockwise quarter-turns.
   --viewer-step <n>        Advance n items in the viewer (after --viewer-rotate).
+  --text-editor <path>     Render the built-in text-editor window for <path>.
+  --image-editor <path>    Render the built-in image-editor window for <path>
+                           with demo redaction/annotation strokes.
   --drag-ghost <N>         Render the drag cursor ghost for an N-item drag
                            (placeholder tiles) against a neutral backdrop.
   --safe-mode              Launch the GUI with all optional background work
@@ -486,11 +503,15 @@ pub fn run(args: Args) -> Result<()> {
     let theme_mode = args.theme;
     let settings_page = args.settings.clone();
     let disk_usage_root = args.disk_usage.clone();
+    let disk_usage_filter = args.filter.clone();
+    let du_results_only = args.du_results_only;
     let viewer_target = args.viewer.clone();
     let viewer_adjust = args.viewer_adjust;
     let viewer_adjust_video = args.viewer_adjust_video;
     let viewer_rotate = args.viewer_rotate;
     let viewer_step = args.viewer_step;
+    let text_editor_target = args.text_editor.clone();
+    let image_editor_target = args.image_editor.clone();
     let drag_ghost = args.drag_ghost;
     let icon_picker = args.icon_picker;
 
@@ -536,7 +557,10 @@ pub fn run(args: Args) -> Result<()> {
         let settings_page = settings_page.clone();
         let shell_args = shell_args.clone();
         let disk_usage_root = disk_usage_root.clone();
+        let disk_usage_filter = disk_usage_filter.clone();
         let viewer_target = viewer_target.clone();
+        let text_editor_target = text_editor_target.clone();
+        let image_editor_target = image_editor_target.clone();
         cx.spawn(async move |cx| {
             // Headless capture: `Window::render_to_image` samples an offscreen
             // render target with the window hidden — macOS via gpui_macos's
@@ -580,6 +604,12 @@ pub fn run(args: Args) -> Result<()> {
                                 canonical, fs, tasks, None, None, cx,
                             )
                         });
+                        if let Some(filter) = disk_usage_filter.as_deref() {
+                            view.update(cx, |view, cx| {
+                                view.apply_filter(filter, cx);
+                                view.set_filter_results_only_for_screenshot(du_results_only, cx);
+                            });
+                        }
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(target) = viewer_target.clone() {
                         // Headless viewer window: build the playlist
@@ -631,6 +661,35 @@ pub fn run(args: Args) -> Result<()> {
                                 w.sim_rotate_then_step(viewer_rotate, viewer_step, cx)
                             });
                         }
+                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    } else if let Some(target) = text_editor_target.clone() {
+                        // Headless built-in text editor window
+                        // (docs/features/TEXT_EDITOR.md): the off-thread read
+                        // lands within the pre-capture settle delay.
+                        let canonical = std::fs::canonicalize(&target).unwrap_or(target.clone());
+                        let name = canonical
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let view = cx.new(|cx| {
+                            crate::text_editor::TextEditorView::new(
+                                canonical, name, None, None, None, window, cx,
+                            )
+                        });
+                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    } else if let Some(target) = image_editor_target.clone() {
+                        // Headless built-in image editor
+                        // (docs/features/IMAGE_EDITOR.md), demo strokes on.
+                        let canonical = std::fs::canonicalize(&target).unwrap_or(target.clone());
+                        let name = canonical
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let view = cx.new(|cx| {
+                            crate::image_edit::ImageEditView::new(
+                                canonical, name, None, None, None, true, window, cx,
+                            )
+                        });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if icon_picker {
                         // Headless icon-picker window: a standalone

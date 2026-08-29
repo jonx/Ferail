@@ -19,8 +19,8 @@
 use crate::file_category::FileCategory;
 use crate::model::{DiskUsageTree, NodeKind, SizeMode};
 use crate::{build_layout_node_with_mode, compute_treemap};
-use ferail_core::msgid;
 use ferail_core::NodeId;
+use ferail_core::msgid;
 
 /// Canonical category palette as `(r, g, b, a)` bytes. The GPUI view
 /// converts these to its float color type; the HTML export emits them
@@ -144,8 +144,12 @@ pub fn treemap_html_fragment(
         let tooltip = format!("{name} \u{2014} {size} \u{2014} {kind}");
         // Same visibility thresholds as the live view, so the export
         // labels exactly what the window labeled.
-        let show_label = r.width >= 60.0 && r.height >= 24.0;
-        let show_size = r.width >= 80.0 && r.height >= 40.0;
+        let show_label = if r.lays_out_children {
+            r.label_strip_height > 0.0
+        } else {
+            r.width >= 60.0 && r.height >= 24.0
+        };
+        let show_size = !r.lays_out_children && r.width >= 80.0 && r.height >= 40.0;
 
         out.push_str(&format!(
             "<div title=\"{}\" style=\"position:absolute;left:{}px;top:{}px;\
@@ -163,12 +167,24 @@ pub fn treemap_html_fragment(
             ca as f32 / 255.0,
         ));
         if show_label {
-            out.push_str(&format!(
-                "<div style=\"padding:2px 4px;font-size:11px;font-weight:600;\
-                 color:rgba(255,255,255,0.93);white-space:nowrap;\
-                 overflow:hidden;text-overflow:ellipsis;\">{}</div>",
-                escape_html(&name)
-            ));
+            if r.lays_out_children {
+                out.push_str(&format!(
+                    "<div style=\"height:{}px;padding:0 4px;box-sizing:border-box;\
+                     font-size:11px;font-weight:600;line-height:{}px;\
+                     color:rgba(255,255,255,0.93);white-space:nowrap;\
+                     overflow:hidden;text-overflow:ellipsis;\">{}</div>",
+                    r.label_strip_height,
+                    r.label_strip_height,
+                    escape_html(&name)
+                ));
+            } else {
+                out.push_str(&format!(
+                    "<div style=\"padding:2px 4px;font-size:11px;font-weight:600;\
+                     color:rgba(255,255,255,0.93);white-space:nowrap;\
+                     overflow:hidden;text-overflow:ellipsis;\">{}</div>",
+                    escape_html(&name)
+                ));
+            }
             if show_size {
                 out.push_str(&format!(
                     "<div style=\"padding:0 4px;font-size:11px;\

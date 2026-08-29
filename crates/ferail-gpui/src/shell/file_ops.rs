@@ -2367,6 +2367,45 @@ impl Shell {
         }
     }
 
+    /// Open the single targeted file in the built-in text editor
+    /// (docs/features/TEXT_EDITOR.md). Availability mirrors the
+    /// system-editor entry below: one file, never a directory. Content
+    /// checks (is it text? is it small enough?) happen off-thread inside
+    /// the editor window, never at dispatch time.
+    pub(super) fn on_edit_file(&mut self, _: &EditFile, _: &mut Window, cx: &mut Context<Self>) {
+        let targets = self.action_entries_visible_order(cx);
+        let [(_, entry, path)] = targets.as_slice() else {
+            return;
+        };
+        if matches!(entry.kind, EntryKind::Directory) {
+            return;
+        }
+        let name = entry.name.to_string();
+        let origin_tab = self.active_tab().id;
+        let weak = cx.weak_entity();
+        crate::text_editor::open(path.clone(), name, weak, origin_tab, cx);
+    }
+
+    /// Open the single targeted image in the built-in redaction/annotation
+    /// editor (docs/features/IMAGE_EDITOR.md). Same dispatch shape as
+    /// `on_edit_file`; the extension gate keeps it a silent no-op on
+    /// non-image targets (the menu already hides it there).
+    pub(super) fn on_edit_image(&mut self, _: &EditImage, _: &mut Window, cx: &mut Context<Self>) {
+        let targets = self.action_entries_visible_order(cx);
+        let [(_, entry, path)] = targets.as_slice() else {
+            return;
+        };
+        if matches!(entry.kind, EntryKind::Directory)
+            || !crate::image_edit::editable_image_name(&entry.name)
+        {
+            return;
+        }
+        let name = entry.name.to_string();
+        let origin_tab = self.active_tab().id;
+        let weak = cx.weak_entity();
+        crate::image_edit::open(path.clone(), name, weak, origin_tab, cx);
+    }
+
     pub(super) fn on_edit_text_file(
         &mut self,
         _: &EditTextFile,

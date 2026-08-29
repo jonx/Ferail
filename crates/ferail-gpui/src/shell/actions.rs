@@ -10,6 +10,12 @@ actions!(
         /// Explicitly open one file in the platform text editor: TextEdit on
         /// macOS, Notepad on Windows, desktop text association on Linux.
         EditTextFile,
+        /// Open one file in Ferail's built-in lightweight text editor
+        /// (docs/features/TEXT_EDITOR.md).
+        EditFile,
+        /// Open one image in Ferail's built-in redaction/annotation editor
+        /// (docs/features/IMAGE_EDITOR.md).
+        EditImage,
         Refresh,
         /// Trigger the macOS "Show Desktop" reveal (the Dock's private
         /// `CoreDockSendNotification`). The toolbar button and menu item

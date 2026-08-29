@@ -45,6 +45,7 @@ pub mod fs_watcher;
 mod go_to_folder_prompt;
 pub mod grid;
 pub mod icons;
+pub mod image_edit;
 pub mod inline_edit;
 pub mod keyboard_help;
 pub mod keymap;
@@ -66,6 +67,7 @@ pub mod redact;
 pub mod report;
 pub mod reset_db;
 pub mod safe_mode;
+pub(crate) mod safe_write;
 mod scrub_slider;
 // The headless screenshot driver is a CLI path with no live UI to
 // freeze — the Prime Directive syscall lint doesn't apply to it.
@@ -85,6 +87,7 @@ pub mod system_stats;
 pub mod task_panel;
 pub mod tasks;
 pub mod text;
+pub mod text_editor;
 pub mod text_preview;
 pub mod thumbnails;
 pub mod tool_results;
