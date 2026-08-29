@@ -5,20 +5,24 @@
 
 .EXAMPLE
     ./scripts/testing/fast-ntfs-vhdx.ps1 Create
+    ./scripts/testing/fast-ntfs-vhdx.ps1 Diagnose
     ./scripts/testing/fast-ntfs-vhdx.ps1 Mutate -MutationSeconds 30
     ./scripts/testing/fast-ntfs-vhdx.ps1 Cleanup
 
 .NOTES
-    Requires an elevated PowerShell and the Hyper-V PowerShell module. The
-    VHDX stays under target/ by default and is never committed. Cleanup will
-    delete only a .vhdx carrying this script's matching marker file.
+    Requires an elevated PowerShell. The Hyper-V PowerShell module is used
+    when available; otherwise the script falls back to built-in DiskPart and
+    Storage cmdlets. The VHDX stays under target/ by default and is never
+    committed. Cleanup will delete only a .vhdx carrying this script's
+    matching marker file.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('Create', 'Mutate', 'Cleanup')]
+    [ValidateSet('Create', 'Diagnose', 'Mutate', 'Cleanup')]
     [string]$Action = 'Create',
     [string]$VhdxPath,
+    [string]$HelperPath,
     [ValidateRange(1, 600)]
     [int]$MutationSeconds = 15
 )
@@ -43,8 +47,63 @@ $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this fixture script from an elevated PowerShell.'
 }
-if (-not (Get-Command New-VHD -ErrorAction SilentlyContinue)) {
-    throw 'The Hyper-V PowerShell module is required (New-VHD/Mount-VHD).'
+
+$UseHyperV = [bool](Get-Command New-VHD -ErrorAction SilentlyContinue) -and
+    [bool](Get-Command Mount-VHD -ErrorAction SilentlyContinue) -and
+    [bool](Get-Command Dismount-VHD -ErrorAction SilentlyContinue)
+
+function Invoke-DiskPart {
+    param([Parameter(Mandatory)][string[]]$Commands)
+
+    $scriptPath = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllLines(
+            $scriptPath,
+            $Commands,
+            [System.Text.Encoding]::ASCII
+        )
+        $output = & diskpart.exe /s $scriptPath 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "DiskPart failed with exit code $LASTEXITCODE`n$($output -join [Environment]::NewLine)"
+        }
+        $output
+    } finally {
+        Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function New-FixtureVhd {
+    if ($UseHyperV) {
+        New-VHD -Path $VhdxPath -Dynamic -SizeBytes 8GB -BlockSizeBytes 1MB | Out-Null
+        return
+    }
+
+    if (-not (Get-Command diskpart.exe -ErrorAction SilentlyContinue)) {
+        throw 'Neither the Hyper-V PowerShell module nor built-in DiskPart is available.'
+    }
+    Invoke-DiskPart @(
+        "create vdisk file=`"$VhdxPath`" maximum=8192 type=expandable"
+    ) | Out-Null
+    if (-not (Test-Path -LiteralPath $VhdxPath)) {
+        throw "DiskPart did not create the requested VHDX: $VhdxPath"
+    }
+}
+
+function Mount-FixtureVhd {
+    if ($UseHyperV) {
+        return Mount-VHD -Path $VhdxPath -Passthru
+    }
+
+    $image = Mount-DiskImage -ImagePath $VhdxPath -PassThru
+    return $image | Get-Disk
+}
+
+function Dismount-FixtureVhd {
+    if ($UseHyperV) {
+        Dismount-VHD -Path $VhdxPath -ErrorAction SilentlyContinue
+    } elseif (Test-Path -LiteralPath $VhdxPath) {
+        Dismount-DiskImage -ImagePath $VhdxPath -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-FixtureRoot {
@@ -62,9 +121,9 @@ switch ($Action) {
             throw "fixture already exists: $VhdxPath"
         }
         New-Item -ItemType Directory -Path (Split-Path -Parent $VhdxPath) -Force | Out-Null
-        $vhd = New-VHD -Path $VhdxPath -Dynamic -SizeBytes 8GB -BlockSizeBytes 1MB
+        New-FixtureVhd
         try {
-            $disk = Mount-VHD -Path $VhdxPath -Passthru
+            $disk = Mount-FixtureVhd
             Initialize-Disk -Number $disk.DiskNumber -PartitionStyle GPT -PassThru | Out-Null
             $partition = New-Partition -DiskNumber $disk.DiskNumber -UseMaximumSize -AssignDriveLetter
             $volume = Format-Volume -Partition $partition -FileSystem NTFS `
@@ -118,7 +177,7 @@ switch ($Action) {
             } | ConvertTo-Json | Set-Content -LiteralPath $MarkerPath -Encoding UTF8
             Write-Host "Fixture ready: $root"
         } catch {
-            Dismount-VHD -Path $VhdxPath -ErrorAction SilentlyContinue
+            Dismount-FixtureVhd
             throw
         }
     }
@@ -139,6 +198,30 @@ switch ($Action) {
         }
         Write-Host "Mutation complete: $iteration create/delete cycles"
     }
+    'Diagnose' {
+        if (-not (Test-Path -LiteralPath $MarkerPath)) {
+            throw 'fixture marker is missing; run Create first'
+        }
+        $root = Get-FixtureRoot
+        if (-not $HelperPath) {
+            $releaseHelper = Join-Path $RepoRoot 'target\release\ferail-ntfs-helper.exe'
+            $debugHelper = Join-Path $RepoRoot 'target\debug\ferail-ntfs-helper.exe'
+            $HelperPath = if (Test-Path -LiteralPath $releaseHelper) {
+                $releaseHelper
+            } else {
+                $debugHelper
+            }
+        }
+        $HelperPath = [System.IO.Path]::GetFullPath($HelperPath)
+        if (-not (Test-Path -LiteralPath $HelperPath -PathType Leaf)) {
+            throw "Fast NTFS helper not found: $HelperPath"
+        }
+        Write-Host "Running direct Fast NTFS diagnostic against the disposable fixture..."
+        & $HelperPath --diagnose $root
+        if ($LASTEXITCODE -ne 0) {
+            throw "Fast NTFS diagnostic failed with exit code $LASTEXITCODE"
+        }
+    }
     'Cleanup' {
         if (-not (Test-Path -LiteralPath $MarkerPath)) {
             throw "refusing to delete an unmarked VHDX: $VhdxPath"
@@ -148,7 +231,7 @@ switch ($Action) {
             [string]$marker.purpose -ne 'Ferail Fast NTFS disposable qualification fixture') {
             throw 'fixture marker does not match the requested VHDX'
         }
-        Dismount-VHD -Path $VhdxPath -ErrorAction SilentlyContinue
+        Dismount-FixtureVhd
         if (Test-Path -LiteralPath $VhdxPath) {
             Remove-Item -LiteralPath $VhdxPath -Force
         }
