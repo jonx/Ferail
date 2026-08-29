@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.5 — 2026-08-29
+
 - **Large background listings can no longer outrun the interface.** Ordinary
   folders and recursive searches now use the same finite producer queue and
   time-sliced, coalesced UI apply as Flat View; duplicate and folder-size

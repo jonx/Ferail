@@ -99,8 +99,16 @@ Evidence collected on this native Windows checkout:
 - direct non-elevated
   `ferail-ntfs-helper.exe --diagnose C:\Source\Ferail` completed its path and
   volume probe in 0 ms, then correctly returned access denied for the raw
-  read with an explicit `run elevated` diagnostic. The elevated `Create` /
-  `Diagnose` / `Mutate` / `Cleanup` VHDX sequence remains required;
+  read with an explicit `run elevated` diagnostic;
+- the elevated `Create` / `Diagnose` / 30-second `Mutate` / `Diagnose` /
+  `Cleanup` VHDX sequence passed twice on Windows PowerShell 5.1 through the
+  built-in DiskPart fallback. A run performed 8,167 create/delete cycles; the
+  two raw scans indexed 48 then 49 files with zero corrupt records, returned
+  29 then 30 subtree rows, and completed in 25 ms then 18 ms. Unicode,
+  hardlink, sparse, compressed, ADS, junction, long-path and denied-ACL
+  fixtures were present. The VHDX and marker were absent and the image was
+  detached after each pass. The real run also fixed PowerShell 5.1 ADS
+  creation and added safe recovery/cleanup for a failed partial Create;
 - the hidden hang-dump broker captured a disposable same-user process with
   exit 0, a non-empty atomic dump and no `.part`. The full
   `FERAIL_DEBUG_FREEZE=20` path then reported a synthetic UI stall after about
@@ -110,9 +118,9 @@ Evidence collected on this native Windows checkout:
   the matching PDB remains a release-candidate evidence step.
 
 Do not infer completion of the million-row marquee, result-heavy
-duplicate/folder-size soak, drag/drop modifier matrix, elevated VHDX or
-installer/update matrix from these checks. Those are still the shortest useful
-interactive pass before the next tag.
+duplicate/folder-size soak, drag/drop modifier matrix or installer/update
+matrix from these checks. Those are still the shortest useful interactive pass
+before the next tag.
 
 ### 2026-08-28 — automatic watchdog minidump needs Windows qualification
 

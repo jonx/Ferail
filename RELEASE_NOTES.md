@@ -1,58 +1,63 @@
-# Ferail 0.7.4 — Private screenshots, flexible navigation and Windows setup
+# Ferail 0.7.5 — Direct editing and smoother large folders
 
-This release turns Private Mode into the intended screenshot-safe projection,
-adds a configurable sidebar and discoverable editable path bar, improves
-content-based audio recognition, and publishes a real Windows installer beside
-the portable package.
+This release makes everyday file work more direct and keeps Ferail responsive
+when folders, searches and background results become very large.
 
-## Private screenshots and diagnostics
+## Edit and navigate where you are
 
-- Private Mode keeps the prepared Ferail UI visible while replacing names,
-  paths, metadata and content with stable session aliases or neutral
-  placeholders. The title-bar shield is the sole indicator and toggle;
-  `Cmd/Ctrl+Shift+K` toggles it and Escape exits it.
-- Screenshot capture enables privacy by default. Ferail-owned interaction is
-  frozen while private data is projected, but close and Quit remain usable.
-- On Windows, a UI freeze now asks a pristine out-of-process broker to write a
-  same-stem minidump with all thread contexts beside the text report.
-- The new public bug-report guide explains which crash/hang files to attach,
-  which context is useful, and how to capture screenshots without exposing a
-  personal library.
+- Rename files and folders directly in list or icon view with F2 or Rename.
+  Ferail selects a file's stem without swallowing its extension, validates the
+  new name as you type, accepts with Enter or a click elsewhere, and cancels
+  with Escape.
+- The path bar, Go to Folder and filter are compact single-line controls with
+  useful completion. Windows paths stay readable and never expose the internal
+  `\\?\` prefix.
+- Search tokens such as `kind:` offer their values in place, while Escape and
+  the clear control make it quick to start over.
 
-## Navigation and sidebar
+## Large folders remain interactive
 
-- Click the empty tail of the breadcrumb or its edit icon to type or paste a
-  path; the existing `Cmd/Ctrl+L` shortcut remains available.
-- `Cmd/Ctrl+Shift+B` cycles the sidebar through normal, compact and icons-only
-  widths while preserving the user's normal width.
-- Sidebar sections can be collapsed and reordered persistently, including
-  sections which exist only on Windows or Linux, and their default order can
-  be restored.
-- Windows no longer renders Finder-only tag controls or schedules their dead
-  background work.
+- Ordinary folders, recursive searches, duplicate results and folder-size
+  updates now use finite queues and time-sliced interface updates. Ferail keeps
+  every result, but background work waits instead of consuming unlimited
+  memory or monopolising the window.
+- Hidden tabs continue collecting results without causing invisible redraws;
+  returning to one refreshes it once and warms only the visible rows.
+- Rapid preview selection keeps the active request and the newest request,
+  cancels obsolete work cooperatively, and leaves the final selection in
+  control.
+- Rectangle selection is restored in list view. Drag from empty space across
+  rows and use Shift/Cmd/Ctrl to extend the current selection without scanning
+  the complete directory.
 
-## Media correctness
+## Clearer and safer presentation
 
-- Known audio extensions remain the fast parser hint. Renamed or extensionless
-  audio is still recognized from bounded content signatures.
-- MPEG/AAC fallback detection requires several coherent frames, so Get Info no
-  longer invents MP3 duration and bitrate for an executable containing a
-  random sync word.
-- Get Info, the rich Description column and embedded cover thumbnails use the
-  same policy without adding a whole-list file scan.
+- Suspicious control characters, unusual whitespace, bidirectional marks and
+  homoglyphs remain visibly warned even when a narrow Name column elides the
+  dangerous part of a filename.
+- Back, Forward and Parent navigation reveal the intended item after streamed
+  loading and sorting instead of following a temporary row number.
+- Narrow sidebars, Settings rows, search controls and the Disk Usage header now
+  adapt more cleanly as the window is resized.
+- Ferail's public privacy policy documents local processing, diagnostics,
+  update checks and how to remove saved application data.
 
-## Windows installer and Fast NTFS
+## Windows reliability
 
-- Windows downloads now include both the portable ZIP and an Inno Setup
-  installer. Installed copies prefer the setup update path and offer Install
-  and Restart; portable copies continue to receive ZIP updates.
-- The installer includes the exact sibling `ferail-ntfs-helper.exe`, preserving
-  the narrow elevation boundary used by the portable build. Ferail itself is
-  not elevated.
-- The helper's standalone diagnostic is documented. From an elevated
-  PowerShell, `ferail-ntfs-helper.exe --diagnose <path>` emits aggregate MFT
-  geometry, phases, rates, counts and timings without names or the requested
-  path.
+- Fast NTFS verifies that its administrator helper exactly matches this build
+  before asking Windows to elevate it. A missing, stale or replaced helper now
+  falls back to Portable Disk Usage instead of running an unexpected program.
+- The Windows rendering stack and GPUI integration have been updated, including
+  the native drag image path and current input/window behavior.
+- Headless captures no longer inherit the Fast NTFS preference, so automated
+  screenshots cannot display an elevation prompt or wait on a helper.
+
+## Platform polish
+
+- macOS warms native folder artwork only for visible rows, restoring consistent
+  folder icons without sweeping a huge directory.
+- Icons-only sidebars use less space, stay centred in narrow windows and expose
+  every location name in a tooltip.
 
 ## Downloads
 
@@ -62,15 +67,6 @@ the portable package.
 
 Windows binaries remain unsigned, so SmartScreen may show its standard
 unknown-publisher warning.
-
-## SHA-256
-
-- `Ferail-0.7.4.dmg` — `694cbd3253e9cf65e0bfab2e784c25c2d477d614560a22d7ab7456f3f8b63e71`
-- `Ferail-0.7.4-win-x64-setup.exe` — `8bb2386705638018241ae953f5a4c86a1bb423d7f052a0c0ede164ea83d46c4e`
-- `Ferail-0.7.4-win-x64.zip` — `6a359396d1511b9bcde85dd20dbf5aaab1e5f0dc76a73abec6508074b5d0bd81`
-- `Ferail-0.7.4-x64-symbols.zip` — `844376944c7a17af2241ad02015b19a566575692c55fa33a31ebd432fbcb15d4`
-- `ferail_0.7.4-1_amd64.deb` — `0ae91352e1b67ef9a2611428d025e4fb246c4847ce3cfd7c3f5fb6097dc206cb`
-- `ferail_0.7.4-1_arm64.deb` — `4f53d4d311dbc2411a28b1ba2804f2fe9a747a8b0de579fa2405adf7a7302274`
 
 The full technical history is in [CHANGELOG.md](CHANGELOG.md), and reporting
 instructions are in [docs/REPORTING_BUGS.md](docs/REPORTING_BUGS.md).
