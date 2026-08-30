@@ -45,7 +45,7 @@ ferail-shell-aros   = { path = "crates/ferail-shell-aros" }
 ferail-video-mpv    = { path = "crates/ferail-video-mpv" }
 
 # Still needed by ferail-shell-mac for the winit-window-taking subset
-# (begin_drag, show_context_menu, install_services_anchor, etc.) — those
+# (begin_drag, show_context_menu, install_services_anchor, etc.), those
 # functions are unreachable through the `platform_shell` alias today but
 # kept for parity / a possible re-introduction; revisit when the shell
 # surface is pruned.
@@ -72,18 +72,18 @@ md-5        = "0.10"
 sha1        = "0.10"
 
 # Bulk-rename pattern rules (docs/features/BULK_RENAME.md): user-supplied
-# find/replace patterns with $1..$9 capture refs. MIT/Apache-2.0 — clean
+# find/replace patterns with $1..$9 capture refs. MIT/Apache-2.0: clean
 # for the dual-licensed release.
 regex       = "1"
 
 # Status-bar app-footprint segment (docs/features/SYSTEM_STATS.md): process
-# CPU / RSS / run-time sampling. `system` only — no disk/network/component
+# CPU / RSS / run-time sampling. `system` only, no disk/network/component
 # probes. Same 0.31 line the graph already carries via zed-scap, so this
 # adds no second copy.
 sysinfo     = { version = "0.31", default-features = false, features = ["system"] }
 
 # Media tags (docs/features/MEDIA-TAGS.md): one parser for ID3v1/v2 (mp3 +
-# WAV/AIFF chunks), MP4 atoms, Vorbis comments (flac/ogg/opus), and APE —
+# WAV/AIFF chunks), MP4 atoms, Vorbis comments (flac/ogg/opus), and APE:
 # tags, audio properties, and embedded cover art. Pure Rust, MIT/Apache-2.0.
 # Its MSRV (1.85) is what set this workspace's rust-version.
 lofty       = "0.24"
@@ -91,7 +91,7 @@ lofty       = "0.24"
 # in-repo AROS-aware copy, so every target resolves the same implementation.
 filetime    = "0.2"
 
-# External — new stack (ferail-gpui).
+# External: new stack (ferail-gpui).
 #
 # Pinning strategy: `gpui-component` is pinned to a specific rev (it
 # is our higher-level coupling and we want updates to be deliberate).
@@ -116,20 +116,20 @@ filetime    = "0.2"
 gpui = { git = "https://github.com/zed-industries/zed", features = ["profiler"] }
 # wayland + x11 enable gpui_linux's compositor backends (gpui_platform's
 # wayland/x11 features pull gpui_linux/wayland|x11). Without them the Linux
-# build compiles but panics at startup — guess_compositor() returns "Wayland"
+# build compiles but panics at startup: guess_compositor() returns "Wayland"
 # and hits the unreachable arm. No-op on macOS/Windows (gpui_linux is
 # Linux-only there).
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "wayland", "x11"] }
 # Real HTTP for gpui's `cx.http_client()` (gpui itself installs a
-# NullHttpClient). Same zed source as gpui — the lock resolves them to one
-# rev — and its `zed-reqwest`/tokio underpinnings are already in the graph
+# NullHttpClient). Same zed source as gpui: the lock resolves them to one
+# rev, and its `zed-reqwest`/tokio underpinnings are already in the graph
 # via gpui-component-assets, so this adds the thin wrapper only. Powers the
 # update check (docs/features/UPDATES.md).
 reqwest_client = { git = "https://github.com/zed-industries/zed" }
 # `tree-sitter-languages` pulls in the full tree-sitter grammar set so
 # the preview pane's TextView highlights fenced code blocks (and
 # markdown code) for every language (docs/features/PREVIEW.md). Each
-# grammar is a C-compiled crate — a real but one-time build cost.
+# grammar is a C-compiled crate: a real but one-time build cost.
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781" }
 gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781" }
@@ -138,11 +138,11 @@ gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54e
 # present in every clone and on CI.
 #
 # `ztracing` (and its satellites `ztracing_macro` and `zlog`) are GPL-3.0,
-# and gpui depends on ztracing directly as of zed 00cba838a — previously the
+# and gpui depends on ztracing directly as of zed 00cba838a: previously the
 # only edge was via `sum_tree`, which we severed with a vendored fork (see
 # git history for vendor/sum-tree). Outside Zed's own `--cfg ztracing`
 # profiling builds the crate is pure no-ops, so `vendor/ztracing` is a
-# clean-room MIT/Apache no-op stub — behaviourally identical, not
+# clean-room MIT/Apache no-op stub: behaviourally identical, not
 # GPL-derived. Patching it also drops ztracing_macro and zlog from the
 # graph and made the sum_tree fork unnecessary. See vendor/ztracing/README.md.
 # Verify with:
@@ -157,7 +157,7 @@ ztracing = { path = "vendor/ztracing" }
 gpui_windows = { path = "vendor/gpui_windows" }
 
 # `tar` gates its path<->bytes conversion, symlink, permission and xattr
-# helpers on cfg(unix)/cfg(windows)/wasm32, and AROS is none of those — the
+# helpers on cfg(unix)/cfg(windows)/wasm32, and AROS is none of those: the
 # crate simply does not compile for the target. `vendor/tar` is upstream
 # 0.4.46 plus AROS arms; byte-identical behaviour everywhere else, so unlike
 # the sibling-checkout patches this one is safe (and required) on every
@@ -170,7 +170,7 @@ tar = { path = "vendor/tar" }
 # copy uses block2's inhabited ABI model; see vendor/block/README.md.
 block = { path = "vendor/block" }
 
-# Same story, same reason — upstream has no AROS arm and the crate does not
+# Same story, same reason: upstream has no AROS arm and the crate does not
 # compile for the target. Both are copies of zed-aros/vendor-aros (whose AROS
 # work these are), kept here so Ferail's build does not depend on a sibling
 # checkout for something every platform links.
@@ -178,8 +178,8 @@ block = { path = "vendor/block" }
 # `filetime` is patched **globally** rather than only from the AROS config on
 # purpose. A version-differing patch that is only present for AROS
 # invocations goes silently inert the moment any host `cargo` command
-# re-resolves the lock to a newer registry version — cargo will not downgrade
-# to a patch, it just drops it — and the AROS build then fails with the
+# re-resolves the lock to a newer registry version: cargo will not downgrade
+# to a patch, it just drops it, and the AROS build then fails with the
 # original "no libc for this target" errors. Patching here means the vendored
 # copy is the only filetime any build can see, on any target.
 #
@@ -190,11 +190,11 @@ block = { path = "vendor/block" }
 # from std Metadata and reports set-times unsupported.
 filetime = { path = "vendor/filetime" }
 
-# NOTE — the AROS `[patch]` entries deliberately do NOT live here.
+# NOTE: the AROS `[patch]` entries deliberately do NOT live here.
 #
 # The AROS port needs four source overrides (gpui, gpui_platform,
 # gpui-component[-assets], plus AROS-only source shims) that resolve to
-# **sibling checkouts** — `../zed-aros`, `../gpui-component-aros`. Unlike the
+# **sibling checkouts**: `../zed-aros`, `../gpui-component-aros`. Unlike the
 # in-repo path above, a *sibling* path in this shared manifest is a hard
 # requirement on every machine that builds the repo: cargo resolves `[patch]`
 # before it does anything else, so a missing sibling is not a degraded build, it
@@ -211,14 +211,14 @@ filetime = { path = "vendor/filetime" }
 # of paths that are not committed inside the repo.
 
 [profile.dev]
-# Text rasterization is sluggish at -Copt-level=0 — keep some optimization in dev.
+# Text rasterization is sluggish at -Copt-level=0: keep some optimization in dev.
 opt-level = 1
 
 [profile.release]
 lto = true
 codegen-units = 1
 # Unwind (not abort) so GPUI's per-frame `catch_unwind` can absorb a stray
-# paint/event panic and keep the window alive — the prime directive ("the UI
+# paint/event panic and keep the window alive: the prime directive ("the UI
 # must never stop") outweighs the small size win of aborting. The obs panic
 # hook still prints a crash report either way.
 panic = "unwind"
