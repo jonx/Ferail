@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.6 - 2026-08-30
+
 - **Enter in a path or filter field now uses exactly what you typed.**
   Pasting a folder path that contains subfolders and pressing Enter used
   to append the first suggested subfolder, landing you somewhere you

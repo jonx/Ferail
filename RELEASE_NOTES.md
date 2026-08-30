@@ -1,67 +1,74 @@
-# Ferail 0.7.5 — Direct editing and smoother large folders
+# Ferail 0.7.6 - Built-in editors and a Disk Usage you can search
 
-This release makes everyday file work more direct and keeps Ferail responsive
-when folders, searches and background results become very large.
+This release adds two small editors so routine fixes no longer leave the file
+manager, makes Disk Usage searchable in place, and settles how keyboards behave
+in every field that offers suggestions.
 
-## Edit and navigate where you are
+## Edit without leaving Ferail
 
-- Rename files and folders directly in list or icon view with F2 or Rename.
-  Ferail selects a file's stem without swallowing its extension, validates the
-  new name as you type, accepts with Enter or a click elsewhere, and cancels
-  with Escape.
-- The path bar, Go to Folder and filter are compact single-line controls with
-  useful completion. Windows paths stay readable and never expose the internal
-  `\\?\` prefix.
-- Search tokens such as `kind:` offer their values in place, while Escape and
-  the clear control make it quick to start over.
+- **Text files.** Right-click a file and choose Edit, or press Cmd+E, to open a
+  small dedicated window with undo, find, line numbers and syntax highlighting
+  by file type. Saving keeps the file's identity (tags, permissions, creation
+  date) and its exact line-ending and BOM shape, and always writes the new text
+  durably to disk before touching the original. Files too large or not text are
+  politely refused with a one-click hand-off to the system editor.
+- **Images.** Choose Edit Image to black out sensitive areas (rectangle or
+  brush, always opaque) or annotate them in seven colours and three brush
+  sizes, with step-by-step undo. Cmd+S saves an "edited" copy beside the
+  original, which is never touched by default; Cmd+Shift+S overwrites it after
+  an explicit confirmation. Edits always render at the image's full resolution.
+  Covers PNG, JPEG, BMP, TIFF and WebP; GIF is excluded so animations cannot be
+  silently flattened.
+- Both editors zoom (Cmd+= / Cmd+- / Cmd+0), carry an icon toolbar with
+  shortcut tooltips, and offer a location button that returns to the exact tab
+  the file came from and reselects it.
 
-## Large folders remain interactive
+## Disk Usage answers questions
 
-- Ordinary folders, recursive searches, duplicate results and folder-size
-  updates now use finite queues and time-sliced interface updates. Ferail keeps
-  every result, but background work waits instead of consuming unlimited
-  memory or monopolising the window.
-- Hidden tabs continue collecting results without causing invisible redraws;
-  returning to one refreshes it once and warms only the visible rows.
-- Rapid preview selection keeps the active request and the newest request,
-  cancels obsolete work cooperatively, and leaves the final selection in
-  control.
-- Rectangle selection is restored in list view. Drag from empty space across
-  rows and use Shift/Cmd/Ctrl to extend the current selection without scanning
-  the complete directory.
+- The filter field now filters the treemap you already scanned instead of
+  replacing it with a generic search. The full map stays visible with
+  non-matches dimmed, and an icon toggle redraws the map and the side list from
+  matching files only.
+- Filtering never restarts or waits for a scan: a bounded queue holds incoming
+  facts while a debounced, cancellable background projection reads a stable
+  snapshot, then the same scan resumes.
+- Nested folder labels no longer show through their children. The layout
+  reserves an exact label strip per container, and both the live view and the
+  HTML export clip names to it.
+- Clicking a deeply nested file in the largest-files list highlights its
+  nearest visible ancestor when the exact tile is below the drawing depth.
 
-## Clearer and safer presentation
+## Keyboards behave predictably
 
-- Suspicious control characters, unusual whitespace, bidirectional marks and
-  homoglyphs remain visibly warned even when a narrow Name column elides the
-  dangerous part of a filename.
-- Back, Forward and Parent navigation reveal the intended item after streamed
-  loading and sorting instead of following a temporary row number.
-- Narrow sidebars, Settings rows, search controls and the Disk Usage header now
-  adapt more cleanly as the window is resized.
-- Ferail's public privacy policy documents local processing, diagnostics,
-  update checks and how to remove saved application data.
-- Archive browsing uses compact icon actions, content-based opening for
-  extensionless and ZIP-based package files, and preview-on-Enter/double-click
-  without silently extracting a permanent copy. Directory quarantine removal
-  is recursive, cancellable and does not follow links or reparse points.
+- Enter in a path or filter field now uses exactly what the field holds.
+  Pasting a folder path that contains subfolders used to append the first
+  suggestion; completion is now opt-in with Tab, and Up/Down move the
+  highlight.
+- Escape unwinds transient interface consistently: it closes suggestions before
+  clearing a query, cancels inline edits, leaves docked result surfaces, hides
+  the preview pane, and closes secondary windows. Unsaved editor work still
+  requires an explicit Save, Discard or Cancel.
+- `type:` is accepted as a friendly alias for `kind:`, token suggestions remain
+  available after a plain-name term, and choosing one appends the criterion
+  instead of replacing the search.
+- Every secondary window Ferail opens is listed in the Window menu and removed
+  from it the moment it closes.
 
-## Windows reliability
+## Presentation and performance
 
-- Fast NTFS verifies that its administrator helper exactly matches this build
-  before asking Windows to elevate it. A missing, stale or replaced helper now
-  falls back to Portable Disk Usage instead of running an unexpected program.
-- The Windows rendering stack and GPUI integration have been updated, including
-  the native drag image path and current input/window behavior.
-- Headless captures no longer inherit the Fast NTFS preference, so automated
-  screenshots cannot display an elevation prompt or wait on a helper.
-
-## Platform polish
-
-- macOS warms native folder artwork only for visible rows, restoring consistent
-  folder icons without sweeping a huge directory.
-- Icons-only sidebars use less space, stay centred in narrow windows and expose
-  every location name in a tooltip.
+- Horizontal scrolling returned to the bottom of the list view, and keyboard
+  column navigation moves headers and rows in the same frame.
+- The command palette now uses the maintained upstream Command control, so
+  search, grouping, shortcut hints and arrow-key navigation share one
+  implementation.
+- The filter autocomplete popover can grow independently of the narrow
+  title-bar field, and tab close buttons sit to the left of their labels so the
+  pointer stays put while several tabs are closed in a row.
+- An opt-in performance HUD (`--performance-hud`, or the command palette)
+  reports frame timing and process resources without forcing redraws.
+- Open With fills its submenu without rebuilding the context menu, and very
+  large text previews are bounded on whole visual lines instead of growing
+  layout without limit.
 
 ## Downloads
 
