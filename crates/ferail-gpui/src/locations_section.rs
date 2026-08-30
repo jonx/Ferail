@@ -1,14 +1,14 @@
 //! The sidebar's "Locations" section.
 //!
 //! Locations used to render through gpui-component's `SidebarMenu`, which
-//! offers no drop hooks at all — so Downloads, Desktop, and friends silently
+//! offers no drop hooks at all, so Downloads, Desktop, and friends silently
 //! rejected every drag while Favorites and the Browse tree accepted them. The
 //! rows are drawn here instead, as ordinary elements, so a Location is a drop
 //! target with the same accent ring every other target uses:
 //!
 //! * files dragged from the file list / Finder transfer into the folder,
 //! * archive members extract into it (typed drag *and* the cross-window
-//!   native promise session, which carries no GPUI payload — see
+//!   native promise session, which carries no GPUI payload: see
 //!   `docs/GPUI-UPSTREAM.md` #11).
 //!
 //! Visuals stay what `SidebarMenu` gave: the per-location glyph, the iCloud
@@ -28,7 +28,7 @@ use ferail_core::platform_locations::{PathBackedRootState, PlatformRootId};
 use ferail_fs_native::CloudState;
 
 /// One Locations row, resolved by the shell at build time. Everything here is
-/// cached state — rendering a row never touches the filesystem.
+/// cached state, rendering a row never touches the filesystem.
 #[derive(Clone)]
 pub struct LocationRow {
     pub node_id: ferail_core::NodeId,
@@ -506,7 +506,7 @@ fn render_location_row(
     cx: &App,
 ) -> AnyElement {
     // Row builders can run during layout/prepaint, outside `Shell::render`'s
-    // own guard — re-enter it so an icon cache miss returns the placeholder
+    // own guard: re-enter it so an icon cache miss returns the placeholder
     // instead of a synchronous NSWorkspace fetch (parity with tree.rs).
     let _render_guard = ferail_core::path_guard::enter_render();
     let theme = cx.theme();

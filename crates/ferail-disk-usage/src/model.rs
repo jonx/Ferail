@@ -54,7 +54,7 @@ pub struct DiskUsageNode {
     pub display_name: String,
     /// True when the path resolves under a known cloud-storage root
     /// (`~/Library/Mobile Documents/` on macOS). Coarse path-prefix
-    /// detection — doesn't tell you whether a given file is
+    /// detection: doesn't tell you whether a given file is
     /// downloaded vs a placeholder. Surfaced as a cloud-glyph overlay
     /// in the DU window.
     pub is_cloud: bool,

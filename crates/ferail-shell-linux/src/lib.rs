@@ -3,14 +3,14 @@
 //! This crate is the Linux arm of the `platform_shell` indirection (see
 //! [`ferail_gpui::platform_shell`] and `docs/features/linux-port.md`). Its
 //! job is to mirror the public `pub fn` surface that `ferail-gpui` reaches
-//! through `crate::platform_shell::*`, so that the app compiles, links, and —
-//! increasingly — *works* on `target_os = "linux"`.
+//! through `crate::platform_shell::*`, so that the app compiles, links, and
+//! (increasingly) *works* on `target_os = "linux"`.
 //!
 //! ## Pattern
 //!
 //! Every function has a real implementation behind `#[cfg(target_os = "linux")]`
 //! and a no-op twin behind `#[cfg(not(target_os = "linux"))]`. The twin exists
-//! purely so the crate still compiles on macOS/Windows as a workspace member —
+//! purely so the crate still compiles on macOS/Windows as a workspace member:
 //! it is never reached through the alias, because cargo only links the matching
 //! shell crate per target. Shared types are declared unconditionally with
 //! identical shape across all three shell crates so they round-trip through the
@@ -25,7 +25,7 @@
 //!
 //! The signatures below are the exact subset of `ferail-shell-mac` /
 //! `ferail-shell-win32` that gpui invokes through the alias. Callback bounds
-//! match **macOS** (`Box<dyn Fn(..) + 'static>`, no `Send`) — the proven-green
+//! match **macOS** (`Box<dyn Fn(..) + 'static>`, no `Send`): the proven-green
 //! contract. `docs/features/linux-port.md` §6 maps every still-stubbed function
 //! to the freedesktop / D-Bus / XDG mechanism to reach for; run all blocking
 //! work off the UI thread.
@@ -34,7 +34,7 @@
 //! `reveal_in_finder`, `open_terminal`, `system_is_dark`, `open_with_app`,
 //! `open_with_candidates` (freedesktop MIME + `.desktop` scan), and
 //! `copy_to_clipboard` (plain text via `arboard`). Still stubbed: the file-URL
-//! clipboard, thumbnails, the dark/volume/power observers, and video — these
+//! clipboard, thumbnails, the dark/volume/power observers, and video: these
 //! need richer `ashpd`/`zbus`/`gstreamer` integration (linux-port.md §6).
 //! (Trash and download-provenance live in `ferail-fs-native`, not here.)
 
@@ -72,7 +72,7 @@ pub enum SetIconResult {
     DecodeFailed,
 }
 
-/// RAII guard that keeps the system awake while held — twin of shell-mac's
+/// RAII guard that keeps the system awake while held: twin of shell-mac's
 /// `SleepBlocker`. On Linux it owns a `systemd-inhibit` child holding an `idle`
 /// inhibitor lock; dropping the guard kills the child, releasing the lock. The
 /// shape differs per platform (it carries a `Child` only on Linux), which is
@@ -98,26 +98,26 @@ pub struct SleepBlocker;
 // =============================================================
 
 /// Configure the About-panel text. No global menu bar on Linux (the title-bar
-/// hamburger covers about/settings) — no-op for v1.
+/// hamburger covers about/settings), no-op for v1.
 pub fn set_about_options(_app_name: &str, _tagline: &str, _version: &str, _copyright: &str) {}
 
 /// Show the About panel. No-op until an in-window about surface exists.
 pub fn show_about_panel() {}
 
 /// Whether a "Show Desktop" affordance is available. Linux has no portable
-/// minimize-all primitive across compositors — `false` hides the menu item.
+/// minimize-all primitive across compositors: `false` hides the menu item.
 pub fn show_desktop_available() -> bool {
     false
 }
 
 /// Minimize-all / show desktop. Returns whether it acted. No portable Linux
-/// equivalent yet — `false`.
+/// equivalent yet: `false`.
 pub fn show_desktop() -> bool {
     false
 }
 
 /// Raise every app window preserving z-order (macOS `arrangeInFront:`).
-/// No portable Linux/AROS primitive — `false` makes the caller fall
+/// No portable Linux/AROS primitive: `false` makes the caller fall
 /// back to raising each window through gpui.
 pub fn bring_all_windows_to_front() -> bool {
     false
@@ -175,7 +175,7 @@ pub fn edit_text_file(_path: &Path) -> std::io::Result<()> {
 /// implement it, and it highlights the item in its parent), falling back to
 /// opening the parent directory with `xdg-open`.
 ///
-/// Blocks for the D-Bus method REPLY (`--print-reply`) — without it,
+/// Blocks for the D-Bus method REPLY (`--print-reply`), without it,
 /// `dbus-send` exits 0 the moment the message is *sent*, so on
 /// desktops with no FileManager1 implementation (i3/sway/minimal) the
 /// "success" was a lie and the xdg-open fallback was dead code.
@@ -232,8 +232,8 @@ pub fn open_terminal(path: &Path) {
 /// A custom program is spawned as-is; otherwise the detection chain runs:
 /// `$TERMINAL`, then the Debian `x-terminal-emulator` alternative, then a
 /// probe list of common emulators. Either way the child inherits
-/// `current_dir(path)` — how virtually every emulator picks its initial
-/// shell directory — and any custom params (with `{dir}` expanded) are
+/// `current_dir(path)`: how virtually every emulator picks its initial
+/// shell directory, and any custom params (with `{dir}` expanded) are
 /// passed along. Admin mode appends the emulator's exec tokens plus
 /// `sudo -s`, so the terminal opens straight into a root shell with the
 /// password prompt inside it (there is no portable "launch this GUI app
@@ -394,7 +394,7 @@ fn parse_desktop_entry(content: &str) -> DesktopEntry {
         };
         match key.trim() {
             "Type" => de.entry_type = Some(val.trim().to_string()),
-            // Unlocalized Name only — `Name[fr]` falls through to `_`.
+            // Unlocalized Name only: `Name[fr]` falls through to `_`.
             "Name" => de.name = Some(val.trim().to_string()),
             "MimeType" => {
                 de.mimetypes = val
@@ -531,7 +531,7 @@ pub fn copy_to_clipboard(_text: &str) {}
 
 /// Copy file paths to the clipboard as `text/uri-list` `file://` URIs (plus
 /// the GNOME `x-special/gnome-copied-files` target for Nautilus interop).
-/// Stub — needs Wayland/X11 selection access (`wl-clipboard` / `xclip` / a
+/// Stub: needs Wayland/X11 selection access (`wl-clipboard` / `xclip` / a
 /// native protocol client). Returns `false` so callers surface "not
 /// available" instead of a lying success toast (the `is_dir` half of
 /// each item is a mac-pasteboard need).
@@ -565,7 +565,7 @@ pub fn clipboard_read_file_urls_with_operation() -> (Vec<PathBuf>, ClipboardFile
 /// Duplicate a path in place. Mirrors the win32 `std::fs` implementation with a
 /// Linux-flavoured copy-name convention: `stem (copy).ext`, then
 /// `stem (copy N).ext`. Directories are copied recursively; symlinks inside a
-/// directory are skipped (never followed — avoids cycles and dangling-link
+/// directory are skipped (never followed: avoids cycles and dangling-link
 /// copy errors).
 #[cfg(target_os = "linux")]
 pub fn duplicate_path(src: &Path) -> Result<PathBuf, String> {
@@ -607,12 +607,12 @@ pub fn duplicate_path(_src: &Path) -> Result<PathBuf, String> {
 }
 
 /// Unmount and eject the volume mounted at `path`, Finder-style:
-/// unmount the filesystem, then — once nothing else on the same drive
-/// is mounted — power the drive down so it's safe to unplug.
+/// unmount the filesystem, then, once nothing else on the same drive
+/// is mounted: power the drive down so it's safe to unplug.
 ///
 /// `udisksctl` does the heavy lifting (the desktop-standard udisks2
 /// path; works without root for seat-local users), with a plain
-/// `umount` fallback for setups without udisks. Synchronous — callers
+/// `umount` fallback for setups without udisks. Synchronous: callers
 /// dispatch from a worker. The power-off step is best-effort: by then
 /// the volume the caller named is already unmounted.
 #[cfg(target_os = "linux")]
@@ -626,7 +626,7 @@ pub fn eject_volume(_path: &Path) -> Result<(), String> {
 }
 
 /// Unmount every volume in `volume_paths` (mount points on one physical
-/// device), then power the device down — Finder's "Eject All". A single
+/// device), then power the device down: Finder's "Eject All". A single
 /// path is the plain eject. If any unmount fails, the power-off is
 /// skipped and the first error returned (already-unmounted siblings
 /// stay unmounted, like Finder).
@@ -677,7 +677,7 @@ pub fn eject_device(_volume_paths: &[&Path]) -> Result<(), String> {
 
 /// Unmount one filesystem: udisksctl first (the desktop-standard path),
 /// plain `umount` as fallback for setups without udisks. When both
-/// fail, surface the udisks error — it's the more descriptive one
+/// fail, surface the udisks error: it's the more descriptive one
 /// ("target is busy", polkit denial, …).
 #[cfg(target_os = "linux")]
 fn unmount_filesystem(source: &str, mount_point: &Path) -> Result<(), String> {
@@ -693,7 +693,7 @@ fn unmount_filesystem(source: &str, mount_point: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Names of processes holding files open on the volume at `path` — the
+/// Names of processes holding files open on the volume at `path`: the
 /// "why won't it eject" answer for a failed unmount. Scans
 /// `/proc/<pid>/fd/*` and `/proc/<pid>/cwd` symlinks for targets inside
 /// the mount point (what `lsof` does); without root this only sees the
@@ -759,8 +759,8 @@ pub fn activate_app(_pid: i32) -> bool {
 }
 
 /// Run a command to completion; `Err` carries trimmed stderr (or the
-/// spawn error) so eject failures surface *why* — "target is busy",
-/// polkit denials — instead of a bare exit status.
+/// spawn error) so eject failures surface *why*: "target is busy",
+/// polkit denials, instead of a bare exit status.
 #[cfg(target_os = "linux")]
 fn run_checked(cmd: &mut std::process::Command) -> Result<(), String> {
     let program = cmd.get_program().to_string_lossy().into_owned();
@@ -800,13 +800,13 @@ fn mount_source_for(path: &Path) -> Option<String> {
 /// Parent disk name for a mount source: "/dev/sdb1" → "sdb",
 /// "/dev/nvme0n1p2" → "nvme0n1". Resolved through sysfs (a partition's
 /// `/sys/class/block/<name>` entry lives inside its disk's directory);
-/// a whole-disk source maps to itself. `None` when unsure — safer to
+/// a whole-disk source maps to itself. `None` when unsure: safer to
 /// skip the power-off than to power off the wrong drive.
 #[cfg(target_os = "linux")]
 fn parent_disk_of(source: &str) -> Option<String> {
     let name = source.strip_prefix("/dev/")?;
     if name.contains('/') {
-        return None; // /dev/mapper/… — don't guess.
+        return None; // /dev/mapper/…: don't guess.
     }
     let sys = Path::new("/sys/class/block").join(name);
     if sys.join("partition").exists() {
@@ -821,7 +821,7 @@ fn parent_disk_of(source: &str) -> Option<String> {
 }
 
 /// True when any filesystem is still mounted from a partition (or the
-/// whole device) of `disk` per `/proc/self/mounts` — gates the
+/// whole device) of `disk` per `/proc/self/mounts`: gates the
 /// post-unmount `power-off`.
 #[cfg(target_os = "linux")]
 fn disk_has_mounted_filesystems(disk: &str) -> bool {
@@ -859,7 +859,7 @@ fn unescape_mounts(s: &str) -> String {
     out
 }
 
-/// Make an "alias" to `target` beside it — a POSIX symlink named
+/// Make an "alias" to `target` beside it: a POSIX symlink named
 /// `stem (link).ext` (next free `stem (link N).ext`). The macOS alias / Windows
 /// `.lnk` concept maps cleanly to a symlink here.
 #[cfg(target_os = "linux")]
@@ -923,7 +923,7 @@ pub fn make_alias_in(_target: &Path, _dest_dir: &Path) -> Result<PathBuf, String
 /// `(N)` suffix if taken (capped at 99). Deflate at the `zip` crate's default
 /// level. Directories are walked recursively; symlinks are skipped (a link
 /// cycle would otherwise grow the walk forever, and archiving link targets via
-/// their parent double-stores content). Platform-neutral — identical to the
+/// their parent double-stores content). Platform-neutral: identical to the
 /// win32 implementation. Call on a worker thread; large archives take seconds.
 pub fn compress_paths(targets: &[&Path]) -> Result<PathBuf, String> {
     use std::io::Write;
@@ -1031,26 +1031,26 @@ fn walk_into_zip(
 // Quick Look equivalent (preview / thumbnails)
 // =============================================================
 
-/// Pop a system preview for `paths`. No Quick Look on Linux — route to the
+/// Pop a system preview for `paths`. No Quick Look on Linux: route to the
 /// in-app preview pane (or optional `sushi` shell-out). Stub.
 pub fn show_quick_look(_paths: &[&Path]) -> Result<(), String> {
     Err("show_quick_look: not available on Linux".into())
 }
 
-/// Fetch a content thumbnail as straight RGBA8 `(bytes, width, height)` — the
+/// Fetch a content thumbnail as straight RGBA8 `(bytes, width, height)`: the
 /// same contract as `fetch_icon_rgba` (the gpui side swaps to BGRA when it
 /// builds the `RenderImage`).
 ///
 /// Rides the **shared freedesktop thumbnail cache** (`$XDG_CACHE_HOME/
 /// thumbnails/{normal,large,x-large,xx-large}/<md5(file-uri)>.png`) so a
-/// thumbnail Nautilus already generated returns instantly from disk — and a
+/// thumbnail Nautilus already generated returns instantly from disk, and a
 /// thumbnail we generate is reusable by other file managers. On a miss (or a
-/// stale entry — the source is newer than the cached PNG) it regenerates with
+/// stale entry: the source is newer than the cached PNG) it regenerates with
 /// `gdk-pixbuf-thumbnailer`, which writes the spec `Thumb::*` tEXt chunks.
 ///
 /// v1 covers what gdk-pixbuf loads (images). Video poster frames and PDF first
 /// pages need their own thumbnailers (totem/evince) or the Tumbler D-Bus
-/// service that dispatches to all registered thumbnailers — a follow-up; those
+/// service that dispatches to all registered thumbnailers: a follow-up; those
 /// simply return `None` here and fall back to the type icon.
 ///
 /// Off the render path (the gpui thumbnail warmer runs this on the background
@@ -1098,14 +1098,14 @@ pub fn fetch_quick_look_thumbnail(_path: &Path, _size_px: u32) -> Option<(Vec<u8
     None
 }
 
-/// The preview pane's fetch — same as [`fetch_quick_look_thumbnail`] here;
+/// The preview pane's fetch, same as [`fetch_quick_look_thumbnail`] here;
 /// Windows separates the two tiers because its shell thumbnails and its
 /// preview handlers are different things.
 pub fn fetch_preview_image(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     fetch_quick_look_thumbnail(path, size_px)
 }
 
-/// Last-resort large type image — Linux callers draw their own type
+/// Last-resort large type image: Linux callers draw their own type
 /// glyphs when every content tier fails, so there is nothing to add here.
 pub fn fetch_type_icon(_path: &Path, _size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     None
@@ -1134,7 +1134,7 @@ fn thumb_bucket(size_px: u32) -> (&'static str, u32) {
     }
 }
 
-/// Lowercase-hex MD5 of the file URI — the freedesktop thumbnail cache key.
+/// Lowercase-hex MD5 of the file URI: the freedesktop thumbnail cache key.
 #[cfg(target_os = "linux")]
 fn thumb_md5(uri: &str) -> String {
     use md5::{Digest, Md5};
@@ -1153,7 +1153,7 @@ fn decode_png_rgba(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 // =============================================================
-// Get Info — shell facts (the NSURL-resource-values equivalent)
+// Get Info: shell facts (the NSURL-resource-values equivalent)
 // =============================================================
 
 /// Shell-sourced Get Info facts. Shape mirrored from
@@ -1178,14 +1178,14 @@ pub fn read_shell_info(_path: &Path) -> ShellInfo {
     ShellInfo::default()
 }
 
-/// Set the per-file "Hide extension" flag — a macOS Finder concept with no
+/// Set the per-file "Hide extension" flag: a macOS Finder concept with no
 /// Linux equivalent. Mirrors `ferail_shell_mac::set_hidden_extension`.
 pub fn set_hidden_extension(_path: &Path, _hide: bool) -> Result<(), String> {
     Err("hiding the extension per-file is macOS-only".into())
 }
 
 // =============================================================
-// Tags (Finder color tags) — no portable Linux equivalent
+// Tags (Finder color tags), no portable Linux equivalent
 // =============================================================
 
 /// No portable desktop-wide tag store is wired on Linux yet.
@@ -1248,7 +1248,7 @@ pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static>) {}
 // App identity / icon
 // =============================================================
 
-/// Swap the running app icon. **No-op on Linux** — icon identity comes from a
+/// Swap the running app icon. **No-op on Linux**: icon identity comes from a
 /// `.desktop` file + Wayland `app_id` / X11 `WM_CLASS`, not a runtime swap.
 pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) -> SetIconResult {
     SetIconResult::NotMacOs
@@ -1258,7 +1258,7 @@ pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) -> SetIconResult {
 /// Wayland `app_id`'s job).
 pub fn set_app_user_model_id(_id: &str) {}
 
-/// The app bundle path. No bundle concept on Linux — `None`.
+/// The app bundle path. No bundle concept on Linux: `None`.
 pub fn app_bundle_path() -> Option<String> {
     None
 }
@@ -1281,7 +1281,7 @@ pub fn start_power_observer(_callback: Box<dyn Fn(PowerEvent) + 'static>) {}
 /// child alive inside the [`SleepBlocker`]; dropping the guard kills it and
 /// releases the lock. `--what=idle` mirrors macOS's "prevent idle system sleep"
 /// (an explicit user suspend / lid close is still allowed). Returns `None` if
-/// `systemd-inhibit` isn't available (non-systemd host) — callers treat that as
+/// `systemd-inhibit` isn't available (non-systemd host): callers treat that as
 /// "couldn't inhibit", same as the macOS failure path.
 #[cfg(target_os = "linux")]
 pub fn prevent_idle_sleep(reason: &str) -> Option<SleepBlocker> {
@@ -1389,7 +1389,7 @@ pub fn video_overlay_step(_id: u64, _frames: i64) {}
 /// the caller does not wait on it. Used for launchers (`xdg-open`, terminals,
 /// apps) so a slow or chatty child never blocks the calling worker. Returns
 /// `Ok` once the child is spawned. A small named thread `wait()`s the child in
-/// the background so it doesn't linger as a zombie until app exit — launchers
+/// the background so it doesn't linger as a zombie until app exit: launchers
 /// like `xdg-open` exit quickly, so the reaper threads are short-lived.
 #[cfg(target_os = "linux")]
 fn spawn_detached(cmd: &mut std::process::Command) -> std::io::Result<()> {
@@ -1398,7 +1398,7 @@ fn spawn_detached(cmd: &mut std::process::Command) -> std::io::Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
-    // Best-effort: if the reaper thread can't start, the child still ran —
+    // Best-effort: if the reaper thread can't start, the child still ran:
     // it just won't be reaped until process exit (the old behavior).
     let _ = std::thread::Builder::new()
         .name("child-reaper".into())
@@ -1415,7 +1415,7 @@ fn spawn_detached(cmd: &mut std::process::Command) -> std::io::Result<()> {
 #[cfg(target_os = "linux")]
 fn file_uri(path: &Path) -> String {
     // Percent-encode from the RAW path bytes. The previous version
-    // pushed each byte ≥ 0x80 as a `char` — mapping UTF-8 bytes to
+    // pushed each byte ≥ 0x80 as a `char`: mapping UTF-8 bytes to
     // Latin-1 codepoints that were then re-encoded as UTF-8, so
     // "Résumé.pdf" produced a double-encoded mojibake URI the file
     // manager couldn't resolve. Per RFC 3986, everything outside the
@@ -1470,7 +1470,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 // `compress_paths` is platform-neutral, so its tests are **not** gated and run
 // on any host (`cargo test -p ferail-shell-linux` executes them on macOS).
 // The `duplicate_path` / `make_alias_in` / `file_uri` tests are gated to Linux
-// because the functions under test live behind `cfg(target_os = "linux")` —
+// because the functions under test live behind `cfg(target_os = "linux")`:
 // run them on a Linux host, or type-check with
 // `cargo check --target x86_64-unknown-linux-gnu -p ferail-shell-linux --tests`.
 #[cfg(test)]
@@ -1513,7 +1513,7 @@ mod tests {
 
     /// The `.desktop` scan core: visible `Application` entries declaring the
     /// MIME are offered (default first); hidden and non-matching entries are
-    /// not. Hermetic — points XDG at temp dirs, no desktop environment needed.
+    /// not. Hermetic: points XDG at temp dirs, no desktop environment needed.
     #[cfg(target_os = "linux")]
     #[test]
     fn open_with_candidates_scans_desktop_entries() {
@@ -1582,7 +1582,7 @@ mod tests {
 
         let first = compress_paths(&[f.as_path()]).unwrap();
         assert_eq!(first.file_name().unwrap(), "data.bin.zip");
-        // A second run must not overwrite the first — it bumps to " (2)".
+        // A second run must not overwrite the first: it bumps to " (2)".
         let second = compress_paths(&[f.as_path()]).unwrap();
         assert_eq!(second.file_name().unwrap(), "data.bin (2).zip");
     }
@@ -1598,7 +1598,7 @@ mod tests {
         assert_eq!(first.file_name().unwrap(), "notes (copy).txt");
         assert_eq!(std::fs::read(&first).unwrap(), b"hello");
 
-        // Second duplicate must not clobber the first — it bumps to "(copy 2)".
+        // Second duplicate must not clobber the first: it bumps to "(copy 2)".
         let second = duplicate_path(&src).unwrap();
         assert_eq!(second.file_name().unwrap(), "notes (copy 2).txt");
     }
@@ -1716,7 +1716,7 @@ pub struct LockScan {
     pub truncated: bool,
 }
 
-/// Processes holding open any file under `roots`. Stub — lands with the
+/// Processes holding open any file under `roots`. Stub: lands with the
 /// /proc/*/fd scan for `processes_using`.
 pub fn processes_using_tree(_roots: &[std::path::PathBuf], _max_files: usize) -> LockScan {
     LockScan::default()

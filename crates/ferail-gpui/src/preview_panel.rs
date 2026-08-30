@@ -1,7 +1,7 @@
 //! The preview pane, as a host-agnostic component.
 //!
 //! It used to be ~700 lines of `Shell` methods reading the active tab's
-//! selection directly. That made it unusable anywhere else — most visibly, an
+//! selection directly. That made it unusable anywhere else, most visibly, an
 //! archive workbench popped out into its own window had no preview, because
 //! the pane belonged to the Shell in the *other* window.
 //!
@@ -94,7 +94,7 @@ fn terminal_text(document: &crate::text_preview::TextPreviewDocument) -> StyledT
 /// What the host wants previewed.
 #[derive(Clone, Debug, Default)]
 pub enum PreviewTarget {
-    /// Nothing selected — the pane shows its empty state.
+    /// Nothing selected: the pane shows its empty state.
     #[default]
     None,
     /// A file or folder, with the row it came from (for name, size, kind).
@@ -105,7 +105,7 @@ pub enum PreviewTarget {
     /// A mounted volume, previewed as itself (a sidebar volume click lands
     /// here, since navigating clears the selection).
     Volume { path: PathBuf, name: String },
-    /// Content we already hold, with no file behind it — an archive entry we
+    /// Content we already hold, with no file behind it: an archive entry we
     /// decoded in memory rather than writing out. Renderers we own (text,
     /// images) take this path, so previewing an archive entry usually touches
     /// no disk at all.
@@ -132,7 +132,7 @@ impl std::fmt::Debug for PreviewContent {
     }
 }
 
-/// A stand-in row for content that has no listing entry of its own — an
+/// A stand-in row for content that has no listing entry of its own: an
 /// archive entry staged to a scratch file, labelled with its real name rather
 /// than the scratch filename.
 pub fn synthetic_entry(path: &std::path::Path, name: &str) -> FileEntry {
@@ -159,7 +159,7 @@ pub fn synthetic_entry(path: &std::path::Path, name: &str) -> FileEntry {
 }
 
 /// Raised when the pane's close button is pressed. The host decides what
-/// hiding means — the Shell clears `preview_visible`, the archive workbench
+/// hiding means: the Shell clears `preview_visible`, the archive workbench
 /// also switches its own preview toggle off.
 pub struct PreviewCloseRequested;
 
@@ -200,7 +200,7 @@ impl PreviewPanel {
         }
     }
 
-    /// Point the pane at something else. Cheap and idempotent — hosts call it
+    /// Point the pane at something else. Cheap and idempotent: hosts call it
     /// on every selection change.
     pub fn set_target(&mut self, target: PreviewTarget, cx: &mut Context<Self>) {
         let old_path = match &self.target {
@@ -350,11 +350,11 @@ impl PreviewPanel {
     ///
     /// `overflow_scroll`'s built-in handler runs just before this one (in the
     /// same bubble pass) and has already added the full wheel delta to
-    /// `preview_text_scroll`, unclamped — so `offset()` now sits *past* the
+    /// `preview_text_scroll`, unclamped, so `offset()` now sits *past* the
     /// top (positive) or bottom (below `-max_offset`) by exactly the part the
     /// box couldn't use. We forward that residual to `preview_scroll` and
-    /// `stop_propagation` so the outer pane's own handler — which would
-    /// otherwise apply the *whole* delta and double-scroll — never fires.
+    /// `stop_propagation` so the outer pane's own handler, which would
+    /// otherwise apply the *whole* delta and double-scroll, never fires.
     ///
     /// A short file (box not scrollable, `max_offset == 0`) spills the entire
     /// delta straight through, so its box never traps the wheel.
@@ -389,7 +389,7 @@ impl PreviewPanel {
     /// debounced save as the splitter widths. The drag anchor (mouse
     /// y + height at drag start) is snapped in the `on_drag`
     /// constructor; `on_drag_move` then applies the absolute delta,
-    /// so the box edge tracks the cursor 1:1 — no per-tick
+    /// so the box edge tracks the cursor 1:1, no per-tick
     /// accumulation drift, no dependence on the pane's scroll offset.
     fn preview_thumb_resize_grip(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let weak = cx.weak_entity();
@@ -550,9 +550,9 @@ impl PreviewPanel {
                 // Quick Look thumbnail (Stage 8 native preview).
                 // `preview::request` was kicked off when the row
                 // was selected; this just reads whatever the cache
-                // has — Loaded shows the bitmap, Pending shows a
+                // has: Loaded shows the bitmap, Pending shows a
                 // muted placeholder, Failed shows nothing.
-                // Folders have no file preview — show metadata only
+                // Folders have no file preview: show metadata only
                 // (no thumbnail/text box). Files get the media block.
                 let is_dir = matches!(entry.kind, EntryKind::Directory);
                 let private = crate::private_mode::enabled();
@@ -722,7 +722,7 @@ impl PreviewPanel {
                     // applies the delta to `preview_text_scroll` first; the
                     // `on_scroll_wheel` below then forwards only what spilled
                     // past the box's top/bottom to the outer `preview_scroll`,
-                    // so a long file scrolls the box, then reveals Get Info —
+                    // so a long file scrolls the box, then reveals Get Info,
                     // not both at once. `track_scroll` is what makes the box's
                     // offset readable for that math.
                     let block = div()
@@ -750,7 +750,7 @@ impl PreviewPanel {
                     } else {
                         let md =
                             crate::text_preview::to_markdown_source(&entry.name, &document.text);
-                        // Compact mono in code blocks, and don't wrap —
+                        // Compact mono in code blocks, and don't wrap:
                         // long lines scroll horizontally in the block
                         // above instead of folding.
                         let style = gpui_component::text::TextViewStyle::default().code_block(
@@ -764,7 +764,7 @@ impl PreviewPanel {
                         // stale text selection bleed onto the next file you
                         // previewed (it looked "already selected" on hover).
                         // A distinct id per file gives each a clean TextView
-                        // at the cost of re-parsing on file switch (cheap —
+                        // at the cost of re-parsing on file switch (cheap:
                         // the worker caps content to 500 lines, off-thread).
                         let view = gpui_component::text::TextView::markdown(
                             ("preview-textview", entry.id.as_raw() as usize),
@@ -831,7 +831,7 @@ impl PreviewPanel {
                     //
                     // Box height is user-adjustable via the resize grip
                     // below; the image fills whatever the box allows
-                    // (aspect preserved — gpui's img derives its
+                    // (aspect preserved: gpui's img derives its
                     // aspect_ratio from the bitmap's intrinsic size).
                     col = col.child(
                         div()
@@ -919,12 +919,12 @@ impl PreviewPanel {
                 };
                 col = col.child(name_header);
 
-                // The Get Info panel, embedded — the detail rows the
+                // The Get Info panel, embedded: the detail rows the
                 // preview used to show, now editable and complete. Cmd+I
                 // opens the same content as a standalone popup.
                 col = col.child(info_view);
 
-                // Quarantine surface — the red mark line, the
+                // Quarantine surface: the red mark line, the
                 // provenance the prefetch worker read off the xattr /
                 // Zone.Identifier record (source URL, referrer, agent
                 // + download time), and the clear action. All cached
@@ -970,7 +970,7 @@ impl PreviewPanel {
                         // used before hardcodes its label at `text_sm`
                         // and lets the value inherit the ambient size;
                         // its `.small()`/`.xsmall()` knob only changes
-                        // gap + padding, not font size — so it always
+                        // gap + padding, not font size, so it always
                         // rendered a notch larger than the rest of the
                         // pane.)
                         let muted = cx.theme().muted_foreground;
@@ -1022,7 +1022,7 @@ impl PreviewPanel {
                     }
                 }
 
-                // Action row — icon-only buttons with tooltips that
+                // Action row: icon-only buttons with tooltips that
                 // include the keyboard shortcut. No Get Info button here:
                 // the preview pane already shows the full Get Info panel,
                 // so the icon would just duplicate what's on screen (Cmd+I

@@ -22,23 +22,23 @@ The UI framework and component library. Each is licensed Apache-2.0; the
 Apache-2.0 license text is reproduced in [LICENSE-APACHE](LICENSE-APACHE).
 Per Apache-2.0 §4(d), the upstream attribution notices are preserved below.
 
-- **gpui**, **gpui_platform** — from the Zed editor project.
+- **gpui**, **gpui_platform**: from the Zed editor project.
   <https://github.com/zed-industries/zed>
   Copyright © 2022–2025 Zed Industries, Inc. Licensed under Apache-2.0.
   (The `gpui` crate is deliberately licensed Apache-2.0, separate from the
   GPL-licensed Zed editor crates in the same repository.)
 
-- **gpui-component**, **gpui-component-assets** — the UI primitives and the
+- **gpui-component**, **gpui-component-assets**: the UI primitives and the
   bundled icon assets. <https://github.com/longbridge/gpui-component>
   Copyright © 2024–2025 Longbridge. Licensed under Apache-2.0.
 
 ### GPL-3.0 severance (gpui → ztracing)
 
-**The current build contains no GPL-licensed code — because this repository
+**The current build contains no GPL-licensed code, because this repository
 severs the edge itself.** That is an active measure, not an upstream fix.
 
 `gpui` reaches three small **GPL-3.0-or-later** crates from the Zed
-repository — `ztracing` and, through it, `zlog` and `ztracing_macro` — which
+repository: `ztracing` and, through it, `zlog` and `ztracing_macro`: which
 would place copyleft obligations on any redistributed binary, despite `gpui`
 itself being Apache-2.0. Outside Zed's own `--cfg ztracing` profiling builds
 those crates are pure no-ops, so nothing is lost by removing them.
@@ -46,13 +46,13 @@ those crates are pure no-ops, so nothing is lost by removing them.
 The dependency **is present in the `gpui` revision resolved here**, and since
 zed `00cba838a` (2026-08-05) it is a *direct* `gpui → ztracing` edge, no
 longer just `gpui → sum_tree → ztracing`. It is severed by
-[`vendor/ztracing`](vendor/ztracing/README.md) — a **clean-room MIT/Apache
+[`vendor/ztracing`](vendor/ztracing/README.md): a **clean-room MIT/Apache
 no-op stub** with the same public surface, written from the API contract
-rather than derived from the GPL source — wired in through a `[patch]` in the
+rather than derived from the GPL source: wired in through a `[patch]` in the
 workspace `Cargo.toml`. Patching `ztracing` at the root keeps `zlog` and
 `ztracing_macro` out of the graph entirely, and retired the earlier
 `vendor/sum-tree` fork (a copy of Apache-2.0 `sum_tree` minus its ztracing
-use, sufficient only while `sum_tree` was ztracing's sole consumer — see git
+use, sufficient only while `sum_tree` was ztracing's sole consumer: see git
 history for that crate).
 
 > **Correction (0.2.2).** An earlier revision of this section stated the edge
@@ -61,7 +61,7 @@ history for that crate).
 > generated on a machine whose `[patch]` entries redirected `gpui` to an AROS
 > fork that happened to drop `ztracing`. A normal clone re-resolved against
 > upstream and pulled the GPL crates straight back in. **Do not treat the
-> lockfile alone as proof of the licence surface** — verify against the
+> lockfile alone as proof of the licence surface**: verify against the
 > resolved graph.
 
 Verification, which should print nothing:
@@ -78,7 +78,7 @@ Consequences worth knowing:
   Their empty output is what keeps a redistributable binary MIT/Apache.
 - Upstream tracks the same inconsistency at
   <https://github.com/zed-industries/zed/issues/55470>. It is acknowledged but
-  stuck in legal — do not assume it lands on a timeline. If it does, delete
+  stuck in legal: do not assume it lands on a timeline. If it does, delete
   `vendor/sum-tree` and the `[patch]` block.
 
 Ferail's own source is MIT/Apache-2.0 regardless; this matters for the
@@ -92,7 +92,7 @@ Three crates are vendored under `vendor/` unmodified except for additive
 `target_os = "aros"` arms, and patched in from the workspace `Cargo.toml`.
 AROS is not `unix`, `windows` or `wasm32`, and each of these matches
 exhaustively over exactly those, so upstream does not merely lose a feature on
-AROS — it fails to compile.
+AROS: it fails to compile.
 
 | Crate | Upstream version | Licence | Delta |
 |---|---|---|---|
@@ -101,7 +101,7 @@ AROS — it fails to compile.
 | `vendor/filetime` | 0.2.26 | MIT OR Apache-2.0 | AROS arm reading times from std `Metadata`; set-times reported unsupported |
 
 Each keeps its upstream `LICENSE-MIT` and `LICENSE-APACHE` as shipped, and each
-behaves byte-identically to upstream off AROS — the arms are additive, no
+behaves byte-identically to upstream off AROS: the arms are additive, no
 existing arm is modified. `vendor/stacker` and `vendor/filetime` originate in
 `zed-aros/vendor-aros`, where the AROS work was done; they are copied here so
 Ferail's build does not depend on a sibling checkout for crates every platform
@@ -109,15 +109,15 @@ links.
 
 > **Do not move these into the AROS-only patch file.** They differ in version
 > from the registry, and cargo drops rather than downgrades to such a patch the
-> moment a host command re-resolves the lock — leaving the AROS build broken in
+> moment a host command re-resolves the lock, leaving the AROS build broken in
 > a way that looks like a missing toolchain.
 
-## LHA / LZH decoding — `delharc` (MIT / Apache-2.0)
+## LHA / LZH decoding - `delharc` (MIT / Apache-2.0)
 
 `.lha` / `.lzh` support links [`delharc`](https://github.com/royaltm/rust-delharc)
 unmodified from crates.io. Pure Rust, no C, and taken with
 `default-features = false` so its `std` feature (which enables `chrono/clock`)
-stays off. Decoder only — Ferail cannot create LHA archives, which the
+stays off. Decoder only: Ferail cannot create LHA archives, which the
 capability matrix reflects.
 
 ---
@@ -128,12 +128,12 @@ The inline syntax-highlighted code preview embeds **tree-sitter** and 35
 grammar crates, all compiled into the shipped binary. Their licenses require
 the copyright and permission notices to travel with redistributed copies.
 
-- **tree-sitter** — <https://github.com/tree-sitter/tree-sitter>
+- **tree-sitter**: <https://github.com/tree-sitter/tree-sitter>
   Copyright © 2018–2025 Max Brunsfeld and contributors. Licensed under MIT.
-- **Grammar crates** — 32 are MIT, 2 are `MIT OR Apache-2.0`, and 1 is
+- **Grammar crates**: 32 are MIT, 2 are `MIT OR Apache-2.0`, and 1 is
   Apache-2.0; `tree-sitter-graphql` (Copyright © 2025 Joohwan Oh) ships a
   `LICENSE` file rather than a manifest `license` field, and is MIT. Each
-  grammar carries its own copyright holder — the authoritative per-crate
+  grammar carries its own copyright holder: the authoritative per-crate
   list is pinned in [`Cargo.lock`](Cargo.lock) and can be regenerated with
   `cargo about` or `cargo bundle-licenses`.
 
@@ -206,12 +206,12 @@ DEALINGS IN THE SOFTWARE.
 
 On macOS, folder and file-type artwork is fetched at runtime from the system
 via `NSWorkspace`/`IconForFile`. This Apple artwork is **never bundled or
-redistributed** with Ferail — it is read from the user's own OS at display
-time — so no Apple artwork ships in the binary.
+redistributed** with Ferail: it is read from the user's own OS at display
+time, so no Apple artwork ships in the binary.
 
 ---
 
-## libmpv (optional video player — not bundled)
+## libmpv (optional video player - not bundled)
 
 The optional `mpv` build feature (off by default) plays video through
 **libmpv** (LGPL-2.1-or-later / GPL depending on build). Ferail does **not**

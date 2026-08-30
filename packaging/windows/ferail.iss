@@ -1,4 +1,4 @@
-; Inno Setup script for Ferail — driven by scripts/package-win.ps1.
+; Inno Setup script for Ferail: driven by scripts/package-win.ps1.
 ;
 ; Build directly with:
 ;   iscc /DSourceDir=..\..\target\package\Ferail /DAppVersion=0.2.1 ferail.iss
@@ -7,7 +7,7 @@
 ; it takes the already-staged payload (exes + licences) and wraps it in a
 ; per-user-or-per-machine installer with a Start Menu entry and an uninstaller.
 ;
-; Note the deliberate absence of a code-signing step here — signing is
+; Note the deliberate absence of a code-signing step here, signing is
 ; signtool's job in package-win.ps1, which signs the payload BEFORE this runs
 ; and the resulting installer AFTER. Inno's SignTool hook would need the cert
 ; configured in the IDE, which does not survive CI.
@@ -26,7 +26,7 @@
 #define CliExe         "ferail.exe"
 
 [Setup]
-; Stable across releases — changing it makes Windows treat an upgrade as a
+; Stable across releases, changing it makes Windows treat an upgrade as a
 ; separate product and leaves the old install behind.
 AppId={{EEBE7A1D-2613-4900-8F19-0F955E307518}
 AppName={#AppName}
@@ -64,7 +64,7 @@ WizardStyle=modern
 CloseApplications=yes
 RestartApplications=yes
 
-; Dual MIT/Apache-2.0 — show MIT during setup; both ship in licenses\.
+; Dual MIT/Apache-2.0: show MIT during setup; both ship in licenses\.
 LicenseFile=..\..\LICENSE-MIT
 
 [Languages]
@@ -84,7 +84,7 @@ Source: "{#SourceDir}\ferail-ntfs-helper.exe"; DestDir: "{app}"; Flags: ignoreve
 ; in step with scripts/package-win.ps1, which asserts the two are distinct.
 Source: "{#SourceDir}\cli\{#CliExe}"; DestDir: "{app}\cli"; Flags: ignoreversion
 ; MIT/Apache-2.0 (plus the MIT tree-sitter grammars and the ISC/MIT icon
-; artwork) require their notices to accompany a redistributed copy — an
+; artwork) require their notices to accompany a redistributed copy: an
 ; installer carrying only the executables does not satisfy that.
 Source: "{#SourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs
 

@@ -47,7 +47,7 @@ pub type ArchiveOpSettled = Box<dyn FnOnce(bool, &mut Shell, &mut Context<Shell>
 
 /// Selection Zed/Finder/Explorer use when rename starts: a directory selects
 /// its whole name; a file leaves the final extension in place.  Byte offsets
-/// are intentional — gpui-component's selection API is UTF-8-byte based.
+/// are intentional: gpui-component's selection API is UTF-8-byte based.
 fn inline_name_selection_end(name: &str, is_dir: bool) -> usize {
     if is_dir {
         return name.len();
@@ -64,7 +64,7 @@ pub(crate) struct ArchiveSaveRequest {
 
 /// Build the newline-joined clipboard text for [`Shell::on_copy_file_list`],
 /// returning it with the number of lines. With `recursive`, each directory
-/// row is followed by its full subtree — a blocking disk walk, so recursive
+/// row is followed by its full subtree: a blocking disk walk, so recursive
 /// calls belong on the background executor only.
 fn build_file_list_text(
     items: &[(PathBuf, bool)],
@@ -89,7 +89,7 @@ fn build_file_list_text(
     (text, count)
 }
 
-/// Success toast for "Copy File List" — the recursive flavor says so, since
+/// Success toast for "Copy File List": the recursive flavor says so, since
 /// nothing else on screen reveals that Shift changed what was copied.
 fn copy_file_list_toast(count: usize, recursive: bool) -> gpui::SharedString {
     if recursive {
@@ -108,7 +108,7 @@ fn copy_file_list_toast(count: usize, recursive: bool) -> gpui::SharedString {
 }
 
 impl Shell {
-    /// Cmd+C — write the selection's file URLs to the pasteboard.
+    /// Cmd+C: write the selection's file URLs to the pasteboard.
     pub(super) fn on_copy_files(
         &mut self,
         _: &CopyFiles,
@@ -127,7 +127,7 @@ impl Shell {
             return;
         }
         // `is_dir` comes from the cached FileEntry so the pasteboard
-        // write never stats — a per-path stat on the main thread hangs
+        // write never stats: a per-path stat on the main thread hangs
         // Cmd+C on a dead network mount (Prime Directive).
         let items: Vec<(PathBuf, bool)> = self
             .action_entries_visible_order(cx)
@@ -164,7 +164,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Cmd+X — copy the selection's URLs to the pasteboard and mark them
+    /// Cmd+X: copy the selection's URLs to the pasteboard and mark them
     /// so the next plain Paste *moves* them. The rows render dimmed
     /// while marked.
     pub(super) fn on_cut_files(
@@ -202,7 +202,7 @@ impl Shell {
             items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
         if !crate::platform_shell::clipboard_cut_file_urls(&refs) {
             // Don't dim rows for a Cut that can never complete its
-            // move — the stub platform has no file clipboard.
+            // move: the stub platform has no file clipboard.
             window.push_notification(
                 Notification::error(tr!("File clipboard isn't available on this platform yet.")),
                 cx,
@@ -222,7 +222,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Cmd+V — paste the pasteboard's files into this folder. A *move*
+    /// Cmd+V: paste the pasteboard's files into this folder. A *move*
     /// when those exact items were Cut (clearing the mark), else a copy.
     pub(super) fn on_paste_files(
         &mut self,
@@ -257,7 +257,7 @@ impl Shell {
         self.spawn_transfer_op(sources, dest, mode, window, cx);
     }
 
-    /// Cmd+Option+V — Finder's "Move Items Here".
+    /// Cmd+Option+V: Finder's "Move Items Here".
     pub(super) fn on_move_paste_files(
         &mut self,
         _: &MovePasteFiles,
@@ -282,7 +282,7 @@ impl Shell {
             return;
         }
         // Pasteboard read is a semantic event (action handler), same
-        // boundary as Quick Look — never from render.
+        // boundary as Quick Look, never from render.
         let sources = crate::platform_shell::clipboard_read_file_urls();
         if sources.is_empty() {
             window.push_notification(Notification::info(tr!("No files on the clipboard")), cx);
@@ -361,7 +361,7 @@ impl Shell {
     /// Transfer OS paths *into* the folder at `row_ix` (dnd-spec §3.5).
     /// Shared by the list row and the icon-grid cell so both view modes
     /// resolve the destination and clear any pending spring-load the
-    /// same way. Non-folder rows never call this — their drops fall
+    /// same way. Non-folder rows never call this: their drops fall
     /// through to the pane-background target's current-dir semantics.
     pub(crate) fn drop_onto_folder_row(
         &mut self,
@@ -396,7 +396,7 @@ impl Shell {
     /// hovers a folder row, after a short dwell over the *same* row,
     /// drill into it so the user can drop deeper without releasing the
     /// drag. Only folder rows feed this, so the row's path is a
-    /// directory by construction — no stat here.
+    /// directory by construction, no stat here.
     pub(crate) fn spring_load_hover(&mut self, row_ix: usize, cx: &mut Context<Self>) {
         const SPRING_DWELL: std::time::Duration = std::time::Duration::from_millis(600);
         let now = std::time::Instant::now();
@@ -446,7 +446,7 @@ impl Shell {
             ),
             many => trn!("{n} item", "{n} items", many.len()),
         };
-        // "Moving “D4Mac” to “Backup”…" — the destination is part of the
+        // "Moving “D4Mac” to “Backup”…": the destination is part of the
         // label so the task panel answers *where to* without a hover.
         let dest_name = dest
             .file_name()
@@ -463,7 +463,7 @@ impl Shell {
         // counters on its hot path (no channel, no per-file allocation);
         // this sampler reads them on its own ~10 Hz clock and derives the
         // rate/ETA UI-side. The copy can never be slowed or stalled by
-        // drawing its own progress, no matter how many files — the Prime
+        // drawing its own progress, no matter how many files: the Prime
         // Directive, structurally.
         let prog = Arc::new(engine::TransferProgress::new());
         let done = Arc::new(AtomicBool::new(false));
@@ -578,7 +578,7 @@ impl Shell {
 
             // 1. Plan (walk + conflict scan) off the UI thread. The walk
             // ticks `prog`'s planning counter so the status bar can show
-            // "Preparing — N items" instead of looking hung on a big tree.
+            // "Preparing: N items" instead of looking hung on a big tree.
             let plan = {
                 let (s, d, c) = (sources.clone(), dest.clone(), cancel.clone());
                 let p = prog_run.clone();
@@ -603,7 +603,7 @@ impl Shell {
             // 1b. Free-space precheck + Auto-mode resolution (background:
             // same_volume stats + statvfs aren't UI-thread work). A
             // cross-volume transfer writes total_bytes onto the
-            // destination volume — refuse up front rather than fail
+            // destination volume: refuse up front rather than fail
             // mid-copy and strand a partial. Same-volume clone/rename
             // consume ~nothing, so they skip the check. Resolving the
             // volume relationship here also lets an Auto drag-drop
@@ -645,7 +645,7 @@ impl Shell {
                         window.push_notification(
                             crate::shell::error_notification(
                                 tr!(
-                                    "Not enough space on \u{201c}{dest}\u{201d} \u{2014} needs {needed}, only {free} free",
+                                    "Not enough space on \u{201c}{dest}\u{201d}: needs {needed}, only {free} free",
                                     dest = dest_name,
                                     needed = ferail_fs_native::humanize_bytes(total),
                                     free = ferail_fs_native::humanize_bytes(avail),
@@ -660,7 +660,7 @@ impl Shell {
             }
 
             // 2. Per-item collision resolution. Pasting next to the
-            // originals obviously means "make me a copy" — no dialog.
+            // originals obviously means "make me a copy", no dialog.
             // Otherwise prompt once per conflicting top-level item, with
             // an "apply to the rest" shortcut that fills the remainder
             // with that choice. The map is keyed by source path; the
@@ -810,7 +810,7 @@ impl Shell {
             // byte-moving engine run, so the machine doesn't doze
             // mid-transfer and strand a half-written file
             // (docs/features/POWER.md). Reacting to WillSleep would be
-            // too late — the engine can't checkpoint-and-resume — so we
+            // too late, the engine can't checkpoint-and-resume, so we
             // prevent the sleep instead. None (assertion declined) just
             // means no guard; released right after the engine returns.
             let sleep_blocker =
@@ -818,7 +818,7 @@ impl Shell {
 
             // 3. Run the engine on the background executor. The
             // same-volume answer rides along for move-undo
-            // eligibility (stat — not allowed on the UI thread).
+            // eligibility (stat, not allowed on the UI thread).
             let result = {
                 let c = cancel.clone();
                 let p = prog_run.clone();
@@ -849,7 +849,7 @@ impl Shell {
                     })
                     .await
             };
-            // Engine finished — stop the sampler; the final state is set
+            // Engine finished: stop the sampler; the final state is set
             // by the completion block below. Drop the sleep guard now
             // that the byte-moving is done (the tail below is cheap UI).
             done_run.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -887,7 +887,7 @@ impl Shell {
                                 // Cross-volume (or mixed-volume) move:
                                 // undo copies each item back and then
                                 // deletes the moved copy. Only when the
-                                // move replaced nothing — copy-back-
+                                // move replaced nothing: copy-back-
                                 // undoing a replace would erase the sole
                                 // remaining version's provenance.
                                 TransferMode::Move if outcome.replaced == 0 => {
@@ -922,7 +922,7 @@ impl Shell {
             let mut reload = vec![dest.clone()];
             // Anything that may have moved needs its source parents
             // refreshed too (Auto may have resolved to Move; on error
-            // a partial move may have happened — over-reloading is
+            // a partial move may have happened, over-reloading is
             // harmless).
             if mode != TransferMode::Copy {
                 for s in &sources {
@@ -938,7 +938,7 @@ impl Shell {
             let _ = win.update(cx, |_, window, cx| {
                 match &result {
                     Ok((outcome, _, effective)) => {
-                        // Failures always surface — even for sub-150ms ops —
+                        // Failures always surface, even for sub-150ms ops,
                         // as a per-item, classified report. The toast offers
                         // Copy (raw detail → clipboard), an in-process Retry of
                         // just the failed items, and Retry as administrator…
@@ -972,7 +972,7 @@ impl Shell {
                                     .any(|f| f.kind.is_elevation_recoverable());
                                 // The exact locked paths (not top-level
                                 // sources): the lock lookup needs the file the
-                                // OS actually refused. Capped — a thousand
+                                // OS actually refused. Capped: a thousand
                                 // locked items would all name the same app.
                                 let locked: Vec<PathBuf> = outcome
                                     .failed
@@ -1003,13 +1003,13 @@ impl Shell {
                         let is_move = matches!(effective, TransferMode::Move);
                         let mut msg = match (outcome.cancelled, is_move) {
                             (true, true) => trn!(
-                                "Cancelled \u{2014} {n} item moved",
-                                "Cancelled \u{2014} {n} items moved",
+                                "Cancelled: {n} item moved",
+                                "Cancelled: {n} items moved",
                                 n
                             ),
                             (true, false) => trn!(
-                                "Cancelled \u{2014} {n} item copied",
-                                "Cancelled \u{2014} {n} items copied",
+                                "Cancelled: {n} item copied",
+                                "Cancelled: {n} items copied",
                                 n
                             ),
                             (false, true) => trn!("Moved {n} item", "Moved {n} items", n),
@@ -1044,7 +1044,7 @@ impl Shell {
 
     /// Re-run the failed items of a transfer **with administrator privileges**.
     /// Serialises them into an `ElevatedOp` and runs the privileged worker
-    /// (which re-execs this binary elevated — one OS auth prompt); reads back
+    /// (which re-execs this binary elevated, one OS auth prompt); reads back
     /// which items still failed and reports it. The whole thing runs off the UI
     /// thread because the auth dialog blocks.
     pub(crate) fn retry_transfer_elevated(
@@ -1066,14 +1066,14 @@ impl Shell {
         let process = self.process.clone();
         let win = window.window_handle();
         cx.spawn(async move |_this, cx| {
-            // Blocks on the OS auth dialog — keep it on the executor, never the
+            // Blocks on the OS auth dialog: keep it on the executor, never the
             // UI thread (Prime Directive).
             let result = cx
                 .background_executor()
                 .spawn(async move { crate::elevation::run_elevated_op(&op) })
                 .await;
 
-            // Refresh the destination, plus the moved-from parents on a move —
+            // Refresh the destination, plus the moved-from parents on a move:
             // a partial elevated run may have changed either side.
             let mut reload = vec![dest.clone()];
             if is_move {
@@ -1111,7 +1111,7 @@ impl Shell {
                             .file_name()
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_else(|| path.display().to_string());
-                        msg.push_str(&format!("\n\u{2022} {name} \u{2014} {}", kind.summary()));
+                        msg.push_str(&format!("\n\u{2022} {name}: {}", kind.summary()));
                     }
                     window.push_notification(error_notification(msg), cx);
                 }
@@ -1134,7 +1134,7 @@ impl Shell {
         .detach();
     }
 
-    /// "What's using it?" — name the processes holding the locked items, then
+    /// "What's using it?": name the processes holding the locked items, then
     /// offer close-and-retry from a follow-up toast. The Restart Manager scan
     /// enumerates every process (seconds, not millis), so it runs on the
     /// background executor (Prime Directive).
@@ -1154,7 +1154,7 @@ impl Shell {
             let holders = cx
                 .background_executor()
                 .spawn(async move {
-                    // Dedupe by pid — one app usually holds several items.
+                    // Dedupe by pid, one app usually holds several items.
                     let mut seen: Vec<crate::platform_shell::LockingProcess> = Vec::new();
                     for path in &locked {
                         for lp in crate::platform_shell::processes_using(path) {
@@ -1388,8 +1388,8 @@ impl Shell {
         }
     }
 
-    /// Copy the *whole* visible list — every row in the active tab,
-    /// not just the selection — as newline-joined full paths. Serves
+    /// Copy the *whole* visible list: every row in the active tab,
+    /// not just the selection, as newline-joined full paths. Serves
     /// folder views, duplicate-finder results, and search results
     /// uniformly: all three feed the same table delegate, so iterating
     /// its rows and resolving each path from the cache (never the
@@ -1570,7 +1570,7 @@ impl Shell {
                     )
                 };
                 // Reveal is a process spawn on mac/win but a blocking
-                // D-Bus round-trip per path on Linux — run the loop on
+                // D-Bus round-trip per path on Linux: run the loop on
                 // the background executor (Prime Directive).
                 let win = window.window_handle();
                 cx.spawn(async move |_this, cx| {
@@ -1615,7 +1615,7 @@ impl Shell {
         let Some(path) = self.context_target.take() else {
             return;
         };
-        // Blocking D-Bus round-trip on Linux — worker, not UI thread.
+        // Blocking D-Bus round-trip on Linux: worker, not UI thread.
         cx.background_spawn(async move {
             crate::platform_shell::reveal_in_finder(&path);
         })
@@ -1652,7 +1652,7 @@ impl Shell {
         let Some((_, _, path)) = self.action_entries_visible_order(cx).into_iter().next() else {
             return;
         };
-        // Settings read + process spawn — worker, not UI thread
+        // Settings read + process spawn: worker, not UI thread
         // (Prime Directive).
         cx.background_spawn(async move {
             let spec = crate::feature_settings::TerminalConfig::load().spec();
@@ -1673,7 +1673,7 @@ impl Shell {
         let Some(path) = self.context_target.take() else {
             return;
         };
-        // Settings read + process spawn — worker, not UI thread
+        // Settings read + process spawn: worker, not UI thread
         // (Prime Directive).
         cx.background_spawn(async move {
             let spec = crate::feature_settings::TerminalConfig::load().spec();
@@ -1683,8 +1683,8 @@ impl Shell {
     }
 
     /// Sidebar volume menu "Eject". Unmounts and ejects the right-
-    /// clicked volume (`context_target`) on a worker — `unmountAndEject`
-    /// can block while the system flushes/closes the device — then
+    /// clicked volume (`context_target`) on a worker: `unmountAndEject`
+    /// can block while the system flushes/closes the device, then
     /// reports success or failure as a toast. The volume observer drops
     /// the row from the sidebar once the unmount lands.
     pub(super) fn on_eject_volume(
@@ -1735,7 +1735,7 @@ impl Shell {
     ///
     /// Finder parity: when the volume shares its physical device with
     /// other mounted volumes (a partitioned external disk, a
-    /// multi-volume APFS container), ask first — eject just this
+    /// multi-volume APFS container), ask first: eject just this
     /// volume, or every volume on the disk so it can be unplugged. The
     /// sibling lookup reads the cached sidebar volume list only; no
     /// I/O on the click path.
@@ -1835,7 +1835,7 @@ impl Shell {
     }
 
     /// Display name of the volume mounted exactly at `path`, from the
-    /// cached sidebar volume list — pure in-memory lookup, no I/O, so
+    /// cached sidebar volume list: pure in-memory lookup, no I/O, so
     /// it's safe on the render path. `None` when `path` isn't a mount
     /// root.
     pub(super) fn mounted_volume_name(&self, path: &Path) -> Option<String> {
@@ -1860,7 +1860,7 @@ impl Shell {
 
     /// Other mounted volumes sharing `path`'s physical device, as
     /// `(mount path, display name)` pairs from the cached sidebar
-    /// volume list — no I/O. Removable volumes only: an internal-disk
+    /// volume list, no I/O. Removable volumes only: an internal-disk
     /// grouping must never be swept into an eject-all.
     fn sibling_volumes_on_device(&self, path: &Path) -> Vec<(PathBuf, String)> {
         let volumes = self.process.volumes.borrow();
@@ -1886,7 +1886,7 @@ impl Shell {
     /// open) navigate home, tool-result surfaces rooted on it are
     /// dropped (the archive workbench holds the archive file open;
     /// disk-usage and duplicate scans walk it), and a pinned preview
-    /// override pointing into it is cleared — the ordinary preview
+    /// override pointing into it is cleared: the ordinary preview
     /// follows the (now empty) selection by itself. Pure state
     /// mutation, no I/O. Returns whether anything was released.
     fn release_volumes_locally(&mut self, roots: &[PathBuf], cx: &mut Context<Self>) -> bool {
@@ -1931,7 +1931,7 @@ impl Shell {
             let hit = match target {
                 PreviewTarget::File { path, .. } => under(path),
                 PreviewTarget::Volume { path, .. } => under(path),
-                // No path to test — an in-memory archive-entry preview;
+                // No path to test: an in-memory archive-entry preview;
                 // tie it to the archive surface we just dropped.
                 PreviewTarget::InMemory { .. } => dropped_archive,
                 PreviewTarget::None => false,
@@ -1950,7 +1950,7 @@ impl Shell {
     /// The process-wide half of the release: run
     /// [`Self::release_volumes_locally`] on every live Shell window
     /// (a tab in another window holds the volume just as firmly), and
-    /// close any viewer window whose playlist touches the volumes —
+    /// close any viewer window whose playlist touches the volumes:
     /// mpv keeps the playing file open, and that alone fails an eject.
     fn release_volumes_for_eject(&mut self, roots: &[PathBuf], cx: &mut Context<Self>) -> bool {
         let mut released = self.release_volumes_locally(roots, cx);
@@ -1985,17 +1985,17 @@ impl Shell {
     /// Eject the given `(mount path, display name)` volumes on a
     /// worker (unmount/eject can block while the system flushes and
     /// closes the device). A single volume goes through
-    /// `eject_volume`; several — the "Eject All" answer — go through
+    /// `eject_volume`; several, the "Eject All" answer, go through
     /// `eject_device`, which unmounts every partition before powering
     /// the device down (a per-volume loop spuriously fails on macOS
     /// while sibling partitions are mounted). Failure toasts are
     /// enriched with the processes still holding files open on the
-    /// volume — the usual reason an eject fails, and the part Finder's
+    /// volume: the usual reason an eject fails, and the part Finder's
     /// "disk is in use" alert never tells you. The volume observer
     /// drops ejected rows from the sidebar once the unmounts land.
     ///
     /// Before any of that, Ferail releases its own holds
-    /// ([`Self::release_volumes_for_eject`]) — otherwise browsing the
+    /// ([`Self::release_volumes_for_eject`]), otherwise browsing the
     /// volume in a tab was enough to make its own eject button report
     /// "Ferail has files open on it". When something was released, the
     /// worker waits briefly for the dropped resources (mpv teardown,
@@ -2074,7 +2074,7 @@ impl Shell {
                     // the released resources a beat to close their file
                     // descriptors (mpv teardown, cancelled directory
                     // walks) before the unmount samples the volume.
-                    // Blocking sleeps are fine here — this whole closure
+                    // Blocking sleeps are fine here: this whole closure
                     // is the blocking-eject worker.
                     if released {
                         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -2100,7 +2100,7 @@ impl Shell {
                 for failure in failures {
                     // No blocker we can name → the platform error is all
                     // we have. Otherwise: the blocking apps as clickable
-                    // chips — clicking one brings that app forward so
+                    // chips, clicking one brings that app forward so
                     // the user can close the offending files (inert for
                     // daemons/shells with no GUI to activate). Pinned
                     // open (no autohide) so it survives the app switch;
@@ -2115,7 +2115,7 @@ impl Shell {
                         continue;
                     }
                     let msg = tr!(
-                        "Couldn’t eject {what} — these apps have files open on it. \
+                        "Couldn’t eject {what}: these apps have files open on it. \
                          Click one to bring it forward, close the files, and try again.",
                         what = failure.what
                     );
@@ -2200,7 +2200,7 @@ impl Shell {
         if !crate::platform_shell::SUPPORTS_TAGS {
             return;
         }
-        // Tag xattrs are filesystem I/O — a large selection means one
+        // Tag xattrs are filesystem I/O: a large selection means one
         // read-modify-write per file, and any file on a dead network
         // mount blocks for the mount timeout. Prime Directive: collect
         // the paths here, run the toggles on the background executor,
@@ -2226,7 +2226,7 @@ impl Shell {
                     for path in &paths {
                         match crate::platform_shell::toggle_tag(path, color) {
                             Ok(()) => done += 1,
-                            // Stringly-typed platform error — classify it
+                            // Stringly-typed platform error: classify it
                             // so the report shares the one advice table.
                             Err(e) => {
                                 failures.push(ferail_fs_native::file_ops::FileOpError::other(
@@ -2356,7 +2356,7 @@ impl Shell {
         };
         if let Some(app) = app_path {
             // `open -a` waits for the app to check in (seconds on a
-            // cold launch) — one batched invocation on the background
+            // cold launch), one batched invocation on the background
             // executor instead of N sequential waits on the UI thread.
             cx.background_spawn(async move {
                 if let Err(e) = crate::platform_shell::open_with_app_many(&paths, &app) {
@@ -2609,7 +2609,7 @@ impl Shell {
         // each item's resulting location inside the Trash [mac], and
         // those (original, trashed) pairs are exactly what Cmd+Z
         // needs to rename things back. Notification moved to
-        // completion — the old one fired before the op ran.
+        // completion: the old one fired before the op ran.
         let process = self.process.clone();
         // Register the trash as a foreground task so slow / large deletes
         // (and Empty Trash on a network volume) get a visible, counted
@@ -2648,7 +2648,7 @@ impl Shell {
                                 pairs.push((path.clone(), trashed));
                             }
                             // Trashed, but the resulting URL wasn't
-                            // reported — done, just not undoable.
+                            // reported: done, just not undoable.
                             Ok(None) => done += 1,
                             Err(e) => failures
                                 .push(ferail_fs_native::file_ops::FileOpError::from_io(&e, path)),
@@ -2695,7 +2695,7 @@ impl Shell {
                     .map(|f| f.to_string())
                     .collect::<Vec<_>>()
                     .join("\n");
-                // The items elevation could still trash — bare permission
+                // The items elevation could still trash: bare permission
                 // denials (a root-owned app), not locked/missing ones.
                 let recoverable: Vec<PathBuf> = failures
                     .iter()
@@ -2722,7 +2722,7 @@ impl Shell {
 
     /// Re-run the given items' trash (or permanent delete, when `delete`) with
     /// administrator rights: serialise them, run the elevated worker (one OS
-    /// auth prompt — same osascript path copy/move uses), and report what
+    /// auth prompt, same osascript path copy/move uses), and report what
     /// landed. Elevated trashes move into the user's `~/.Trash` as root, so the
     /// item lands owned by root; we don't register Undo for them (restoring a
     /// root-owned item to a root-owned location would itself need elevation).
@@ -2743,7 +2743,7 @@ impl Shell {
         let process = self.process.clone();
         let win = window.window_handle();
         cx.spawn(async move |_this, cx| {
-            // Blocks on the OS auth dialog — keep it off the UI thread.
+            // Blocks on the OS auth dialog: keep it off the UI thread.
             let result = cx
                 .background_executor()
                 .spawn(async move { crate::elevation::run_elevated_trash_op(&op) })
@@ -2817,7 +2817,7 @@ impl Shell {
     }
 
     /// Permanently delete the selected items (no Trash) after a counted
-    /// confirmation — a targeted Empty Trash. No undo. A permission denial on
+    /// confirmation: a targeted Empty Trash. No undo. A permission denial on
     /// a protected item offers an elevated retry, exactly like Move to Trash.
     /// Bound to Option+Cmd+Delete [mac] / Shift+Delete [win/linux].
     pub(super) fn on_delete_immediately(
@@ -2849,7 +2849,7 @@ impl Shell {
         let win = window.window_handle();
 
         cx.spawn(async move |this, cx| {
-            // Confirm first — this is the one delete with no undo.
+            // Confirm first: this is the one delete with no undo.
             let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
             let opened = win.update(cx, |_, window, cx| {
                 let tx = go_tx.clone();
@@ -2888,7 +2888,7 @@ impl Shell {
                             ),
                         )
                         // Enter lands on the dialog's ConfirmDialog binding, not
-                        // the button's click handler — without this, the default
+                        // the button's click handler, without this, the default
                         // `on_ok` closed the dialog with nothing sent and the
                         // task above waited on `go_rx` forever.
                         .on_ok(move |_, _, _| {
@@ -3002,7 +3002,7 @@ impl Shell {
 
     /// Empty every trash this user can reach (`~/.Trash` + mounted
     /// volumes' `.Trashes/<uid>` [mac]) after an explicit, counted
-    /// confirmation. Permanently destructive — the one file operation
+    /// confirmation. Permanently destructive: the one file operation
     /// with no undo, which is why it confirms first.
     pub(super) fn on_empty_trash(
         &mut self,
@@ -3029,7 +3029,7 @@ impl Shell {
                             Ok(rd) => items += rd.flatten().count(),
                             // TCC can deny Trash reads (e.g. dev runs
                             // from a terminal without Files & Folders
-                            // access) — that's "unknown", not "empty".
+                            // access): that's "unknown", not "empty".
                             Err(_) => unreadable = true,
                         }
                     }
@@ -3084,7 +3084,7 @@ impl Shell {
                 return;
             }
             // Now that the user has confirmed, surface the destruction as
-            // a foreground task — emptying a full Trash (or one on a slow
+            // a foreground task, emptying a full Trash (or one on a slow
             // volume) can take real time. (docs/features/FILE_OPS.md)
             let task_id = process.tasks.borrow_mut().begin(
                 crate::tasks::TaskKind::FileOp,
@@ -3095,7 +3095,7 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let mut deleted = 0usize;
-                    // Every item that couldn't be removed, classified —
+                    // Every item that couldn't be removed, classified:
                     // feeds the shared "N of M · why" report, and its
                     // permission-denied subset is exactly what an
                     // elevated retry can finish (root-owned trash).
@@ -3146,8 +3146,8 @@ impl Shell {
                     } else {
                         window.push_notification(
                             Notification::success(trn!(
-                                "Emptied Trash \u{2014} {n} item deleted",
-                                "Emptied Trash \u{2014} {n} items deleted",
+                                "Emptied Trash: {n} item deleted",
+                                "Emptied Trash: {n} items deleted",
                                 deleted
                             )),
                             cx,
@@ -3331,8 +3331,8 @@ impl Shell {
 
     /// Shared single-line text-naming modal used by every naming
     /// surface (file/folder rename and favorite-shortcut rename in
-    /// `shell.rs`, plus new-folder above). Pre-fills `initial`, then —
-    /// once the dialog has mounted — focuses the field and selects its
+    /// `shell.rs`, plus new-folder above). Pre-fills `initial`, then
+    /// (once the dialog has mounted) focuses the field and selects its
     /// text so the name is ready to overtype. `on_commit` runs with the
     /// trimmed new name when the user confirms, and is skipped when the
     /// name is empty or unchanged from `initial`.
@@ -3358,7 +3358,7 @@ impl Shell {
     /// a typed name that the OS would reject or silently mangle (Windows
     /// reserved names/chars, trailing dot/space) is caught up front and the
     /// dialog stays open with an explanation. Surfaces that name something
-    /// *other* than a file — the favorite-shortcut label — pass `false`.
+    /// *other* than a file, the favorite-shortcut label, pass `false`.
     #[allow(clippy::too_many_arguments)] // one prompt builder, many knobs by design
     pub(crate) fn open_named_prompt(
         &mut self,
@@ -3415,7 +3415,7 @@ impl Shell {
             )
         });
         // Focus the field and select its contents on the next frame,
-        // once the dialog (and its input) are mounted in the tree —
+        // once the dialog (and its input) are mounted in the tree,
         // doing it synchronously here wouldn't stick. SelectAll is the
         // input's own action, dispatched to the now-focused field.
         window.on_next_frame(move |window, cx| {
@@ -3660,8 +3660,8 @@ impl Shell {
     }
 
     /// Bulk rename over the resolved multi-selection
-    /// (docs/features/BULK_RENAME.md). Snapshots the selection once —
-    /// `(path, display name, mtime)` triples, model/cache-only — and
+    /// (docs/features/BULK_RENAME.md). Snapshots the selection once
+    /// (`(path, display name, mtime)` triples, model/cache-only) and
     /// opens the pattern-rule dialog over it. With fewer than two
     /// targets this degrades to inline rename (one) or a
     /// no-op (none), so palette/menu dispatch is always sensible.
@@ -3718,7 +3718,7 @@ impl Shell {
         // showing matches Spacebar's "open/dismiss" Mac feel.
         #[cfg(target_os = "macos")]
         {
-            // qlmanage spawn — worker, not UI thread (Prime Directive).
+            // qlmanage spawn: worker, not UI thread (Prime Directive).
             cx.background_spawn(async move {
                 let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
                 let _ = crate::platform_shell::show_quick_look(&refs);
@@ -4120,7 +4120,7 @@ impl Shell {
     }
 
     /// Compress the action target set into a single `format` archive next to
-    /// the first target — `<name>.<ext>` for one item, `Archive.<ext>` for
+    /// the first target, `<name>.<ext>` for one item, `Archive.<ext>` for
     /// many, `" 2"`-deduped on collision (Finder naming). Runs on the
     /// `create_archive` engine off-thread; this replaces the macOS `ditto`
     /// shell-out so every platform shares one code path (and gains levels /
@@ -4223,14 +4223,14 @@ impl Shell {
         );
     }
 
-    /// Extract Here — unpack the selected archive(s) into the current folder.
+    /// Extract Here: unpack the selected archive(s) into the current folder.
     pub(super) fn on_extract(&mut self, _: &Extract, window: &mut Window, cx: &mut Context<Self>) {
         let paths = self.gather_archive_targets(cx);
         let cur = self.active_tab().current_dir.clone();
         self.spawn_extract_into(paths, cur, None, window, cx);
     }
 
-    /// Extract To… — pick a destination folder from a native modal, then
+    /// Extract To…: pick a destination folder from a native modal, then
     /// extract there. The picker is a blocking nested run-loop that must run
     /// with no `App` borrow held, so it goes inside a spawned task (mirrors
     /// `Shell::locate_favorite`); the extraction is dispatched back on the
@@ -4256,7 +4256,7 @@ impl Shell {
         .detach();
     }
 
-    /// The archive subset of the action targets — lexical extension check, no
+    /// The archive subset of the action targets: lexical extension check, no
     /// I/O on the UI thread (Prime Directive).
     fn gather_archive_targets(&mut self, cx: &mut Context<Self>) -> Vec<PathBuf> {
         self.action_entries_visible_order(cx)
@@ -4271,7 +4271,7 @@ impl Shell {
     }
 
     /// Extract each archive in `paths` into `dest_parent`, off-thread. Each
-    /// archive's table of contents picks a smart destination — extract in place
+    /// archive's table of contents picks a smart destination: extract in place
     /// when it has a single root folder that isn't already taken, otherwise a
     /// `" 2"`-deduped wrapper named after the archive. Encrypted archives fail
     /// with a clear message (the password flow lives in the workbench).
@@ -4280,8 +4280,8 @@ impl Shell {
     ///
     /// `spawn_file_op` is the right tool for ops that finish in a blink
     /// (duplicate, alias): it registers a non-cancellable task and reports only
-    /// start/end. Archive work is different — a multi-gigabyte tarball can run
-    /// for minutes — so this variant mirrors `spawn_transfer_op`: the worker
+    /// start/end. Archive work is different: a multi-gigabyte tarball can run
+    /// for minutes, so this variant mirrors `spawn_transfer_op`: the worker
     /// bumps lock-free counters on `TransferProgress` while a ~10 Hz foreground
     /// sampler reads them and drives the task row (fraction, bytes, rate, ETA,
     /// current entry). The work is never slowed by drawing its own progress,
@@ -4452,7 +4452,7 @@ impl Shell {
                             // Clicking the confirmation lands on the result:
                             // the op wrote into `created`, which may be a
                             // folder the user is not looking at. Reveal its
-                            // parent with the new entries selected — the same
+                            // parent with the new entries selected: the same
                             // thing "Show in Finder" does for a download.
                             let reveal = created
                                 .first()
@@ -4533,13 +4533,13 @@ impl Shell {
             .unwrap_or_else(|| dest_parent.to_string_lossy().into_owned());
         let success = if count == 1 {
             tr!(
-                "Extracted to {dest} \u{2014} click to show",
+                "Extracted to {dest}, click to show",
                 dest = dest_name
             )
         } else {
             trn!(
-                "Extracted {n} archive to {dest} \u{2014} click to show",
-                "Extracted {n} archives to {dest} \u{2014} click to show",
+                "Extracted {n} archive to {dest}, click to show",
+                "Extracted {n} archives to {dest}, click to show",
                 count,
                 dest = dest_name
             )
@@ -4628,7 +4628,7 @@ impl Shell {
         );
     }
 
-    /// Add dropped files/folders to an existing archive **file** — the
+    /// Add dropped files/folders to an existing archive **file**: the
     /// drag-and-drop twin of opening the archive and dropping into its
     /// workbench. Only formats whose capability row allows in-place editing
     /// (ZIP today) reach here; callers gate on
@@ -4743,8 +4743,8 @@ impl Shell {
     }
 
     /// Members dragged out of one archive and dropped on **another archive**:
-    /// add them to it. The two halves already exist — cherry-pick extraction
-    /// and append — so this stages the members into a private directory beside
+    /// add them to it. The two halves already exist: cherry-pick extraction
+    /// and append, so this stages the members into a private directory beside
     /// the target, appends them by leaf name (the shape a Finder drop of the
     /// same members produces), and removes the staging directory on every
     /// path. Nothing is decoded or written on the UI thread.
@@ -4823,7 +4823,7 @@ impl Shell {
                 }
 
                 // Extraction keeps each member's path *inside* its source
-                // archive, so collect the dragged entries themselves — a
+                // archive, so collect the dragged entries themselves: a
                 // member picked out of an inner folder is added by its leaf.
                 let mut staged: Vec<PathBuf> = Vec::with_capacity(entries.len());
                 for entry in &entries {
@@ -4876,7 +4876,7 @@ impl Shell {
     /// Cherry-pick extraction (used by the archive workbench and by dropping
     /// archive members onto a folder): write each dragged entry into
     /// `dest_parent` **by its leaf name**, exactly as a Finder drop of the
-    /// same members does — `alpha.txt` lands as `dest/alpha.txt`, a dragged
+    /// same members does: `alpha.txt` lands as `dest/alpha.txt`, a dragged
     /// folder brings its subtree, and nothing is wrapped in an extra folder
     /// named after the archive. Extraction stages inside `dest_parent` first
     /// (same volume, so publishing is a rename) and an existing name is
@@ -4900,14 +4900,14 @@ impl Shell {
         let task_label = trn!("Extracting {n} item", "Extracting {n} items", count);
         let success = match dest_parent.file_name() {
             Some(name) => trn!(
-                "Extracted {n} item to {dest} \u{2014} click to show",
-                "Extracted {n} items to {dest} \u{2014} click to show",
+                "Extracted {n} item to {dest}, click to show",
+                "Extracted {n} items to {dest}, click to show",
                 count,
                 dest = name.to_string_lossy()
             ),
             None => trn!(
-                "Extracted {n} item \u{2014} click to show",
-                "Extracted {n} items \u{2014} click to show",
+                "Extracted {n} item, click to show",
+                "Extracted {n} items, click to show",
                 count
             ),
         };
@@ -4938,7 +4938,7 @@ impl Shell {
 
                 // Extraction preserves each member's path *inside the
                 // archive*, so it runs into a private staging directory and
-                // only the dragged entries themselves are published — a
+                // only the dragged entries themselves are published: a
                 // member picked out of `sub/` must land beside its siblings
                 // in the destination, not recreate `sub/`.
                 let staging = {
@@ -5178,8 +5178,8 @@ impl Shell {
     }
 }
 
-/// The running-phase task label for a transfer — "Moving “D4Mac” to
-/// “Backup”…" — as a whole translated sentence per mode, so word order is
+/// The running-phase task label for a transfer, "Moving “D4Mac” to
+/// “Backup”…", as a whole translated sentence per mode, so word order is
 /// the translator's call. `what` is the already-built noun (a quoted name
 /// or "{n} items").
 fn transfer_running_label(mode: TransferMode, what: &str, dest: &str) -> SharedString {
@@ -5202,28 +5202,28 @@ fn transfer_running_label(mode: TransferMode, what: &str, dest: &str) -> SharedS
     }
 }
 
-/// The planning-phase task label ("Copying — preparing (N items)…").
+/// The planning-phase task label ("Copying, preparing (N items)…").
 fn transfer_preparing_label(mode: TransferMode, planned: u64) -> SharedString {
     match mode {
         TransferMode::Copy => trn!(
-            "Copying \u{2014} preparing ({n} item)\u{2026}",
-            "Copying \u{2014} preparing ({n} items)\u{2026}",
+            "Copying: preparing ({n} item)\u{2026}",
+            "Copying: preparing ({n} items)\u{2026}",
             planned
         ),
         TransferMode::Move => trn!(
-            "Moving \u{2014} preparing ({n} item)\u{2026}",
-            "Moving \u{2014} preparing ({n} items)\u{2026}",
+            "Moving: preparing ({n} item)\u{2026}",
+            "Moving: preparing ({n} items)\u{2026}",
             planned
         ),
         TransferMode::Auto => trn!(
-            "Transferring \u{2014} preparing ({n} item)\u{2026}",
-            "Transferring \u{2014} preparing ({n} items)\u{2026}",
+            "Transferring: preparing ({n} item)\u{2026}",
+            "Transferring: preparing ({n} items)\u{2026}",
             planned
         ),
     }
 }
 
-/// "Copying failed: <engine detail>" — the sentence is ours, the detail is
+/// "Copying failed: <engine detail>": the sentence is ours, the detail is
 /// the backend's (kept English by design, see LOCALIZATION.md).
 fn transfer_failed_message(mode: TransferMode, detail: &str) -> String {
     match mode {
@@ -5236,7 +5236,7 @@ fn transfer_failed_message(mode: TransferMode, detail: &str) -> String {
 
 /// Windowed throughput for the transfer sampler: the mean of the
 /// window's per-sample instantaneous rates with the top and bottom 20%
-/// trimmed away. The trim is what keeps the displayed number level —
+/// trimmed away. The trim is what keeps the displayed number level:
 /// an instant-clone jump (gigabytes landing in one tick) or a stalled
 /// tick (0 B/s while a drive seeks) lands in the discarded extremes
 /// instead of dragging the mean around. 0.0 while there aren't enough
@@ -5264,7 +5264,7 @@ fn trimmed_window_rate(samples: &std::collections::VecDeque<(std::time::Instant,
 
 /// Round an ETA up to a coarser step the larger it is, so the countdown
 /// ticks calmly ("~51m" → "~50m") instead of flickering through every
-/// second ("~51m 21s" → "~51m 4s" → "~52m 40s"). Rounds *up* — an ETA
+/// second ("~51m 21s" → "~51m 4s" → "~52m 40s"). Rounds *up*: an ETA
 /// that overshoots slightly reads better than one that hits zero while
 /// the transfer is still running.
 fn round_eta(secs: u64) -> u64 {
@@ -5283,7 +5283,7 @@ fn round_eta(secs: u64) -> u64 {
 /// Ask the user for a destination folder, off the UI thread.
 ///
 /// Uses **gpui's** path prompt rather than `platform_shell::pick_folder`,
-/// which is a `None` stub outside macOS/Windows — on AROS that made
+/// which is a `None` stub outside macOS/Windows, on AROS that made
 /// "Extract To…" silently do nothing, which is precisely the platform where
 /// it matters most: the archive's own folder is frequently on a read-only
 /// volume (`MacRO:`) or a full one, so extracting in place cannot work and
@@ -5341,7 +5341,7 @@ mod transfer_rate_tests {
 
     #[test]
     fn one_tick_spike_is_trimmed_out() {
-        // A steady 50 MB/s stream with one 5 GB instant-clone tick —
+        // A steady 50 MB/s stream with one 5 GB instant-clone tick:
         // the spike must not drag the mean up.
         let mut deltas = [5_000_000u64; 20];
         deltas[10] = 5_000_000_000;

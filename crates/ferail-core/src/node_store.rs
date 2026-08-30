@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::{path_guard, NodeId};
 
-/// Normalize a path for use as an identity-map key. **Lexical only —
+/// Normalize a path for use as an identity-map key. **Lexical only,
 /// never touches the filesystem**, so it's safe at every call depth
 /// including under the path guard.
 ///
@@ -19,16 +19,16 @@ use crate::{path_guard, NodeId};
 ///   - redundant separators          `/Users//x`  → `/Users/x`
 ///
 /// What it deliberately does NOT fold, and why:
-///   - **case** — APFS and NTFS are *usually* case-insensitive but
+///   - **case**: APFS and NTFS are *usually* case-insensitive but
 ///     it's a per-volume property; case-folding keys would wrongly
 ///     merge distinct files on case-sensitive volumes. Identity
 ///     stays case-preserving; case-insensitive *aliasing* is a
 ///     boundary concern (canonicalize at input edges).
-///   - **`..` segments** — `a/../b` is not lexically `b` when `a`
+///   - **`..` segments**: `a/../b` is not lexically `b` when `a`
 ///     is a symlink; collapsing requires filesystem knowledge this
 ///     function must not have. Typed input containing `..` is
 ///     canonicalized at the boundary (breadcrumb parse, CLI args).
-///   - **symlinks** — same reason; boundary canonicalization owns it.
+///   - **symlinks**: same reason; boundary canonicalization owns it.
 pub fn normalize_path_key(path: &Path) -> PathBuf {
     let mut out = PathBuf::with_capacity(path.as_os_str().len());
     for comp in path.components() {
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn parent_dir_segments_not_collapsed() {
-        // `a/../b` ≠ lexical `b` when `a` is a symlink — collapsing
+        // `a/../b` ≠ lexical `b` when `a` is a symlink, collapsing
         // needs filesystem knowledge this layer must not have.
         let mut store = NodeStore::new();
         let direct = store.get_or_create_path("/Users/b");
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn normalize_is_prefix_stable() {
-        // parent() of a normalized path is itself normalized — the
+        // parent() of a normalized path is itself normalized: the
         // parent-index lookup in insert_path relies on this.
         let n = normalize_path_key(Path::new("/Users/x/./docs//"));
         assert_eq!(n, PathBuf::from("/Users/x/docs"));

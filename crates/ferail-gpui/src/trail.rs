@@ -1,8 +1,8 @@
-//! Activity trail — a typed, timestamped flight recorder of what the user did:
+//! Activity trail: a typed, timestamped flight recorder of what the user did:
 //! folder navigations (new / back / forward) and the key commands they ran.
 //!
 //! This answers "where are we, where have we been, and what got us here" for
-//! the Diagnostics page and the issue reporter — a bug report carries the last
+//! the Diagnostics page and the issue reporter: a bug report carries the last
 //! ~256 actions so a problem can be reproduced from context.
 //!
 //! It is an in-memory ring buffer with no I/O, so recording is cheap and safe
@@ -50,7 +50,7 @@ pub enum TrailEvent {
     Command {
         label: &'static str,
     },
-    /// A free-form note — e.g. an error surfaced to the user.
+    /// A free-form note, e.g. an error surfaced to the user.
     Note(String),
 }
 
@@ -114,7 +114,7 @@ pub fn render_lines() -> Vec<String> {
 
 /// Like [`render_lines`], but redacts every navigated path to a name-free shape
 /// when [`crate::redact::enabled`] is set (the default). This is what gets
-/// shown, copied, and bundled — so a shared report leaks no file or folder
+/// shown, copied, and bundled, so a shared report leaks no file or folder
 /// names.
 pub fn render_lines_sanitized() -> Vec<String> {
     render(crate::redact::enabled())

@@ -36,19 +36,19 @@ pub fn init() {
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
     // ...but never let that leak into *library* error construction.
-    // `std::backtrace::Backtrace::capture()` — which `anyhow::Error` calls on
-    // every `anyhow!`/`bail!`/`.context()` — consults RUST_LIB_BACKTRACE
+    // `std::backtrace::Backtrace::capture()`: which `anyhow::Error` calls on
+    // every `anyhow!`/`bail!`/`.context()`: consults RUST_LIB_BACKTRACE
     // first and falls back to RUST_BACKTRACE, so the default above would
     // silently make every anyhow error in the process capture a full stack
     // walk. Hot paths build those errors by the hundreds per frame (gpui's
     // font lookup re-wraps a cached miss in a fresh `anyhow!` per text run;
     // on Linux that walk is ~9 misses deep), and on Linux each capture is a
-    // libgcc `_Unwind_Find_FDE` crawl over a 100 MB binary — measured at 78%
+    // libgcc `_Unwind_Find_FDE` crawl over a 100 MB binary: measured at 78%
     // of the UI thread's time on the Ubuntu VM, the app crawling at seconds
     // per frame. Panics are unaffected: std's panic path honours
     // RUST_BACKTRACE, and our hook uses `Backtrace::force_capture()` anyway.
     if std::env::var_os("RUST_LIB_BACKTRACE").is_none() {
-        // SAFETY: as above — startup, before any worker spawn.
+        // SAFETY: as above: startup, before any worker spawn.
         unsafe { std::env::set_var("RUST_LIB_BACKTRACE", "0") };
     }
 
@@ -66,13 +66,13 @@ pub fn init() {
     // On booted AROS a shell command's stderr goes to the AROS console, not the
     // host process, so `eprintln!` never reaches the `aros-ctl` log. And gpui's
     // `.log_err()` (e.g. the swallowed `paint_svg` failure) routes through the
-    // `log` crate, which is a no-op until a logger is installed — nothing
+    // `log` crate, which is a no-op until a logger is installed, nothing
     // installs one on AROS. Bridge the `log` facade into the MacRW file sink so
     // both are actually observable on the host (~/AROS/Shared/ferail-log.txt).
     #[cfg(target_os = "aros")]
     {
         // Info by default: at Trace, cosmic_text shapes and notify rescans
-        // flood both sinks (tens of lines per frame — real I/O cost, and the
+        // flood both sinks (tens of lines per frame: real I/O cost, and the
         // volume that used to overflow the boot console). FERAIL_LOG_TRACE=1
         // restores the firehose for icon/text debugging sessions.
         let max = if std::env::var_os("FERAIL_LOG_TRACE").is_some() {
@@ -99,7 +99,7 @@ pub fn line(level: &str, args: std::fmt::Arguments) {
     let msg = format!("[+{:7.3}s][{}] {}", elapsed_secs(), level, args);
     // On AROS, routine logs must NOT touch stderr: stderr is the boot
     // console, the console lives on its own Intuition screen, and a write
-    // can yank that screen in front of the app's (observed 2026-07-21 —
+    // can yank that screen in front of the app's (observed 2026-07-21:
     // every `navigate:` line swapped screens mid-click, which reads as
     // "the listview stopped updating" and eats the next clicks). The
     // MacRW file sink is the log surface there; stderr stays for panics,
@@ -112,7 +112,7 @@ pub fn line(level: &str, args: std::fmt::Arguments) {
 
 /// Non-panicking stderr write. `eprintln!` panics when stderr fails, and on
 /// AROS the boot-console handler does fail partial writes under sustained
-/// output — with panic=abort that cascaded into a whole-OS deadend reboot
+/// output, with panic=abort that cascaded into a whole-OS deadend reboot
 /// (the "spontaneous silent reboot": notify-rs TRACE spam → eprintln! →
 /// "failed printing to stderr" panic). Diagnostics must never kill the app.
 pub fn stderr_line(msg: &str) {
@@ -121,7 +121,7 @@ pub fn stderr_line(msg: &str) {
 }
 
 /// AROS-only host-visible diagnostic sink. Appends each line to
-/// `MacRW:ferail-log.txt` — the host-shared volume, readable on macOS as
+/// `MacRW:ferail-log.txt`: the host-shared volume, readable on macOS as
 /// `~/AROS/Shared/ferail-log.txt`. Truncated on first write each boot. This
 /// is the same host-durable trick the panic hook uses (`ferail-panic.txt`),
 /// needed because AROS stderr never reaches the `aros-ctl` log.
@@ -240,7 +240,7 @@ fn breadcrumbs() -> &'static Mutex<VecDeque<String>> {
 /// How much of the crash lands on stderr vs. in the report file. A
 /// terminal crash used to dump everything (up to 64 breadcrumbs + 28
 /// backtrace lines) on the console; now stderr gets a digest sized to
-/// these caps and the report file gets the whole story — every
+/// these caps and the report file gets the whole story: every
 /// breadcrumb plus the complete raw backtrace.
 const STDERR_BREADCRUMBS: usize = 8;
 const STDERR_FRAME_LINES: usize = 12;
@@ -262,7 +262,7 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
     // Persist the essential facts FIRST, before anything that can fail. A
     // panic inside this hook aborts immediately (panic-in-hook cannot
     // unwind), and on this port Backtrace::force_capture() is the prime
-    // suspect — reports were lost entirely when it came before the write.
+    // suspect: reports were lost entirely when it came before the write.
     #[cfg(target_os = "aros")]
     {
         use std::io::Write as _;
@@ -290,7 +290,7 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
 
     // The report file gets the whole story, unconditionally: every
     // breadcrumb, the compacted Ferail/GPUI frames for a quick read, and
-    // the complete raw backtrace. Appended — persist_crash_report already
+    // the complete raw backtrace. Appended: persist_crash_report already
     // seeded the file, and a second panic (or a native-exception sidecar
     // line) must never overwrite the first, informative report.
     let mut detailed = String::with_capacity(4096);
@@ -311,7 +311,7 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
         append_report(path, &detailed);
     }
 
-    // stderr gets a console-sized digest — the last few breadcrumbs, the
+    // stderr gets a console-sized digest: the last few breadcrumbs, the
     // relevant frames, and a pointer to the report file for the rest.
     // Two cases still print everything: the user asked for the full
     // backtrace inline, or no report file could be written (stderr is
@@ -340,7 +340,7 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
     }
 
     // On AROS, stderr is lost (console-bound) and with panic=abort the whole
-    // OS may reboot before anything drains — persist the report to the
+    // OS may reboot before anything drains: persist the report to the
     // host-shared volume with a dedicated file handle. Deliberately NOT the
     // shared aros_sink: the panicking thread may hold its (non-reentrant)
     // mutex, and a deadlocked panic hook reports nothing at all.
@@ -372,7 +372,7 @@ fn write_report_header(out: &mut String, thread_name: &str, location: &str, payl
     let _ = writeln!(out);
 }
 
-/// Append `text` to the crash-report file. Append, never truncate — the
+/// Append `text` to the crash-report file. Append, never truncate: the
 /// same double-panic rationale as [`persist_crash_report`], plus the
 /// Windows native-exception filter shares this file for its sidecar line.
 fn append_report(path: &std::path::Path, text: &str) {
@@ -416,7 +416,7 @@ fn write_compact_backtrace(out: &mut String, backtrace: &str, max_lines: usize) 
     use std::fmt::Write as _;
 
     // Backslash-normalized so Windows backtraces (`.\crates\ferail-gpui\...`)
-    // match too — they used to slip past the `/`-only patterns and every
+    // match too: they used to slip past the `/`-only patterns and every
     // Windows report said "<no Ferail/GPUI frames found>". A frame counts if
     // either its symbol line or its `at path:line` line matches; the panic
     // hook's own frames are noise on every report and are skipped.
@@ -447,7 +447,7 @@ fn write_compact_backtrace(out: &mut String, backtrace: &str, max_lines: usize) 
             pending_frame = Some(line);
             continue;
         }
-        // Drop the hook's own frame together with its location line —
+        // Drop the hook's own frame together with its location line:
         // `is_relevant` can't do it alone, since the location (`at
         // ...crates/ferail-gpui/src/obs.rs`) matches the ferail patterns.
         if pending_frame
@@ -561,7 +561,7 @@ where
 }
 
 // =============================================================================
-// Macros — `#[macro_export]`ed so any ferail-gpui code can reach them via
+// Macros, `#[macro_export]`ed so any ferail-gpui code can reach them via
 // `crate::log_info!`, `crate::log_warn!`, `crate::log_error!`.
 // =============================================================================
 

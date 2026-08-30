@@ -13,16 +13,16 @@ per-entry packed size, compression method, and checksum.*
 
 Code:
 
-- `ferail-archive` — format identity, capability matrix, entry metadata,
+- `ferail-archive`: format identity, capability matrix, entry metadata,
   archive tree, and path-safety rules;
-- `ferail-fs-native/src/archive/` — format probing, table-of-contents readers,
+- `ferail-fs-native/src/archive/`: format probing, table-of-contents readers,
   extraction, creation, ZIP rewriting, progress, cancellation, and scratch
   cleanup;
-- `ferail-gpui/src/archive.rs` — archive workbench, projected edits, preview,
+- `ferail-gpui/src/archive.rs`: archive workbench, projected edits, preview,
   drag-and-drop, and Save/Revert interaction;
-- `ferail-gpui/src/archive_create.rs` — new-archive dialog;
-- `ferail-gpui/src/archive_convert.rs` — capability-driven conversion dialog;
-- `ferail-gpui/src/shell/file_ops.rs` — background task integration and user
+- `ferail-gpui/src/archive_create.rs`: new-archive dialog;
+- `ferail-gpui/src/archive_convert.rs`: capability-driven conversion dialog;
+- `ferail-gpui/src/shell/file_ops.rs`: background task integration and user
   notifications.
 
 ## Supported formats
@@ -146,9 +146,9 @@ hard failure so it cannot silently produce an incomplete archive.
 The reverse gesture works too: dropping files or folders **onto an archive
 file** in the list or grid adds them to it, without opening the workbench
 first. The row classifies itself by suffix only (`Format::from_path`, pure
-string work — render must not probe the file), so a ZIP shows the ordinary
-accent copy ring while a format that cannot be edited in place — 7z, the tar
-family, single-member gz/bz2/xz, LHA — shows the forbidden cursor and danger
+string work: render must not probe the file), so a ZIP shows the ordinary
+accent copy ring while a format that cannot be edited in place, 7z, the tar
+family, single-member gz/bz2/xz, LHA: shows the forbidden cursor and danger
 ring. Both consume the drop: letting a refused archive fall through to the
 pane behind it would move the files into the current folder, somewhere the
 user never aimed. Dropped folders bring their subtree, an entry whose name is
@@ -156,7 +156,7 @@ already present is reported rather than shadowed, and the worker re-derives
 the real format before writing, so a mislabelled file fails there instead of
 being corrupted. ZIP-based packages (`.docx`, `.jar`, `.apk`) are not
 recognized as archives by suffix and are never offered as add targets. The
-operation is deliberately not undoable — undo would need the pre-add bytes,
+operation is deliberately not undoable: undo would need the pre-add bytes,
 which are not kept. Members dragged out of *another* archive land the same way:
 they are cherry-picked into a private staging directory beside the target and
 appended by leaf name, and the staging directory is removed on every path.
@@ -165,7 +165,7 @@ Appending is transactional, like the workbench's Save. Existing members are
 byte-copied (never re-encoded) into a sibling temp file, the additions are
 written there, the result's central directory is parsed and the archive's stamp
 re-checked, and only then does an atomic replace swap it in. An in-place append
-would be faster — it rewrites just the central directory — but a cancellation,
+would be faster, it rewrites just the central directory, but a cancellation,
 vanished source, read error, or full disk part-way through would leave a
 truncated member inside the user's real archive while the operation reported
 failure. Duplicate names are skipped rather than shadowed, and the skip set
@@ -175,7 +175,7 @@ alone instead of reporting a clean success.
 
 Local filenames become archive paths through one component filter. A name is
 one component by construction, but on Unix it may legitimately *contain* a
-backslash — translating that to `/` would invent structure, turning the real
+backslash, translating that to `/` would invent structure, turning the real
 file `..\payload` into the entry `../payload`. Ferail's own extraction guard
 would reject that, but another tool's might not, so backslashes are left alone
 and any component that still fails the shared safety rule is dropped rather
@@ -209,7 +209,7 @@ leaf names are disambiguated without changing their archive paths.
 Another Ferail window receives the same native gesture without first
 materializing a temporary file. AppKit only delivers a drag to a window
 registered for a type that is on the session pasteboard, and GPUI registers its
-windows for the legacy filename list alone — which a promise never carries, so
+windows for the legacy filename list alone, which a promise never carries, so
 by default a Ferail window is not a destination at all. Ferail's promise items
 are therefore an `NSFilePromiseProvider` subclass that also declares a private,
 pathless marker type, and every Ferail window is registered for that marker at
@@ -223,13 +223,13 @@ that window's current folder. Folder rows, grid cells, Browse-tree folders,
 volumes, available path favorites, sidebar Locations, and breadcrumb segments
 highlight and extract into the targeted folder; expandable targets keep the
 ordinary spring-load behavior. Every one of those targets works whether the
-workbench is popped out or docked — docked, the workbench covers the file list,
+workbench is popped out or docked: docked, the workbench covers the file list,
 so the sidebar and breadcrumb are the destinations that remain reachable, and a
 release over the workbench itself stays a cancelled drag. During a native promise session GPUI owns no typed drag,
 so `drag_over` never fires: every one of those targets paints its accent ring
 from a plain hover style instead, refreshed by the `on_mouse_move` that the
 platform delivers. GPUI allows a single `.hover()` per element, so each target
-merges its ordinary hover wash and this drop ring into one closure — adding a
+merges its ordinary hover wash and this drop ring into one closure, adding a
 second `.hover()` is a debug assertion, not a style that loses. Every path
 invokes the same background extraction pipeline. No placeholder path is
 advertised, so Finder cannot receive an extra dummy file. Session completion
@@ -260,17 +260,17 @@ handle a format.
 ## Staged ZIP editing
 
 Only a file whose explicit format is ordinary `.zip` may enter edit mode.
-Dropping files or folders into the workbench—or onto one of its inner
-folders—adds an `ArchiveAddition` to an in-memory journal. Rename and Remove
+Dropping files or folders into the workbench, or onto one of its inner
+folders, adds an `ArchiveAddition` to an in-memory journal. Rename and Remove
 add journal operations as well. The visible table of contents is a pure
 projection of the original entries plus that journal; the source archive is
 untouched until **Save Changes**.
 
 The header shows the number of pending changes and exposes:
 
-- **Save Changes** — commit the complete journal once;
-- **Revert** — abandon every pending operation;
-- close protection in a standalone window — Save Changes, Discard Changes, or
+- **Save Changes**: commit the complete journal once;
+- **Revert**: abandon every pending operation;
+- close protection in a standalone window: Save Changes, Discard Changes, or
   Keep Editing.
 
 Removing a not-yet-saved addition cancels that addition rather than recording
@@ -379,8 +379,8 @@ work as an application or document.
 
 ## Localization and documentation rule
 
-Every archive string visible to a user—labels, tooltips, drop rejection,
-password errors, warnings, progress, and results—must use the i18n macros.
+Every archive string visible to a user, labels, tooltips, drop rejection,
+password errors, warnings, progress, and results, must use the i18n macros.
 After adding or changing text, regenerate `locales/en.json`, translate every
 new key in bundled German and French, then run extraction and language-pack
 validation. English is the fallback, not permission to leave bundled packs

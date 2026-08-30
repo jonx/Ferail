@@ -1,4 +1,4 @@
-//! Composite `AssetSource` — our local icon bundle stacks in front of
+//! Composite `AssetSource`: our local icon bundle stacks in front of
 //! the upstream `gpui_component_assets::Assets`. Lets `gpui_component::Icon`
 //! / `gpui::svg().path("icons/file/X.svg")` resolve transparently
 //! whether the SVG ships with us or with the upstream library bundle.
@@ -52,8 +52,8 @@ impl AssetSource for FeraAssets {
 mod tests {
     use super::*;
 
-    /// Rasterize `svg_bytes` the way gpui's `svg()` element does — parse with
-    /// usvg, render to an alpha mask with resvg — and return the count of
+    /// Rasterize `svg_bytes` the way gpui's `svg()` element does: parse with
+    /// usvg, render to an alpha mask with resvg, and return the count of
     /// pixels with non-zero coverage. Zero means "parses but draws nothing",
     /// the failure mode behind an icon that silently doesn't appear.
     fn coverage(svg_bytes: &[u8], label: &str) -> usize {
@@ -76,7 +76,7 @@ mod tests {
     }
 
     /// Every SVG we ship must parse and rasterize to a non-empty mask. This is
-    /// the dynamic guard — it auto-covers any icon added under `resources/`.
+    /// the dynamic guard: it auto-covers any icon added under `resources/`.
     #[test]
     fn local_bundle_icons_all_rasterize() {
         let mut n = 0;

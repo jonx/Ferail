@@ -1,6 +1,6 @@
 //! Pure zoom/pan geometry for the viewer window.
 //!
-//! No gpui types — every function is f32 math over `(w, h)` tuples so
+//! No gpui types: every function is f32 math over `(w, h)` tuples so
 //! the whole sticky-zoom contract is unit-testable and portable
 //! (docs/features/VIEWER.md, "stage.rs").
 //!
@@ -16,7 +16,7 @@ pub enum ZoomMode {
     /// Fit the viewport exactly (aspect preserved): large media scales
     /// down, small media scales *up* to fill the window.
     Fit,
-    /// Fit inside the viewport, but never upscale beyond 100 % —
+    /// Fit inside the viewport, but never upscale beyond 100 %:
     /// tiny icons render pixel-true instead of as blurry posters.
     FitDown,
     /// 100 %, one image pixel per logical pixel.
@@ -29,7 +29,7 @@ pub enum ZoomMode {
 pub const MIN_SCALE: f32 = 0.05;
 pub const MAX_SCALE: f32 = 32.0;
 
-/// Sticky view state. Lives on the viewer window, *not* per image —
+/// Sticky view state. Lives on the viewer window, *not* per image:
 /// navigation keeps it verbatim, which is the feature.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StageState {
@@ -49,7 +49,7 @@ impl Default for StageState {
 }
 
 impl StageState {
-    /// Centered state in the given mode — what "reset zoom" returns to.
+    /// Centered state in the given mode: what "reset zoom" returns to.
     pub fn reset(mode: ZoomMode) -> Self {
         Self {
             mode,
@@ -69,7 +69,7 @@ pub struct StageRect {
 }
 
 /// Scale that fits `img` to `view` exactly (up- or downscaling), aspect
-/// preserved. Not clamped to [`MIN_SCALE`]/[`MAX_SCALE`] — those bound
+/// preserved. Not clamped to [`MIN_SCALE`]/[`MAX_SCALE`]: those bound
 /// *user* zoom steps; a fit is whatever the window demands.
 pub fn fit_scale(img: (f32, f32), view: (f32, f32)) -> f32 {
     if img.0 <= 0.0 || img.1 <= 0.0 {

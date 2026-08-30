@@ -3,7 +3,7 @@
 //!
 //! Uses `/usr/bin/ditto` with `-c -k --sequesterRsrc --keepParent`:
 //! that's the same combination Finder runs. Produces `<name>.zip`
-//! for a single source, or `Archive.zip` for multiples — same
+//! for a single source, or `Archive.zip` for multiples, same
 //! naming Finder uses.
 //!
 //! Synchronous on the calling thread; callers dispatch from a
@@ -33,7 +33,7 @@ pub fn compress(targets: &[&Path]) -> Result<PathBuf, String> {
     //   -k           PKZip format (vs xar default)
     //   --sequesterRsrc  preserve resource forks via __MACOSX/
     //   --keepParent     include the parent dir name when given a
-    //                    single source — matters for "compress
+    //                    single source: matters for "compress
     //                    Foo" producing Foo.zip containing Foo/.
     let mut cmd = Command::new("/usr/bin/ditto");
     cmd.arg("-c")

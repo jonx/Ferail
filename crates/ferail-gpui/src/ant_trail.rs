@@ -7,12 +7,12 @@
 //! persisted settings at startup and edited live by the Appearance
 //! settings color picker. Reading [`base`] during render subscribes the
 //! window to changes, so editing the color repaints open windows
-//! immediately. `None` (the default) falls back to [`default_base`] —
+//! immediately. `None` (the default) falls back to [`default_base`]:
 //! the original warm orange.
 //!
 //! [`ExcludeFavoritesFromTracking`] is the policy behind
 //! `Shell::navigate_from_favorite`: when set (the default), reaching a
-//! folder by clicking its favorite does not record a visit — it neither
+//! folder by clicking its favorite does not record a visit: it neither
 //! bumps that folder's Ant Trail heat nor pushes it into Recents, since
 //! a favorite is a deliberate shortcut rather than organic browsing. The
 //! same folder reached by browsing still records normally.
@@ -25,7 +25,7 @@ pub struct AntTrailColor(pub Option<Hsla>);
 
 impl gpui::Global for AntTrailColor {}
 
-/// The original hardcoded warm orange — the heat metaphor's "glow."
+/// The original hardcoded warm orange: the heat metaphor's "glow."
 /// Returned at full alpha; the per-row heat alpha is applied by [`tint`].
 pub fn default_base() -> Hsla {
     gpui::Rgba {
@@ -49,13 +49,13 @@ pub fn base(cx: &App) -> Hsla {
 /// Apply per-folder heat to a base color, producing the row/cell tint.
 /// Heat 0→1 maps to alpha 0→0.30 (the original fixed recipe). Alpha is
 /// *set*, not multiplied, so a color picked with a partial alpha can't
-/// double-dim the tint — the translucency comes from heat alone.
+/// double-dim the tint: the translucency comes from heat alone.
 pub fn tint(base: Hsla, heat: f32) -> Hsla {
     base.alpha((heat * 0.30).clamp(0.0, 1.0))
 }
 
 /// Master switch for the heat tint. Default `true`. When off, the list
-/// and grid skip the tint entirely — some find the colored rows noisy —
+/// and grid skip the tint entirely: some find the colored rows noisy,
 /// but visits are still recorded, so Recents (and future prediction)
 /// keep working. Set live by the Appearance settings toggle; read during
 /// render so flipping it repaints open windows at once.

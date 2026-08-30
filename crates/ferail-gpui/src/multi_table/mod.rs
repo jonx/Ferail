@@ -9,21 +9,21 @@
 //!
 //! ## Future evolutions this fork enables
 //!
-//! - **Drag-select rubber-banding** — `on_mouse_down` + `on_mouse_move`
+//! - **Drag-select rubber-banding**: `on_mouse_down` + `on_mouse_move`
 //!   to sweep-select a row range by dragging, emitting new events as the
 //!   mouse moves.
-//! - **Press-on-selected drag delay** — spec §3.3 requires mouse-down on
+//! - **Press-on-selected drag delay**: spec §3.3 requires mouse-down on
 //!   a selected row to wait for a drag threshold before collapsing
 //!   selection, which upstream's instant `SelectRow` cannot express.
-//! - **Custom drag image / payload** — attach a multi-row drag badge
+//! - **Custom drag image / payload**: attach a multi-row drag badge
 //!   with a count chip; upstream only supports single-row `on_drag`.
-//! - **Empty-area click** — left-click on blank space below the last
+//! - **Empty-area click**: left-click on blank space below the last
 //!   row to clear selection (spec §2.4); requires a hit-test gap the
 //!   upstream table doesn't expose.
-//! - **Per-cell click intercept** — modifier-aware cell clicks for
+//! - **Per-cell click intercept**: modifier-aware cell clicks for
 //!   future inline rename or cell-level context menus.
 
-// Lint policy: this module is a pinned fork — keeping the diff
+// Lint policy: this module is a pinned fork, keeping the diff
 // against upstream gpui-component reviewable beats lint cleanliness,
 // so style lints that would rewrite inherited code are allowed here.
 // Correctness lints stay on. Don't add these allows elsewhere.

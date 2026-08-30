@@ -1,15 +1,15 @@
 //! Built-in image redaction / annotation editor
 //! (docs/features/IMAGE_EDITOR.md).
 //!
-//! One standalone window per image, deliberately tiny: two modes (Redact —
-//! opaque black; Annotate — coloured), two tools (rectangle, brush), undo,
+//! One standalone window per image, deliberately tiny: two modes (Redact
+//! (opaque black; Annotate) coloured), two tools (rectangle, brush), undo,
 //! Cmd+S saves an "edited" copy beside the original, Cmd+Shift+S overwrites
 //! the original after a confirmation. Not a paint program: no zoom, no
 //! layers, no filters.
 //!
 //! Pixel discipline: the window keeps only a bounded display-resolution
 //! copy of the image in memory. Every interactive repaint composites the
-//! strokes over that copy off-thread (single-flight, latest-wins — the
+//! strokes over that copy off-thread (single-flight, latest-wins, using the
 //! `schedule_process` shape from the viewer); the full-resolution image is
 //! re-decoded from the file only inside the save worker, so a 50-megapixel
 //! photo never rides the UI thread and is never persisted at preview
@@ -36,7 +36,7 @@ use crate::shell::Shell;
 use crate::text::TextScale as _;
 use crate::viewer::stage::{self, StageState, ZoomMode};
 
-/// Key-binding context for the editor window — bound in
+/// Key-binding context for the editor window. Bound in
 /// `keymap::install_extras`: Cmd+S copy-save, Cmd+Shift+S overwrite,
 /// Cmd+Z undo, Esc / Cmd+W close through the unsaved-edits guard.
 pub const IMAGE_EDITOR_CONTEXT: &str = "ImageEditor";
@@ -75,7 +75,7 @@ fn command_tooltip(label: SharedString, mac: &str, other: &str) -> SharedString 
 /// animation); HEIC/AVIF/RAW have no encoder here.
 const EDITABLE_EXTS: &[&str] = &["png", "jpg", "jpeg", "jpe", "bmp", "tif", "tiff", "webp"];
 
-/// Refuse images past this many pixels — a full-res RGBA buffer is 4 B/px
+/// Refuse images past this many pixels: a full-res RGBA buffer is 4 B/px
 /// in the save worker, so 64 MP ≈ 256 MB peak, the ceiling of "fast and
 /// simple".
 const MAX_EDIT_PIXELS: u64 = 64_000_000;
@@ -98,7 +98,7 @@ const ANNOTATE_COLORS: &[[u8; 3]] = &[
 const BRUSH_FRACTIONS: &[f32] = &[0.008, 0.018, 0.035];
 
 /// Can the built-in image editor open a file with this display name?
-/// Extension-only — safe to call at context-menu build time.
+/// Extension-only, so it is safe to call at context-menu build time.
 pub fn editable_image_name(name: &str) -> bool {
     let Some((_, ext)) = name.rsplit_once('.') else {
         return false;
@@ -106,7 +106,7 @@ pub fn editable_image_name(name: &str) -> bool {
     EDITABLE_EXTS.contains(&ext.to_ascii_lowercase().as_str())
 }
 
-/// Number of image-editor windows open — drives the shared spiral cascade.
+/// Number of image-editor windows open. Drives the shared spiral cascade.
 static OPEN_IMAGE_EDITOR_WINDOWS: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) struct CascadeGuard {
@@ -1342,7 +1342,7 @@ impl Render for ImageEditView {
 }
 
 // ---------------------------------------------------------------------------
-// Pure pixel workers — blocking, background executor only.
+// Pure pixel workers: blocking, background executor only.
 // ---------------------------------------------------------------------------
 
 fn load_for_edit(path: &Path) -> LoadOutcome {
@@ -1579,7 +1579,7 @@ fn encode_image(rgba: &[u8], w: u32, h: u32, ext: &str) -> Result<Vec<u8>, Strin
 
 #[cfg(test)]
 mod tests {
-    // No `use super::*` — `gpui::*`'s `test` attribute macro would shadow
+    // No `use super::*`: `gpui::*`'s `test` attribute macro would shadow
     // the built-in `#[test]`.
     use super::{Stroke, apply_strokes, editable_image_name, encode_image, save_edited};
 

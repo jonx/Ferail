@@ -8,27 +8,27 @@
 //! stays a substring term. All terms AND together.
 //!
 //! Supported tokens (also the source of truth for the filter box's
-//! autocomplete — see [`TOKEN_HELP`]):
+//! autocomplete: see [`TOKEN_HELP`]):
 //!
-//! - `kind:folder|file|link` (or the `type:` alias) — entry kind.
-//! - `ext:rs` — file extension, case-insensitive, no dot.
-//! - `size:>10mb` / `size:<1gb` / `size:1mb..100mb` — sizes use the
+//! - `kind:folder|file|link` (or the `type:` alias): entry kind.
+//! - `ext:rs`: file extension, case-insensitive, no dot.
+//! - `size:>10mb` / `size:<1gb` / `size:1mb..100mb`: sizes use the
 //!   same 1024-based units the Size column displays.
-//! - `mod:` / `created:` — date predicates: `>2026-01-01`,
+//! - `mod:` / `created:`: date predicates: `>2026-01-01`,
 //!   `<=2026-06-30`, `2026-01-01..2026-03-31`, or the relative
 //!   keywords `today`, `yesterday`, `week`, `month`, `year`.
-//! - `locked:yes|no` — the immutable/read-only flag (Finder's
+//! - `locked:yes|no`: the immutable/read-only flag (Finder's
 //!   "Locked" checkbox).
-//! - `"quoted phrase"` — exact substring including spaces.
+//! - `"quoted phrase"`: exact substring including spaces.
 //!
 //! A token whose value fails to parse (`size:banana`) degrades to a
-//! plain substring term, so typing never makes the filter *lie* — at
+//! plain substring term, so typing never makes the filter *lie*, at
 //! worst it matches literally.
 //!
 //! Parsing is pure: relative dates are resolved against a caller-
 //! supplied [`DateCtx`] (now + local timezone offset), so the module
 //! stays platform-neutral and deterministic in tests. Evaluation reads
-//! only in-memory `FileEntry` fields — no I/O, per the prime
+//! only in-memory `FileEntry` fields, no I/O, per the prime
 //! directive; a metadata value the filesystem didn't provide
 //! (`created_unix == None`) quietly fails the predicate.
 
@@ -89,7 +89,7 @@ impl FilterExpr {
         FilterExpr { terms }
     }
 
-    /// No terms at all — matches every entry.
+    /// No terms at all: matches every entry.
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
     }
@@ -99,7 +99,7 @@ impl FilterExpr {
         self.terms.iter().any(|t| !matches!(t, Term::Text(_)))
     }
 
-    /// The free-text part of the query, space-joined — what a
+    /// The free-text part of the query, space-joined: what a
     /// name-index engine (Spotlight) should be queried with.
     pub fn text_needle(&self) -> String {
         let mut out = String::new();
@@ -116,7 +116,7 @@ impl FilterExpr {
 
     /// Do all text terms match this haystack? The caller supplies the
     /// haystack already lowercased (name, or name+format, or relative
-    /// path — per surface).
+    /// path, per surface).
     pub fn text_matches(&self, haystack_lower: &str) -> bool {
         self.terms.iter().all(|t| match t {
             Term::Text(needle) => haystack_lower.contains(needle),
@@ -300,7 +300,7 @@ fn parse_bool(value: &str) -> Option<bool> {
 }
 
 /// `>10mb`, `<=1gb`, `10mb..1gb`, or a bare `10mb` (exact-ish: that
-/// value or more, matching user intent of "about this big" poorly —
+/// value or more, matching user intent of "about this big" poorly,
 /// so bare means >=). Returns inclusive byte bounds.
 fn parse_size_range(value: &str) -> Option<(Option<u64>, Option<u64>)> {
     if let Some((lo, hi)) = value.split_once("..") {
@@ -421,7 +421,7 @@ fn civil_to_unix(s: &str, tz_offset_secs: i64) -> Option<i64> {
     Some(days * 86_400 - tz_offset_secs)
 }
 
-/// Help metadata for one filter token — drives the filter box's
+/// Help metadata for one filter token: drives the filter box's
 /// autocomplete menu so the menu and the parser can't drift apart.
 pub struct TokenHelp {
     /// The token key including the trailing colon, e.g. `"size:"`.
@@ -429,7 +429,7 @@ pub struct TokenHelp {
     /// Ready-to-insert example values for the value menu. Empty when
     /// the value is freeform (`ext:`).
     pub values: &'static [&'static str],
-    /// One-line description shown next to the key suggestion — a msgid;
+    /// One-line description shown next to the key suggestion: a msgid;
     /// translate at the display site with `ferail_core::i18n::tr_raw`.
     pub detail: &'static str,
 }
@@ -439,32 +439,32 @@ pub const TOKEN_HELP: &[TokenHelp] = &[
     TokenHelp {
         key: "kind:",
         values: &["folder", "file", "link"],
-        detail: msgid!("entry kind — kind:folder, kind:file, kind:link"),
+        detail: msgid!("entry kind: kind:folder, kind:file, kind:link"),
     },
     TokenHelp {
         key: "ext:",
         values: &[],
-        detail: msgid!("file extension — ext:rs, ext:pdf"),
+        detail: msgid!("file extension: ext:rs, ext:pdf"),
     },
     TokenHelp {
         key: "size:",
         values: &[">1mb", ">100mb", "<1mb", "1mb..100mb"],
-        detail: msgid!("file size — size:>10mb, size:1mb..1gb"),
+        detail: msgid!("file size: size:>10mb, size:1mb..1gb"),
     },
     TokenHelp {
         key: "mod:",
         values: &["today", "yesterday", "week", "month", "year", ">2026-01-01"],
-        detail: msgid!("modified date — mod:today, mod:>2026-01-01, mod:2026-01-01..2026-03-31"),
+        detail: msgid!("modified date: mod:today, mod:>2026-01-01, mod:2026-01-01..2026-03-31"),
     },
     TokenHelp {
         key: "created:",
         values: &["today", "yesterday", "week", "month", "year", ">2026-01-01"],
-        detail: msgid!("creation date — created:week, created:2026-01-01..2026-06-30"),
+        detail: msgid!("creation date: created:week, created:2026-01-01..2026-06-30"),
     },
     TokenHelp {
         key: "locked:",
         values: &["yes", "no"],
-        detail: msgid!("locked (immutable / read-only) flag — locked:yes"),
+        detail: msgid!("locked (immutable / read-only) flag: locked:yes"),
     },
 ];
 

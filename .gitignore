@@ -9,19 +9,19 @@
 # Generated filename-hazard test fixtures (names contain control/bidi chars)
 test-data/filename-hazards/samples/
 # WCORPUS-OPEN fixtures: generated names include trailing dots/spaces and
-# reserved device names that break ordinary tooling — keep only the docs.
+# reserved device names that break ordinary tooling - keep only the docs.
 test-data/open-reveal/*
 !test-data/open-reveal/README.md
 
-# Throwaway verify-step probes (Slow AI spikes) — never committed
+# Throwaway verify-step probes (Slow AI spikes) - never committed
 /spikes
 
-# Secrets and per-machine config — never commit
+# Secrets and per-machine config - never commit
 .env
 .env.*
 *.pem
 *.key
 .cargo/config.toml
 
-# AROS cross-link outputs (link-aros.sh) — regenerable, the ELF is huge
+# AROS cross-link outputs (link-aros.sh) - regenerable, the ELF is huge
 crates/ferail-aros-app/build/

@@ -1,11 +1,11 @@
-# AROS build overrides — copy to `.cargo/config.toml` at the repo root.
+# AROS build overrides - copy to `.cargo/config.toml` at the repo root.
 #
 #     cp packaging/aros/cargo-config-aros.toml .cargo/config.toml
 #
 # `.cargo/config.toml` is gitignored (per-machine config), which is exactly what
 # these entries need to be: they point at **sibling checkouts** that only an
 # AROS builder has. They used to live in the workspace `Cargo.toml`, where a
-# missing sibling turned every clean clone — on every platform, including CI —
+# missing sibling turned every clean clone - on every platform, including CI,
 # into an instant manifest error rather than a merely AROS-less build.
 #
 # Cargo applies `[patch]` from this file exactly as it would from a manifest.
@@ -37,5 +37,5 @@ gpui-component-assets = { path = "../gpui-component-aros/crates/assets" }
 stacker = { path = "../zed-aros/vendor-aros/stacker" }
 # filetime (via notify) has unix/windows/wasm arms only; the vendored copy
 # adds an AROS arm (std-Metadata reads, set-times unsupported). Same source
-# otherwise — inert off-AROS.
+# otherwise - inert off-AROS.
 filetime = { path = "../zed-aros/vendor-aros/filetime" }

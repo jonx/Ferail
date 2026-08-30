@@ -1,10 +1,10 @@
-//! LHA / LZH codec — read and extract.
+//! LHA / LZH codec: read and extract.
 //!
 //! LHarc is the archive format of the Amiga world: essentially all of Aminet
 //! ships as `.lha`, and AmigaOS-family systems (AROS included) treat it the
 //! way the rest of the world treats zip. It is also common on retro MS-DOS and
 //! X68000 collections, so this is a cross-platform format, not an AROS-only
-//! one — the codec is identical on every target.
+//! one: the codec is identical on every target.
 //!
 //! Backed by [`delharc`], a pure-Rust decoder covering `-lh0-` (stored)
 //! through `-lh7-`, the older `-lz*-` methods, and `-lhd-` directory entries.
@@ -21,8 +21,8 @@
 //! # `no_std` delharc
 //!
 //! The dependency is taken with `default-features = false` so that its `std`
-//! feature — which pulls `chrono/clock`, and with it platform time APIs that
-//! AROS has no arm for — stays off. The cost is that delharc then speaks its
+//! feature, which pulls `chrono/clock`, and with it platform time APIs that
+//! AROS has no arm for: stays off. The cost is that delharc then speaks its
 //! own [`delharc::stub_io::Read`] rather than [`std::io::Read`], so this
 //! module carries two small bridges: [`StdReader`] adapts a std reader *into*
 //! delharc, and [`Decoded`] adapts delharc's decoded output back *out* to std.
@@ -156,7 +156,7 @@ pub(super) fn extract(
     progress: &TransferProgress,
     cancel: &AtomicBool,
 ) -> Result<ExtractOutcome, ArchiveError> {
-    // No central directory, so the totals are unknown up front — same
+    // No central directory, so the totals are unknown up front, same
     // indeterminate progress the tar family uses.
     progress.begin_transfer(0, 0);
     let mut reader = open(archive)?;

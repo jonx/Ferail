@@ -11,17 +11,17 @@ description = "Linux platform shell: freedesktop / D-Bus / XDG integration (stub
 ferail-core.workspace = true
 
 # compress_paths writes `.zip` archives. Pure-Rust, cross-platform, and the
-# logic is platform-neutral — so it (and its test) compile and run on any host,
+# logic is platform-neutral - so it (and its test) compile and run on any host,
 # mirroring ferail-shell-win32's identical use. Same major/features as win32.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Linux-only shell deps. Kept under cfg(target_os = "linux") so the crate still
 # compiles on macOS/Windows as a workspace member (the cfg(not(linux)) stub arms).
 # The remaining work (file-URL clipboard, thumbnails, dark/volume/power
-# observers, video) will pull `ashpd`/`zbus`/`gstreamer` — see
+# observers, video) will pull `ashpd`/`zbus`/`gstreamer` - see
 # docs/features/linux-port.md §6.
 [target.'cfg(target_os = "linux")'.dependencies]
-# copy_to_clipboard — plain-text clipboard over Wayland + X11.
+# copy_to_clipboard - plain-text clipboard over Wayland + X11.
 arboard = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 md-5 = "0.11.0"

@@ -1,9 +1,9 @@
 //! Design tokens. Single source of truth for colors, spacing, typography.
 //! See `specs/controls/01-design-tokens.md`. No raw color literals or pixel
-//! values exist outside this crate — they would be a spec violation.
+//! values exist outside this crate: they would be a spec violation.
 //!
 //! Iteration 2: Zed-aligned. Two foreground tiers (no tertiary), single
-//! accent (no hover/pressed variants — Zed doesn't tint hover with accent),
+//! accent (no hover/pressed variants: Zed doesn't tint hover with accent),
 //! sharp corners by default (Zed's `Corners::default()` is zero), subtle
 //! background-layer deltas (~6% in dark, ~3% in light).
 
@@ -60,7 +60,7 @@ pub struct Tokens {
     pub magic: MagicTokens,
     /// User UI scale applied to all numeric dimensions on construction
     /// (text, space, hit, icon, layout). Borders and radii are not
-    /// scaled — they are tied to pixel-level crispness.
+    /// scaled: they are tied to pixel-level crispness.
     /// 1.0 = baseline; clamp to [0.6, 2.5] when setting.
     pub ui_scale: f32,
 }
@@ -83,7 +83,7 @@ pub struct ForegroundTokens {
     pub on_accent: Color,
 }
 
-/// One accent. No hover/pressed variants — Zed reserves accent for
+/// One accent. No hover/pressed variants: Zed reserves accent for
 /// selection/focus only. Hover uses `bg.layer3`.
 #[derive(Clone, Debug)]
 pub struct AccentTokens {
@@ -118,7 +118,7 @@ pub struct SpacingTokens {
 }
 
 /// Sharp by default for explorer chrome. The `sm/md/lg` triplet
-/// is the semantic three-step from the design brief — `sm` for
+/// is the semantic three-step from the design brief: `sm` for
 /// controls (inputs, segments, toggles), `md` for cards / groups,
 /// `lg` for modal windows and large surfaces. `popover` is kept
 /// for context menus and tooltips where Apple's convention is a
@@ -144,13 +144,13 @@ pub struct TextTokens {
 }
 
 /// A named tier in the canonical type scale. Every text size in the app
-/// resolves to one of these — the single source of truth for typography.
+/// resolves to one of these: the single source of truth for typography.
 /// Render code maps a tier to logical px via [`TextTokens::get`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TextSize {
     /// Micro labels / dense overlays.
     Xxs,
-    /// Body and metadata — the workhorse tier.
+    /// Body and metadata: the workhorse tier.
     Xs,
     /// Slightly emphasized labels and rows.
     Sm,
@@ -278,12 +278,12 @@ impl Tokens {
     /// Build a scaled copy of this token set. Multiplies every numeric
     /// dimension that contributes to UI density (text, spacing, hit
     /// rects, icons, layout heights / widths) by `scale`. Borders and
-    /// radii are not scaled — they're tied to crisp pixel rendering.
+    /// radii are not scaled: they're tied to crisp pixel rendering.
     /// `scale` is clamped to `[UI_SCALE_MIN, UI_SCALE_MAX]` so a stray
     /// keystroke can't break the layout.
     ///
     /// Idempotent in the sense that calling `scaled(1.0)` is a no-op.
-    /// Re-scaling an already-scaled `Tokens` compounds — callers should
+    /// Re-scaling an already-scaled `Tokens` compounds: callers should
     /// always start from a freshly-built `for_theme(...)`.
     pub fn scaled(mut self, scale: f32) -> Self {
         let s = scale.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
@@ -351,7 +351,7 @@ impl Tokens {
                 fill: Color::rgb(0x2A, 0x63, 0xD9),
                 // ~18% accent on light surfaces, perceptually subtle but distinct.
                 subtle: Color::rgba(0x2A, 0x63, 0xD9, 46),
-                // Neutral gray for unfocused selection — no accent leak.
+                // Neutral gray for unfocused selection, no accent leak.
                 subtle_inactive: Color::rgba(0x6F, 0x6F, 0x6F, 28),
             },
             border: BorderTokens {

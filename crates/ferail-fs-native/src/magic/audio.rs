@@ -2,7 +2,7 @@
 //!
 //! All extract channels + sample rate where the bitstream header
 //! fits inside the 4 KB read. MP3 with very large ID3 tags can push
-//! the first frame past 4 KB — in that case we report only the type,
+//! the first frame past 4 KB, in that case we report only the type,
 //! no audio facts.
 //!
 //! Ported from bfe-explorer's `sniff_audio_info`, `sniff_mp3_info`,
@@ -16,7 +16,7 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
         return Some(sniff_mp3_with_id3(buf));
     }
 
-    // Bare MP3 frame — but only if we're sure it's not a UTF-16 BOM.
+    // Bare MP3 frame, but only if we're sure it's not a UTF-16 BOM.
     if buf.len() >= 4 && !is_utf16_bom(buf) && is_valid_mp3_frame_header(buf) {
         let mut info = MagicInfo::new(MagicType::Mp3);
         parse_mp3_frame(buf, &mut info);
@@ -33,7 +33,7 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
 
     // AIFF / AIFF-C: the IFF `FORM` container with an `AIFF` (uncompressed)
     // or `AIFC` (compressed) form type. Without this, uncompressed AIFF has
-    // no recognizable leading signature and falls through to "Binary" — which
+    // no recognizable leading signature and falls through to "Binary", which
     // then trips the format-mismatch alert against the `.aiff` extension.
     if buf.len() >= 12 && buf.starts_with(b"FORM") && matches!(&buf[8..12], b"AIFF" | b"AIFC") {
         return Some(sniff_aiff(buf));
@@ -119,7 +119,7 @@ fn parse_mp3_frame(buf: &[u8], info: &mut MagicInfo) {
     }
 
     // Bitrate tables for Layer III (most common). Layer I/II have
-    // their own tables — skipped because Layer III dominates real
+    // their own tables: skipped because Layer III dominates real
     // files.
     if version_bits == 3 && layer_bits == 1 && bitrate_idx > 0 && bitrate_idx < 15 {
         const RATES_V1_L3: [u16; 15] = [
@@ -237,7 +237,7 @@ fn extended_f80_to_u32(b: &[u8]) -> u32 {
     let exponent = (((b[0] & 0x7f) as u32) << 8) | b[1] as u32; // 15-bit, bias 16383
     let mantissa = u64::from_be_bytes([b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9]]);
     if exponent == 0 || exponent == 0x7fff {
-        return 0; // zero / subnormal / inf / NaN — not a real rate
+        return 0; // zero / subnormal / inf / NaN, not a real rate
     }
     // value = mantissa * 2^(exponent - 16383 - 63); the mantissa's top bit is
     // the explicit integer part of the extended format.

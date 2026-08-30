@@ -6,11 +6,11 @@
 #
 # That scoping is the point. `[patch]` is global to a build, so putting these
 # in `.cargo/config.toml` would feed the sibling forks to the macOS and Windows
-# builds on the same machine — including release packaging, where it would also
+# builds on the same machine - including release packaging, where it would also
 # shadow the `vendor/ztracing` patch that severs the GPL-3.0 ztracing edge
 # (gpui-from-zed-aros brings its own ztracing). Here they only reach AROS.
 #
-# **Paths below are relative to the PARENT of this file's directory** — i.e.
+# **Paths below are relative to the PARENT of this file's directory** - i.e.
 # to `packaging/`, not to `packaging/aros/` and not to the repo root. That is
 # cargo's rule for config files (it assumes the usual `<root>/.cargo/` layout
 # and resolves relative to `<root>`), and getting it wrong fails with a path
@@ -42,13 +42,13 @@ gpui-component-assets = { path = "../../gpui-component-aros/crates/assets" }
 
 # libc, for AROS only. Upstream compiles to an empty module on this target
 # (AROS is not cfg(unix)), which is fine until something actually imports from
-# it — lzma-sys does, for `c_char`/`c_uchar`/`size_t`/`c_uint`, so xz cannot
+# it - lzma-sys does, for `c_char`/`c_uchar`/`size_t`/`c_uint`, so xz cannot
 # build without this. zed-aros vendors 0.2.186 with an additive AROS module.
 #
 # Scoped here rather than patched globally like the small crates below: libc is
 # large and security-relevant, and pointing macOS/Windows/Linux release builds
 # at a fork is a much bigger blast radius than a stack-probe shim. The cost of
-# that choice is the inertness trap described below — the vendored copy is
+# that choice is the inertness trap described below - the vendored copy is
 # 0.2.186, so `Cargo.lock` must stay on 0.2.186 or this patch is silently
 # dropped and the AROS build fails with "unresolved imports `libc::c_char`".
 # Re-pin with `cargo update -p libc --precise 0.2.186`.

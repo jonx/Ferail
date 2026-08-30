@@ -1,11 +1,11 @@
-//! Portable still-image metadata reader (WIN-014) — the one place the
+//! Portable still-image metadata reader (WIN-014): the one place the
 //! `kamadak-exif` dependency lives.
 //!
 //! Fills [`ImageMeta`] for Get Info's Image section: pixel dimensions from
 //! the image *header* (`image::image_dimensions` reads a few hundred bytes,
 //! never a full decode) and a curated EXIF subset (camera, date taken,
-//! orientation, exposure, GPS **presence**). Anything unreadable — not an
-//! image, no EXIF, truncated, malformed — degrades to fewer fields or
+//! orientation, exposure, GPS **presence**). Anything unreadable, not an
+//! image, no EXIF, truncated, malformed: degrades to fewer fields or
 //! `None`; this reader must never error a Get Info open.
 //!
 //! Privacy: GPS coordinates are detected but deliberately not parsed,
@@ -13,7 +13,7 @@
 //! this module.
 //!
 //! Runs off the UI thread (Prime Directive): both probes open the file.
-//! Cross-platform, pure Rust, no platform services — the Windows
+//! Cross-platform, pure Rust, no platform services: the Windows
 //! `IPropertyStore` provider planned by WIN-014 is additive, not a
 //! replacement for this.
 
@@ -25,7 +25,7 @@ use ferail_core::media::ImageMeta;
 
 /// Extensions worth probing. Gate up front so Get Info on arbitrary files
 /// doesn't open them twice for nothing. `heic`/`heif`/`avif` have EXIF but
-/// no header support in `image` — they simply yield no dimensions.
+/// no header support in `image`: they simply yield no dimensions.
 const IMAGE_EXTS: &[&str] = &[
     "jpg", "jpeg", "jpe", "png", "tif", "tiff", "webp", "heic", "heif", "avif",
 ];
@@ -73,7 +73,7 @@ fn apply_exif(meta: &mut ImageMeta, exif: &exif::Exif) {
             .and_then(|f| ascii_value(&f.value))
     };
     // display_value carries the human form kamadak already knows how to
-    // build ("1/250 s", "f/2.8", "35 mm") — no rational math to re-do here.
+    // build ("1/250 s", "f/2.8", "35 mm"), no rational math to re-do here.
     let display = |tag| {
         exif.get_field(tag, In::PRIMARY)
             .map(|f| f.display_value().with_unit(exif).to_string())
@@ -97,7 +97,7 @@ fn apply_exif(meta: &mut ImageMeta, exif: &exif::Exif) {
     meta.iso = exif
         .get_field(Tag::PhotographicSensitivity, In::PRIMARY)
         .and_then(|f| f.value.get_uint(0));
-    // Presence only — the coordinate values are deliberately not read.
+    // Presence only: the coordinate values are deliberately not read.
     meta.gps_present = exif.get_field(Tag::GPSLatitude, In::PRIMARY).is_some()
         || exif.get_field(Tag::GPSLongitude, In::PRIMARY).is_some();
 }
@@ -116,7 +116,7 @@ fn ascii_value(value: &Value) -> Option<String> {
     }
 }
 
-/// `"2023:04:01 12:30:00"` → `"2023-04-01 12:30:00"` — only the date part's
+/// `"2023:04:01 12:30:00"` → `"2023-04-01 12:30:00"`: only the date part's
 /// colons change. Anything not shaped like an EXIF datetime passes through.
 fn normalize_exif_datetime(s: &str) -> String {
     match s.split_once(' ') {

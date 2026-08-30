@@ -27,7 +27,7 @@ pub enum DiskUsageFact {
         node: NodeId,
         size_bytes: u64,
     },
-    /// Allocated (on-disk, block-aligned) bytes for a node — emitted
+    /// Allocated (on-disk, block-aligned) bytes for a node: emitted
     /// by the macOS scanner alongside `NodeSizeAdded`. Optional: not
     /// every platform supports it cheaply.
     NodeAllocatedAdded {
@@ -57,7 +57,7 @@ impl DiskUsageTree {
             }
             DiskUsageFact::NodeLinked { container, node } => {
                 // Containers are always Container-kind even before they're
-                // formally announced — the link itself implies as much.
+                // formally announced: the link itself implies as much.
                 self.ensure_node(*container).kind = NodeKind::Container;
                 self.add_link_unchecked(*container, *node);
             }

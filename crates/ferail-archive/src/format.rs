@@ -1,6 +1,6 @@
 //! Archive format identity and extension-based detection.
 //!
-//! Detection here is **lexical only** — it looks at the filename suffix and
+//! Detection here is **lexical only**: it looks at the filename suffix and
 //! never touches the filesystem. That is deliberate: the context-menu builder
 //! and other UI-thread callers decide whether a path is an archive on the hot
 //! path, so the decision must not stat, open, or sniff magic bytes (Prime
@@ -12,33 +12,33 @@ use ferail_core::msgid;
 /// A supported archive format.
 ///
 /// The set is intentionally bounded to the formats Ferail ships codecs for
-/// (see the workspace archive plan). "Any format" is not a goal — the long
+/// (see the workspace archive plan). "Any format" is not a goal: the long
 /// tail (rar, ace, obscure codecs) costs far more than it returns. New arms
 /// land here together with their codec in `ferail-fs-native` and their row
 /// in [`crate::Capabilities`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Format {
-    /// `.zip` — random-access, editable, password-capable. The workhorse.
+    /// `.zip`: random-access, editable, password-capable. The workhorse.
     Zip,
-    /// `.tar` — uncompressed archive; no central directory, so not editable
+    /// `.tar`: uncompressed archive; no central directory, so not editable
     /// in place.
     Tar,
-    /// `.tar.gz` / `.tgz` — gzip-compressed tar stream.
+    /// `.tar.gz` / `.tgz`: gzip-compressed tar stream.
     TarGz,
-    /// `.tar.bz2` / `.tbz2` — bzip2-compressed tar stream.
+    /// `.tar.bz2` / `.tbz2`: bzip2-compressed tar stream.
     TarBz2,
-    /// `.tar.xz` / `.txz` — xz/LZMA-compressed tar stream.
+    /// `.tar.xz` / `.txz`: xz/LZMA-compressed tar stream.
     TarXz,
-    /// `.gz` — a single gzip-compressed member (not a multi-file archive).
+    /// `.gz`: a single gzip-compressed member (not a multi-file archive).
     Gzip,
-    /// `.bz2` — a single bzip2-compressed member.
+    /// `.bz2`: a single bzip2-compressed member.
     Bzip2,
-    /// `.xz` — a single xz/LZMA-compressed member.
+    /// `.xz`: a single xz/LZMA-compressed member.
     Xz,
-    /// `.7z` — 7-Zip container. Read + extract only in v1 (`sevenz-rust`
+    /// `.7z`: 7-Zip container. Read + extract only in v1 (`sevenz-rust`
     /// has no stable write path we expose yet).
     SevenZ,
-    /// `.lha` / `.lzh` — the Amiga/MS-DOS era LHarc container, still the
+    /// `.lha` / `.lzh`: the Amiga/MS-DOS era LHarc container, still the
     /// dominant archive format on Aminet and AmigaOS-family systems. Read +
     /// extract only: `delharc` decodes every method we care about (`-lh0-`
     /// stored through `-lh7-`, plus `-lz*-` and `-lhd-` directories) but does
@@ -51,7 +51,7 @@ impl Format {
     ///
     /// Multi-part tar suffixes (`.tar.gz`) are checked before their single
     /// counterparts (`.gz`) so a tarball is never mistaken for a lone gzip
-    /// member. Returns `None` for anything not recognized as an archive —
+    /// member. Returns `None` for anything not recognized as an archive:
     /// the caller uses that to decide whether Extract / Open-as-archive is
     /// even offered.
     pub fn from_path(path: &str) -> Option<Format> {
@@ -143,7 +143,7 @@ impl Format {
 
     /// Whether this format is a single compressed member rather than a
     /// multi-file archive (`.gz` / `.bz2` / `.xz` on their own). These have
-    /// exactly one logical entry — decompressing yields one file.
+    /// exactly one logical entry, decompressing yields one file.
     pub fn is_single_member(self) -> bool {
         matches!(self, Format::Gzip | Format::Bzip2 | Format::Xz)
     }
@@ -154,7 +154,7 @@ impl Format {
 /// layer maps each step to the concrete level its backend expects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompressionLevel {
-    /// No compression — fastest, store only (where the format supports it).
+    /// No compression: fastest, store only (where the format supports it).
     Store,
     /// Light compression, favor speed.
     Fast,
@@ -166,7 +166,7 @@ pub enum CompressionLevel {
 }
 
 impl CompressionLevel {
-    /// A user-facing label for the create dialog — a msgid; translate at
+    /// A user-facing label for the create dialog: a msgid; translate at
     /// the display site with `ferail_core::i18n::tr_raw`.
     pub fn label(self) -> &'static str {
         match self {

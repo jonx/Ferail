@@ -24,25 +24,25 @@ instantly.
 - **Trail scope = navigation + key commands** (state-changing/destructive ones),
   not all ~50 handlers.
 
-## Phase 1 — Activity trail  ✅ implemented
+## Phase 1 - Activity trail  ✅ implemented
 
-`crates/ferail-gpui/src/trail.rs` — a typed, timestamped ring buffer
+`crates/ferail-gpui/src/trail.rs`: a typed, timestamped ring buffer
 (`TrailEvent`: `Navigate{kind, path}` / `Command{label}` / `Note`), cap 256,
 in-memory (no I/O, UI-thread-safe). Mirrors the `obs` breadcrumb buffer but
 stores typed events. `obs` stays as the raw stderr log.
 
 Recording hooks:
-- Navigation — `Shell::navigate_with_tracking` (Go), `navigate_back` (Back),
+- Navigation: `Shell::navigate_with_tracking` (Go), `navigate_back` (Back),
   `navigate_forward` (Forward).
-- Key commands — one `trail::command("…")` line at the top of the curated
+- Key commands, one `trail::command("…")` line at the top of the curated
   handlers (Move to Trash, Empty Trash, Paste, Move Here, New Folder, Rename,
   Find Duplicates, Undo, Toggle Hidden Files). New commands opt in with one line.
 
-Not yet surfaced in the UI — Phase 2's Diagnostics page renders it.
+Not yet surfaced in the UI: Phase 2's Diagnostics page renders it.
 
-## Phase 2 — Diagnostics / health check  (TODO)
+## Phase 2 - Diagnostics / health check  (TODO)
 
-`crates/ferail-gpui/src/diagnostics.rs` — `run_checks()` produces a
+`crates/ferail-gpui/src/diagnostics.rs`: `run_checks()` produces a
 `DiagnosticsReport` of `Check { name, status: Ok|Warn|Fail, detail }`, grouped
 App / Storage / Dependencies / Environment. Checks:
 - App: version, debug/release, features (`mpv`), commit.
@@ -50,40 +50,40 @@ App / Storage / Dependencies / Environment. Checks:
   probe); settings file exists/parseable; metadata DB path/openable/writable;
   cache/thumbnail dirs.
 - Dependencies: mpv path valid + libmpv loadable (when selected).
-- Environment: OS/version/arch, env-var **presence** only (APPDATA/HOME/XDG —
+- Environment: OS/version/arch, env-var **presence** only (APPDATA/HOME/XDG:
   privacy), free space on the config volume, platform capabilities.
 
 Two front-ends over one `run_checks()`:
 1. **Settings → Diagnostics page** (new `SettingsCategory::Diagnostics`). Renders
    a *cached* report entity; opening / "Re-run" schedules the checks on a
-   **background task** (prime directive — they touch the FS) → entity update →
+   **background task** (prime directive: they touch the FS) → entity update →
    re-render. Buttons: Re-run, Copy report, Save report…, Report a problem…
-2. **`ferail-gpui --doctor`** — same `run_checks()` headless, prints the report
+2. **`ferail-gpui --doctor`**: same `run_checks()` headless, prints the report
    to stdout, exits. Works even when the GUI won't start; no duplicated logic.
 
 Needs `app_state::config_dir()` made `pub` (or a diagnostics accessor).
 
 **Reveal buttons (implemented).** A `Check` additionally carries
-`path: Option<PathBuf>` — structured, never re-parsed from the prose
+`path: Option<PathBuf>`: structured, never re-parsed from the prose
 `detail` (whose shape varies per status and gets username-scrubbed in
-shared output). Rows with a path — the App group's **Executable** row
+shared output). Rows with a path: the App group's **Executable** row
 (`platform_shell::app_bundle_path()`, i.e. the running `.app` bundle or
-binary), config dir, settings file, metadata DB, mpv install — render a
+binary), config dir, settings file, metadata DB, mpv install: render a
 "Reveal" button that jumps to the location *in Ferail*:
 `shell::reveal_path_in_app` opens a new tab in the first live Shell
 window (or a fresh window if none) at the parent folder with the entry
 queued for selection via `pending_select_names`, then raises the window.
 `render_text` ignores the field, so `--doctor` / Copy report / bundle
-output are unchanged, and the jump is a local UI action — it coexists
+output are unchanged, and the jump is a local UI action: it coexists
 with the redaction toggle. A not-yet-created target ("written on first
 change" rows) still reveals the parent; the unresolved name is dropped
 when the load completes.
 
 **Bug reports group (implemented).** Right after Privacy, a titled
-"Bug reports" group lists the folders an issue report draws on — the
+"Bug reports" group lists the folders an issue report draws on: the
 reports folder (`<config>/reports`: crash + freeze reports, native
 minidumps, saved bundles) and the config folder itself (settings file,
-metadata DB, language packs) — each with its scrubbed path and an
+metadata DB, language packs), each with its scrubbed path and an
 "Open folder" button. The click creates the folder on the background
 executor (it may never have been written to), then opens it *inside* a
 Ferail tab via `shell::open_dir_in_app` (the reveal helper's sibling
@@ -91,10 +91,10 @@ that lands in the folder instead of selecting it in its parent). The
 group also hosts the Copy report / Create report bundle… buttons.
 
 **Console crash output.** The panic hook (`obs::print_crash_report`)
-splits its output: the crash-report file gets everything — every
+splits its output: the crash-report file gets everything: every
 breadcrumb, the compacted Ferail/GPUI frames, and the complete raw
 backtrace, appended (never truncated, so a second panic or the native
-filter's minidump sidecar line can't erase it) — while stderr gets a
+filter's minidump sidecar line can't erase it), while stderr gets a
 digest (last `STDERR_BREADCRUMBS` breadcrumbs, `STDERR_FRAME_LINES`
 compact frame lines) ending with the report path.
 `FERAIL_FULL_BACKTRACE=1` / `RUST_BACKTRACE=full` still print the whole
@@ -102,7 +102,7 @@ report inline, as does a missing config dir (stderr is then the only
 copy). The Windows native-exception filter likewise echoes its one
 sidecar line to stderr (unless `quiet`, the preview broker).
 
-## Phase 3 — Issue reporter  (TODO)
+## Phase 3 - Issue reporter  (TODO)
 
 `crates/ferail-gpui/src/report.rs` + a redaction modal.
 - Capture: `window.render_to_image()` → `image::RgbaImage` (same path as the
@@ -115,9 +115,9 @@ sidecar line to stderr (unless `quiet`, the preview broker).
 - Deliver: save the zip + reveal it; optionally open a prefilled mail/issue
   draft.
 
-## Phase 4 — Privacy redaction  ✅ implemented
+## Phase 4 - Privacy redaction  ✅ implemented
 
-`crates/ferail-gpui/src/redact.rs` — so a user can share a report and we
+`crates/ferail-gpui/src/redact.rs`: so a user can share a report and we
 **learn nothing about their files**. Two layers compose:
 
 - **Account scrub** ([`report::redact_username`]) is *always* applied: the home
@@ -131,7 +131,7 @@ sidecar line to stderr (unless `quiet`, the preview broker).
 Where it applies:
 
 - The **activity trail** is the real leaker (it records the folders you browse),
-  so it is redacted *structurally* at the source — `trail::render_lines_sanitized`
+  so it is redacted *structurally* at the source: `trail::render_lines_sanitized`
   reshapes each `Navigate` path via `redact::redact_path`, so no guessing.
 - The **issue bundle** and **"Copy report"** both render the sanitized trail and
   scrub the account name; the bundle README states whether redaction was on.

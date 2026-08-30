@@ -25,7 +25,7 @@ use gpui::{AppContext, Context, EventEmitter};
 #[derive(Debug, Clone)]
 pub enum FavoritesEvent {
     /// A new entry was appended or inserted. `index` is its position in
-    /// the sorted entry list — useful for the §2.2 fade-in animation.
+    /// the sorted entry list: useful for the §2.2 fade-in animation.
     Added {
         id: FavoriteId,
         index: usize,
@@ -34,7 +34,7 @@ pub enum FavoritesEvent {
     /// `UndoOp::RemoveFavorite` variant (iter 6) can capture it without
     /// a separate clone.
     Removed(Favorite),
-    /// One or more entries had their `sort_index` rewritten — drag
+    /// One or more entries had their `sort_index` rewritten: drag
     /// reorder, keyboard reorder, or a one-shot sort.
     Reordered,
     Renamed(FavoriteId),
@@ -64,7 +64,7 @@ pub struct Favorites {
     index: HashMap<PathBuf, FavoriteId>,
     /// Cached runtime availability state per favorite (§8). Updated
     /// off the UI thread on hydrate / add / repoint. Render reads from
-    /// here — never touches the filesystem itself (Prime Directive).
+    /// here, never touches the filesystem itself (Prime Directive).
     /// The watcher extension that flips state live on rename / delete /
     /// mount events is iter 11 polish; for v1 this snapshot is taken
     /// at startup and after explicit mutations.
@@ -76,7 +76,7 @@ pub struct Favorites {
 
 impl Favorites {
     /// Construct an empty entity. Real entries arrive via [`Self::hydrate`]
-    /// once `Shell::start_metadata_load` has the DB open — the constructor
+    /// once `Shell::start_metadata_load` has the DB open: the constructor
     /// is cheap so it runs on the synchronous `Shell::new` path.
     pub fn new(db: Option<Arc<Mutex<MetadataDb>>>) -> Self {
         Self {
@@ -93,7 +93,7 @@ impl Favorites {
     }
 
     /// Replace in-memory state from a DB-loaded list. Emits `Reordered`
-    /// so observers refresh — hydrate is a bulk update.
+    /// so observers refresh: hydrate is a bulk update.
     pub fn hydrate(&mut self, mut entries: Vec<Favorite>, cx: &mut Context<Self>) {
         entries.sort_by(|a, b| {
             a.sort_index
@@ -108,7 +108,7 @@ impl Favorites {
     }
 
     /// Read the runtime availability of a favorite. `Available` when
-    /// nothing has been computed yet — the watcher extension keeps
+    /// nothing has been computed yet: the watcher extension keeps
     /// this map live in iter 11 polish.
     pub fn state_for(&self, id: FavoriteId) -> FavoriteState {
         self.state
@@ -127,7 +127,7 @@ impl Favorites {
     /// Filesystem-watcher hook: a directory containing a favorited path
     /// changed, so a favorite may have been deleted or moved (flipping
     /// Available → Missing) or restored. Same background probe as the
-    /// mount/hydrate passes — see [`Self::watch_dirs`] for what the
+    /// mount/hydrate passes: see [`Self::watch_dirs`] for what the
     /// watcher registers.
     pub fn refresh_availability(&self, cx: &mut Context<Self>) {
         self.refresh_state(cx);
@@ -136,7 +136,7 @@ impl Favorites {
     /// Parent directories of every path favorite, deduplicated. The
     /// filesystem watcher registers these (non-recursively) so a delete,
     /// move, or rename of a favorited entry surfaces as an event on its
-    /// parent — driving [`Self::refresh_availability`] so the row flips
+    /// parent, driving [`Self::refresh_availability`] so the row flips
     /// to Missing live, not only on the next mount/unmount or re-hydrate.
     pub fn watch_dirs(&self) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = Vec::new();
@@ -207,7 +207,7 @@ impl Favorites {
         self.index.contains_key(p)
     }
 
-    /// Inverse — returns the favorite's id for a path, if any.
+    /// Inverse: returns the favorite's id for a path, if any.
     pub fn id_for_path(&self, p: &Path) -> Option<FavoriteId> {
         self.index.get(p).copied()
     }
@@ -307,7 +307,7 @@ impl Favorites {
         self.tag_id(name).is_some()
     }
 
-    /// Insert a favorite at a specific fractional `sort_index` — used by
+    /// Insert a favorite at a specific fractional `sort_index`: used by
     /// drag-to-add (iter 8). Dedup applies as in [`Self::add_path`].
     pub fn add_path_at(
         &mut self,
@@ -358,7 +358,7 @@ impl Favorites {
     ///
     /// If the same target was re-added by another path between remove
     /// and undo (e.g. drag-to-add re-adds the folder, then Cmd+Z fires
-    /// for the older remove), the path is already in the index — restoring
+    /// for the older remove), the path is already in the index, restoring
     /// would create a duplicate row. Dedup against the existing entry and
     /// emit a pulse instead.
     pub fn restore(&mut self, fav: Favorite, cx: &mut Context<Self>) {
@@ -459,7 +459,7 @@ impl Favorites {
     }
 
     /// One-shot sort that rewrites every `sort_index`. The manual
-    /// order isn't "locked" — subsequent drags continue to work
+    /// order isn't "locked": subsequent drags continue to work
     /// (§4.5). Persists atomically through `replace_favorites`.
     pub fn one_shot_sort(&mut self, by: FavoriteSort, cx: &mut Context<Self>) {
         match by {
@@ -482,7 +482,7 @@ impl Favorites {
                 });
             }
         }
-        // Assign indices directly over the freshly-sorted entries —
+        // Assign indices directly over the freshly-sorted entries,
         // routing through `renormalize_sort_indices` (which sorts by
         // existing sort_index) would undo the new order.
         for (i, f) in self.entries.iter_mut().enumerate() {

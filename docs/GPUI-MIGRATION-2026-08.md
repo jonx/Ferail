@@ -1,4 +1,4 @@
-# GPUI dependency migration — 2026-08-28
+# GPUI dependency migration - 2026-08-28
 
 This is the checkpoint for Ferail's move to the current coherent
 gpui-component/Zed pair. It records what is complete, which local deltas remain

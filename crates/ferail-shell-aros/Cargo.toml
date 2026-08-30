@@ -7,7 +7,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-# v1: the AROS shell rides ferail-shell-linux's portable scaffold — its
+# v1: the AROS shell rides ferail-shell-linux's portable scaffold - its
 # `cfg(not(target_os = "linux"))` arms are exactly the safe no-op surface a
 # new platform starts from, and the platform-neutral impls (zip compression)
 # are pure Rust. Real AROS integrations (workbench.library, icon.library,

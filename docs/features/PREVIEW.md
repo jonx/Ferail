@@ -53,8 +53,8 @@ remain bounded by their latest-wins queues.
   NFO/checksum candidates. A small **Sidecar files** card can preview an NFO
   without changing folder selection or open a manifest Verify surface. The
   cache is memory-only and stores no sidecar body or hash.
-- With nothing selected and the tab parked at a volume's mount root — where a
-  sidebar volume click lands — the pane previews the volume itself: name plus
+- With nothing selected and the tab parked at a volume's mount root: where a
+  sidebar volume click lands: the pane previews the volume itself: name plus
   the Get Info volume section (capacity, available, used, format, a read-only
   Access row when the mount is, mount point, device). The mount-root check reads the cached volume list only; the record
   gathers on the background executor like every other selection.
@@ -88,7 +88,7 @@ cannot keep consuming the single preview slot.
 ## Content Thumbnail Provider
 
 `preview.rs` requests a 512 px thumbnail on a worker and stores it in an LRU
-cache. The fetch is `video_poster::fetch_content_thumbnail` — Quick Look
+cache. The fetch is `video_poster::fetch_content_thumbnail`: Quick Look
 first, then embedded cover art for audio, then an mpv poster frame for
 videos Quick Look refuses. It is used for:
 
@@ -101,7 +101,7 @@ videos Quick Look refuses. It is used for:
 Quick Look only thumbnails what AVFoundation decodes; whole container
 families (AVI, WMV/ASF, MKV, …) come back empty instantly. When the user has
 selected the mpv video provider (Settings → Plugins), the fallback decodes
-one frame with libmpv on a **dedicated poster worker thread** — pooled
+one frame with libmpv on a **dedicated poster worker thread**: pooled
 tasks await the result rather than blocking, so a folder of 90 rips can
 never starve the background pool (prefetch, folder sizes, timers) the way
 a blocking convoy would. The queue drains newest-first: the folder being
@@ -120,15 +120,15 @@ identically. On Windows the two differ, because the shell does:
 
 - `Thumbnail` = what Explorer would show: `IShellItemImageFactory`
   (`SIIGBF_THUMBNAILONLY`), then for PDFs page 1 rendered natively by
-  `Windows.Data.Pdf` (`ferail-shell-win32/src/pdf_render.rs` — no window,
+  `Windows.Data.Pdf` (`ferail-shell-win32/src/pdf_render.rs`: no window,
   no third-party code). Open, parse, render and stream read share one
   five-second deadline and are cancelled on expiry.
-- `Preview` = the same chain, plus — when both come up empty — a brokered
+- `Preview` = the same chain, plus, when both come up empty, a brokered
   `IPreviewHandler` capture (Word/Excel/PowerPoint, RTF, text). A preview
   handler is a live viewer, so its capture includes the handler's own
   chrome (scrollbars, toolbars); that is acceptable in the pane and
-  exactly why the grid never gets it. Explorer's real answer — the handler
-  hosted live in a child window over the pane — is tracked in `TODO.md`.
+  exactly why the grid never gets it. Explorer's real answer: the handler
+  hosted live in a child window over the pane: is tracked in `TODO.md`.
   The capture loads in the disposable broker first so killing that process
   owns the provider lifetime; `prevhost.exe` is compatibility fallback only.
   A newer selection cancels and kills the active broker immediately.
@@ -137,7 +137,7 @@ Neither shell tier ever returns a type icon: the icon is the *caller's*
 last tier (`platform_shell::fetch_type_icon`, `SIIGBF_RESIZETOFIT`),
 requested by `fetch_content` only after the bundled raster decoder, cover
 art, and the poster gate all had their turn. An icon returned any earlier
-would mask a decodable image — the shell declines a 512 px extraction for
+would mask a decodable image: the shell declines a 512 px extraction for
 some files (OneDrive placeholders, for one) whose grid-size thumbnail
 works, and the pane must then decode the image itself rather than show
 the Photos icon. macOS/Linux return `None` from `fetch_type_icon` and

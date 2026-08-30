@@ -8,7 +8,7 @@ API, so we compose a faithful equivalent from `NSWorkspace`,
 
 ## Status
 
-Done — broad parity with Finder's menu. Services / Quick Actions submenu now
+Done: broad parity with Finder's menu. Services / Quick Actions submenu now
 auto-populated by AppKit through a custom `ServicesAnchor` responder spliced
 into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](../../crates/ferail-shell-mac/src/services.rs)).
 
@@ -18,20 +18,20 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
   `InfoTarget::Volume` so the header names the volume), Reveal in Finder,
   Copy Path, Open Terminal Here, Add / Remove from Favorites, New Folder
   Here, Eject and What's Blocking Eject? (removable volume rows only; the
-  latter additionally gated on `lock_diagnostics_available()` — Windows-only
+  latter additionally gated on `lock_diagnostics_available()`: Windows-only
   today, see `shell/lock_info.rs`).
-- List pane (per-row): full Finder-equivalent — Open, Open in New Tab
+- List pane (per-row): full Finder-equivalent: Open, Open in New Tab
   (folders/files), Edit in TextEdit/Notepad/Text Editor (one file), Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
   Compress (submenu: ZIP / 7-Zip / TAR ▸ Gzip·Bzip2·XZ·Uncompressed),
   Extract (archive rows only; submenu: Extract Here / Extract To…),
   Copy Path, Open Terminal Here (folders), What's Locking This? (platforms
-  with `lock_diagnostics_available()` — Windows-only today; a Restart-Manager
+  with `lock_diagnostics_available()`: Windows-only today; a Restart-Manager
   dialog naming the processes holding the selection open, with force-close
-  buttons — `shell/lock_info.rs`), Share…, Tags row
+  buttons: `shell/lock_info.rs`), Share…, Tags row
   (7 colours), Move to Trash.
-- List pane (background): right-click on empty space — below the last row,
-  or anywhere in an empty folder — targets the *folder being browsed*,
+- List pane (background): right-click on empty space: below the last row,
+  or anywhere in an empty folder: targets the *folder being browsed*,
   never the selection: New Folder, Paste, Select All, Get Info, Reveal in
   Finder, Copy Path, Open Terminal Here, Add Folder to Favorites, Refresh.
   Region is decided in the mouse capture phase (`TableState`'s
@@ -40,7 +40,7 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
   ride the `context_target` actions; `TableEvent::RightClickedBackground`
   (emitted at menu-build time) is what stages the current directory there.
   An earlier attempt hung a `.context_menu` on the file-pane wrapper and
-  ate the row menus' clicks — this one lives inside the same
+  ate the row menus' clicks: this one lives inside the same
   `PlatformContextMenu` wrapper the rows use, so the two can't fight.
 - Disk-usage treemap: Open, Reveal, Copy Path, Quick Look, Zoom into,
   Move to Trash. Multi-selection-aware.
@@ -62,7 +62,7 @@ Slow operations run on workers and report back through
 `AppEvent::FileOpComplete`:
 
 - Duplicate (`ferail_shell_mac::duplicate_path`)
-- Compress / Extract — the pure-Rust archive engine
+- Compress / Extract: the pure-Rust archive engine
   (`ferail_fs_native::{create_archive, extract_archive}`, backed by the
   `ferail-archive` model crate). Creates zip / 7z / tar / tar.gz / tar.bz2 /
   tar.xz; extracts all of those plus gzip/bzip2/xz single members. The GPUI
@@ -72,7 +72,7 @@ Slow operations run on workers and report back through
   every single file, with the authoritative content probe deferred to its
   worker. "Extract Here" targets the current folder and
   "Extract To…" a native folder picker (run inside a spawned task so its nested
-  run-loop holds no `App` borrow). Both pick a smart destination off-thread —
+  run-loop holds no `App` borrow). Both pick a smart destination off-thread:
   extract in place when the archive has a single root folder, otherwise a
   `" 2"`-deduped wrapper named after the archive.
 - Explicit text editing launches the platform editor on a background task:
@@ -99,7 +99,7 @@ Finder).
 ### Command availability over a group (GPUI)
 
 A context command's *visibility* and its *execution* must agree on which
-files they target — otherwise a command can be shown for a file it won't
+files they target, otherwise a command can be shown for a file it won't
 touch, or hidden for one it would (the Clear-Quarantine-on-a-mixed-pair
 bug). The GPUI shell guarantees this by resolving the target set **once**,
 from a single place, and reusing it for both:
@@ -112,8 +112,8 @@ from a single place, and reusing it for both:
   **menu** set, and must agree with it row for row: clicked row inside the
   selection → the whole set; outside → that row alone (because the click
   collapses the selection onto it). It returns the `MenuTargets` snapshot
-  the menu gates on — `Vec<TargetCap>` capability caps + a single `anchor`
-  — projected from the already-loaded `FileEntry`s, so it stays cache-only.
+  the menu gates on: `Vec<TargetCap>` capability caps + a single `anchor`
+ : projected from the already-loaded `FileEntry`s, so it stays cache-only.
 - It runs **when the menu builds**, from the delegate's own mirrored
   selection, not from a snapshot staged ahead of time. That is not a style
   choice: gpui-component builds the menu inside a `window.defer` callback
@@ -121,7 +121,7 @@ from a single place, and reusing it for both:
   *after* the row's (so it runs first in the bubble phase). The deferred
   build therefore lands **before** the table's `RightClickedRow` event ever
   reaches the Shell. Anything the Shell stages from that event is one
-  right-click late — which is exactly what made the first menu after a
+  right-click late, which is exactly what made the first menu after a
   folder load silently drop every gated command (Rename, Copy Path,
   Extract, Open as Archive, Open With) until you right-clicked a second
   time. Both right-click sites (list rows and the icons grid) go through
@@ -131,7 +131,7 @@ from a single place, and reusing it for both:
 
 #### Content that can't be fetched on the UI thread
 
-Some menu content — "Open With" candidates, most obviously — comes from a
+Some menu content, "Open With" candidates, most obviously, comes from a
 blocking shell query that the [Prime Directive](../ARCHITECTURE.md#prime-directive)
 forbids on the UI thread, and the menu builder is synchronous. The rule is:
 
@@ -145,23 +145,23 @@ forbids on the UI thread, and the menu builder is synchronous. The rule is:
 
 So warming is a latency optimisation and nothing more: a cold right-click
 shows the same menu a warm one does, a beat later. Never gate a command's
-*existence* on a cache being populated — gate it on the caps, which are
+*existence* on a cache being populated: gate it on the caps, which are
 projected from rows already in memory.
 
 #### Three command archetypes
 
 Every command is classified by how it behaves across a multi-selection:
 
-1. **Batch** — one operation over the whole set (Compress → one archive,
+1. **Batch**: one operation over the whole set (Compress → one archive,
    Extract → one op per selected archive, Move to Trash → one batch op,
    Tags → applied to all). Always shown; a large count is the point, so it
    is never guarded.
-2. **FanOut** — invoked once per file (Open, Quick Look, Reveal in Finder,
+2. **FanOut**: invoked once per file (Open, Quick Look, Reveal in Finder,
    Get Info, Duplicate, Make Alias). Always shown, but the handler iterates
    over the resolved set. Open in New Tab fans out too, but is *also*
-   anchor-gated (below) — a tab is a folder view, so it only exists for a
+   anchor-gated (below): a tab is a folder view, so it only exists for a
    folder anchor and its handler drops file targets from the set.
-3. **SingleOnly** — meaningful only for one file (Copy Path, Rename, Open
+3. **SingleOnly**: meaningful only for one file (Copy Path, Rename, Open
    With). Hidden once more than one row is targeted.
 
 Plus **capability / anchor** rules that don't fit a count (Clear
@@ -179,24 +179,24 @@ enum Availability {
 }
 ```
 
-Batch and FanOut need no rule — they're added unconditionally and differ
+Batch and FanOut need no rule: they're added unconditionally and differ
 only in how the *handler* treats the group. `SingleOnly` gates on
 `MenuTargets::is_single()`; `When` is the per-command callback the menu
 asked for. Clear Quarantine is `When(avail_any_quarantined)`, matching
 `Shell::on_clear_quarantine`, which strips the Mark-of-the-Web from the
-quarantined subset and recursively beneath a directory anchor — so
+quarantined subset and recursively beneath a directory anchor, so
 right-clicking the clean file in a mixed selection
 still offers it.
 
 To gate a new command, pick `SingleOnly` or write a `When` closure; to
 gate on a new per-file capability, add a field to `TargetCap` (projected
-from the cached `FileEntry` — no I/O) and read it through `any`/`all`.
+from the cached `FileEntry`: no I/O) and read it through `any`/`all`.
 Caps are cache-only, honouring the prime directive.
 
 #### Fan-out confirmation
 
-A FanOut command that spawns a *separate foreground artifact per file* — a
-tab, a Get Info window, an app launch, a Finder reveal — routes through
+A FanOut command that spawns a *separate foreground artifact per file*: a
+tab, a Get Info window, an app launch, a Finder reveal: routes through
 `Shell::confirm_fanout`. Below the threshold (10) it runs immediately;
 at or above it, a confirmation dialog asks first so a stray 200-row
 selection can't silently open 200 windows. Power users can still proceed.
@@ -205,12 +205,12 @@ single-window FanOut (Quick Look opens one HUD for all paths) never
 confirm. Guarded today: Open, Open in New Tab, Get Info, Reveal in Finder.
 
 A FanOut that opens its own OS windows (Get Info) cascades them along a
-spiral instead of stacking on the centred spot — see `crate::window_cascade`.
+spiral instead of stacking on the centred spot: see `crate::window_cascade`.
 The slot is an Archimedean spiral (`r ∝ √slot`, `θ ∝ √slot`, equal
 arc-length steps) around the display centre, clamped to stay on-screen so a
 large batch is still grabbable. Each window holds a slot guard that frees
 its slot on close, so closing them all re-centres the next one. The module
-is window-kind-agnostic — any future multi-window surface can reuse it with
+is window-kind-agnostic, any future multi-window surface can reuse it with
 its own slot counter.
 
 ## Tags
@@ -230,26 +230,26 @@ Files → Terminal** and resolved at click time by
 → `platform_shell::open_terminal_with` (settings read + process spawn on
 a worker):
 
-- **Terminal application** — blank uses the platform default
+- **Terminal application**: blank uses the platform default
   (Terminal.app / `wt.exe`, falling back to `cmd.exe` / the Linux
   `$TERMINAL`-then-probe chain). Accepts an app name or `.app` bundle
   (macOS, launched via `open -a`), a program path, or a `PATH` command.
-- **Arguments** — one params string, split shell-style (double quotes
+- **Arguments**: one params string, split shell-style (double quotes
   group); `{dir}` expands per-token to the target folder. Without
   `{dir}` the child instead inherits the folder as its working
   directory.
-- **Launch mode** — Standard, or Administrator: `ShellExecuteExW`
+- **Launch mode**: Standard, or Administrator: `ShellExecuteExW`
   verb `runas` (UAC) on Windows; on macOS and Linux the terminal opens
   into a `sudo -s` root shell (macOS routes app bundles through
   Terminal.app AppleScript `do script`, which needs the one-time
-  Automation consent; CLI terminals get their exec flag — `-e`, `--`,
-  `wezterm start --`, `-x` — from `ferail_core::terminal::exec_prefix_for`).
+  Automation consent; CLI terminals get their exec flag, `-e`, `--`,
+  `wezterm start --`, `-x`: from `ferail_core::terminal::exec_prefix_for`).
 
 ## Prewarm Rule
 
 The plan is built from cached app state at right-click time; no I/O on
-hover. Open With's Launch Services query — once the last synchronous
-Cocoa call on this path — now pre-warms off the UI thread on
+hover. Open With's Launch Services query, once the last synchronous
+Cocoa call on this path, now pre-warms off the UI thread on
 selection-lead change (`spawn_open_with_warm`), and a cache miss shows a
 disabled "Open With (loading…)" item that the arriving fetch replaces in
 place by rebuilding only the retained submenu. Measured, the query costs a one-time ~5–10 ms
@@ -261,7 +261,7 @@ a hot-path saving (see [OPEN_WITH.md](OPEN_WITH.md) §3).
 
 Goal: let the user hide the context-menu entries they never use, per
 menu, the way the table header already lets them hide columns. Not built
-— this section is the design the work should follow.
+This section is the design the work should follow.
 
 ### The precedent is already in the codebase
 
@@ -282,7 +282,7 @@ supplies the storage rules to copy verbatim:
 
 ### Prerequisite: a stable id per entry
 
-Today the row menu is an imperative chain —
+Today the row menu is an imperative chain:
 `menu.menu(tr!("Rename…"), Box::new(RenameSelected))`, ~40 entries in
 `context_menu` plus 8 in `background_context_menu`. An entry's identity
 is its **Rust action type**, there is no action↔`CommandId` bridge, and
@@ -292,7 +292,7 @@ site's `tr!`. `ferail_core::commands` carries only 17
 
 So the enabling change is to build each menu from a table of
 `(CommandId, Availability, label, action)` rather than an inline chain.
-That is worth doing on its own merits — it removes the label
+That is worth doing on its own merits: it removes the label
 duplication and makes the menus introspectable for the Cmd+K palette and
 the Keyboard Shortcuts page. Once it exists, hiding entries is one
 predicate.
@@ -310,7 +310,7 @@ the surface, then toggle its entries. The surfaces are:
 |---|---|
 | File list / icon grid **row** (one definition serves both) | [file_list.rs:2465](../../crates/ferail-gpui/src/file_list.rs#L2465) |
 | File list **background** (targets the browsed folder) | [file_list.rs:2812](../../crates/ferail-gpui/src/file_list.rs#L2812) |
-| Table **header** (already customizable — columns) | [file_list.rs:2414](../../crates/ferail-gpui/src/file_list.rs#L2414) |
+| Table **header** (already customizable: columns) | [file_list.rs:2414](../../crates/ferail-gpui/src/file_list.rs#L2414) |
 | **Breadcrumb** segment | [shell/render.rs:3111](../../crates/ferail-gpui/src/shell/render.rs#L3111) |
 | Sidebar **Favorites** section header / favorite row | [favorites_section.rs:258](../../crates/ferail-gpui/src/favorites_section.rs#L258), [:741](../../crates/ferail-gpui/src/favorites_section.rs#L741) |
 | Sidebar **Locations / Volumes** row | [locations_section.rs:325](../../crates/ferail-gpui/src/locations_section.rs#L325) |
@@ -319,14 +319,14 @@ the surface, then toggle its entries. The surfaces are:
 | **Disk-usage treemap** | [disk_usage.rs:1223](../../crates/ferail-gpui/src/disk_usage.rs#L1223) |
 
 Each gets a stable `MenuSurface` id, and visibility is stored per
-`(surface, command)` — the same command can be wanted in one menu and
+`(surface, command)`: the same command can be wanted in one menu and
 not another.
 
 ### Opening a menu must not get slower
 
 Dynamic entries must not add per-open cost. The rules:
 
-- Parse the persisted spec **once** — at startup and on settings change —
+- Parse the persisted spec **once**: at startup and on settings change:
   into an in-memory structure keyed by surface, exactly like
   `app_state`'s memoized `load()`. **Never** read the file, and never
   call a parsing `load()`, at menu-open time (Prime Directive: menu
@@ -334,7 +334,7 @@ Dynamic entries must not add per-open cost. The rules:
 - Resolve per entry with an **array index or a small set probe** against
   a dense id, not a string parse. For scale: every entry already pays a
   `tr_raw` (an `arc_swap` load plus, in a non-English catalog, a HashMap
-  lookup and an `Arc` clone) just to get its label — a visibility check
+  lookup and an `Arc` clone) just to get its label: a visibility check
   is strictly cheaper than what the loop already does, so a correct
   implementation is unmeasurable next to today's build.
 - The common case is "nothing hidden". Keep a fast path: an empty
@@ -347,13 +347,13 @@ built from a list, this is one pass over the items before they are handed
 to `PopupMenu`: drop separators at the head, collapse any run of adjacent
 separators to one, drop separators at the tail. Deliberately a
 post-processing step on the item list rather than per-`if` bookkeeping at
-each call site — the group structure stays readable, and the rule is
+each call site: the group structure stays readable, and the rule is
 testable in isolation.
 
 ### Safety rules
 
 - **Preference AND availability, never OR.** A user marking an entry
-  "shown" must not override `Availability` — otherwise the
+  "shown" must not override `Availability`: otherwise the
   shown-for-a-file-it-will-not-touch class of bug that the availability
   machinery exists to prevent comes straight back.
 - **Never hide everything.** Same rule as columns: the visible set can
@@ -394,14 +394,14 @@ ported: the normal menu never pays the Shell-extension cost.
 - Tags row as a single horizontal `setView:` NSMenuItem matching
   Finder's compact swatch strip, instead of seven stacked emoji
   rows. Custom `NSView` with tracking areas and click hit-testing.
-- Open With follow-ups — an "Other…" app chooser, user-defined custom
+- Open With follow-ups: an "Other…" app chooser, user-defined custom
   tools, "Always Open With", and allowing the submenu on a
   multi-selection (the dispatch already handles many files).
   [OPEN_WITH.md](OPEN_WITH.md).
-- User-customizable menu entries — see
+- User-customizable menu entries: see
   [Customizing Which Entries Appear](#customizing-which-entries-appear-planned)
   above. Blocked on giving every entry a stable `CommandId` and building
   the menus from a table.
 - Per-target enable/disable rules (read-only volumes, missing
   files, permission-denied). `MenuPlanItem` already supports
-  `enabled: bool` — call sites just don't compute it yet.
+  `enabled: bool`: call sites just don't compute it yet.

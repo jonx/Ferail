@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-/// The generated source catalog — every msgid in the workspace.
+/// The generated source catalog: every msgid in the workspace.
 pub const EN_JSON: &str = include_str!("../../../../locales/en.json");
 
 /// Translations shipped inside the binary. A user pack with the same code
@@ -148,8 +148,8 @@ impl LanguagePack {
         (translated, src.strings.len())
     }
 
-    /// Check a pack against the source catalog. Nothing here is fatal —
-    /// a pack with problems still loads, string by string — but the
+    /// Check a pack against the source catalog. Nothing here is fatal
+    /// (a pack with problems still loads, string by string) but the
     /// report tells the user what to fix.
     pub fn validate(&self) -> ValidationReport {
         let src = source();
@@ -250,7 +250,7 @@ impl ValidationReport {
         );
         if !self.placeholder_mismatches.is_empty() {
             s.push_str(&format!(
-                "\n{} translation(s) changed a {{placeholder}} — these will show wrong or missing values:\n",
+                "\n{} translation(s) changed a {{placeholder}}: these will show wrong or missing values:\n",
                 self.placeholder_mismatches.len()
             ));
             for k in &self.placeholder_mismatches {
@@ -360,7 +360,7 @@ You are translating the user interface of Ferail, a desktop file manager, from E
 This JSON file is a Ferail language pack. Please:
 1. Translate every entry in \"untranslated\" and move it into \"strings\" (same key, translated value). \
 Leave existing \"strings\" entries alone unless they are wrong. When you are done, \"untranslated\" must be empty or removed.
-2. Keys are the English source text — never change a key. If a key starts with a word and \"::\" \
+2. Keys are the English source text, never change a key. If a key starts with a word and \"::\" \
 (for example \"menu::Open\"), the part before \"::\" is only a context hint; translate the part after it and keep the key verbatim.
 3. Keep every {placeholder} exactly as written ({n}, {name}, {dest}, …). You may reorder them. \"{{\" and \"}}\" are literal braces.
 4. A value that is an object with \"one\"/\"other\" is a plural. Provide the forms {language} needs, keyed by CLDR category \
@@ -482,7 +482,7 @@ mod tests {
             .iter()
             .find(|(_, v)| matches!(v, PackValue::Text(t) if !placeholders(t).is_empty()))
         else {
-            return; // no placeholder msgids yet — nothing to test
+            return; // no placeholder msgids yet, nothing to test
         };
         let PackValue::Text(english) = value else {
             unreachable!()

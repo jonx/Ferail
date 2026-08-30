@@ -18,13 +18,13 @@ const RADIUS: f32 = 34.0;
 
 /// Angular winding per spiral step (radians). Paired with the sqrt radius
 /// below, `theta = ANGLE * sqrt(slot)` puts windows at roughly equal
-/// arc-length along a single spiral arm — not a tight ring (would overlap)
+/// arc-length along a single spiral arm, not a tight ring (would overlap)
 /// and not a straight diagonal (would walk off-screen).
 const ANGLE: f32 = 1.9;
 
 /// Offset in px from the centred position for the `slot`-th window (slot 0
 /// → no offset → centred). Equal-arc-length Archimedean spiral: both radius
-/// and angle grow with `sqrt(slot)`, so `r ∝ theta` — a clean single arm.
+/// and angle grow with `sqrt(slot)`, so `r ∝ theta`: a clean single arm.
 fn spiral_offset(slot: usize) -> (f32, f32) {
     if slot == 0 {
         return (0.0, 0.0);
@@ -47,7 +47,7 @@ pub fn cascaded_bounds(slot: usize, size: Size<Pixels>, cx: &App) -> WindowBound
 
     let (center_x, center_y) = match frame {
         Some(f) => (f32::from(f.center().x), f32::from(f.center().y)),
-        // No display info (e.g. headless) — fall back to a fixed origin.
+        // No display info (e.g. headless): fall back to a fixed origin.
         None => (w / 2.0, h / 2.0),
     };
     let mut ox = center_x - w / 2.0 + dx;
@@ -78,14 +78,14 @@ mod tests {
         (p.0 * p.0 + p.1 * p.1).sqrt()
     }
 
-    /// Slot 0 is the centred position — no offset.
+    /// Slot 0 is the centred position, no offset.
     #[test]
     fn slot_zero_is_centred() {
         assert_eq!(spiral_offset(0), (0.0, 0.0));
     }
 
     /// The radius is exactly `RADIUS * sqrt(slot)`, so it grows without
-    /// bound but slowly (area ∝ slot) — the property that keeps a large
+    /// bound but slowly (area ∝ slot): the property that keeps a large
     /// batch evenly spread instead of racing off-screen.
     #[test]
     fn radius_follows_sqrt_law() {
@@ -95,7 +95,7 @@ mod tests {
         }
     }
 
-    /// Radius is monotonic in the slot — later windows never move closer to
+    /// Radius is monotonic in the slot: later windows never move closer to
     /// the centre than earlier ones.
     #[test]
     fn radius_is_monotonic() {
@@ -104,7 +104,7 @@ mod tests {
         }
     }
 
-    /// Consecutive windows are spread apart (not stacked) — the whole point
+    /// Consecutive windows are spread apart (not stacked): the whole point
     /// of cascading. Each step is at least a grabbable title-bar's worth.
     #[test]
     fn consecutive_windows_are_spread() {
@@ -116,7 +116,7 @@ mod tests {
         }
     }
 
-    /// It winds — the angle advances every step rather than marching in one
+    /// It winds: the angle advances every step rather than marching in one
     /// fixed direction (the difference from a linear cascade).
     #[test]
     fn angle_advances_each_step() {

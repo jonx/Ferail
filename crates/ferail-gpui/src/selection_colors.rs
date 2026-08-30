@@ -1,11 +1,11 @@
-//! Selection color palette — single source of truth shared by the file
+//! Selection color palette: single source of truth shared by the file
 //! list (`multi_table` Table + `file_list`) and the icon grid
 //! (`shell::render`).
 //!
 //! The grid keyed selection off the saturated `theme.blue` and read
 //! clearly; the list keyed off `theme.table_active`, which the
 //! gpui-component theme hard-caps at alpha ≤ 0.2 and is a desaturated
-//! near-foreground gray — so list selection looked faint next to the
+//! near-foreground gray, so list selection looked faint next to the
 //! grid. Both renderers now read this module instead, so they share one
 //! hue and the list matches the grid.
 //!
@@ -46,7 +46,7 @@ pub fn fill(cx: &App) -> Hsla {
     accent(cx).opacity(0.14)
 }
 
-/// Background pill behind a *non-lead* selected grid label — slightly
+/// Background pill behind a *non-lead* selected grid label: slightly
 /// muted from full strength so the focused (lead) item still stands out.
 pub fn member_pill(cx: &App) -> Hsla {
     accent(cx).opacity(0.82)

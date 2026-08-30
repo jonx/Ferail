@@ -1,6 +1,6 @@
 //! Domain types shared between FS, controls, and app layers.
 //! This crate has zero platform deps and zero UI deps. That is enforced by
-//! convention, not the compiler — if you find yourself reaching for `windows`
+//! convention, not the compiler: if you find yourself reaching for `windows`
 //! or `winit` here, stop.
 
 pub mod asset_work;
@@ -71,15 +71,15 @@ pub enum EntryKind {
 /// formats numbers. The modification time is the deliberate exception: it is
 /// rendered *live* from [`mtime_unix`](Self::mtime_unix) via
 /// [`humanize_mtime`] so a relative label ("4 seconds ago") keeps counting up
-/// instead of freezing at enumerate time — see that function for why this is
+/// instead of freezing at enumerate time: see that function for why this is
 /// cheap and paint-safe.
 #[derive(Clone, Debug)]
 pub struct FileEntry {
     pub id: NodeId,
-    /// The raw on-disk leaf name — the bytes `readdir` returned. This is the
+    /// The raw on-disk leaf name: the bytes `readdir` returned. This is the
     /// *truth* used to reconstruct the file's path (joins, renames, opens);
     /// never the user-facing string. On macOS a colon here is the HFS/Unix
-    /// separator that Finder shows as a slash — see [`display_name`](Self::display_name).
+    /// separator that Finder shows as a slash: see [`display_name`](Self::display_name).
     pub name: Arc<str>,
     /// The user-facing leaf name, pre-computed at enumerate time. On macOS a
     /// `:` in [`name`](Self::name) is shown as `/` to match Finder (see
@@ -88,20 +88,20 @@ pub struct FileEntry {
     /// renders this, while path operations keep using `name`.
     pub display_name: Arc<str>,
     /// Pre-computed `name_hazards::has_hazards(&display_name)`. Lets the dense
-    /// list row decide — with a cheap bool, no per-paint `analyze()` alloc —
+    /// list row decide, with a cheap bool, no per-paint `analyze()` alloc:
     /// whether to draw the deceptive-character highlight treatment.
     pub name_has_hazards: bool,
     pub kind: EntryKind,
     pub size: u64,
     pub mtime_unix: i64,
     pub display_size: Arc<str>,
-    /// Friendly type label — "Folder", "Symlink", uppercased extension
+    /// Friendly type label: "Folder", "Symlink", uppercased extension
     /// (e.g. "RS", "MD"), or "File" when there's no extension. macOS shell
     /// crate (iter-4) replaces this with `NSWorkspace.localizedDescription`.
     pub display_kind: Arc<str>,
     /// Magic-byte detected type, e.g. "PNG image", "Mach-O 64-bit", "Plain text".
     /// Empty string when not yet detected or no match. Populated lazily by
-    /// the host (App) — `ferail-core` never blocks on file I/O.
+    /// the host (App): `ferail-core` never blocks on file I/O.
     pub display_magic: Arc<str>,
     /// Rich ` · `-joined fact string for the Description column,
     /// e.g. `"Windows PE · 64-bit · x86-64 · GUI · .NET"`,
@@ -126,7 +126,7 @@ pub struct FileEntry {
     /// nothing to show beyond the flag."
     pub quarantine: Option<Box<QuarantineDetails>>,
     /// Platform "hidden" semantics, resolved at enumerate time by the
-    /// filesystem backend — NOT a name heuristic. macOS: dot-prefix OR
+    /// filesystem backend, NOT a name heuristic. macOS: dot-prefix OR
     /// the `UF_HIDDEN` BSD flag (what Finder hides). Windows: dot-prefix
     /// OR `FILE_ATTRIBUTE_HIDDEN` (covers `$RECYCLE.BIN`, `desktop.ini`,
     /// etc.). Filter sites must use this flag, never re-derive from the
@@ -135,7 +135,7 @@ pub struct FileEntry {
     pub hidden: bool,
     /// Birth (creation) time, unix seconds, resolved from the same
     /// stat the enumeration already makes. `None` where the filesystem
-    /// doesn't record one (some network/legacy volumes) — value
+    /// doesn't record one (some network/legacy volumes): value
     /// filters treat missing as non-matching, never as zero.
     pub created_unix: Option<i64>,
     /// Platform "locked" flag, from the enumerate-time stat: macOS
@@ -171,10 +171,10 @@ pub enum FormatFlag {
     /// Extension and content agree, it's an honest executable, or there is
     /// no extension claim to contradict. Draw nothing.
     None,
-    /// They describe different but *benign* formats — a renamed or resaved
+    /// They describe different but *benign* formats: a renamed or resaved
     /// file. Worth a quiet, non-alarming cue; not a threat.
     Notice,
-    /// The content is active/dangerous and the extension hides that — an
+    /// The content is active/dangerous and the extension hides that: an
     /// executable or script wearing an image/document/text extension,
     /// hidden macros in an Office file, or an archive/binary smuggled
     /// inside a media/document/text file. Draw the danger indicator.
@@ -194,7 +194,7 @@ impl FileEntry {
     /// Unified Format label for the file list: prefer the magic-detected
     /// description, fall back to the extension-derived kind. Returns
     /// `(primary, flag)` where `flag` grades how the extension and the
-    /// detected content relate — see [`FormatFlag`]. The danger tier fires
+    /// detected content relate: see [`FormatFlag`]. The danger tier fires
     /// only for genuine disguises (dangerous content under an innocent
     /// extension); mere terminology or benign-format differences earn the
     /// quiet [`FormatFlag::Notice`] tier instead.
@@ -225,7 +225,7 @@ fn formats_compatible(kind: &str, magic: &str) -> bool {
         return true;
     }
     // Placeholder kinds ("File" / "Folder" / "Symlink") fire when a
-    // file has no extension or we couldn't derive one — they're
+    // file has no extension or we couldn't derive one: they're
     // *missing* information, not an assertion about format. A Mach-O
     // binary with no extension still shows kind="File", which
     // doesn't contradict the magic-detected type. Same for folders
@@ -359,7 +359,7 @@ enum ExtClass {
     Document,
     /// Plain text, source, markup, or config.
     Text,
-    /// A declared archive / disk image — archive content is honest here.
+    /// A declared archive / disk image: archive content is honest here.
     Archive,
     /// A recognized extension that fits none of the above (opaque data).
     Opaque,
@@ -450,7 +450,7 @@ fn ext_class(kind: &str) -> ExtClass {
 
 /// Grade the relationship between an extension and the content actually
 /// found inside the file. The danger tier ([`FormatFlag::Alert`]) is
-/// reserved for genuine disguises — dangerous content wearing an innocent
+/// reserved for genuine disguises: dangerous content wearing an innocent
 /// extension. Benign disagreements fall to [`FormatFlag::Notice`], and
 /// anything consistent (or lacking an extension claim) is
 /// [`FormatFlag::None`].
@@ -483,7 +483,7 @@ fn classify_format(kind: &str, magic: &str, description: &str) -> FormatFlag {
         // Archives are honest under an archive extension or the ZIP-wrapped
         // document family (docx / jar / apk / epub …, handled by
         // `formats_compatible`). Hidden inside something the user opens to
-        // *view* — a picture, a document, a text file — it's smuggled.
+        // *view*, a picture, a document, a text file, it's smuggled.
         ContentRisk::ArchiveOrBinary => {
             if ext == ExtClass::Archive || formats_compatible(kind, magic) {
                 FormatFlag::None
@@ -544,7 +544,7 @@ fn normalize_format(s: &str) -> String {
 
 /// Current wall-clock time as whole seconds since the Unix epoch. Cheap
 /// (a vDSO-backed clock read on the platforms we target), so it is safe to
-/// call from the paint path — once per frame, or once per visible row.
+/// call from the paint path, once per frame, or once per visible row.
 pub fn now_unix() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -554,7 +554,7 @@ pub fn now_unix() -> i64 {
 
 /// Human-readable *relative* modification time: "just now", "4 seconds ago",
 /// "3 min 30 sec ago", "2 hr 5 min ago", "3 days ago". Once a file is a week
-/// or more old — where second-level precision stops being useful — it falls
+/// or more old, where second-level precision stops being useful, it falls
 /// back to an absolute date ("Mar 4", then "2026-05-01" past a year).
 ///
 /// Computed against a caller-supplied `now_unix` rather than reading the clock
@@ -564,7 +564,7 @@ pub fn now_unix() -> i64 {
 /// Why this is allowed on the paint path when sizes/dates are otherwise
 /// pre-formatted: a *relative* duration is timezone-independent (`now - mtime`
 /// is identical in every zone), so unlike absolute hour-of-day formatting it
-/// needs no local-timezone machinery — it is pure integer arithmetic plus one
+/// needs no local-timezone machinery: it is pure integer arithmetic plus one
 /// small allocation, bounded to the handful of on-screen rows.
 pub fn humanize_mtime(mtime_unix: i64, now_unix: i64) -> String {
     const MIN: i64 = 60;
@@ -672,7 +672,7 @@ mod time_tests {
         assert_eq!(humanize_mtime(NOW - 1, NOW), "1 second ago");
         assert_eq!(humanize_mtime(NOW - 4, NOW), "4 seconds ago");
         assert_eq!(humanize_mtime(NOW - 59, NOW), "59 seconds ago");
-        // 3 min 30 sec — the user's example.
+        // 3 min 30 sec: the user's example.
         assert_eq!(
             humanize_mtime(NOW - (3 * MIN + 30), NOW),
             "3 min 30 sec ago"
@@ -816,7 +816,7 @@ mod format_label_tests {
 
     #[test]
     fn honest_executables_are_none() {
-        // The extension already advertises code — not a disguise.
+        // The extension already advertises code, not a disguise.
         assert_eq!(flag("EXE", "PE / DOS executable"), FormatFlag::None);
         assert_eq!(flag("DLL", "PE / DOS executable"), FormatFlag::None);
         assert_eq!(flag("SO", "ELF executable"), FormatFlag::None);
@@ -838,7 +838,7 @@ mod format_label_tests {
 
     #[test]
     fn macro_doc_under_macro_extension_is_none() {
-        // .docm/.xlsm expect macros — not hidden.
+        // .docm/.xlsm expect macros, not hidden.
         assert_eq!(
             entry_desc("DOCM", "Word document", "Word document · macro-enabled")
                 .format_label()
@@ -916,12 +916,12 @@ mod format_label_tests {
 
     #[test]
     fn archive_under_opaque_extension_is_notice() {
-        // .dat that's a ZIP isn't a disguise — .dat promises nothing.
+        // .dat that's a ZIP isn't a disguise, .dat promises nothing.
         assert_eq!(flag("DAT", "ZIP archive"), FormatFlag::Notice);
     }
 }
 
-/// A process holding files open on a volume — the "why won't it eject"
+/// A process holding files open on a volume: the "why won't it eject"
 /// answer a failed unmount is enriched with. `pid` lets the UI activate
 /// the owning application so the user can close the offending files;
 /// `name` is the process display name shown on the toast. Produced by
@@ -936,7 +936,7 @@ pub struct BusyApp {
 /// pre-formatted in the worker so paint never allocates or parses.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct QuarantineDetails {
-    /// Quarantining agent name from the `com.apple.quarantine` string —
+    /// Quarantining agent name from the `com.apple.quarantine` string,
     /// e.g. "Safari", "com.google.Chrome". `None` when the field was empty.
     pub agent: Option<String>,
     /// ISO-8601 download timestamp from the quarantine record. `None` when
@@ -946,7 +946,7 @@ pub struct QuarantineDetails {
     pub where_from: Vec<String>,
 }
 
-/// Filesystem trait — implemented by `ferail-fs-native` (cross-platform std::fs)
+/// Filesystem trait: implemented by `ferail-fs-native` (cross-platform std::fs)
 /// and `ferail-shell-win32` (Windows shell namespace, PIDLs, virtual roots).
 /// The UI talks to *this*, never to platform APIs directly.
 pub trait FsBackend: Send + Sync {
@@ -959,7 +959,7 @@ pub trait FsBackend: Send + Sync {
 /// this as an empty-state when `initial` is empty.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EnumerationError {
-    /// macOS TCC / Unix EACCES — the user can grant access via System
+    /// macOS TCC / Unix EACCES: the user can grant access via System
     /// Settings → Privacy & Security → Files and Folders (macOS) or by
     /// running with appropriate permissions (Linux).
     PermissionDenied,
@@ -972,7 +972,7 @@ pub enum EnumerationError {
 
 /// Opaque handle to a streamed enumeration. Real impl pushes batches over a
 /// channel; the slice's stub returns one synchronous batch. `error` is
-/// `Some` only on hard failure — partial listings are not currently
+/// `Some` only on hard failure: partial listings are not currently
 /// represented (would land alongside async enumeration).
 pub struct EnumerationHandle {
     pub initial: Vec<FileEntry>,

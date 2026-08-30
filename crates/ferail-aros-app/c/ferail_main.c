@@ -62,8 +62,8 @@ int main(int argc, char **argv)
 
     /* File-manager rule: never let DOS pop "Please insert volume ..."
      * requesters over the app. A file manager probes paths and volumes as
-     * routine business (and third-party code we embed — sqlite's VFS path
-     * walk — probes garbage like "/System:"); with pr_WindowPtr = -1 DOS
+     * routine business (and third-party code we embed: sqlite's VFS path
+     * walk: probes garbage like "/System:"); with pr_WindowPtr = -1 DOS
      * returns ERROR_DEVICE_NOT_MOUNTED instead of blocking the calling
      * task on a system requester. Same convention as Directory Opus &
      * every Amiga file manager. */

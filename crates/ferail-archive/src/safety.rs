@@ -4,7 +4,7 @@
 //! `/etc/passwd` would, if joined naively to the destination, write *outside*
 //! it. Going pure-Rust on macOS means we no longer get `ditto`'s built-in
 //! containment for free, so every extractor MUST route each entry path through
-//! [`safe_relative_path`] before creating a file. This is pure string logic —
+//! [`safe_relative_path`] before creating a file. This is pure string logic:
 //! the codec layer still owns the on-disk symlink checks it can only do with
 //! real paths, but the traversal decision lives here so it is unit-testable and
 //! shared by every format.
@@ -12,7 +12,7 @@
 /// Why an entry path was rejected as unsafe to extract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnsafePath {
-    /// The path is absolute (`/etc/passwd`) — it would escape the destination.
+    /// The path is absolute (`/etc/passwd`): it would escape the destination.
     Absolute,
     /// The path contains a `..` component that escapes the destination root.
     Traversal,
@@ -58,7 +58,7 @@ pub fn safe_relative_path(entry_path: &str) -> Result<String, UnsafePath> {
 
     // Walk components, folding `.` away and rejecting any `..` (we do not
     // allow *any* traversal, even one that would stay in-bounds after the
-    // fact — the simplest safe rule).
+    // fact: the simplest safe rule).
     let mut parts: Vec<&str> = Vec::new();
     for comp in unified.split('/') {
         match comp {

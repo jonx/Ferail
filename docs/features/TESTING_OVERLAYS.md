@@ -10,7 +10,7 @@ are not implemented yet and are tracked in [TODO.md](../../TODO.md).
 
 ## Current Tool
 
-Use the binary's headless screenshot mode — the full dev loop, flag families,
+Use the binary's headless screenshot mode: the full dev loop, flag families,
 and worked examples live in [SCREENSHOTS.md](SCREENSHOTS.md):
 
 ```sh

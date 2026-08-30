@@ -1,4 +1,4 @@
-//! Favorite shortcut data model — pure data, no UI, no filesystem.
+//! Favorite shortcut data model: pure data, no UI, no filesystem.
 //!
 //! A favorite is the user's pinned reference to a location: folder,
 //! volume, application bundle, and (reserved) saved searches and
@@ -45,9 +45,9 @@ pub enum FavoriteKind {
     Folder,
     Volume,
     Application,
-    /// Reserved for a future iteration — saved search queries.
+    /// Reserved for a future iteration: saved search queries.
     SavedSearch,
-    /// Reserved for a future iteration — Finder tag favorites.
+    /// Reserved for a future iteration: Finder tag favorites.
     Tag,
 }
 
@@ -79,9 +79,9 @@ pub enum FavoriteTarget {
     /// subsequent on-disk renames do not re-canonicalize, so the favorite
     /// can detect Missing state by comparing against this stored path.
     Path(PathBuf),
-    /// Reserved — saved-search query string.
+    /// Reserved: saved-search query string.
     SavedSearch(String),
-    /// Reserved — Finder tag identifier.
+    /// Reserved: Finder tag identifier.
     Tag(String),
 }
 
@@ -167,7 +167,7 @@ impl Favorite {
 
     /// Effective label: custom name if set, else basename of the target
     /// path. Volume / saved-search / tag favorites with no custom name
-    /// fall back to the raw string the caller passed at add-time —
+    /// fall back to the raw string the caller passed at add-time:
     /// the runtime layer is responsible for substituting the volume's
     /// localized name before render.
     pub fn effective_label(&self) -> String {
@@ -205,7 +205,7 @@ pub fn fractional_between(a: f64, b: f64) -> f64 {
         (true, true) => {
             let mid = (a + b) / 2.0;
             if mid <= a || mid >= b {
-                // Precision exhausted in this slot — caller should
+                // Precision exhausted in this slot: caller should
                 // schedule a renormalize pass. Returning a value
                 // equal to `a` keeps the entry from being lost.
                 a
@@ -220,7 +220,7 @@ pub fn fractional_between(a: f64, b: f64) -> f64 {
 /// at `pos` by `by` slots within a list whose sort_indices are `indices`
 /// (in list order). The runtime keyboard-reorder (`Favorites::shift`,
 /// §4.4) feeds these bounds to [`fractional_between`]. `NEG_INFINITY` /
-/// `INFINITY` mark the open ends. Returns `None` for a no-op move —
+/// `INFINITY` mark the open ends. Returns `None` for a no-op move,
 /// already at the relevant edge, `pos` out of range, or a zero step.
 pub fn reorder_bounds(indices: &[f64], pos: usize, by: isize) -> Option<(f64, f64)> {
     if pos >= indices.len() {
@@ -333,7 +333,7 @@ mod tests {
         let a = FavoriteId::new();
         let b = FavoriteId::new();
         let c = FavoriteId::new();
-        // Arbitrary mid value — NOT 3.14, which trips the deny-level
+        // Arbitrary mid value, NOT 3.14, which trips the deny-level
         // clippy::approx_constant and fails `cargo clippy --all-targets`.
         let mut v = vec![(a, 2.5), (b, -1.0), (c, 999.0)];
         renormalize_sort_indices(&mut v);

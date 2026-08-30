@@ -30,9 +30,9 @@ Done (iter-8.0 → 8.5). All five sub-iters shipped:
 
 ## Crate
 
-[`crates/ferail-meta`](../../crates/ferail-meta/) — single
+[`crates/ferail-meta`](../../crates/ferail-meta/): single
 `MetadataDb` connection, schema-versioned (delete-and-recreate on
-mismatch — Ferail-Win32's policy; caches built on top are derived data, so
+mismatch: Ferail-Win32's policy; caches built on top are derived data, so
 a recreate is cheap), plus a thin `MetadataCache` (FIFO-ish bounded
 HashMap) for hot-data read-amplification.
 
@@ -76,11 +76,11 @@ folder_usage (
 )
 + idx_folder_hits
 
--- Window state — single row.
+-- Window state: single row.
 window_state (id INTEGER PRIMARY KEY CHECK (id = 1),
               width, height, maximized)
 
--- Layout state — single row, includes DU-window geometry so the
+-- Layout state: single row, includes DU-window geometry so the
 -- separate `du_window.txt` file can retire.
 layout_state (id INTEGER PRIMARY KEY CHECK (id = 1),
               sidebar_width, preview_width, preview_visible,
@@ -100,18 +100,18 @@ queries.
 
 ## Lifecycle
 
-1. **Open** at app start (`App::open_metadata_db`) — best-effort.
+1. **Open** at app start (`App::open_metadata_db`): best-effort.
    Failure logs and leaves `metadata_db = None`; the rest of the app
    degrades gracefully (in-memory caches still work, just don't
    survive restart).
-2. **Hydrate** — Ant Trail visit counts re-bind to fresh `NodeId`s
+2. **Hydrate**: Ant Trail visit counts re-bind to fresh `NodeId`s
    via `NativeFs::id_for_path` since IDs are session-scoped. Magic
    cache hydrates lazily during `start_magic_prefetch` for the
    active folder's entries.
-3. **Write through** — every `record(NodeId)` on Ant Trail mirrors
+3. **Write through**: every `record(NodeId)` on Ant Trail mirrors
    to `record_folder_visit(path, now)`; every `MagicBatch` arm
    upserts a `FileMetaRecord` for each result.
-4. **Schema bumps** — increment `DB_VERSION` in
+4. **Schema bumps**: increment `DB_VERSION` in
    [`db.rs`](../../crates/ferail-meta/src/db.rs) when changing
    column shape. The on-open version check deletes mismatched files
    and recreates fresh.
@@ -125,14 +125,14 @@ in, then walk down the checklist.
 
 1. Add a column to the right table in
    [`ferail-meta/src/db.rs`](../../crates/ferail-meta/src/db.rs)
-   inside `init_schema()` — usually `window_state` or
+   inside `init_schema()`: usually `window_state` or
    `layout_state` for single-row state, or a new dedicated table
    for list-like state.
 2. Add the field to the matching Rust struct (`WindowState`,
    `LayoutState`, `TabState`, …) and to the corresponding
    `save_*` / `load_*` SQL.
 3. Bump `DB_VERSION` (top of `db.rs`). On next open the old file
-   gets deleted and recreated — fine for derived UI state.
+   gets deleted and recreated: fine for derived UI state.
 4. In `ferail-gpui`, extend the persistence site that owns that
    state (e.g. the `persist_*` writers in `settings.rs` /
    `favorites.rs`, or the shell's layout persistence) to write the
@@ -158,7 +158,7 @@ in, then walk down the checklist.
 
 ### C. Ant Trail-shaped signal (counter + last-access)
 
-Probably wants its own table — `folder_usage` is dedicated
+Probably wants its own table: `folder_usage` is dedicated
 because it accumulates ad-hoc. New tables:
 
 1. Add the `CREATE TABLE` + indexes to `init_schema()`.
@@ -230,7 +230,7 @@ doesn't trigger the version-mismatch recreate path.
 | DU window geometry | n/a | New `layout_state` columns: `du_width`/`du_height`/`du_topn_width` |
 | Schema version | 5 | restarted at 1 (we're not migrating Ferail-Win32 data) |
 | `nav_history` | yes (per-tab back/forward) | omitted for now; tabs only carry the active path |
-| `score` column on `folder_usage` | persisted | computed at read time from hits/recency — fewer dimensions to keep in sync |
+| `score` column on `folder_usage` | persisted | computed at read time from hits/recency: fewer dimensions to keep in sync |
 
 ## Open items
 

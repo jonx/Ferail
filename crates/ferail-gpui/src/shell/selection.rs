@@ -70,7 +70,7 @@ impl Shell {
         let cmd = modifiers.secondary();
         let shift = modifiers.shift;
         if shift && cmd {
-            // Cmd+Shift+Click: additive range — union anchor→row
+            // Cmd+Shift+Click: additive range: union anchor→row
             // into the existing set, lead = row, anchor unchanged.
             self.range_select(id, /* additive */ true, cx);
         } else if shift {
@@ -85,7 +85,7 @@ impl Shell {
             // Plain click: replace selection to just this row.
             self.replace_select_one(id, cx);
         }
-        // Preview always follows the lead — keeps the right pane
+        // Preview always follows the lead: keeps the right pane
         // and the table in lockstep regardless of which gesture
         // ran. Same cost as the old single-click behavior.
         self.request_preview_for_row(row_ix, cx);
@@ -185,7 +185,7 @@ impl Shell {
     }
 
     /// Queue leaf `names` for selection in the active tab, but only when it
-    /// is still a plain directory view of `dir` — the "select what I just
+    /// is still a plain directory view of `dir`: the "select what I just
     /// pasted/renamed/created" affordance. If the user moved away (navigated
     /// elsewhere, or the tab shows search/dupe results) the operation's
     /// results are not where they're looking, and selecting would be a
@@ -212,9 +212,9 @@ impl Shell {
     ///
     /// Streaming loads deliver in batches, so a name may simply not be here
     /// yet: only the names that resolve are consumed, and the rest stay queued
-    /// for a later batch. Names that never arrive — the file was moved or
+    /// for a later batch. Names that never arrive: the file was moved or
     /// renamed between the operation and the click, or it's hidden/filtered
-    /// in this view — are dropped when the load completes
+    /// in this view: are dropped when the load completes
     /// (`finish_directory_load_in_tab`) or the tab navigates.
     pub(super) fn apply_pending_select_names(&mut self, cx: &mut Context<Self>) {
         if self.active_tab().pending_select_names.is_empty() {
@@ -242,7 +242,7 @@ impl Shell {
         self.select_row_indices(&found, cx);
         // Scroll the result into view. Without this the selection can land
         // off-screen in a long listing and the reveal looks like it did
-        // nothing — which is exactly how the first version of the extract
+        // nothing, which is exactly how the first version of the extract
         // confirmation failed.
         let grid = matches!(self.active_tab().view_mode, crate::grid::ViewMode::Grid);
         if grid {
@@ -382,7 +382,7 @@ impl Shell {
         }
     }
 
-    /// Spec §2.5: Cmd+A — select every row currently in the
+    /// Spec §2.5: Cmd+A: select every row currently in the
     /// (filtered) model. anchor = first visible, lead = last.
     /// Non-range gesture → clears `range_live`.
     pub(super) fn select_all_visible(&mut self, cx: &mut Context<Self>) {
@@ -483,7 +483,7 @@ impl Shell {
                     });
                     // The list view auto-scrolls via `set_selected_row`,
                     // but the grid's `uniform_list` rides its own
-                    // `grid_scroll` handle that the table never touches — so
+                    // `grid_scroll` handle that the table never touches, so
                     // reveal the lead there too. Without this, Back / parent
                     // navigation (which seeds the child folder as the lead)
                     // selects a cell that may sit far below the fold while
@@ -517,7 +517,7 @@ impl Shell {
 
     /// Resolve the NodeId at a given row index by reading the
     /// delegate's `entries`. Cheap (one indexed access). Returns
-    /// `None` if the row index is out of bounds — possible if the
+    /// `None` if the row index is out of bounds: possible if the
     /// model changed between an event being queued and dispatched.
     pub(super) fn node_id_at_row(&self, row_ix: usize, cx: &App) -> Option<NodeId> {
         self.active_tab()
@@ -532,7 +532,7 @@ impl Shell {
     /// Spec §2.6 streaming arrival. For each NodeId currently in
     /// the tab's `filtered_out` holding set whose row has now
     /// arrived in the model, move it back into `selection`. Runs
-    /// after every batch and at `Done`. Doesn't drop anything —
+    /// after every batch and at `Done`. Doesn't drop anything,
     /// dropping is `reconcile_done`'s job.
     pub(super) fn restore_filtered_out_against_model_in_tab(
         &mut self,
@@ -577,7 +577,7 @@ impl Shell {
     /// anchor→lead inclusive span. As rows stream in, the visible
     /// position of the endpoints may change and rows between them
     /// may newly appear. Recompute the span on every batch + at
-    /// `Done`. No-op if either endpoint isn't visible yet — we
+    /// `Done`. No-op if either endpoint isn't visible yet: we
     /// wait for the row that defines them to land before binding.
     pub(super) fn recompute_live_range_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(idx) else {
@@ -678,7 +678,7 @@ impl Shell {
             }
         }
         // If neither endpoint is in the model anymore, the live
-        // range can't reconcile — let it freeze.
+        // range can't reconcile: let it freeze.
         if tab.range_live && (tab.anchor.is_none() || tab.lead.is_none()) {
             tab.range_live = false;
             moved = true;
@@ -803,7 +803,7 @@ impl Shell {
             // range live so subsequent batches recompute the span.
             tab.range_live = true;
         } else {
-            // Plain navigation collapses selection — replace_select_one
+            // Plain navigation collapses selection: replace_select_one
             // clears range_live.
             self.replace_select_one(new_lead, cx);
             return;
@@ -1126,7 +1126,7 @@ impl Shell {
     // gesture lives on the grid root div (`grid_body`); these handlers
     // run in window space and map into grid content space via the tab's
     // cached `grid_pane_origin` + live scroll offset. All geometry is
-    // analytic (no per-cell bounds are stored) — the same O(n) scan the
+    // analytic (no per-cell bounds are stored): the same O(n) scan the
     // list's `range_select` already does.
 
     /// Map a window-space pointer position to the grid entry index under
@@ -1224,7 +1224,7 @@ impl Shell {
     }
 
     /// Mouse-up (inside or outside the pane): finish the marquee. A
-    /// press that never moved is a plain background click — it clears the
+    /// press that never moved is a plain background click: it clears the
     /// selection (unless it was additive, which is a no-op).
     pub(super) fn on_grid_marquee_up(
         &mut self,
@@ -1483,7 +1483,7 @@ impl Shell {
     /// gpui matches keybindings to actions *before* running key
     /// listeners (window.rs `dispatch_key_event`), so arrows, Space
     /// (Quick Look), Cmd/Ctrl chords, etc. are consumed as actions and
-    /// never reach here — only unbound printable characters do.
+    /// never reach here, only unbound printable characters do.
     pub(crate) fn on_typeahead_key(
         &mut self,
         event: &gpui::KeyDownEvent,
@@ -1494,7 +1494,7 @@ impl Shell {
         // `contains_focused`, not `is_focused`: clicking a row moves window
         // focus to the table's own handle (a descendant of the shell root),
         // and typing right after a click must still typeahead. Exact-match
-        // checking silently disabled typeahead after any click — found on
+        // checking silently disabled typeahead after any click: found on
         // the AROS port, but latent on every platform.
         let view_focused = if grid {
             self.active_tab().grid_focus.contains_focused(window, cx)
@@ -1509,7 +1509,7 @@ impl Shell {
         let input_focused = window.has_focused_input(cx);
 
         // Precedence is a pure function so it's unit-testable without a
-        // window — see `typeahead_char` and its tests.
+        // window: see `typeahead_char` and its tests.
         let Some(ch) = typeahead_char(
             input_focused,
             view_focused,
@@ -1520,7 +1520,7 @@ impl Shell {
         };
 
         if self.typeahead_advance(ch, grid, cx) {
-            // Consumed — don't let the character fall through to any
+            // Consumed: don't let the character fall through to any
             // IME / text-input handling on the way back up.
             cx.stop_propagation();
         }
@@ -1551,7 +1551,7 @@ impl Shell {
         let candidate = format!("{prev}{ch}");
 
         // Snapshot the visible entries (display names lowercased) and
-        // the current lead's index — same read pattern the arrow-key
+        // the current lead's index, same read pattern the arrow-key
         // navigators use.
         let (names, ids): (Vec<String>, Vec<NodeId>) = {
             let d = self.active_tab().table.read(cx).delegate();
@@ -1653,7 +1653,7 @@ mod marquee_tests {
 const TYPEAHEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
 
 /// Decide whether a printable key-down should drive type-to-select, and
-/// with what character — the precedence rules of [`Shell::on_typeahead_key`]
+/// with what character: the precedence rules of [`Shell::on_typeahead_key`]
 /// as a pure function so they're unit-testable without a window.
 ///
 /// Order matters:
@@ -1661,10 +1661,10 @@ const TYPEAHEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(
 ///    filter and the modal name prompts (New Folder / Rename / favorite
 ///    label) own every printable key; if typeahead consumed one it would
 ///    `stop_propagation` and the character would never reach the input's
-///    IME — on macOS that reads as "typing does nothing" in those fields.
+///    IME, on macOS that reads as "typing does nothing" in those fields.
 ///    This is the guard for that regression.
 /// 2. The active list/grid must actually hold focus (`view_focused`,
-///    descendant-aware) — the shell root also sees keys bubbling from
+///    descendant-aware): the shell root also sees keys bubbling from
 ///    unrelated descendants.
 /// 3. Modifier chords (Cmd/Ctrl/Fn) are commands, not text.
 /// 4. Only a single, non-control glyph counts; it's lowercased for
@@ -1704,7 +1704,7 @@ mod typeahead_tests {
     fn typeahead_yields_to_focused_input() {
         // THE REGRESSION GUARD. A focused text field (filter or a modal
         // name prompt like New Folder / Rename) must win over the view,
-        // even when the view "contains" that field's focus — otherwise
+        // even when the view "contains" that field's focus, otherwise
         // typeahead's stop_propagation eats the character and typing into
         // the field silently does nothing on macOS.
         assert_eq!(

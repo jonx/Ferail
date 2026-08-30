@@ -2,15 +2,15 @@
 //!
 //! Harvest Stage 9.c. Replaces the flat `SidebarMenuItem` list with a
 //! recursively-expandable folder tree. Each section (Locations,
-//! Volumes) renders as a `TreeSection` — a thin `SidebarItem` wrapper
+//! Volumes) renders as a `TreeSection`: a thin `SidebarItem` wrapper
 //! around a pre-computed `Vec<TreeRowSpec>` so the build step (which
 //! needs `&Shell` state) stays inside the Shell view, while the render
 //! step satisfies gpui-component's `SidebarItem` trait without needing
 //! a mutable Shell borrow.
 //!
 //! State that drives the visible rows lives on `Shell`:
-//! - `expanded: HashSet<PathBuf>` — which folders are currently open.
-//! - `tree_children: HashMap<PathBuf, Vec<TreeChild>>` — per-path
+//! - `expanded: HashSet<PathBuf>`: which folders are currently open.
+//! - `tree_children: HashMap<PathBuf, Vec<TreeChild>>`: per-path
 //!   child cache (folders only; files are not shown in the tree).
 //!
 //! Click semantics mirror Finder:
@@ -22,7 +22,7 @@
 //! Lazy enumeration: `Shell::ensure_tree_children` runs
 //! `std::fs::read_dir` once per expanded path, caches the result. The
 //! current implementation is synchronous because the existing
-//! `Shell::load_path` is too — moving both to a background-executor
+//! `Shell::load_path` is too, moving both to a background-executor
 //! pipeline is a unified follow-on (streaming enumeration).
 
 use crate::text::{IconScale as _, TextScale as _};
@@ -47,12 +47,12 @@ use smallvec::smallvec;
 use crate::icons::IconCache;
 use crate::shell::Shell;
 
-/// Icon edge length (DIPs) for every sidebar row icon — Locations,
+/// Icon edge length (DIPs) for every sidebar row icon: Locations,
 /// Favorites, Browse, and Volumes share it so the sections read as
 /// one surface. Finder sizes its sidebar icons noticeably larger
 /// than its list-view icons; 24 matches that feel against our 16px
 /// file-list icons. Disclosure carets and the section "+" button
-/// stay at 16 — they're affordances, not icons.
+/// stay at 16: they're affordances, not icons.
 pub(crate) const SIDEBAR_ICON_PX: f32 = 24.0;
 
 /// Horizontal gutter (px) between the tree rows and the sidebar edges,
@@ -76,14 +76,14 @@ pub enum TreeRowIcon {
 /// below, `Blank` once its subtree is the trailing one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeGuide {
-    /// Empty 14px spacer — ancestor at this level was its parent's
+    /// Empty 14px spacer: ancestor at this level was its parent's
     /// last child, so no line continues through here.
     Blank,
-    /// `│` — an outer ancestor's line passing through this row.
+    /// `│`: an outer ancestor's line passing through this row.
     Vertical,
-    /// `├` — this row, with more siblings below it.
+    /// `├`: this row, with more siblings below it.
     Tee,
-    /// `└` — this row as its parent's last visible child.
+    /// `└`: this row as its parent's last visible child.
     Corner,
 }
 
@@ -124,7 +124,7 @@ pub struct TreeRowSpec {
 }
 
 /// Cached representation of one direct child of an expanded folder.
-/// Files are intentionally not included — the tree shows hierarchy;
+/// Files are intentionally not included: the tree shows hierarchy;
 /// the main pane shows files.
 #[derive(Clone, Debug)]
 pub struct TreeChild {
@@ -133,14 +133,14 @@ pub struct TreeChild {
     pub label: String,
     /// Platform hidden semantics resolved at load time by
     /// `ferail_fs_native::entry_is_hidden` (UF_HIDDEN on macOS,
-    /// FILE_ATTRIBUTE_HIDDEN on Windows, dot-prefix everywhere) — same
+    /// FILE_ATTRIBUTE_HIDDEN on Windows, dot-prefix everywhere), same
     /// contract as `FileEntry::hidden`.
     pub hidden: bool,
     /// Whether this directory itself contains at least one
     /// subdirectory, resolved at enumeration time (worker thread) by
     /// `shell::loading::dir_has_subdir`. Drives the caret: leaf
     /// folders render no disclosure mark. Hidden subdirectories
-    /// count — the chevron may reveal nothing while Show Hidden is
+    /// count: the chevron may reveal nothing while Show Hidden is
     /// off, which beats scanning twice per child.
     pub has_subdirs: bool,
 }
@@ -197,7 +197,7 @@ impl Collapsible for TreeSection {
 /// Section header shared by every sidebar section (Locations,
 /// Favorites, Browse, Volumes) so the labels read as one family.
 /// `SidebarGroup`'s built-in header is identical except it lacks the
-/// SEMIBOLD weight — which is why Locations uses [`LabeledMenu`]
+/// SEMIBOLD weight, which is why Locations uses [`LabeledMenu`]
 /// below instead of `SidebarGroup`.
 pub(crate) fn section_header(label: SharedString, cx: &App) -> Div {
     let theme = cx.theme();
@@ -401,11 +401,11 @@ impl SidebarItem for LabeledMenu {
 /// Favorites section with its own collapse + rendering rules
 /// (docs/features/FAVORITES.md), and custom tree sections (Browse,
 /// Volumes). Wrapping them in a single `SidebarItem` enum lets
-/// `gpui_component::Sidebar<E>` hold the mixed sequence — gpui-
+/// `gpui_component::Sidebar<E>` hold the mixed sequence: gpui-
 /// component otherwise pins one `E` for all of a sidebar's children.
 // The size spread (Group ≈ 700 B vs Tree ≈ 96 B) is fine here: the
 // sidebar builds a handful of these per render and drops them with
-// the frame — boxing the large variant would add an allocation per
+// the frame, boxing the large variant would add an allocation per
 // section per frame for no win.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
@@ -549,7 +549,7 @@ impl SidebarItem for TreeSection {
 
 /// Render one tree row. The caret + label split is deliberate so
 /// click-on-name navigates while click-on-caret only toggles
-/// expansion — matches Finder's sidebar. A small NSWorkspace-fetched
+/// expansion: matches Finder's sidebar. A small NSWorkspace-fetched
 /// folder/volume icon renders between the caret and the label, with
 /// the icon cache keyed by path so /Volumes/Foo gets its custom icon
 /// rather than the generic blue-folder.
@@ -582,7 +582,7 @@ fn render_tree_row(
     let row_key: SharedString = format!("tree-row-{}", path.display()).into();
     let caret_key: SharedString = format!("tree-caret-{}", path.display()).into();
 
-    // 8px base + ~14px per depth level — readable indentation
+    // 8px base + ~14px per depth level: readable indentation
     // without taking too much sidebar width.
     let indent = px(8.0 + 14.0 * depth as f32);
 
@@ -665,7 +665,7 @@ fn render_tree_row(
 
     // Tree folders are drop targets (dnd-spec §3.5): Browse/Volumes
     // rows accept OS file drags into the folder they represent. The
-    // transfer itself runs through Shell::handle_external_drop —
+    // transfer itself runs through Shell::handle_external_drop,
     // nothing filesystem-y happens here.
     let drop_shell = shell.clone();
     let drop_dest = path.clone();
@@ -783,7 +783,7 @@ fn render_tree_row(
             // The row's own connector (last level) normally hands off to
             // the caret right where its column ends. Leaf rows have no
             // caret, so extend the stub through the empty caret slot to
-            // where an arrow tip would end (~12px in) — connector lengths
+            // where an arrow tip would end (~12px in): connector lengths
             // read consistently whether or not a row is expandable.
             let stub_extra = if level + 1 == guide_count && !is_expandable {
                 12.0
@@ -820,7 +820,7 @@ fn render_tree_row(
     }
 
     // Caret slot. Reserves the same width for non-expandable rows so
-    // labels align across rows that don't have a caret — leaf
+    // labels align across rows that don't have a caret: leaf
     // folders without subdirectories. `▼` / `▶` render larger than
     // the small `▾`/`▸` glyphs at our font size.
     if !icon_only && is_expandable {
@@ -847,7 +847,7 @@ fn render_tree_row(
             .on_click(move |_, _window, cx| {
                 // Caret toggles expand-collapse only. Suppress
                 // bubbling so the row's navigate handler doesn't run
-                // — clicking the caret should not change the
+                //, clicking the caret should not change the
                 // current directory.
                 cx.stop_propagation();
                 if let Some(shell) = shell_for_caret.upgrade() {
@@ -912,7 +912,7 @@ fn render_tree_row(
             )
         });
         row = row.when(ejectable, |this| {
-            // Trailing eject affordance — Finder draws an ⏏ on every
+            // Trailing eject affordance: Finder draws an ⏏ on every
             // removable/external volume row so a drive can be unmounted
             // without opening the context menu. Stops propagation so the
             // click ejects rather than navigating into the volume. The
@@ -982,7 +982,7 @@ fn render_tree_row(
     // to whichever final element the row renders into (the row
     // alone, or the row+capacity-bar wrapper for volumes). Lives
     // outside the row-building chain because `.context_menu(...)`
-    // changes the element's type to `ContextMenu<E>` — incompatible
+    // changes the element's type to `ContextMenu<E>`: incompatible
     // with the `row = row.child(...)` accumulator pattern above.
     let shell_for_menu = shell.clone();
     let path_for_menu = path.clone();
@@ -1057,7 +1057,7 @@ fn render_tree_row(
             // Finder draws this bar ~140 DIPs wide. Rather than pin a
             // fixed width that gets clipped when the user drags the
             // sidebar narrow, let the track flex to fill whatever room is
-            // left after the indent — capped at 140 so it doesn't sprawl
+            // left after the indent: capped at 140 so it doesn't sprawl
             // on a wide sidebar, and `min_w_0` so it shrinks instead of
             // overflowing when the panel is tight. The used portion is a
             // `relative` fraction of the track, so it stays correct at any

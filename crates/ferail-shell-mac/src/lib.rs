@@ -54,13 +54,13 @@ mod power_assert;
 mod video_overlay;
 
 /// Spotlight-backed global search (Tier 2). Cross-platform module with
-/// internal cfg gates — non-macOS builds get unsupported stubs.
+/// internal cfg gates: non-macOS builds get unsupported stubs.
 pub mod spotlight;
 pub use spotlight::{spotlight_available, spotlight_search, SpotlightScope};
 
 /// AppKit-sourced facts for the Get Info panel (UTI, localized Kind,
 /// date-added, Finder attribute bits). Cross-platform module with internal
-/// cfg gates — non-macOS builds get an empty record.
+/// cfg gates: non-macOS builds get an empty record.
 pub mod resource_values;
 pub use resource_values::{read_shell_info, set_hidden_extension, ShellInfo};
 
@@ -140,7 +140,7 @@ pub fn set_command_state(_id: ferail_core::commands::CommandId, _on: bool) {}
 
 /// Show a native modal NSAlert with the given title and body. Single
 /// "OK" button, informational style. Used for any "show this text
-/// in a sheet" surface the host wants — Settings placeholder, Help
+/// in a sheet" surface the host wants: Settings placeholder, Help
 /// shortcuts cheat sheet, etc. Host composes both strings.
 #[cfg(target_os = "macos")]
 pub fn show_alert(title: &str, body: &str) {
@@ -165,7 +165,7 @@ pub fn show_alert(_title: &str, _body: &str) {}
 
 /// Present a native folder picker (`NSOpenPanel` restricted to
 /// directories) and return the chosen path, or `None` if the user
-/// cancelled. Synchronous / modal like [`show_alert`] — must be called
+/// cancelled. Synchronous / modal like [`show_alert`]: must be called
 /// on the main thread. Backs the Favorites "Locate…" repoint flow
 /// (`docs/features/FAVORITES.md` §8.2 / §8.3).
 #[cfg(target_os = "macos")]
@@ -195,7 +195,7 @@ pub fn pick_folder() -> Option<std::path::PathBuf> {
 }
 
 /// Open `url` in the user's default handler (typically the browser).
-/// Best-effort — failures are logged at the AppKit level and we don't
+/// Best-effort: failures are logged at the AppKit level and we don't
 /// surface them. macOS uses NSWorkspace; non-macOS falls back to the
 /// `open` / `xdg-open` shell command.
 #[cfg(target_os = "macos")]
@@ -238,7 +238,7 @@ pub fn copy_to_clipboard(_text: &str) {}
 /// into a macOS file picker (e.g. the Full Disk Access "+" sheet).
 /// When launched from a `.app` bundle this is the bundle path; a bare
 /// binary (e.g. `cargo run`) returns the executable path. `None` if
-/// the path can't be determined. Cheap — no directory reads.
+/// the path can't be determined. Cheap, no directory reads.
 #[cfg(target_os = "macos")]
 pub fn app_bundle_path() -> Option<String> {
     use objc2_foundation::NSBundle;
@@ -276,7 +276,7 @@ pub(crate) fn spawn_and_reap(cmd: &mut std::process::Command) -> std::io::Result
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
-    // Best-effort: if the reaper thread can't start, the child still ran —
+    // Best-effort: if the reaper thread can't start, the child still ran:
     // it just won't be reaped until process exit (the old behavior).
     let _ = std::thread::Builder::new()
         .name("child-reaper".into())
@@ -351,19 +351,19 @@ pub fn open_terminal(path: &std::path::Path) {
 /// preferences (docs/features/CONTEXT_MENU.md).
 ///
 /// Standard mode:
-/// - no custom program — `open -a Terminal <dir>` (today's behavior);
-/// - a `.app` bundle — `open -a <app> [<dir>] [--args <params>]`, the
+/// - no custom program: `open -a Terminal <dir>` (today's behavior);
+/// - a `.app` bundle: `open -a <app> [<dir>] [--args <params>]`, the
 ///   `<dir>` document passed only when the params never mention `{dir}`;
-/// - a plain binary — spawned directly with the resolved params, working
+/// - a plain binary: spawned directly with the resolved params, working
 ///   directory set to `path` when `{dir}` isn't in the params.
 ///
 /// Admin mode opens a **root shell** (there is no "launch a GUI app
 /// elevated" on macOS): a CLI-binary terminal gets its exec flag +
 /// `sudo -s`; anything else routes through Terminal.app via AppleScript
-/// `do script "cd <dir> && sudo -s"` — the sudo password prompt appears
+/// `do script "cd <dir> && sudo -s"`: the sudo password prompt appears
 /// inside the terminal. The AppleScript path needs the one-time
 /// Automation (TCC) consent to control Terminal. Callers run this on a
-/// worker (Prime Directive) — `osascript` can block on that consent.
+/// worker (Prime Directive): `osascript` can block on that consent.
 #[cfg(target_os = "macos")]
 pub fn open_terminal_with(path: &std::path::Path, spec: &ferail_core::terminal::TerminalSpec) {
     use ferail_core::terminal::{exec_prefix_for, POSIX_ADMIN_SHELL};
@@ -438,7 +438,7 @@ pub fn open_terminal_with(_path: &std::path::Path, _spec: &ferail_core::terminal
 
 /// Duplicate `src` next to itself with Finder's " copy" / " copy 2"
 /// naming. Returns the destination path on success, or an error
-/// string on failure (collision exhausted, IO error). Synchronous —
+/// string on failure (collision exhausted, IO error). Synchronous:
 /// callers run this on a worker.
 #[cfg(target_os = "macos")]
 pub fn duplicate_path(src: &std::path::Path) -> Result<std::path::PathBuf, String> {
@@ -450,7 +450,7 @@ pub fn duplicate_path(_src: &std::path::Path) -> Result<std::path::PathBuf, Stri
     Err("duplicate is macOS-only in this build".into())
 }
 
-/// Unmount and eject the volume mounted at `path`. Synchronous —
+/// Unmount and eject the volume mounted at `path`. Synchronous:
 /// callers run this on a worker. Non-macOS: error.
 #[cfg(target_os = "macos")]
 pub fn eject_volume(path: &std::path::Path) -> Result<(), String> {
@@ -464,7 +464,7 @@ pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
 
 /// Unmount every volume on the physical device backing
 /// `volume_paths[0]` and eject the device (Finder's "Eject All").
-/// Synchronous — callers run this on a worker. Non-macOS: error.
+/// Synchronous: callers run this on a worker. Non-macOS: error.
 #[cfg(target_os = "macos")]
 pub fn eject_device(volume_paths: &[&std::path::Path]) -> Result<(), String> {
     file_ops::eject_device(volume_paths)
@@ -475,16 +475,16 @@ pub fn eject_device(_volume_paths: &[&std::path::Path]) -> Result<(), String> {
     Err("eject is macOS-only in this build".into())
 }
 
-/// Processes holding files open on the volume at `path` — the
+/// Processes holding files open on the volume at `path`: the
 /// "why won't it eject" answer for a failed eject, with pids so the UI
-/// can activate the blocking app ([`activate_app`]). Synchronous —
+/// can activate the blocking app ([`activate_app`]). Synchronous:
 /// callers run this on a worker. Non-macOS: empty.
 #[cfg(target_os = "macos")]
 pub fn volume_busy_processes(path: &std::path::Path) -> Vec<ferail_core::BusyApp> {
     file_ops::volume_busy_processes(path)
 }
 
-/// Bring the application owning `pid` to the foreground — the click
+/// Bring the application owning `pid` to the foreground: the click
 /// action on a failed-eject toast's culprit chips, so the user can go
 /// close the files blocking the eject. `false` when the pid has no GUI
 /// application to activate (a daemon or a shell), which callers treat
@@ -516,7 +516,7 @@ pub fn volume_busy_processes(_path: &std::path::Path) -> Vec<ferail_core::BusyAp
 }
 
 /// Make a Finder-resolvable alias file pointing at `target`.
-/// Synchronous — callers run this on a worker.
+/// Synchronous: callers run this on a worker.
 #[cfg(target_os = "macos")]
 pub fn make_alias(target: &std::path::Path) -> Result<std::path::PathBuf, String> {
     file_ops::make_alias(target)
@@ -528,7 +528,7 @@ pub fn make_alias(_target: &std::path::Path) -> Result<std::path::PathBuf, Strin
 }
 
 /// Make a Finder-resolvable alias to `target` inside `dest_dir` (used by
-/// Cmd+Option alias-drop). Synchronous — callers run this on a worker.
+/// Cmd+Option alias-drop). Synchronous: callers run this on a worker.
 #[cfg(target_os = "macos")]
 pub fn make_alias_in(
     target: &std::path::Path,
@@ -547,7 +547,7 @@ pub fn make_alias_in(
 
 /// Compress `targets` into a `.zip` next to the first target's
 /// parent (Finder behaviour: `Foo.zip` for one source, `Archive.zip`
-/// for several). Synchronous — callers run this on a worker.
+/// for several). Synchronous: callers run this on a worker.
 #[cfg(target_os = "macos")]
 pub fn compress_paths(targets: &[&std::path::Path]) -> Result<std::path::PathBuf, String> {
     archive::compress(targets)
@@ -568,7 +568,7 @@ pub fn show_quick_look(paths: &[&std::path::Path]) -> Result<(), String> {
 
 /// Generate a Quick Look thumbnail for `path` at `size_px` (longest
 /// edge). Returns RGBA8888 bytes plus the actual image dimensions.
-/// Synchronous — call from a worker thread. macOS-only; non-macOS
+/// Synchronous: call from a worker thread. macOS-only; non-macOS
 /// returns `None`.
 #[cfg(target_os = "macos")]
 pub fn fetch_quick_look_thumbnail(
@@ -594,7 +594,7 @@ pub fn fetch_preview_image(path: &std::path::Path, size_px: u32) -> Option<(Vec<
     fetch_quick_look_thumbnail(path, size_px)
 }
 
-/// Last-resort large type image — macOS callers draw their own type
+/// Last-resort large type image: macOS callers draw their own type
 /// glyphs when every content tier fails, so there is nothing to add here.
 pub fn fetch_type_icon(_path: &std::path::Path, _size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     None
@@ -633,7 +633,7 @@ pub fn read_canonical_tags(_path: &std::path::Path) -> Vec<ferail_core::commands
 }
 
 /// Toggle a single Finder colour tag on `path`. Other tags
-/// (including user-defined ones) are preserved. Synchronous —
+/// (including user-defined ones) are preserved. Synchronous:
 /// callers run this on a worker if the selection is large.
 #[cfg(target_os = "macos")]
 pub fn toggle_tag(
@@ -702,8 +702,8 @@ pub fn open_with_candidates(_path: &std::path::Path) -> Vec<OpenWithCandidate> {
 /// `/usr/bin/open -a` so we don't have to wire up the
 /// `NSWorkspace.openURLs:` completion-handler contract.
 ///
-/// `open` waits for the target app to check in — seconds on a cold
-/// launch — so call from a worker, never the UI thread.
+/// `open` waits for the target app to check in: seconds on a cold
+/// launch, so call from a worker, never the UI thread.
 pub fn open_with_app(target: &std::path::Path, app_path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -717,7 +717,7 @@ pub fn open_with_app(target: &std::path::Path, app_path: &std::path::Path) -> Re
 }
 
 /// Open every `target` with the app at `app_path` in ONE
-/// `/usr/bin/open -a` invocation — N sequential `open` calls each wait
+/// `/usr/bin/open -a` invocation: N sequential `open` calls each wait
 /// for the app to check in, so a multi-selection pays the launch wait
 /// once instead of N times. Same worker-only contract as
 /// [`open_with_app`].
@@ -754,7 +754,7 @@ pub enum SetIconResult {
     NotMacOs,
     /// Called off the main thread; refused.
     NotMainThread,
-    /// `NSImage initWithData:` returned nil — PNG decode failed.
+    /// `NSImage initWithData:` returned nil: PNG decode failed.
     DecodeFailed,
 }
 
@@ -790,7 +790,7 @@ pub fn set_app_icon_from_png_bytes(png_bytes: &[u8]) -> SetIconResult {
         // Drives the standard About panel and any other consumer of
         // NSImage(named: "NSApplicationIcon"). Without this, About falls
         // back to whatever the bundle / Finder thinks the executable's
-        // icon is — for an unbundled cargo-run binary, the generic
+        // icon is, for an unbundled cargo-run binary, the generic
         // folder/exec glyph.
         let name = NSString::from_str("NSApplicationIcon");
         img.setName(Some(&name));
@@ -804,7 +804,7 @@ pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) -> SetIconResult {
 }
 
 /// AppUserModelID is a Windows-shell concept (taskbar grouping,
-/// jump-list, pin-to-Start). No equivalent on macOS — the Dock
+/// jump-list, pin-to-Start). No equivalent on macOS: the Dock
 /// groups by bundle identifier, set elsewhere. Stub kept so the
 /// `platform_shell` alias compiles symmetrically on both targets.
 pub fn set_app_user_model_id(_id: &str) {}
@@ -817,7 +817,7 @@ pub fn set_app_user_model_id(_id: &str) {}
 /// callers get `false`.
 ///
 /// Returns `false` on non-macOS or if the lookup fails for any
-/// reason — callers can layer their own override (e.g. an env var)
+/// reason: callers can layer their own override (e.g. an env var)
 /// on top.
 #[cfg(target_os = "macos")]
 pub fn system_is_dark() -> bool {
@@ -847,7 +847,7 @@ pub fn system_is_dark() -> bool {
 /// Force the app-wide native appearance to match the chosen theme,
 /// independent of the system Light/Dark setting. Setting `NSApp`'s
 /// appearance cascades to every window that doesn't override its own,
-/// so native chrome — titlebars, the traffic-light area, menus — on
+/// so native chrome, titlebars, the traffic-light area, menus, on
 /// secondary windows (Viewer, Settings) stops rendering system-dark
 /// under a light app theme (and vice versa). Main-thread only; a no-op
 /// off the main thread or on non-macOS.
@@ -876,17 +876,17 @@ pub fn set_app_appearance(dark: bool) {
 #[cfg(not(target_os = "macos"))]
 pub fn set_app_appearance(_dark: bool) {}
 
-/// macOS "Show Desktop" — the same wallpaper reveal the Dock performs
+/// macOS "Show Desktop": the same wallpaper reveal the Dock performs
 /// when you click the desktop or hit the Show Desktop shortcut. There
 /// is no public API for it, so we resolve the Dock's private
 /// `CoreDockSendNotification` symbol at runtime and post the
 /// `com.apple.showdesktop.awake` toggle.
 ///
 /// Two functions:
-/// - [`show_desktop_available`] — `true` only when we resolved the
+/// - [`show_desktop_available`]: `true` only when we resolved the
 ///   symbol on a new-enough macOS. UI affordances (toolbar button,
 ///   menu item) gate their visibility on this.
-/// - [`show_desktop`] — performs the reveal, returning whether it
+/// - [`show_desktop`]: performs the reveal, returning whether it
 ///   dispatched. Both are panic-free: on failure they report
 ///   unavailable / `false` rather than aborting, so a future OS change
 ///   that pulls the symbol degrades to "the button quietly disappears."
@@ -921,7 +921,7 @@ mod show_desktop_impl {
 
     // Floor we trust this private path on. The Show Desktop notification
     // long predates Big Sur, but gating here keeps us off any ancient
-    // build where the symbol's contract might differ — and satisfies the
+    // build where the symbol's contract might differ, and satisfies the
     // "right OS version" guard cheaply.
     const MIN_MAJOR: isize = 11;
 
@@ -933,7 +933,7 @@ mod show_desktop_impl {
     }
 
     /// Resolved function-pointer address, or 0 when unavailable.
-    /// Computed once — the `dlopen` happens on the first call only, and
+    /// Computed once: the `dlopen` happens on the first call only, and
     /// the handle is intentionally leaked for the process lifetime.
     fn resolved_addr() -> usize {
         static CELL: OnceLock<usize> = OnceLock::new();
@@ -1016,7 +1016,7 @@ pub fn show_desktop() -> bool {
 }
 
 /// Bring every app window to the front, preserving their relative
-/// z-order and leaving the key window unchanged — AppKit's
+/// z-order and leaving the key window unchanged: AppKit's
 /// `-[NSApplication arrangeInFront:]`, the selector Finder's
 /// Window ▸ Bring All to Front is wired to. Returns `false` (never
 /// panics) off the main thread or on non-macOS so the caller can
@@ -1045,7 +1045,7 @@ pub fn bring_all_windows_to_front() -> bool {
 /// the user toggles System Settings → Appearance, or "Auto" mode
 /// crosses the day/night boundary.
 ///
-/// Thread contract: on macOS the callback fires on the MAIN thread —
+/// Thread contract: on macOS the callback fires on the MAIN thread,
 /// but the shell-win32 twin of this function fires its callback on a
 /// WORKER thread. Cross-platform callers must write the callback to
 /// the weaker (win32) contract: thread-safe state only, no gpui
@@ -1065,13 +1065,13 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static>) {
 #[cfg(not(target_os = "macos"))]
 pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static>) {}
 
-/// Write the given paths to the general pasteboard as file URLs —
+/// Write the given paths to the general pasteboard as file URLs:
 /// the cross-app file-copy verb (Finder pastes what we copy and vice
 /// versa). Replaces the pasteboard's previous contents. Main-thread
 /// only (AppKit). docs/features/FILE_OPS.md.
 ///
 /// Each item carries its `is_dir` flag from the caller's cached
-/// `FileEntry` — `fileURLWithPath_isDirectory:` exists precisely so
+/// `FileEntry`: `fileURLWithPath_isDirectory:` exists precisely so
 /// nobody has to stat here, and a stat per path on the main thread
 /// would hang Cmd+C on a dead network mount.
 #[cfg(target_os = "macos")]
@@ -1184,7 +1184,7 @@ pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static>) {}
 /// for the contract).
 ///
 /// Thread contract: the macOS callback fires on the MAIN thread, but
-/// the shell-win32 twin fires on a WORKER thread — cross-platform
+/// the shell-win32 twin fires on a WORKER thread: cross-platform
 /// callers must write to the weaker (win32) contract (thread-safe
 /// state / channel send only, no gpui entities).
 #[cfg(target_os = "macos")]
@@ -1203,7 +1203,7 @@ pub use power_assert::{prevent_idle_sleep, SleepBlocker};
 #[cfg(not(target_os = "macos"))]
 pub struct SleepBlocker;
 
-/// No-op on non-macOS workspace builds — returns an inert guard.
+/// No-op on non-macOS workspace builds: returns an inert guard.
 #[cfg(not(target_os = "macos"))]
 pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
     None
@@ -1212,7 +1212,7 @@ pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
 /// Open a windowless native video player for `path` and start playback,
 /// returning a handle (0 on failure). Frames are pulled out as BGRA
 /// pixel buffers via [`video_overlay_copy_frame`] and drawn by the gpui
-/// host as an image — there is no native overlay NSView. Main-thread
+/// host as an image, there is no native overlay NSView. Main-thread
 /// only. `on_ended` fires on the main thread when the video plays to
 /// the end; it must defer (e.g. through a channel), not call player
 /// APIs synchronously. See docs/features/VIEWER.md.
@@ -1380,7 +1380,7 @@ pub fn set_window_opacity(_ns_view: *mut std::ffi::c_void, _opacity: f32) {}
 /// ever copy: same-volume Finder drops don't move, and ⌥ / ⌘ / ⌃ change
 /// nothing. Replacing the method on gpui's window classes with one that
 /// offers Copy | Link | Generic | Move outside the app restores the
-/// standard macOS contract — the destination picks the operation and
+/// standard macOS contract: the destination picks the operation and
 /// AppKit's built-in modifier filtering applies (⌥ forces copy and the
 /// system draws the green “+” badge, ⌘ forces move, ⌃ makes an alias).
 /// The within-application mask is left exactly as upstream had it
@@ -1390,7 +1390,7 @@ pub fn set_window_opacity(_ns_view: *mut std::ffi::c_void, _opacity: f32) {}
 /// `GPUIWindow` / `GPUIPanel` or grows a real API for this
 /// (docs/GPUI-UPSTREAM.md #10 asks for allowed operations on
 /// `ExternalDragPayload`), this quietly degrades to upstream's copy-only
-/// behaviour. Call **after the first gpui window exists** — the classes
+/// behaviour. Call **after the first gpui window exists**: the classes
 /// are registered lazily on first window construction. Idempotent;
 /// returns whether at least one class was patched.
 ///
@@ -1412,9 +1412,9 @@ pub fn install_native_drag_operations() -> bool {
     fn is_archive_promise_drag(dragging_info: *mut AnyObject) -> bool {
         // Ferail knows synchronously that it is starting an archive promise,
         // so the session flag is the primary signal for in-process handoff.
-        // The pasteboard marker — declared by Ferail's promise-provider
+        // The pasteboard marker: declared by Ferail's promise-provider
         // subclass, and the type its windows register for so AppKit routes
-        // the gesture here at all — is the defensive fallback for
+        // the gesture here at all: is the defensive fallback for
         // callback-order variations.
         if native_drag::ARCHIVE_PROMISE_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
             return true;
@@ -1442,7 +1442,7 @@ pub fn install_native_drag_operations() -> bool {
         use std::sync::atomic::Ordering::SeqCst;
 
         // GPUI recognizes a file drag only through NSFilenamesPboardType and
-        // answers None otherwise. A file promise has no filename path yet —
+        // answers None otherwise. A file promise has no filename path yet,
         // and AppKit only delivers this callback at all because `file_promise`
         // registered the window for Ferail's private marker type. Admit our
         // own promise sessions directly; GPUI's existing draggingUpdated /
@@ -1517,7 +1517,7 @@ pub fn install_native_drag_operations() -> bool {
         native_drag::SESSION_ACTIVE.store(false, SeqCst);
         native_drag::ARCHIVE_PROMISE_ACTIVE.store(false, SeqCst);
         native_drag::CANCEL_REQUESTED.store(false, SeqCst);
-        // Chain to gpui's implementation — it resets its own drag state
+        // Chain to gpui's implementation: it resets its own drag state
         // (synthetic-drag counter, FileDropEvent::Ended). Skipping it
         // would leave gpui believing a drag is still live.
         let orig = native_drag::ORIG_ENDED_IMP.load(SeqCst);
@@ -1665,7 +1665,7 @@ mod native_drag {
     pub static SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
     /// The current native session carries promised archive members. Raised by
     /// `file_promise::start` before `beginDraggingSession` so a destination's
-    /// `draggingEntered:` — possibly delivered before that call returns — can
+    /// `draggingEntered:`: possibly delivered before that call returns: can
     /// admit the pathless gesture; lowered when the session ends.
     pub static ARCHIVE_PROMISE_ACTIVE: AtomicBool = AtomicBool::new(false);
     /// Esc was pressed mid-session: the mask collapses to None so no
@@ -1690,7 +1690,7 @@ mod native_drag {
     }
 
     // CGEvent: used to finish the physical gesture synthetically after a
-    // cancel. Declared by hand — three functions don't justify a crate.
+    // cancel. Declared by hand, three functions don't justify a crate.
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
         pub fn CGEventCreate(source: *const std::ffi::c_void) -> *mut std::ffi::c_void;
@@ -1733,7 +1733,7 @@ pub fn native_drag_session_active() -> bool {
 /// AppKit has no public "cancel this NSDraggingSession" call, so this uses
 /// the one safe lever the source owns: collapse the source operation mask
 /// to `None` (see `CANCEL_REQUESTED` in the swizzled mask method) so no
-/// destination can accept the items, then finish the gesture synthetically —
+/// destination can accept the items, then finish the gesture synthetically:
 /// a 1-px synthetic drag forces destinations to re-query the now-empty mask,
 /// and a delayed synthetic mouse-up ends the session, which AppKit resolves
 /// as a failed drag: the items animate back to their origin. Ordering
@@ -1801,8 +1801,8 @@ pub fn cancel_native_drag() {}
 // The host (`ferail-gpui`) drives the slide-in/out drawer entirely from its
 // own GPUI tick: it polls the cursor, does the geometry, and moves the window.
 // This crate only exposes the four AppKit calls that work has to bottom out in.
-// All coordinates are macOS *global screen space* — origin at the bottom-left
-// of the main display, y growing upward — which is the one space that
+// All coordinates are macOS *global screen space*: origin at the bottom-left
+// of the main display, y growing upward, which is the one space that
 // `NSEvent.mouseLocation`, `NSScreen.visibleFrame`, and `NSWindow.frame` all
 // already agree on, so the host's math needs no flipping.
 // ---------------------------------------------------------------------------
@@ -1868,7 +1868,7 @@ pub fn screen_visible_frame_for_window(
 }
 
 /// Move/resize a window (identified by one of its content NSViews) to the
-/// given frame in global screen space. Deliberately *not* animated — the host
+/// given frame in global screen space. Deliberately *not* animated: the host
 /// runs any slide itself, one step per GPUI frame, so this returns immediately
 /// and never spins the run loop (Prime Directive). The host keeps the size
 /// fixed during a slide, so this is a pure move and gpui never re-sizes its
@@ -1916,7 +1916,7 @@ pub fn set_window_frame(_ns_view: *mut std::ffi::c_void, _x: f64, _y: f64, _w: f
 /// to drop the behavior again on undock. Main-thread only; no-op otherwise.
 ///
 /// Sets/clears ONLY those two bits, preserving whatever else the host
-/// configured — writing `0` on undock used to clobber gpui's original
+/// configured, writing `0` on undock used to clobber gpui's original
 /// `collectionBehavior` (full-screen-primary participation, Stage
 /// Manager behavior) for the rest of the session.
 #[cfg(target_os = "macos")]
@@ -1950,7 +1950,7 @@ pub fn set_window_all_spaces(_ns_view: *mut std::ffi::c_void, _all_spaces: bool)
 
 /// Whether the window is in native full screen (`styleMask` carries
 /// `NSWindowStyleMaskFullScreen`). Docking must refuse a fullscreen
-/// window — `setFrame:` on one confuses AppKit's Space bookkeeping.
+/// window: `setFrame:` on one confuses AppKit's Space bookkeeping.
 /// `false` off the main thread / off macOS.
 #[cfg(target_os = "macos")]
 pub fn window_is_fullscreen(ns_view: *mut std::ffi::c_void) -> bool {
@@ -2012,7 +2012,7 @@ pub fn window_frame(_ns_view: *mut std::ffi::c_void) -> Option<(f64, f64, f64, f
 //
 // Same public surface in every shell crate (`platform_shell::*`). The host
 // gpui builds the op descriptor; this crate only knows how to "re-launch the
-// current binary elevated and wait" — it never sees the op type.
+// current binary elevated and wait": it never sees the op type.
 // ---------------------------------------------------------------------------
 
 /// A process holding a file the user is trying to mutate, so a "the file is
@@ -2041,7 +2041,7 @@ pub fn elevation_available() -> bool {
 /// … with administrator privileges` (one OS auth prompt; the child runs as
 /// root). The caller passes `--elevated-op <descriptor>` so the same binary
 /// performs the file op as root and writes a result file. Blocks on the auth
-/// dialog — call off the UI thread.
+/// dialog: call off the UI thread.
 #[cfg(target_os = "macos")]
 pub fn run_elevated_self(args: &[String]) -> Result<i32, String> {
     elevation::run_elevated_self(args)
@@ -2052,7 +2052,7 @@ pub fn run_elevated_self(_args: &[String]) -> Result<i32, String> {
 }
 
 /// Whether this platform can enumerate the processes holding a locked file.
-/// macOS file locking is advisory and rarely the cause, so this is deferred —
+/// macOS file locking is advisory and rarely the cause, so this is deferred:
 /// it lands with the Windows Restart Manager work.
 pub fn lock_diagnostics_available() -> bool {
     false
@@ -2074,7 +2074,7 @@ pub struct LockScan {
     pub truncated: bool,
 }
 
-/// Processes holding open any file under `roots`. Unsupported on macOS —
+/// Processes holding open any file under `roots`. Unsupported on macOS:
 /// lands with an lsof-backed `processes_using`.
 pub fn processes_using_tree(_roots: &[std::path::PathBuf], _max_files: usize) -> LockScan {
     LockScan::default()

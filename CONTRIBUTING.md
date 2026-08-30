@@ -3,12 +3,12 @@
 Thanks for your interest in Ferail. This is a cross-platform native file
 manager written in Rust on [GPUI](https://www.gpui.rs/). macOS is the primary
 platform; Windows has broad native parity, Linux builds and runs as an early
-port, and AROS is a research port — the per-platform breakdown is in the
+port, and AROS is a research port: the per-platform breakdown is in the
 [Current status](README.md#current-status) table. The bar for changes is
 correctness, responsiveness, and respect for the architecture's one rule.
 
-**AI-generated pull requests are welcome.** Ferail is mostly "vibe-coded" —
-written largely through AI pair-programming — and contributions made the same
+**AI-generated pull requests are welcome.** Ferail is mostly "vibe-coded"
+(written largely through AI pair-programming) and contributions made the same
 way are encouraged. If you're driving an agent, point it at this file,
 [CLAUDE.md](CLAUDE.md), and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before
 it starts. Every PR still goes through human review.
@@ -46,7 +46,7 @@ adding cross-crate dependencies.
     --navigate ~/Source/Ferail --width 1400 --height 900
   ```
 
-- Keep diffs focused. Do not run broad formatters across the tree — match the
+- Keep diffs focused. Do not run broad formatters across the tree: match the
   surrounding code's style instead.
 
 ## Building

@@ -2,18 +2,18 @@
 //!
 //! Three primitives behind `platform_shell`:
 //!
-//! - [`run_elevated_self`] — re-launch this binary elevated via
+//! - [`run_elevated_self`]: re-launch this binary elevated via
 //!   `ShellExecuteExW` verb `"runas"` (the UAC prompt), wait for the child,
 //!   and return its exit code. The caller ([`ferail-gpui`'s `elevation`
 //!   module]) owns the descriptor/result-file handshake; this function never
 //!   sees the op type.
-//! - [`processes_using`] — name the processes holding a file open, via the
+//! - [`processes_using`]: name the processes holding a file open, via the
 //!   Restart Manager (`RmStartSession` → `RmRegisterResources` → `RmGetList`).
-//! - [`force_close_processes`] — ask those processes to close:
+//! - [`force_close_processes`]: ask those processes to close:
 //!   Restart-Manager graceful shutdown first (`RmShutdown`, which delivers
 //!   WM_CLOSE to GUI apps), then a `TerminateProcess` fallback for survivors.
 //!
-//! All three block (auth dialog / RM enumeration can take seconds) — call
+//! All three block (auth dialog / RM enumeration can take seconds): call
 //! them from a background executor, never the UI thread (Prime Directive).
 
 /// A process holding a file open. Identical shape in every shell crate.
@@ -25,7 +25,7 @@ pub struct LockingProcess {
 
 /// Result of a capped lock scan over one or more roots
 /// ([`processes_using_tree`]). The Restart Manager answers for *files*,
-/// so a folder or volume root is expanded by a bounded walk first —
+/// so a folder or volume root is expanded by a bounded walk first:
 /// `truncated` says the cap cut that walk short, i.e. an empty `holders`
 /// means "none found among `scanned` files", not "none".
 #[derive(Clone, Debug, Default)]
@@ -212,7 +212,7 @@ mod imp {
         }
     }
 
-    /// Name the processes holding `path` open. Empty on any failure — this
+    /// Name the processes holding `path` open. Empty on any failure: this
     /// feeds a diagnostic list, not control flow, so "don't know" and "none"
     /// render the same. Blocks (RM enumerates every process): background only.
     pub fn processes_using(path: &Path) -> Vec<LockingProcess> {
@@ -222,7 +222,7 @@ mod imp {
     /// Name the processes holding open any file under `roots` (files are
     /// taken as-is; directories are expanded by a bounded walk, since the
     /// Restart Manager wants a file list, not a folder). One RM session,
-    /// one process enumeration, however many files were collected — the
+    /// one process enumeration, however many files were collected: the
     /// walk cap bounds the registration, not extra `RmGetList` calls.
     /// Blocks twice over (directory walk + RM): background only.
     pub fn processes_using_tree(roots: &[std::path::PathBuf], max_files: usize) -> super::LockScan {
@@ -283,7 +283,7 @@ mod imp {
         (files, false)
     }
 
-    /// The shared Restart Manager query: register `paths` (chunked — one
+    /// The shared Restart Manager query: register `paths` (chunked, one
     /// `RmRegisterResources` call per `REGISTER_CHUNK` files, same session)
     /// and list the holders with a single two-phase `RmGetList`. Empty on
     /// any failure. Deduped by pid, sorted by name.

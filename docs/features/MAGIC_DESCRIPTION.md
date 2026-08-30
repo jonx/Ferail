@@ -37,15 +37,15 @@ fixes for Office files misdescribed as "ZIP archive" / "Binary data":
   entries inside the first/last 4 KB windows. A routine `.pptx` has a
   10–25 KB CD that starts *before* the tail window, so its entry names
   were invisible and the file stayed a plain ZIP (small decks happened to
-  fit and did refine — hence the inconsistency). `parse_central_directory`
+  fit and did refine, hence the inconsistency). `parse_central_directory`
   now takes a `read_at` closure and performs **one bounded targeted read**
   of the CD itself (capped at 128 KB) when it lies outside both windows.
   ZIP64 marker values (`0xFFFF` / `0xFFFFFFFF`) are resolved through the
   ZIP64 EOCD record while we're there.
-- *OLE2/CFBF detection.* The `D0 CF 11 E0` compound-file container —
+- *OLE2/CFBF detection.* The `D0 CF 11 E0` compound-file container:
   legacy `.doc`/`.xls`/`.ppt`, MSI, and **password-protected OOXML**
   (an encrypted `.pptx` is a CFBF wrapping an `EncryptedPackage` stream,
-  not a ZIP) — previously fell through to "Binary data". New
+  not a ZIP): previously fell through to "Binary data". New
   `magic::ole` sniffs the container and refines the app from the first
   directory sector (one more targeted read): `WordDocument` /
   `Workbook` / `PowerPoint Document` → `DocWordOle` / `DocExcelOle` /
@@ -64,7 +64,7 @@ checking a file by hand:
 `cargo run -p ferail-fs-native --example magic_probe -- <files…>`.
 
 **Folder counts share the column (2026-07-22).** The column is content
-facts for *files*; for *folders* it now shows recursive item counts —
+facts for *files*; for *folders* it now shows recursive item counts:
 "N files · M folders" (singular-aware; "Empty" for an empty tree). These
 come for free from the background folder-size walk (the same pass that
 sums a directory's recursive bytes now also counts its files and
@@ -81,14 +81,14 @@ the folder-size worker owns folder descriptions. See
 Solaris, explicit GNU/Linux) get an OS suffix in the description; the
 System V default (used by ordinary Linux toolchains) adds none, so the
 pre-existing description shape is preserved. AROS ships its libraries as
-aarch64 relocatables — `exec.library` now reads as
+aarch64 relocatables: `exec.library` now reads as
 `ELF · 64-bit · relocatable · ARM64 · AROS`. The Format column label is
 unchanged (`ELF executable`), keeping the icon classifier's `executable`
 tint.
 
 **Refresh forces a re-sniff (2026-06-24).** Because the cache is keyed by
 `(path, mtime, size)`, a row whose *derived* data went stale without the
-file changing — e.g. after the sniffer's own logic changed — would keep
+file changing, e.g. after the sniffer's own logic changed, would keep
 serving the old label/description. The Refresh command (F5 / toolbar)
 now arms `Tab::force_resniff`, which the prefetch worker honors by
 ignoring the magic/description read cache and re-sniffing every visible
@@ -97,7 +97,7 @@ and the next ordinary load is a hit again. Quarantine state stays
 cache-first; the broad `--reset-db magic` CLI path remains for clearing
 the whole cache at once. (Edge case: if a forced re-sniff now yields an
 *empty* description for a row that previously had one, the in-memory cell
-updates but `upsert_file`'s COALESCE keeps the old DB value — harmless
+updates but `upsert_file`'s COALESCE keeps the old DB value: harmless
 for the enrichment case that motivated this.)
 
 - `ferail-fs-native::magic` module ported in full from bfe-explorer
@@ -116,7 +116,7 @@ for the enrichment case that motivated this.)
   read), derives label + description, write-through to DB.
 - File-list UI: `description` column added at 320px, not sortable.
 - Tests: 80 unit tests across `ferail-core` / `ferail-fs-native` /
-  `ferail-meta` — all pass.
+  `ferail-meta`: all pass.
 - Live smoke test: GUI navigates `target/debug`, prefetch processes
   28 rows and applies the batch with no panic.
 
@@ -131,7 +131,7 @@ shows real values populated by content sniffing on a folder of mixed files:
 - `cargo-lock.gz` → `Gzip archive`
 - `run.sh` → `Shell script`
 - `report.txt` → `PNG image` with the mismatch triangle (a PNG wearing a
-  `.txt` extension — magic wins, the ⚠ flags the disagreement).
+  `.txt` extension: magic wins, the ⚠ flags the disagreement).
 
 The headless `--screenshot` path now works on Windows via a
 PrintWindow capture in `ferail-shell-win32` (gpui_windows doesn't
@@ -140,7 +140,7 @@ implement `render_to_image`; see
 
 The unified [Format column](../../crates/ferail-gpui/src/file_list.rs)
 (`Kind ⊎ Magic` with the mismatch triangle) stays. Description is **added on
-top** — it never replaces Format and never displaces the mismatch indicator.
+top**: it never replaces Format and never displaces the mismatch indicator.
 
 ## Goal
 
@@ -166,7 +166,7 @@ The Description column is **derived data** like `display_magic`. It is:
 
 - Computed off the UI thread. Never read from paint.
 - Populated lazily after the row exists (empty string until the worker fills it).
-- Cancelable / droppable — a result that arrives after the directory changed
+- Cancelable / droppable: a result that arrives after the directory changed
   is discarded by `apply_batch`'s bounds check, same as magic today.
 - Cached in the metadata DB by `(path, mtime_unix, size)`. On cache hit, no
   re-read.
@@ -179,7 +179,7 @@ The Description column is **derived data** like `display_magic`. It is:
 **Verified against bfe-explorer source (Nov 2026 read of
 `crates/ferail-ui/src/magic/types.rs`):** the reference implementation does
 everything in **one synchronous read of 4 KB**. The parsers are byte-twiddling
-on a fixed buffer — microseconds per file, dominated by the I/O. A two-pass
+on a fixed buffer: microseconds per file, dominated by the I/O. A two-pass
 split would add complexity for no measurable win.
 
 ### Read budget
@@ -196,26 +196,26 @@ Bump `HEADER_BYTES` from **512 → 4096**. Required for:
   the first frame well past 512 bytes).
 - MP4 `moov` atoms placed near the start.
 
-Cost: 3.5 KB extra per file read. Negligible — the buffer is stack-allocated,
+Cost: 3.5 KB extra per file read. Negligible: the buffer is stack-allocated,
 the read is one disk block either way on most filesystems.
 
 ### Dispatch order
 
 Per bfe-explorer's `sniff_bytes_info`:
 
-1. **Executables**: PE / ELF / Mach-O — full structured parse.
+1. **Executables**: PE / ELF / Mach-O: full structured parse.
 2. **AmigaOS family** (`magic/amiga.rs`): hunk binaries, Workbench icons,
    IFF containers, tracker modules, disk images. See below.
 3. **ZIP-based**: Office (.docx/.xlsm/.pptx + macro variants), JAR, APK,
    generic / encrypted ZIP.
-4. **Images**: PNG / JPEG / GIF / BMP / WebP / ICO / TIFF — width × height +
+4. **Images**: PNG / JPEG / GIF / BMP / WebP / ICO / TIFF: width × height +
    alpha where extractable.
-5. **Audio**: MP3 (ID3 or raw frame) / FLAC / WAV / Ogg — channels, sample
+5. **Audio**: MP3 (ID3 or raw frame) / FLAC / WAV / Ogg: channels, sample
    rate, bitrate, duration.
-6. **Video**: MP4 / MOV / AVI / MKV / WebM — `has_video` / `has_audio` via
+6. **Video**: MP4 / MOV / AVI / MKV / WebM: `has_video` / `has_audio` via
    box / chunk scan.
 7. **Signature table fast path**: PDF, RAR, 7z, Gzip, LHA, SQLite, Lnk, etc.
-   — no metadata beyond the type.
+  , no metadata beyond the type.
 8. **Text heuristic**: shebang → script subtype, UTF-16 BOM, XML / HTML /
    .reg / INI / .url / JSON detection via prefix sniffing on `text.trim_start()`.
 9. **Binary fallback**: < 85% printable → `Binary`; else `Unknown`.
@@ -224,7 +224,7 @@ Per bfe-explorer's `sniff_bytes_info`:
 
 Cross-platform, not an AROS feature: an Aminet download sitting on a Mac is
 still a hunk binary full of `.info` icons and ProTracker modules, and all of
-these are pure header reads. Everything is big-endian — the formats were
+these are pure header reads. Everything is big-endian: the formats were
 designed on a 68000.
 
 | Format | Detection | Facts reported |
@@ -246,8 +246,8 @@ Two ordering constraints, both covered by tests:
   the audio parser reports channels and duration for them, which is strictly
   better than a bare type label.
 
-`EM_68K` (4) also joins the ELF architecture table, so a 68k ELF — as opposed
-to a hunk binary — no longer drops its architecture from the description.
+`EM_68K` (4) also joins the ELF architecture table, so a 68k ELF, as opposed
+to a hunk binary, no longer drops its architecture from the description.
 
 ### What v1 ports
 
@@ -263,7 +263,7 @@ script subtypes / Office subtypes (.docx/.xlsm/.pptx + macros) / JAR / APK
 - TIFF IFD-offset values that point outside the 4 KB buffer.
 - MP4 with `moov` placed at end of file (very large videos exported by
   certain encoders).
-- ZIP file count and `zip_layout` (single-root-folder name) — these need
+- ZIP file count and `zip_layout` (single-root-folder name): these need
   the central directory at EOF, which is genuinely a second I/O. Treat as
   Phase 2 if/when we want them.
 - Image dimensions for JPEGs with > 4 KB of leading EXIF.
@@ -292,7 +292,7 @@ each file lands at 100-300 lines, which is fine. Splitting along format
 families keeps each file mentally cohesive.
 
 ```rust
-// types.rs — ~50 enum variants, structured info struct
+// types.rs, ~50 enum variants, structured info struct
 pub enum MagicType {
     // Documents
     Pdf,
@@ -310,7 +310,7 @@ pub enum MagicType {
     Mp3, Wav, Flac, Ogg,
     // Data
     Json, Xml, Html, Sqlite,
-    // Executables — cross-platform symmetric
+    // Executables: cross-platform symmetric
     ExeWindows, DllWindows, ExeWindowsNet,
     ExeLinux, SoLinux,
     ExeMac, DylibMac,
@@ -348,7 +348,7 @@ impl MagicInfo {
     pub fn description(&self) -> String;  // " · "-joined facts
 }
 
-// mod.rs — read 4 KB, dispatch, return
+// mod.rs: read 4 KB, dispatch, return
 pub fn detect_magic_info(path: &Path) -> Option<MagicInfo>;
 pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo;  // unit-testable
 ```
@@ -398,14 +398,14 @@ pub description: Option<String>,
 Pass 2 writes don't blow away Pass 1's row.
 
 Reset scope: extend `ResetScope::Magic` to also `NULL`-out
-`files.description` (they're paired — re-sniffing magic without re-deriving
+`files.description` (they're paired: re-sniffing magic without re-deriving
 the description would leave stale rows).
 
 ## UI
 
 ### `ferail-gpui::file_list`
 
-Add a fourth column, after Modified or before it — defer the order to
+Add a fourth column, after Modified or before it: defer the order to
 `get_design_feedback` since the user will move it anyway. Default order:
 
 ```rust
@@ -428,10 +428,10 @@ Cell renderer for `"description"`:
     .into_any_element(),
 ```
 
-Empty string renders as an empty cell — no skeleton shimmer in v1.
+Empty string renders as an empty cell, no skeleton shimmer in v1.
 
 **Not sortable in v1.** Description strings sort lexicographically, which
-groups MP3s near MP4s but separates 32-bit and 64-bit executables — both
+groups MP3s near MP4s but separates 32-bit and 64-bit executables, both
 are confusing. Wire sort after we see real columns in use.
 
 ### Format column
@@ -441,7 +441,7 @@ on Format.
 
 ### Sort column ID lookup
 
-`SortColumn::from_id` in `file_list.rs:795` gets no new arm — Description
+`SortColumn::from_id` in `file_list.rs:795` gets no new arm: Description
 isn't sortable. If we add sortability later it would be a separate
 `SortColumn::Description` (probably falling back to magic-then-name).
 
@@ -462,13 +462,13 @@ worker we touch:
 4. `apply_batch` writes `e.display_description = row.description` when
    non-empty (same staleness guards as `display_magic`).
 
-The task registry's single `MagicPrefetch` entry stays — description is
+The task registry's single `MagicPrefetch` entry stays: description is
 part of the same indexing pass, not a separate workload.
 
 ## Performance Budget
 
 Per-row cost is **dominated by the 4 KB read** (one disk block on most
-filesystems — essentially free). The parsing additions are pure
+filesystems: essentially free). The parsing additions are pure
 byte-twiddling on the in-memory buffer:
 
 - PE / ELF / Mach-O header: ~50 lines of slice indexing, no allocation.
@@ -479,7 +479,7 @@ byte-twiddling on the in-memory buffer:
 
 The description formatter allocates one `String` per file (the
 ` · `-joined output, typically 20-60 bytes). For a 50 000-row folder that
-is 50 000 strings averaging ~40 bytes — negligible against the existing
+is 50 000 strings averaging ~40 bytes: negligible against the existing
 `display_magic` allocation per row.
 
 The metadata DB column adds one `TEXT` per file. Existing `files` table
@@ -487,7 +487,7 @@ already has 11 columns; one more is invisible.
 
 **The Format column never blocks on this work.** Detection runs in the
 existing `cx.background_executor().spawn` call. UI thread reads
-`display_description` purely for paint — same contract as `display_magic`
+`display_description` purely for paint, same contract as `display_magic`
 has always had.
 
 ## Test Plan
@@ -519,7 +519,7 @@ UI:
 ## Open Items
 
 - **Sortability**: deferred until we see real usage.
-- **Pass 2 scheduling**: viewport-aware vs idle-only — try idle-only first,
+- **Pass 2 scheduling**: viewport-aware vs idle-only: try idle-only first,
   upgrade if users complain about "MP3" sitting around without metadata.
 - **Cancellation between passes**: Pass 1's worker doesn't currently get
   cancelled when the user navigates away. Pass 2 should respect a generation
@@ -535,5 +535,5 @@ UI:
 bfe-explorer's `MagicInfo::description()` is the canonical formatter. Port
 the match arms verbatim where types overlap; deviate only where ferail's
 type names differ (we have `"ZIP archive"` where bfe has `Zip` /
-`ZipEncrypted` split — the formatter handles both since it reads structured
+`ZipEncrypted` split: the formatter handles both since it reads structured
 fields, not the label string).

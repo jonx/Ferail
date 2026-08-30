@@ -305,7 +305,7 @@ pub struct SimilarImageView {
 pub struct DupeGroupMember {
     pub node: NodeId,
     pub path: PathBuf,
-    /// Last-modified time (Unix seconds) — drives "keep newest".
+    /// Last-modified time (Unix seconds): drives "keep newest".
     pub mtime_unix: i64,
     /// Logical bytes of this member. Similar-image members can differ.
     pub bytes: u64,
@@ -449,7 +449,7 @@ pub struct Marquee {
     pub start: gpui::Point<Pixels>,
     /// Window-space position of the pointer now.
     pub current: gpui::Point<Pixels>,
-    /// Shift / Cmd held at press — union the swept set into `base`
+    /// Shift / Cmd held at press: union the swept set into `base`
     /// instead of replacing the selection.
     pub additive: bool,
     /// Selection snapshot captured at press, unioned with the swept
@@ -467,7 +467,7 @@ pub struct Marquee {
     /// with `base`. A plain background click must not clear until it actually
     /// crosses the movement threshold.
     pub applied: bool,
-    /// True once the pointer has moved past the start threshold — until
+    /// True once the pointer has moved past the start threshold, until
     /// then the gesture is still a candidate plain background click
     /// (which clears the selection on release).
     pub moved: bool,
@@ -499,10 +499,10 @@ pub struct Tab {
     /// multi-million-entry `HashSet`. Ordinary listings keep the sparse
     /// representation above.
     pub selection_all: bool,
-    /// Anchor — fixed end of a Shift-range; set on plain click or
+    /// Anchor: fixed end of a Shift-range; set on plain click or
     /// the first Cmd-click into an empty selection. (Spec §2.3.)
     pub anchor: Option<NodeId>,
-    /// Lead / cursor — moving end of a range, target of keyboard
+    /// Lead / cursor, moving end of a range, target of keyboard
     /// navigation, focus-ring row. Mirrored to the underlying
     /// `TableState::selected_row` so the primitive's native focus
     /// overlay marks it.
@@ -521,7 +521,7 @@ pub struct Tab {
     /// (plain click, Cmd-click, plain kbd nav, Cmd+A, Esc, sort).
     pub range_live: bool,
     /// gpui-component's virtualized Table state for *this* tab.
-    /// Per-tab so tab-switching doesn't re-enumerate — inactive
+    /// Per-tab so tab-switching doesn't re-enumerate: inactive
     /// tabs' enumerations keep streaming into their own table and
     /// the result is ready when the user switches back.
     pub table: Entity<TableState<FileListDelegate>>,
@@ -539,7 +539,7 @@ pub struct Tab {
     /// hashing the same paths again.
     pub grid_warm_key: Option<(u64, usize, usize, u32, u32)>,
     /// Last measured file-pane content width (logical px), cached for
-    /// the grid's columns-per-row math — `uniform_list` needs the row
+    /// the grid's columns-per-row math: `uniform_list` needs the row
     /// count before layout, so we derive columns from the previous
     /// frame's width. One-frame stale on resize is invisible.
     pub grid_pane_width: Pixels,
@@ -583,7 +583,7 @@ pub struct Tab {
     pub folder_size_cancel: Option<Arc<AtomicBool>>,
     /// Cooperative cancel flag for this tab's in-flight magic /
     /// quarantine prefetch (`prefetch::start`). Same lifecycle as
-    /// `folder_size_cancel` — flipped on navigation/reload so a
+    /// `folder_size_cancel`: flipped on navigation/reload so a
     /// superseded pass stops sniffing instead of finishing a listing
     /// the user already left.
     pub prefetch_cancel: Option<Arc<AtomicBool>>,
@@ -603,7 +603,7 @@ pub struct Tab {
     pub force_resniff: bool,
     /// When set, the folder-size pass that follows this load ignores the
     /// `folder_sizes` cache and re-walks every directory row. Armed only
-    /// by the Refresh command — it is the user's explicit "measure this
+    /// by the Refresh command: it is the user's explicit "measure this
     /// again", and the one gesture that should pay for a full re-walk.
     /// Everything else (navigation, returning to a folder, the window
     /// coming forward) rides the cache; deep external changes are caught
@@ -613,13 +613,13 @@ pub struct Tab {
     /// leak a forced walk into the load that replaced it.
     pub force_folder_sizes: bool,
     /// Off-screen accumulator for an *in-place reload* (Refresh, Esc
-    /// clear-filter, show-hidden toggle, watcher reload — any load
+    /// clear-filter, show-hidden toggle, watcher reload, any load
     /// that re-reads the directory already on screen). `Some` for the
     /// duration of such a load: batches accumulate here instead of
     /// touching the live table, and the complete listing is swapped in
     /// atomically on `Done`. The old rows stay put until then, so a
     /// refresh never collapses the list to the first batch and streams
-    /// back — i.e. no flicker. `None` for fresh navigation, which keeps
+    /// back, i.e. no flicker. `None` for fresh navigation, which keeps
     /// the progressive streaming reveal.
     pub(crate) load_staging: Option<super::loading::LoadBatch>,
     /// `Some` while this tab is showing a tool result surface rather than
@@ -655,7 +655,7 @@ pub struct Tab {
     pub last_error: Option<EnumerationError>,
     /// Cached free-space for this tab's volume, refreshed off-thread
     /// on load completion and on volume-watch events. Render reads
-    /// this cache only — the underlying NSURL/statfs query can do a
+    /// this cache only: the underlying NSURL/statfs query can do a
     /// remote round-trip on network mounts (Prime Directive).
     pub volume_free_bytes: Option<u64>,
     /// Cached display name of this tab's volume; same lifecycle as
@@ -663,7 +663,7 @@ pub struct Tab {
     pub volume_name: Option<SharedString>,
     /// Cached read-only mount state of this tab's volume; same
     /// lifecycle as `volume_free_bytes`. The status bar swaps its
-    /// free-space label for "is read-only" when set — "0 B free" on
+    /// free-space label for "is read-only" when set, "0 B free" on
     /// a CD is true but the wrong message.
     pub volume_read_only: bool,
     /// Count + bytes of the hidden entries the last completed load
@@ -687,7 +687,7 @@ pub struct Tab {
     pub pending_select_rows: Vec<usize>,
     /// Leaf names queued for selection once this tab's rows land. Names
     /// rather than row indices because the queuing happens *before* the
-    /// directory is enumerated — the extract confirmation navigates to the
+    /// directory is enumerated: the extract confirmation navigates to the
     /// destination and then wants to select what it just wrote there, and
     /// those rows do not exist at click time. Cleared on apply.
     pub pending_select_names: Vec<String>,
@@ -716,7 +716,7 @@ pub struct Tab {
     pub filter_suggestions: crate::single_line_complete::SingleLineSuggestions,
     /// Subscription handle for this tab's table-event bridge into
     /// `Shell`. Owned by the tab so dropping the tab drops the
-    /// subscription — important for Phase D's tab-close path.
+    /// subscription: important for Phase D's tab-close path.
     #[allow(dead_code)]
     pub(crate) _table_subscription: Subscription,
     /// Subscription for this tab's filter `Input`. Same lifecycle as
@@ -833,7 +833,7 @@ impl Tab {
     /// Row index of the lead within `entries`, or `None` if no lead
     /// is set or the lead is not currently in the view's model.
     /// Used by every site that previously read `Tab::selected` as a
-    /// row index — preview pane, status bar, screenshot driver,
+    /// row index: preview pane, status bar, screenshot driver,
     /// activate_row's keyboard fallback.
     pub fn lead_row(&self, entries: &[FileEntry]) -> Option<usize> {
         let lead = self.lead?;
@@ -855,7 +855,7 @@ impl Tab {
     ///
     /// Captures directory, history, filter, and selection. Drops
     /// load-in-flight bookkeeping, the gpui-component `TableState`,
-    /// and the filter `Input` entity — those are remade fresh on
+    /// and the filter `Input` entity: those are remade fresh on
     /// reopen, and the reopen path re-issues a streaming enumeration
     /// like any new tab. Sort restore is deferred (TableState's
     /// current sort isn't exposed on the public surface today); spec
@@ -885,7 +885,7 @@ impl Tab {
 /// (dropping into the gap on either side of the dragged tab itself).
 ///
 /// Extracted from `Shell::reorder_tab` so the arithmetic is testable
-/// without a gpui harness — the active-index bookkeeping stays in
+/// without a gpui harness: the active-index bookkeeping stays in
 /// the Shell method.
 pub fn reorder_insert_index(from_idx: usize, to_pos: usize, len: usize) -> Option<usize> {
     if from_idx >= len || to_pos > len {
@@ -907,7 +907,7 @@ pub fn reorder_insert_index(from_idx: usize, to_pos: usize, len: usize) -> Optio
 /// Map a drop ON a tab chip (rather than into a between-chip gap) to
 /// the gap position that puts the dragged tab at the target chip's
 /// current slot: dragging rightward inserts after the target, leftward
-/// inserts before it — in both cases the dragged tab ends up exactly
+/// inserts before it, in both cases the dragged tab ends up exactly
 /// where the target chip was. Dropping a chip on itself maps to its
 /// own gap, which `reorder_insert_index` rejects as a no-op.
 pub fn chip_drop_gap_index(from_idx: usize, chip_idx: usize) -> usize {
@@ -982,7 +982,7 @@ mod dupe_group_tests {
 
     #[test]
     fn keep_newest_breaks_mtime_ties_by_first_seen() {
-        // Two members share the newest mtime — keep the earlier-listed
+        // Two members share the newest mtime: keep the earlier-listed
         // one so the choice is stable across runs.
         let g = group(vec![member(1, 300), member(2, 300), member(3, 100)]);
         assert_eq!(g.newest(), Some(NodeId::from(1)));
@@ -1109,7 +1109,7 @@ mod reorder_tests {
 
 /// Per-tab state captured at close time for `Cmd+Shift+T`. Lives on
 /// `ProcessState::closed_tabs` so it survives the tab's owning window
-/// closing — a closed window's tabs can still be reopened from any
+/// closing: a closed window's tabs can still be reopened from any
 /// other window. Spec §3.3 + §3.4.
 ///
 /// `ClosedTab` is intentionally plain data (no gpui entities, no

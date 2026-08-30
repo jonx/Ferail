@@ -1,15 +1,15 @@
-//! "What's Locking This?" — name the processes holding files open, and
+//! "What's Locking This?": name the processes holding files open, and
 //! offer to close them.
 //!
 //! The same Restart-Manager diagnostics the failed-transfer toast uses
 //! (`inspect_locked_retry`), surfaced as a first-class dialog reachable
-//! from the context menu — before an operation fails, not only after.
+//! from the context menu, before an operation fails, not only after.
 //! Folder and volume targets are expanded by a capped background walk
 //! ([`platform_shell::processes_using_tree`]), so the answer is honest
 //! about being a sample on huge trees (`LockScan::truncated`).
 //!
-//! Everything that can block — the walk, the RM process enumeration, the
-//! graceful-then-forced close — runs on the background executor; results
+//! Everything that can block: the walk, the RM process enumeration, the
+//! graceful-then-forced close: runs on the background executor; results
 //! land through entity updates guarded by a generation counter (Prime
 //! Directive). Closing invalidates any in-flight scan and always rescans
 //! afterwards, so the list shows fresh truth, not an optimistic edit.
@@ -32,7 +32,7 @@ use gpui_component::{
 use super::{Shell, ShowLockHolders, ShowLockHoldersAtContext};
 use crate::text::TextScale as _;
 
-/// Walk cap for folder/volume targets — bounds the scan on huge trees.
+/// Walk cap for folder/volume targets: bounds the scan on huge trees.
 /// Matches the Windows shell's own `volume_busy_processes` cap.
 const MAX_SCAN_FILES: usize = 4096;
 
@@ -91,7 +91,7 @@ impl LockInfoView {
     }
 
     /// Ask the given processes to close (graceful Restart-Manager pass,
-    /// then a forced kill for survivors), then rescan — whatever the
+    /// then a forced kill for survivors), then rescan: whatever the
     /// outcome, the list must show what actually holds the files now.
     fn close_processes(&mut self, pids: Vec<u32>, cx: &mut Context<Self>) {
         self.generation += 1;
@@ -163,8 +163,8 @@ impl Render for LockInfoView {
                 ));
                 if scan.truncated {
                     col = col.child(div().text_scale_xs().text_color(muted).child(trn!(
-                        "Only {n} file was checked — a lock outside that sample would not show.",
-                        "Only the first {n} files were checked — a lock outside that sample would not show.",
+                        "Only {n} file was checked: a lock outside that sample would not show.",
+                        "Only the first {n} files were checked: a lock outside that sample would not show.",
                         scan.scanned
                     )));
                 }
@@ -213,8 +213,8 @@ impl Render for LockInfoView {
                 }
                 if scan.truncated {
                     col = col.child(div().text_scale_xs().text_color(muted).child(trn!(
-                        "Only {n} file was checked — a lock outside that sample would not show.",
-                        "Only the first {n} files were checked — a lock outside that sample would not show.",
+                        "Only {n} file was checked: a lock outside that sample would not show.",
+                        "Only the first {n} files were checked: a lock outside that sample would not show.",
                         scan.scanned
                     )));
                 }
@@ -319,7 +319,7 @@ impl Shell {
     }
 
     /// Sidebar volume rows: diagnose everything under the right-clicked
-    /// volume (`context_target`) — the pre-emptive "why won't it eject".
+    /// volume (`context_target`): the pre-emptive "why won't it eject".
     pub(crate) fn on_show_lock_holders_at_context(
         &mut self,
         _: &ShowLockHoldersAtContext,

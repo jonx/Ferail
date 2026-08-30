@@ -1,11 +1,11 @@
 //! Archive codec layer: the bytes-move half of Ferail's archive support.
 //!
-//! `ferail-archive` owns the pure model — the [`Format`] enum, the capability
+//! `ferail-archive` owns the pure model: the [`Format`] enum, the capability
 //! matrix, the [`Toc`] shape, and the zip-slip [`safe_relative_path`] guard.
 //! This module is where those turn into real I/O: parsing an archive's table of
 //! contents, extracting entries, and (later) creating new archives. It backs
-//! both product surfaces — the quick-action Extract command and the embedded
-//! archive workbench — plus the accurate compressed-file descriptions.
+//! both product surfaces: the quick-action Extract command and the embedded
+//! archive workbench, plus the accurate compressed-file descriptions.
 //!
 //! # Prime Directive
 //!
@@ -21,10 +21,10 @@
 //! Reading is split by cost, because formats differ in how expensive their
 //! metadata is:
 //!
-//! - [`read_toc`] — the **full** table of contents. Used when the archive is
+//! - [`read_toc`]: the **full** table of contents. Used when the archive is
 //!   actually opened in the workbench. May stream the whole archive for
 //!   tar-family formats (which have no central directory).
-//! - [`read_summary`] — a **bounded** metadata read for the Description column.
+//! - [`read_summary`]: a **bounded** metadata read for the Description column.
 //!   Cheap for formats with a directory record (zip, 7z) and for single-member
 //!   compressors; deliberately format-level-only for tar-family so rendering a
 //!   column label never stream-decompresses a multi-gigabyte tarball.
@@ -50,7 +50,7 @@ mod tests;
 
 /// A bounded, cheap-to-read summary of an archive, for the Description column.
 ///
-/// Fields are `None`/`false` when the fact was not cheaply available — a
+/// Fields are `None`/`false` when the fact was not cheaply available: a
 /// tar-family archive reports its [`Format`] but no `file_count`, because
 /// counting would mean decompressing the whole stream.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -67,7 +67,7 @@ pub struct ArchiveSummary {
 }
 
 /// Errors from the archive codec layer. Typed rather than stringly so the
-/// workbench can react — most importantly, distinguish "this archive needs a
+/// workbench can react, most importantly, distinguish "this archive needs a
 /// password" (prompt the user) from a genuine failure.
 #[derive(Debug)]
 pub enum ArchiveError {
@@ -148,7 +148,7 @@ impl From<std::io::Error> for ArchiveError {
 }
 
 /// Detect an archive's [`Format`] from its path, or [`ArchiveError::UnsupportedFormat`].
-/// Lexical only (no I/O) — the same rule the UI-thread context-menu builder uses.
+/// Lexical only (no I/O): the same rule the UI-thread context-menu builder uses.
 pub fn format_of(path: &Path) -> Result<Format, ArchiveError> {
     let name = path.to_string_lossy();
     Format::from_path(&name).ok_or(ArchiveError::UnsupportedFormat)
@@ -159,8 +159,8 @@ pub fn format_of(path: &Path) -> Result<Format, ArchiveError> {
 ///
 /// The extension is authoritative when it names a format we support (it also
 /// distinguishes `.tar.gz` from a bare `.gz`, which magic bytes cannot). When
-/// it says nothing — `.docx`, `.xlsx`, `.pptx`, `.jar`, `.apk`, `.ipa`, or a
-/// file with no extension at all — we sniff the header, because every one of
+/// it says nothing, `.docx`, `.xlsx`, `.pptx`, `.jar`, `.apk`, `.ipa`, or a
+/// file with no extension at all: we sniff the header, because every one of
 /// those is a zip container underneath and is perfectly browsable.
 ///
 /// Returns `None` for anything we can't open, so the caller can say so plainly
@@ -214,7 +214,7 @@ pub fn probe_format(path: &Path) -> Option<Format> {
 ///
 /// `password` is used for encrypted zip/7z; pass `None` first and retry with a
 /// password if this returns [`ArchiveError::PasswordRequired`]. Runs the whole
-/// read — for tar-family formats that means streaming the entire archive, so
+/// read, for tar-family formats that means streaming the entire archive, so
 /// this belongs off the UI thread.
 pub fn read_toc(archive: &Path, password: Option<&str>) -> Result<Toc, ArchiveError> {
     ferail_core::path_guard::assert_off_ui_thread("archive::read_toc");
@@ -234,7 +234,7 @@ pub fn read_toc(archive: &Path, password: Option<&str>) -> Result<Toc, ArchiveEr
 /// This is the no-disk path: text and images are decoded and drawn by our own
 /// renderers, so their contents never need to be written out. Formats whose
 /// preview only Quick Look can produce (PDF, Office, video) still have to be
-/// staged to a file — see `ferail_fs_native::scratch`.
+/// staged to a file: see `ferail_fs_native::scratch`.
 ///
 /// `Ok(None)` means the entry is larger than `cap`; the caller decides whether
 /// to stage it instead. Blocking, so off the UI thread like the rest.
@@ -261,7 +261,7 @@ fn feraille_off_ui(what: &str) {
 /// Read a bounded summary of `archive` for the Description column.
 ///
 /// Cheap by contract: never decompresses payloads. Tar-family archives return
-/// a format-only summary (no counts) — see the module docs on the two read
+/// a format-only summary (no counts): see the module docs on the two read
 /// modes.
 pub fn read_summary(archive: &Path) -> Result<ArchiveSummary, ArchiveError> {
     ferail_core::path_guard::assert_off_ui_thread("archive::read_summary");
@@ -285,7 +285,7 @@ pub struct ExtractOptions<'a> {
     /// When true, existing files at the destination are overwritten; when
     /// false, they are left in place and recorded as skipped. The destination
     /// *folder* choice (smart wrap, `" 2"` collision suffix) is the caller's
-    /// job — this flag only governs per-file clobbering within it.
+    /// job: this flag only governs per-file clobbering within it.
     pub overwrite: bool,
 }
 
@@ -294,10 +294,10 @@ pub struct ExtractOptions<'a> {
 pub enum SkipReason {
     /// The entry path failed the zip-slip guard (traversal / absolute / drive).
     UnsafePath,
-    /// A symlink entry — skipped so a malicious link can never be created and
+    /// A symlink entry: skipped so a malicious link can never be created and
     /// then written through by a later entry.
     Symlink,
-    /// A hard-link entry (tar) — skipped for the same reason.
+    /// A hard-link entry (tar): skipped for the same reason.
     HardLink,
     /// A device / fifo / other special entry we do not materialize.
     SpecialFile,
@@ -323,12 +323,12 @@ pub struct SkippedEntry {
 /// The result of an extract operation.
 #[derive(Debug, Default)]
 pub struct ExtractOutcome {
-    /// Top-level paths created under the destination (deduped) — what the undo
+    /// Top-level paths created under the destination (deduped): what the undo
     /// step removes and what "reveal" selects.
     pub created: Vec<PathBuf>,
     /// Count of regular files actually written.
     pub files_written: u64,
-    /// Entries deliberately not written, with reasons — surfaced to the user
+    /// Entries deliberately not written, with reasons: surfaced to the user
     /// so a skipped file is never silently lost.
     pub skipped: Vec<SkippedEntry>,
 }
@@ -409,7 +409,7 @@ fn dispatch_extract(
 
 // --- shared extraction primitives (used by every codec) --------------------
 
-/// Cooperative cancellation check — codecs call this per entry (and per buffer
+/// Cooperative cancellation check: codecs call this per entry (and per buffer
 /// for large files).
 pub(super) fn check_cancel(cancel: &AtomicBool) -> Result<(), ArchiveError> {
     if cancel.load(Ordering::Relaxed) {
@@ -800,7 +800,7 @@ fn configure_no_follow(_options: &mut std::fs::OpenOptions) {}
 pub struct CreateOptions<'a> {
     /// Compression effort (mapped per-codec).
     pub level: CompressionLevel,
-    /// Password — only honored by formats whose capability matrix allows it
+    /// Password, only honored by formats whose capability matrix allows it
     /// (zip); ignored otherwise.
     pub password: Option<&'a str>,
 }
@@ -827,11 +827,11 @@ pub(super) struct PlannedItem {
     /// Absolute source path on disk.
     pub abs: PathBuf,
     /// `/`-joined path inside the archive (rooted at each input's own name, so
-    /// compressing `project/` yields `project/...` entries — Finder's
+    /// compressing `project/` yields `project/...` entries: Finder's
     /// keep-parent shape).
     pub rel: String,
     pub is_dir: bool,
-    /// File size in bytes (0 for directories) — used to size progress.
+    /// File size in bytes (0 for directories): used to size progress.
     pub size: u64,
 }
 
@@ -1223,7 +1223,7 @@ impl Drop for ConversionTemp {
 pub struct AddOutcome {
     /// Number of files written into the archive.
     pub added: u64,
-    /// Entry paths that were already present and therefore left alone — a
+    /// Entry paths that were already present and therefore left alone: a
     /// duplicate name would shadow the original rather than replace it, so we
     /// skip and report instead of silently corrupting the archive's meaning.
     pub skipped_existing: Vec<String>,
@@ -1395,7 +1395,7 @@ pub fn add_to_archive(
 ///
 /// A local name is one component by construction (`file_name` never returns a
 /// separator on its own platform), but on Unix it may legitimately *contain* a
-/// backslash — and translating that to `/`, as this used to, invents structure:
+/// backslash, and translating that to `/`, as this used to, invents structure:
 /// the real file `..\payload` would become the archive entry `../payload`.
 /// Ferail's extraction guard would reject that, but other tools' might not, so
 /// the traversal must never be written in the first place. Backslashes are
@@ -1431,7 +1431,7 @@ fn plan_inputs(inputs: &[&Path]) -> Result<(Vec<PlannedItem>, u64), ArchiveError
         let meta = std::fs::symlink_metadata(&abs)?;
         let ft = meta.file_type();
         if ft.is_symlink() {
-            continue; // never follow — avoids cycles and link-escape surprises
+            continue; // never follow: avoids cycles and link-escape surprises
         }
         if ft.is_dir() {
             items.push(PlannedItem {
@@ -1457,7 +1457,7 @@ fn plan_inputs(inputs: &[&Path]) -> Result<(Vec<PlannedItem>, u64), ArchiveError
                 size: meta.len(),
             });
         }
-        // Other special files (fifo/device) are not archivable — skip.
+        // Other special files (fifo/device) are not archivable: skip.
     }
     Ok((items, total))
 }

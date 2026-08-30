@@ -1,4 +1,4 @@
-//! Background prefetch — magic byte sniffing + quarantine xattr lookup.
+//! Background prefetch: magic byte sniffing + quarantine xattr lookup.
 //!
 //! Magic detection and quarantine lookup are fused into one viewport-owned
 //! background pass. The worker hydrates those visible entries
@@ -12,7 +12,7 @@
 //! does the I/O off the main thread; `this.update(cx, …)` applies
 //! the result on the foreground executor (gpui's NSApp thread).
 //! The Shell entity's weak handle is passed in so a closed window
-//! causes the update call to fail gracefully — no leak, no crash.
+//! causes the update call to fail gracefully, no leak, no crash.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,7 +27,7 @@ use crate::file_list::FileListDelegate;
 /// Process-wide master switch for the per-row file-detail scans that run
 /// on every folder load (Settings → Performance). Covers both the magic
 /// byte / quarantine sniff here *and* the Finder-tag xattr reads in
-/// `Shell::refresh_file_list_tags_in_tab` — the two ungated per-row disk
+/// `Shell::refresh_file_list_tags_in_tab`: the two ungated per-row disk
 /// costs. Off, the Format column falls back to extension-based types and
 /// tag dots don't paint, but no per-row content/xattr I/O runs. Seeded
 /// from persisted settings at startup; default on.
@@ -44,7 +44,7 @@ pub fn file_detail_scan_enabled(cx: &gpui::App) -> bool {
 }
 
 /// One row's worth of prefetched data, returned by the worker.
-/// Keyed by `NodeId` — stable across re-sorts and re-enumerations —
+/// Keyed by `NodeId`: stable across re-sorts and re-enumerations,
 /// so a batch can never land on the wrong row (raw indices shift
 /// whenever the model changes under an in-flight pass).
 pub(crate) struct PrefetchRow {
@@ -61,7 +61,7 @@ pub(crate) struct PrefetchRow {
     /// Same-or-newer snapshot of `is_quarantined`.
     is_quarantined: bool,
     /// Display-ready provenance for quarantined rows (agent,
-    /// ISO download time, newline-joined where-from URLs) — feeds
+    /// ISO download time, newline-joined where-from URLs): feeds
     /// `FileEntry::quarantine` so the preview pane can show where a
     /// marked file came from without re-reading xattrs.
     quarantine_agent: Option<String>,
@@ -122,19 +122,19 @@ fn run_worker(
 ) -> Vec<PrefetchRow> {
     let mut out = Vec::with_capacity(seeds.len());
     // Write-through accumulates here and lands as ONE transaction at
-    // the end (`upsert_files`) — per-row autocommit upserts serialized
+    // the end (`upsert_files`), per-row autocommit upserts serialized
     // a directory's worth of fsyncs behind the connection mutex.
     let mut pending_writes: Vec<FileMetaRecord> = Vec::new();
     for seed in seeds {
         // Navigation flipped the flag: the listing this pass was
         // sniffing for is gone, stop burning 4 KB reads per file.
-        // The partial batch is still returned — rows are keyed by
+        // The partial batch is still returned: rows are keyed by
         // NodeId and write-through already happened per row.
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        // If FileEntry already carries everything (rare — only when
-        // hydrate-from-DB on enumerate gets implemented), skip — unless
+        // If FileEntry already carries everything (rare, only when
+        // hydrate-from-DB on enumerate gets implemented), skip, unless
         // a forced re-sniff is in effect.
         if !force && seed.details_loaded {
             continue;
@@ -142,7 +142,7 @@ fn run_worker(
         let path_str = seed.path.to_string_lossy().into_owned();
 
         // Try DB cache. A row whose stored mtime doesn't match the
-        // live file describes different bytes — serving it would keep
+        // live file describes different bytes, serving it would keep
         // a stale label/description (and quarantine state) forever
         // after an in-place edit, since nothing else re-validates.
         // Drop it and let the fresh derive write through (caches buy
@@ -158,7 +158,7 @@ fn run_worker(
         // Determine magic label + description in one shot. The new
         // detector reads 4 KB once and returns a structured info
         // struct; the label and description are derived from that
-        // same parse. Cached values short-circuit the I/O — but a
+        // same parse. Cached values short-circuit the I/O, but a
         // forced re-sniff ignores them so stale derived data heals.
         let cached_label = (!force)
             .then(|| cached.as_ref().and_then(|r| r.magic_label.clone()))
@@ -167,12 +167,12 @@ fn run_worker(
             .then(|| cached.as_ref().and_then(|r| r.description.clone()))
             .flatten();
         // Track whether the description had to be derived this pass (vs.
-        // served from the DB cache) — only a fresh derive does the extra
+        // served from the DB cache), only a fresh derive does the extra
         // audio-tag read, since the cache already holds the media line.
         let desc_was_cached = cached_desc.is_some();
         let mut detected_magic = None;
         let (magic_label, mut description) = if seed.is_dir {
-            // See `PrefetchSeed::is_dir` — never sniff a directory,
+            // See `PrefetchSeed::is_dir`: never sniff a directory,
             // and don't resurrect a label an older build sniffed for
             // one. Empty values mean the Format column shows the kind
             // ("Folder") and the folder-size worker owns Description.
@@ -198,7 +198,7 @@ fn run_worker(
 
         // Audio files: replace the generic magic description ("MPEG audio,
         // layer III") with the rich media line ("MP3 · stereo · 44.1 kHz ·
-        // 192 kbps · 03:24"). Only on a fresh derive — the cached value is
+        // 192 kbps · 03:24"). Only on a fresh derive: the cached value is
         // already this line (both magic and media descriptions persist to
         // the same `description` field), so a revisit never re-reads tags.
         // lofty reads only the header/tag regions, not the whole file.
@@ -277,7 +277,7 @@ fn run_worker(
             quarantine_where_from: where_from,
         });
     }
-    // One transaction for the whole pass (cancel included — whatever
+    // One transaction for the whole pass (cancel included: whatever
     // was derived is still valid per-row data worth keeping).
     if let Some(db) = db.as_ref() {
         if let Ok(guard) = db.lock() {
@@ -307,7 +307,7 @@ pub(crate) fn apply_viewport_batch(delegate: &mut FileListDelegate, batch: Vec<P
             }
             // Belt-and-suspenders (mirrors `format_label`'s folder guard):
             // a directory row never takes a magic label or description, even
-            // if a stale path-keyed cache row arrives carrying one — the
+            // if a stale path-keyed cache row arrives carrying one: the
             // Format column shows the kind ("Folder") and the folder-size
             // worker owns Description for directories.
             let is_dir = matches!(e.kind, ferail_core::EntryKind::Directory);
@@ -415,7 +415,7 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     /// AROS `exec.library` ELF prefix (64-bit LSB relocatable, aarch64,
-    /// ELFOSABI_AROS) — enough bytes for the sniffer's header parse.
+    /// ELFOSABI_AROS), enough bytes for the sniffer's header parse.
     const AROS_ELF: &[u8] = &[
         0x7f, b'E', b'L', b'F', 0x02, 0x01, 0x01, 0x0f, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x01, 0x00, 0xb7, 0x00, 0x01, 0x00, 0x00, 0x00,

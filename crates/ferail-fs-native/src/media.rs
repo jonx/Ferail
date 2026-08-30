@@ -1,11 +1,11 @@
-//! Native embedded-tag / audio-property reader — the one place the `lofty`
+//! Native embedded-tag / audio-property reader: the one place the `lofty`
 //! dependency lives.
 //!
 //! Two entry points, deliberately split by cost:
 //!
 //! * [`read_media_tags`] is the cheap path (tags + audio properties, **no**
 //!   cover-art bytes). It is what the Get Info gather and the file-list
-//!   prefetch worker call, one file at a time or per row — so it must never
+//!   prefetch worker call, one file at a time or per row, so it must never
 //!   pull a multi-megabyte embedded picture into memory just to format a
 //!   `"MP3 · stereo · …"` line. `ParseOptions::read_cover_art(false)` makes
 //!   lofty skip the picture frames entirely.
@@ -17,7 +17,7 @@
 //! Both run off the UI thread (Prime Directive) and both are cross-platform:
 //! lofty is pure Rust with no platform backends, so this module has no `#[cfg]`
 //! branches. A file lofty can't open (not audio, truncated, unreadable) yields
-//! `None` rather than an error — the caller simply shows no Media section.
+//! `None` rather than an error: the caller simply shows no Media section.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -96,7 +96,7 @@ pub fn read_media_tags_with_magic(
 
 /// Read the embedded cover art for `path`, if any: the front cover when the
 /// file labels one, otherwise the first embedded picture. Returns the raw
-/// **encoded** image bytes (PNG/JPEG/…) for the host to decode — the format is
+/// **encoded** image bytes (PNG/JPEG/…) for the host to decode: the format is
 /// self-describing, so no separate mime hint is needed.
 ///
 /// This is the expensive read (it pulls the full picture payload), so it is
@@ -397,7 +397,7 @@ fn file_type_from_magic(info: &crate::MagicInfo) -> Option<FileType> {
 }
 
 /// Short, human-facing container/codec label for the Description line and the
-/// Media section's "Kind" — `FileType` is `#[non_exhaustive]`, hence the
+/// Media section's "Kind": `FileType` is `#[non_exhaustive]`, hence the
 /// catch-all arm.
 fn codec_label(ft: FileType) -> String {
     match ft {
@@ -436,7 +436,7 @@ mod tests {
 
     /// Build the bytes of a minimal valid PCM WAV: RIFF/WAVE with a `fmt `
     /// chunk and a silent `data` chunk sized to `frames`. Enough for lofty to
-    /// report channels / sample rate / bit depth / duration — no external
+    /// report channels / sample rate / bit depth / duration, no external
     /// fixture file needed.
     fn minimal_wav(channels: u16, sample_rate: u32, bits: u16, frames: u32) -> Vec<u8> {
         let block_align = channels * (bits / 8);

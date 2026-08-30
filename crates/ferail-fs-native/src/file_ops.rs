@@ -1,6 +1,6 @@
 //! Copy / move engine for file operations (docs/features/FILE_OPS.md).
 //!
-//! Pure, synchronous, worker-thread functions — the GPUI side owns
+//! Pure, synchronous, worker-thread functions: the GPUI side owns
 //! scheduling, dialogs, and undo. Contract mirrors `recursive_size`:
 //! cooperative cancellation via `&AtomicBool`, progress via a shared
 //! [`TransferProgress`] sink, partial results reported honestly.
@@ -14,7 +14,7 @@
 //!   3. Anything else (non-mac, or copyfile unavailable) → a chunked
 //!      read/write fallback.
 //!
-//! Same-volume move stays `rename(2)` — instant, beats every copy.
+//! Same-volume move stays `rename(2)`: instant, beats every copy.
 //!
 //! Never touches UI, pasteboard, SQLite, or AppKit.
 
@@ -52,7 +52,7 @@ pub enum FileOpErrorKind {
     /// EACCES/EPERM, Windows `ERROR_ACCESS_DENIED`. The one class where
     /// retrying with elevated privileges plausibly helps.
     PermissionDenied,
-    /// The file is open in another process — unix ETXTBSY/EBUSY, Windows
+    /// The file is open in another process: unix ETXTBSY/EBUSY, Windows
     /// `ERROR_SHARING_VIOLATION`/`ERROR_LOCK_VIOLATION`. Elevation does *not*
     /// help (it can't release another process's handle); closing it does.
     Locked,
@@ -64,13 +64,13 @@ pub enum FileOpErrorKind {
     ReadOnly,
     NameTooLong,
     AlreadyExists,
-    /// Anything not specifically classified — the raw text still carries it.
+    /// Anything not specifically classified: the raw text still carries it.
     Other,
 }
 
 impl FileOpErrorKind {
     /// A short, plain-language label for the per-item failure list, e.g.
-    /// "Documents — in use by another program".
+    /// "Documents, in use by another program".
     pub fn summary(self) -> &'static str {
         match self {
             Self::PermissionDenied => msgid!("permission denied"),
@@ -114,7 +114,7 @@ impl FileOpErrorKind {
     }
 
     /// True when re-running this item with elevated privileges could succeed.
-    /// Only a bare permission denial qualifies — a locked file, a full disk,
+    /// Only a bare permission denial qualifies: a locked file, a full disk,
     /// or a read-only volume aren't fixed by becoming root/admin.
     pub fn is_elevation_recoverable(self) -> bool {
         matches!(self, Self::PermissionDenied)
@@ -127,7 +127,7 @@ impl FileOpErrorKind {
 }
 
 /// A structured, per-item file-operation failure: what kind, which path, and
-/// the untouched raw OS detail (never hidden — power users want it, and it's
+/// the untouched raw OS detail (never hidden: power users want it, and it's
 /// what the Copy-to-clipboard bug-report action carries).
 #[derive(Clone, Debug)]
 pub struct FileOpError {
@@ -213,7 +213,7 @@ fn classify_os_code(code: Option<i32>) -> FileOpErrorKind {
     }
     #[cfg(windows)]
     {
-        // winerror.h values. Literals (not a crate dep) — this whole arm only
+        // winerror.h values. Literals (not a crate dep): this whole arm only
         // compiles on Windows, so it can't be exercised from the macOS build;
         // it's a pure data mapping, verified against the SDK headers.
         match code {
@@ -236,7 +236,7 @@ fn classify_os_code(code: Option<i32>) -> FileOpErrorKind {
 
 /// Shared, lock-light progress sink for a transfer.
 ///
-/// The worker bumps the atomic counters on its hot path — no allocation,
+/// The worker bumps the atomic counters on its hot path, no allocation,
 /// no channel, no waiting on the UI. The UI samples this on its own clock
 /// (~10 Hz) and derives rate/ETA itself. That decoupling is the Prime
 /// Directive made structural: the copy can never be slowed or stalled by
@@ -247,7 +247,7 @@ pub struct TransferProgress {
     bytes_done: AtomicU64,
     items_done: AtomicU64,
     /// Items counted so far during the planning walk, before totals are
-    /// known — drives the "Preparing — N items" phase so a huge tree
+    /// known, drives the "Preparing, N items" phase so a huge tree
     /// doesn't look hung while `plan_transfer` walks it.
     planned: AtomicU64,
     planning: AtomicBool,
@@ -299,7 +299,7 @@ impl TransferProgress {
         self.planning.store(false, Ordering::Relaxed);
     }
 
-    /// Hot-path counters — relaxed atomics, no allocation, no lock.
+    /// Hot-path counters: relaxed atomics, no allocation, no lock.
     pub fn add_bytes(&self, n: u64) {
         self.bytes_done.fetch_add(n, Ordering::Relaxed);
     }
@@ -322,7 +322,7 @@ impl TransferProgress {
 
     /// Publish `path`'s file name as the current item, throttled to
     /// [`NAME_PUBLISH_INTERVAL`]. The to_string_lossy + alloc only runs
-    /// when the gate passes — so the per-file cost in a small-file storm
+    /// when the gate passes, so the per-file cost in a small-file storm
     /// is one uncontended lock + one `Instant::now`, both cheap.
     pub fn note_current(&self, path: &Path) {
         let Ok(mut g) = self.name.lock() else { return };
@@ -395,7 +395,7 @@ pub struct OpOutcome {
     pub replaced: u64,
     pub cancelled: bool,
     /// Items that could not be transferred, each with its classified cause.
-    /// A failed item no longer aborts the batch — the engine records it here
+    /// A failed item no longer aborts the batch: the engine records it here
     /// and moves on, so a 10-item paste that trips on item 3 still attempts
     /// 4..10 and reports exactly what failed and why.
     pub failed: Vec<FileOpError>,
@@ -424,7 +424,7 @@ pub enum NameScheme {
 /// The candidate file name is built by string concatenation, NOT
 /// `Path::set_extension`: on a stem like `"a.tar 2"` set_extension
 /// treats `"tar 2"` as the extension and *replaces* it, turning
-/// `a.tar.gz` into `a.gz` — and collapsing every numbered candidate
+/// `a.tar.gz` into `a.gz`: and collapsing every numbered candidate
 /// to the same name, so the loop exhausted all 9999 and the whole
 /// operation failed with "no free name".
 pub fn pick_available_name(dest_dir: &Path, name: &OsStr, scheme: NameScheme) -> Option<PathBuf> {
@@ -536,7 +536,7 @@ pub fn same_volume(a: &Path, b: &Path) -> bool {
 }
 
 /// Free bytes available to an unprivileged caller on the filesystem
-/// holding `path` (not the volume root — any path under it answers).
+/// holding `path` (not the volume root, any path under it answers).
 /// `None` when the query isn't available (non-mac, or `statvfs` failed),
 /// in which case the caller should skip the precheck rather than block a
 /// transfer it can't size. [win-parity: GetDiskFreeSpaceExW]
@@ -567,7 +567,7 @@ pub fn available_space(_path: &Path) -> Option<u64> {
 
 /// Walk the sources, total the work (overall + per-source), and detect
 /// top-level collisions. Increments `prog.note_planned()` as it walks so
-/// the UI can show "Preparing — N items", then `begin_transfer` flips the
+/// the UI can show "Preparing: N items", then `begin_transfer` flips the
 /// sink into its determinate phase. Errors when a source is missing, the
 /// destination isn't a directory, or the destination sits *inside* a
 /// source (copying a folder into its own subtree never terminates).
@@ -657,7 +657,7 @@ enum Resolution {
 }
 
 /// Resolve where a top-level item lands under `policy`. Replace deletes the
-/// existing destination here — immediately before its copy starts, never
+/// existing destination here: immediately before its copy starts, never
 /// earlier. No longer mutates the outcome (the caller owns the counters now,
 /// so a per-item failure can be recorded without double-counting).
 fn resolve_dest(
@@ -756,7 +756,7 @@ fn copy_file_chunked(
         if n == 0 {
             break;
         }
-        // Cancel only while bytes remain — a file whose final chunk
+        // Cancel only while bytes remain: a file whose final chunk
         // already landed is complete, not partial, and must survive.
         if cancel.load(Ordering::Relaxed) {
             drop(writer);
@@ -775,7 +775,7 @@ fn copy_file_chunked(
 }
 
 /// Copy one top-level item (file, dir tree, or symlink) by real byte
-/// movement — the path taken when the instant clone isn't available
+/// movement: the path taken when the instant clone isn't available
 /// (cross-volume, non-APFS, non-mac). Returns `false` on cancellation;
 /// the partially-copied current file is removed but already-completed
 /// files inside the item stay (the caller reports the partial state).
@@ -835,7 +835,7 @@ fn copy_item(
 }
 
 /// Recreate a symlink at `dst` pointing wherever `src` points.
-/// Links are never followed (same stance as the disk-usage walker) —
+/// Links are never followed (same stance as the disk-usage walker),
 /// copying a folder of symlinks must not balloon into copying their
 /// targets.
 fn recreate_symlink(src: &Path, dst: &Path) -> Result<(), FileOpError> {
@@ -883,7 +883,7 @@ fn recreate_symlink(src: &Path, dst: &Path) -> Result<(), FileOpError> {
 /// Try the instant same-volume APFS clone for a whole top-level item.
 /// Returns `true` only when the clone actually succeeded; `false` means
 /// "fall back to a real byte copy" (cross-volume, non-APFS, non-mac, or
-/// any clonefile refusal — clonefile is atomic, so a refusal leaves no
+/// any clonefile refusal: clonefile is atomic, so a refusal leaves no
 /// partial destination behind).
 fn try_clone(src: &Path, dst: &Path, dest_dir: &Path) -> bool {
     #[cfg(target_os = "macos")]
@@ -914,7 +914,7 @@ pub fn run_copy(
             return Ok(outcome);
         }
         // A per-item resolution failure (bad name, failed Replace-delete, no
-        // free name) is recorded and skipped — it no longer aborts the batch.
+        // free name) is recorded and skipped: it no longer aborts the batch.
         let (dst, replaced) = match resolve_dest(src, &plan.dest_dir, policy_for(src)) {
             Ok(Resolution::Skip) => {
                 outcome.skipped += 1;
@@ -930,7 +930,7 @@ pub fn run_copy(
             outcome.replaced += 1;
         }
         prog.note_current(src);
-        // Tier 1: same-volume clone — instant, whole tree, zero bytes.
+        // Tier 1: same-volume clone: instant, whole tree, zero bytes.
         let item = if try_clone(src, &dst, &plan.dest_dir) {
             prog.add_bytes(plan.source_bytes.get(i).copied().unwrap_or(0));
             prog.add_items(plan.source_items.get(i).copied().unwrap_or(0));
@@ -953,7 +953,7 @@ pub fn run_copy(
 }
 
 /// Move every planned item. Same-volume items take the `rename` fast
-/// path (instant — their planned bytes tick through progress in one
+/// path (instant: their planned bytes tick through progress in one
 /// jump); cross-volume items copy then delete the source, and the
 /// delete only runs when that item's copy fully succeeded.
 pub fn run_move(
@@ -1077,7 +1077,7 @@ mod mac {
 
     /// copyfile status callback. Fires during the data copy; we credit
     /// the byte delta to `prog` and abort (COPYFILE_QUIT) the instant the
-    /// cancel flag is set — that's our intra-file cancellation.
+    /// cancel flag is set: that's our intra-file cancellation.
     extern "C" fn status_cb(
         what: libc::c_int,
         _stage: libc::c_int,
@@ -1124,7 +1124,7 @@ mod mac {
     /// (`COPYFILE_DATA | COPYFILE_METADATA | COPYFILE_DATA_SPARSE`).
     /// Progress + cancellation ride the status callback. Returns
     /// `Ok(false)` if cancelled (partial destination removed). `src` must
-    /// be a regular file — symlinks and directories are handled by the
+    /// be a regular file: symlinks and directories are handled by the
     /// walker in `copy_item`.
     pub fn copy_file(
         src: &Path,
@@ -1188,7 +1188,7 @@ mod mac {
             return Ok(false);
         }
         let _ = std::fs::remove_file(dst);
-        // The copy itself failed — classify the captured OS error against the
+        // The copy itself failed: classify the captured OS error against the
         // source (the item the user asked to move/copy).
         Err(FileOpError::from_io(&err, src))
     }
@@ -1346,7 +1346,7 @@ mod tests {
     }
 
     /// A cancel that lands mid-file must leave no half-written
-    /// destination — the guarantee undo and the user both rely on. We
+    /// destination: the guarantee undo and the user both rely on. We
     /// copy a file large enough that it can't finish in a single
     /// callback/chunk, then a watcher trips `cancel` the moment any bytes
     /// have moved. (Exercises copyfile's COPYFILE_QUIT on mac, the
@@ -1487,7 +1487,7 @@ mod tests {
     }
 
     /// copyfile must carry xattrs (Finder tags, quarantine, where-from
-    /// all ride xattrs) — the headline reason for moving off the
+    /// all ride xattrs): the headline reason for moving off the
     /// hand-rolled byte loop, which dropped them. Exercises the copyfile
     /// path directly so it's covered regardless of volume layout.
     #[cfg(target_os = "macos")]
@@ -1510,7 +1510,7 @@ mod tests {
     }
 
     /// Free-space query answers for an ordinary directory (not just a
-    /// volume root) and reports a plausible nonzero figure — that's what
+    /// volume root) and reports a plausible nonzero figure: that's what
     /// the cross-volume precheck relies on.
     #[cfg(target_os = "macos")]
     #[test]
@@ -1567,7 +1567,7 @@ mod tests {
     /// A hard failure on one top-level item must not abandon the rest: the
     /// engine records it in `outcome.failed` (classified) and keeps copying.
     /// Driven deterministically (no uid/permission dependence) by handing
-    /// `run_copy` a plan whose second source never existed — its copy faults
+    /// `run_copy` a plan whose second source never existed: its copy faults
     /// `NotFound` while the first lands normally.
     #[test]
     fn partial_failure_continues_and_is_recorded() {
@@ -1581,7 +1581,7 @@ mod tests {
         let cancel = no_cancel();
         let prog = TransferProgress::new();
         // Build the plan by hand so the missing source reaches run_copy
-        // (plan_transfer would reject it up front — that's a separate path).
+        // (plan_transfer would reject it up front: that's a separate path).
         let plan = OpPlan {
             sources: vec![good.clone(), ghost.clone()],
             dest_dir: dest.clone(),
@@ -1603,7 +1603,7 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// The classifier turns raw OS errors into the kinds the UI keys off —
+    /// The classifier turns raw OS errors into the kinds the UI keys off:
     /// especially the elevation-recoverable / lock distinction that drives
     /// the Retry-as-administrator vs. who's-locking-it affordances.
     #[cfg(unix)]

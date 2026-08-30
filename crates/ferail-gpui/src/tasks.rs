@@ -1,7 +1,7 @@
-//! Task registry — single source of truth for "what background work
+//! Task registry: single source of truth for "what background work
 //! is in flight right now."
 //!
-//! Pure logic — no GPUI dependency. Long-running jobs in the
+//! Pure logic, no GPUI dependency. Long-running jobs in the
 //! shell (prefetch::start, future copy/move, disk-usage scans) call
 //! `begin` / `end` on the Shell's `TaskRegistry`; the status bar
 //! reads `iter()` to keep its text + progress strip in sync. Both
@@ -31,7 +31,7 @@ pub enum TaskKind {
     Enumeration,
     IconPrefetch,
     /// Real Quick Look thumbnails for the list/grid viewport. Ambient,
-    /// like [`TaskKind::IconPrefetch`] — a distinct kind because it is a
+    /// like [`TaskKind::IconPrefetch`]: a distinct kind because it is a
     /// different worker (QLThumbnailGenerator, not NSWorkspace icons).
     ThumbnailPrefetch,
     MagicPrefetch,
@@ -53,7 +53,7 @@ pub enum TaskKind {
 
 impl TaskKind {
     /// Foreground tasks are user-initiated and actively waited on (file
-    /// transfers, search, scans) — they win the status-bar's primary
+    /// transfers, search, scans): they win the status-bar's primary
     /// slot and carry rich progress. Ambient tasks (prefetch, folder
     /// sizes, enumeration) are passive housekeeping the user never
     /// explicitly asked for and never needs to cancel; they yield the
@@ -109,7 +109,7 @@ pub enum Outcome {
 
 /// A finished task, kept in a small bounded ring so the task panel can
 /// show "Recent" work after the live row is gone. Only foreground,
-/// user-initiated tasks are recorded — ambient prefetch/enumeration
+/// user-initiated tasks are recorded: ambient prefetch/enumeration
 /// would just be churn the user never asked for. (docs/features/FILE_OPS.md)
 #[derive(Clone, Debug)]
 pub struct CompletedTask {
@@ -135,7 +135,7 @@ pub struct ActiveTask {
     /// flags etc.).
     pub cancel: Option<Arc<AtomicBool>>,
     /// Rich transfer progress, set by `update_transfer` for copy/move
-    /// tasks. `None` for every other kind — the status bar / task panel
+    /// tasks. `None` for every other kind: the status bar / task panel
     /// fall back to the plain `progress` bar.
     pub transfer: Option<TransferStats>,
 }
@@ -239,7 +239,7 @@ impl TaskRegistry {
         }
     }
 
-    /// Relabel `id` — used to swap a transfer's label between its
+    /// Relabel `id`: used to swap a transfer's label between its
     /// "Preparing…" planning phase and its running phase. No-op for
     /// stale ids.
     pub fn set_label(&mut self, id: TaskId, label: impl Into<String>) {
@@ -290,7 +290,7 @@ impl TaskRegistry {
 
     /// Push a finished task onto the recent-history ring, dropping the
     /// oldest past the cap. Ambient tasks (prefetch, enumeration, folder
-    /// sizes) are skipped — history is only the user-initiated work the
+    /// sizes) are skipped: history is only the user-initiated work the
     /// person actually did.
     fn record_completed(&mut self, task: &ActiveTask, outcome: Outcome) {
         if !task.kind.is_foreground() {
@@ -331,7 +331,7 @@ impl TaskRegistry {
     }
 
     /// The task that owns the spotlight: the most-recently-started
-    /// *foreground* task (file ops, search, scans — user-initiated and
+    /// *foreground* task (file ops, search, scans: user-initiated and
     /// actively awaited), falling back to the most recent task of any
     /// kind. So a copy in progress never gets buried under an ambient
     /// prefetch that happened to start later. (docs/features/FILE_OPS.md)

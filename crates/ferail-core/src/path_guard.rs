@@ -1,17 +1,17 @@
 //! Runtime guards for the Prime Directive ("the UI must never stop",
 //! docs/ARCHITECTURE.md#prime-directive). Two independent mechanisms:
 //!
-//! 1. **Render guard** — UI code is allowed to carry already-snapshotted
+//! 1. **Render guard**: UI code is allowed to carry already-snapshotted
 //!    display data, but resolving a node into a filesystem path is an
 //!    action-boundary operation. Rendering must never do it, because real
 //!    implementations may lock, touch shell state, or eventually cross a
 //!    process/thread boundary. [`enter_render`] +
 //!    [`assert_path_resolution_allowed`] turn a violation into a panic.
 //!
-//! 2. **UI-thread guard** — blocking filesystem/shell entry points
+//! 2. **UI-thread guard**: blocking filesystem/shell entry points
 //!    (directory enumeration, volume stat, magic sniffing, …) must run on
 //!    a background thread, *even when called from a semantic event
-//!    handler* — a stat against a spun-down external drive or a network
+//!    handler*: a stat against a spun-down external drive or a network
 //!    mount blocks for seconds, and on the UI thread that freezes every
 //!    open window. The app marks its UI thread once at boot
 //!    ([`mark_ui_thread`]); known-blocking functions call
@@ -84,7 +84,7 @@ pub fn is_ui_thread() -> bool {
 /// Debug-build panic when a known-blocking operation runs on the UI
 /// thread. Sprinkled into filesystem/shell entry points that can stall
 /// on slow media (spun-down drives, network mounts). The fix is never
-/// to remove the assert — schedule the call on the background executor
+/// to remove the assert: schedule the call on the background executor
 /// and report back through an entity update.
 #[track_caller]
 pub fn assert_off_ui_thread(operation: &str) {

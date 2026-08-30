@@ -20,7 +20,7 @@ fn main() {
     let out = std::path::Path::new(&out);
     std::fs::create_dir_all(out).unwrap();
 
-    // (label, filename, bytes) — the extension drives the MIME/theme lookup.
+    // (label, filename, bytes): the extension drives the MIME/theme lookup.
     let samples: &[(&str, &str, &[u8])] = &[
         ("text", "note.txt", b"hello"),
         ("rust", "main.rs", b"fn main() {}"),

@@ -2,7 +2,7 @@
 //!
 //! The viewer never names a concrete player. It opens a [`VideoStream`]
 //! from whatever [`VideoBackend`] is active and pulls decoded frames from
-//! it as tightly-packed BGRA — exactly the windowless frame-pull model the
+//! it as tightly-packed BGRA, exactly the windowless frame-pull model the
 //! native player already uses, so the video stays a real gpui `img`
 //! element (zoom / pan / fit / rotate are the shared still-image path).
 //!
@@ -21,7 +21,7 @@ use std::path::Path;
 /// A view-only colour grade a backend can apply to the decoded video
 /// itself. Each field is a signed strength in `[-1, 1]`; all-zero is the
 /// neutral identity. Mirrors the viewer's still-image grade so the same
-/// adjustments popup drives both — a backend that supports this gets
+/// adjustments popup drives both: a backend that supports this gets
 /// colour grading *on video* without the per-frame CPU pass.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct VideoAdjust {
@@ -43,7 +43,7 @@ impl VideoAdjust {
 /// Enhancement filters a backend can bake into the decode at open time:
 /// `denoise`, `sharpen`, `banding` (gradient debanding) and `grain` (film
 /// grain), each `0..1` (0 = off). Unlike [`VideoAdjust`] (which is live),
-/// these sit in the decoder's filter chain — a backend that can't change
+/// these sit in the decoder's filter chain: a backend that can't change
 /// them live re-opens the stream to apply a new value.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct VideoEnhance {
@@ -123,7 +123,7 @@ pub trait VideoStream {
 
     /// Apply a colour grade to the video natively. Returns `true` if the
     /// backend handled it (the viewer then skips its CPU grade for video),
-    /// or `false` if unsupported (the default) — the viewer keeps grading
+    /// or `false` if unsupported (the default): the viewer keeps grading
     /// frames on the CPU. `VideoAdjust::default()` clears the grade.
     fn set_adjust(&mut self, _adjust: VideoAdjust) -> bool {
         false
@@ -131,7 +131,7 @@ pub trait VideoStream {
 
     /// Change enhancement filters *live*. Returns `true` if the backend
     /// applied them without a re-open (mpv, via its runtime filter chain), or
-    /// `false` (the default) — meaning the caller must re-open the stream to
+    /// `false` (the default), meaning the caller must re-open the stream to
     /// change `VideoEnhance` (the old libmpv path). `VideoEnhance::default()`
     /// clears them.
     fn set_enhance(&mut self, _enhance: VideoEnhance) -> bool {
@@ -141,7 +141,7 @@ pub trait VideoStream {
     /// Apply or clear a transparent-colour key *live*. Returns `true` if the
     /// backend keyed natively so the keyed pixels carry alpha = 0 (mpv, via a
     /// `colorkey` filter), letting the viewer composite layers beneath; or
-    /// `false` (the default) — the viewer keys on the CPU itself. `None`
+    /// `false` (the default): the viewer keys on the CPU itself. `None`
     /// clears the key.
     fn set_chroma_key(&mut self, _key: Option<ChromaKey>) -> bool {
         false

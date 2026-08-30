@@ -1,7 +1,7 @@
 //! Interim integrity attestation for the elevated Fast NTFS helper.
 //!
 //! Ferail launches `ferail-ntfs-helper.exe` **elevated**, from the directory
-//! it was unzipped into — a directory the invoking user can write. Until the
+//! it was unzipped into: a directory the invoking user can write. Until the
 //! Windows package carries an Authenticode signature (see
 //! `docs/features/WINDOWS_FAST_NTFS.md`), nothing in the OS distinguishes our
 //! helper from a replacement dropped beside it, so this module stands in.
@@ -18,7 +18,7 @@
 //! * **Cost, not immunity, against a local attacker.** Someone who can write
 //!   the helper can usually write `Ferail.exe` too, and patch the expected
 //!   digest out. The salted construction below means they must reverse the
-//!   binary rather than search it for a known 32-byte digest and overwrite —
+//!   binary rather than search it for a known 32-byte digest and overwrite:
 //!   a scripted swap stops working, a determined one does not.
 //!
 //! Only an Authenticode signature fixes the last point properly, because the
@@ -47,7 +47,7 @@ use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
-/// `FILE_SHARE_READ` — other openers may read, but **not** write, rename or
+/// `FILE_SHARE_READ`: other openers may read, but **not** write, rename or
 /// delete. Spelled out here so this module stays free of the `windows` crate
 /// and its unit tests keep running on macOS/Linux.
 #[cfg(windows)]
@@ -72,7 +72,7 @@ pub struct HelperAttestation {
 }
 
 impl HelperAttestation {
-    /// An attestation no file can satisfy — the salted digest of any input is
+    /// An attestation no file can satisfy: the salted digest of any input is
     /// a SHA-256 output, and finding one that is all zeros is a preimage
     /// problem. Install this when the expected identity should have been
     /// present but could not be read, so the launch path fails closed into
@@ -116,7 +116,7 @@ pub fn last_helper_trust() -> Option<HelperTrust> {
 pub enum HelperTrust {
     /// The bytes on disk matched the digest compiled into this build.
     Attested,
-    /// This build carries no expected digest — a development tree. The helper
+    /// This build carries no expected digest: a development tree. The helper
     /// still runs; the caller is expected to say so in diagnostics.
     Unattested,
 }
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn unattested_build_opens_without_a_digest() {
         // A development tree installs no attestation, so the helper still
-        // launches — but the caller can see that nothing was proven.
+        // launches, but the caller can see that nothing was proven.
         let dir = std::env::temp_dir().join("ferail-attest-unattested");
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("helper.bin");

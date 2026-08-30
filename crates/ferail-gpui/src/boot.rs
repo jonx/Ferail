@@ -1,4 +1,4 @@
-//! GUI boot: everything `main.rs` used to do after CLI parsing —
+//! GUI boot: everything `main.rs` used to do after CLI parsing:
 //! application construction, theme resolution, app-level actions,
 //! process-state setup, menus, and the first window.
 //!
@@ -32,11 +32,11 @@ static DEV_QUIT_CLEANUP: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 // owns focus, so they're bound via `cx.on_action` at the App level
 // rather than under the `SHELL_CONTEXT` keymap.
 //
-// - `Quit`            — Cmd+Q
-// - `OpenAbout`       — About menu item
-// - `NewWindow`       — Cmd+N. Opens a fresh window sharing the singleton
+// - `Quit`           : Cmd+Q
+// - `OpenAbout`      , About menu item
+// - `NewWindow`      : Cmd+N. Opens a fresh window sharing the singleton
 //                       `ProcessState`. See `open_new_window`.
-// - `BringAllToFront` — Window ▸ Bring All to Front. Raises every open
+// - `BringAllToFront`: Window ▸ Bring All to Front. Raises every open
 //                       window (shells, viewers, tool windows) above
 //                       other apps'. See `bring_all_to_front`.
 actions!(
@@ -114,7 +114,7 @@ pub fn run_gui(args: screenshot::Args) {
     // Windows shell: assign our own AppUserModelID so the taskbar
     // groups Ferail windows under their own icon/label instead of
     // inheriting the launching console's identity (PowerShell, etc.).
-    // No-op on macOS. Must run before any window is created — the
+    // No-op on macOS. Must run before any window is created: the
     // shell caches the ID on first-window-show.
     crate::platform_shell::set_app_user_model_id("Knipper.Ferail");
 
@@ -134,8 +134,8 @@ pub fn run_gui(args: screenshot::Args) {
 
     // Archive previews stage entries into a per-process scratch directory.
     // A clean exit removes it, but a crash or a kill runs no destructor, and
-    // archive contents are not something to leave lying around — so sweep any
-    // scratch directory whose owning process is gone. One temp-dir listing —
+    // archive contents are not something to leave lying around, so sweep any
+    // scratch directory whose owning process is gone. One temp-dir listing:
     // cheap on a local SSD, but a temp dir can live on slow media, so it runs
     // on its own thread, not the soon-to-be-UI thread (Prime Directive).
     // Skipped in safe mode like every other optional background task.
@@ -193,7 +193,7 @@ pub fn run_gui(args: screenshot::Args) {
         crate::i18n::init(cx);
         crate::shell::init(cx);
         // Replace the dock / About icon. Has to happen after gpui
-        // has built its NSApplication — calling from `main()` panics
+        // has built its NSApplication, calling from `main()` panics
         // ("Ivar platform not found on class NSApplication").
 
         let icon_result = crate::platform_shell::set_app_icon_from_png_bytes(crate::app_icon::PNG);
@@ -246,7 +246,7 @@ pub fn run_gui(args: screenshot::Args) {
         // Phase 10 polish: System-Appearance follow via a global
         // AtomicBool the Shell polls on each render. The native
         // observer fires on the main thread but doesn't get an
-        // `&mut App`, so direct Theme::change isn't reachable —
+        // `&mut App`, so direct Theme::change isn't reachable,
         // instead we publish to a shared cell and let the Shell
         // pick it up on its next paint (Render is already invoked
         // for any frame, so the lag is single-digit milliseconds).
@@ -300,7 +300,7 @@ pub fn run_gui(args: screenshot::Args) {
         // both the Mac NSAboutPanel and the Windows MessageBoxW. The
         // latter had a quirk where the menu stayed visually pinned
         // because the system-modal MessageBox took focus before the
-        // menu finished dismissing — an overlay dialog inside the
+        // menu finished dismissing: an overlay dialog inside the
         // existing window has none of that interaction with the
         // menu.
         cx.on_action(|_: &OpenAbout, cx| {
@@ -310,7 +310,7 @@ pub fn run_gui(args: screenshot::Args) {
             crate::about::open_about_dialog(cx);
         });
         // Software Update dialog + a fresh check (docs/features/UPDATES.md).
-        // Manual by definition — works whether or not the automatic daily
+        // Manual by definition: works whether or not the automatic daily
         // check is enabled in Settings.
         cx.on_action(|_: &CheckForUpdates, cx| {
             if crate::private_mode::blocks_normal_actions() {
@@ -331,16 +331,16 @@ pub fn run_gui(args: screenshot::Args) {
         // watchdog thread, kill-signal interception. After the
         // ProcessState global (its per-beat snapshot reads the task
         // registry), before any window can freeze. Stays on in safe
-        // mode — diagnosing freezes is what both exist for.
+        // mode, diagnosing freezes is what both exist for.
         crate::watchdog::start(cx);
 
         // Resolve the sidebar Locations for the persisted special-folder
         // mode (Windows/OneDrive) once, before any window paints. Render
-        // reads this cached global — it must never stat (Prime Directive).
+        // reads this cached global: it must never stat (Prime Directive).
         crate::special_folders::seed(cx);
 
         // The three process-wide watchers below are all skipped in safe
-        // mode — each one talks to the OS off-thread, and safe mode's
+        // mode, each one talks to the OS off-thread, and safe mode's
         // whole point is a session where no background subsystem runs.
         if !crate::safe_mode::enabled() {
             // Live volume mount/unmount watch: NSWorkspace notifications
@@ -362,12 +362,12 @@ pub fn run_gui(args: screenshot::Args) {
 
             // App-footprint sampler behind the status bar's
             // "up · CPU · MEM · redraws/s" segment. Not started on the
-            // screenshot path (screenshot::run) — captures use the
+            // screenshot path (screenshot::run): captures use the
             // deterministic `--simulate-stats` label instead
             // (docs/features/SYSTEM_STATS.md).
             crate::system_stats::start_sampler(cx);
 
-            // Daily update check — a no-op unless the user opted in
+            // Daily update check: a no-op unless the user opted in
             // (Settings ▸ About ▸ Updates; off by default). The loop
             // re-reads the setting each wake, so the toggle works
             // without a relaunch.
@@ -390,8 +390,8 @@ pub fn run_gui(args: screenshot::Args) {
         // handles the action itself (its element listener wins the
         // bubble phase and stops propagation); this global fallback
         // only runs when the action reached nobody. It acts *only* at
-        // zero windows — the state where the menu-bar item is the
-        // user's single entry point — so the Go prompt still works
+        // zero windows: the state where the menu-bar item is the
+        // user's single entry point, so the Go prompt still works
         // after the last window closed. It opens a window and shows
         // the prompt in it, navigating that window's own tab rather
         // than stacking a second one on a folder the user never asked
@@ -434,7 +434,7 @@ pub fn run_gui(args: screenshot::Args) {
         })
         .detach();
 
-        // [NSApp activateIgnoringOtherApps:YES] — without this the
+        // [NSApp activateIgnoringOtherApps:YES], without this the
         // terminal that invoked us keeps key-window status and our
         // window opens unfocused behind it.
         cx.activate(true);
@@ -473,7 +473,7 @@ pub fn run_gui(args: screenshot::Args) {
 }
 
 /// Bounds for the initial settings-only boot path. Uses windowed
-/// geometry at the requested size — `WindowBounds::centered` needs
+/// geometry at the requested size: `WindowBounds::centered` needs
 /// an `&mut App` (display metrics) which we don't have inside the
 /// async spawn, and the settings boot path is rare enough that
 /// top-left positioning is fine.
@@ -635,7 +635,7 @@ fn open_shell_window_sized(
     };
     cx.spawn(async move |cx| {
         // The main window failing to open is fatal to a useful session, but a
-        // logged error beats an abort — the panic hook would have nothing more
+        // logged error beats an abort: the panic hook would have nothing more
         // to add than this line.
         if let Err(e) = cx.open_window(opts, |window, cx| {
             install_dev_window_callback_cleanup(window, cx);
@@ -660,7 +660,7 @@ fn open_shell_window_sized(
 
 /// Widen gpui's outbound drag mask to Finder parity (move/copy/alias by
 /// destination + modifier keys, with the system's “+” copy badge). Must
-/// run after a gpui window exists — the window classes it patches are
+/// run after a gpui window exists: the window classes it patches are
 /// registered lazily on first window construction. Idempotent, so every
 /// shell-window open calls it. No-op off macOS: drag-out on other
 /// platforms uses upstream's masks as-is.
@@ -719,7 +719,7 @@ fn open_shell_window_then(
 /// as a startup-log warning via keymap::install instead.
 ///
 /// Per-item dynamic disable (e.g. Move to Trash when nothing is
-/// selected) is deferred to a polish iter — the action handler
+/// selected) is deferred to a polish iter: the action handler
 /// no-ops silently in that case today.
 pub(crate) fn install_app_menus(cx: &mut App) {
     // Show Desktop is gated on the private Dock symbol resolving on a
@@ -823,7 +823,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                 ),
                 MenuItem::separator(),
                 // Favorites (docs/features/FAVORITES.md). The Cmd+D toggle
-                // acts on the selected folder, else the current folder —
+                // acts on the selected folder, else the current folder:
                 // the menu-bar twin of the row context menu's "Add to
                 // Favorites", so the command is discoverable without
                 // knowing the shortcut. Wording matches the context menu;
@@ -835,7 +835,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                     MoveToTrash,
                 ),
                 // Ellipsis: each opens a confirmation dialog (macOS HIG).
-                // Delete Immediately is Finder's "Delete Immediately…" — a
+                // Delete Immediately is Finder's "Delete Immediately…": a
                 // targeted permanent delete with no undo.
                 MenuItem::action(tr!("Delete Immediately\u{2026}"), DeleteImmediately),
                 MenuItem::action(tr!("Empty Trash\u{2026}"), EmptyTrash),
@@ -878,7 +878,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
         Menu {
             // gpui registers a top-level menu literally named "Window"
             // as NSApp's windows menu, so on macOS AppKit automatically
-            // appends the live list of open windows below these items —
+            // appends the live list of open windows below these items:
             // every titled window (shells, viewers, Settings, Disk
             // Usage, …), kept fresh as they open/close/retitle, with
             // the checkmark on the key window; selecting one brings it
@@ -966,7 +966,7 @@ pub(crate) fn install_private_menus(cx: &mut App) {
     }
 }
 
-/// Raise every open window above other apps' windows — Finder's
+/// Raise every open window above other apps' windows: Finder's
 /// Window ▸ Bring All to Front. On macOS this is the native
 /// `arrangeInFront:`, which preserves the windows' relative z-order
 /// and leaves the key window unchanged. Elsewhere it falls back to
@@ -985,7 +985,7 @@ fn bring_all_to_front(cx: &mut App) {
 /// Look up a command's title in `ferail_core::commands`, falling
 /// back to the provided default when the lookup fails. Keeping a
 /// default means a typo in the CommandId string surfaces as the
-/// wrong title rather than panicking — the catalogue still drives
+/// wrong title rather than panicking: the catalogue still drives
 /// every wired item.
 fn title(id: &'static str, fallback: &'static str) -> SharedString {
     find(CommandId(id))
@@ -997,7 +997,7 @@ fn title(id: &'static str, fallback: &'static str) -> SharedString {
 mod tests {
     /// The drag-operations override patches gpui's `GPUIWindow` /
     /// `GPUIPanel` classes by name (registered in a `#[ctor]` at load, so
-    /// they exist here too). If upstream renames them this fails — the
+    /// they exist here too). If upstream renames them this fails: the
     /// override would otherwise silently degrade to copy-only external
     /// drags. Second call checks idempotence.
     #[test]

@@ -79,7 +79,7 @@ Open **PowerShell as Administrator**, change to that folder, then run:
 The path may be a whole local NTFS volume (`C:\`) or a subdirectory. The
 helper builds the volume index once and reports the requested subtree. Its
 shareable output contains aggregate geometry, phases, record rates, counts,
-bytes and timings—not the requested path or any file name.
+bytes and timings, not the requested path or any file name.
 
 Expected success ends with a `--- report ---` block containing `mft`, `subtree`,
 `skipped`, and `timing` lines. When reporting a problem, attach the redirected

@@ -1,12 +1,12 @@
-//! Background-task panel — small popover that lists every in-flight
+//! Background-task panel: small popover that lists every in-flight
 //! task with its label + progress. Toggled by clicking the task region
 //! of the status bar (Stage 5.c). Positioned absolutely in the bottom-
 //! left of the shell window, sitting just above the status bar.
 //!
-//! Tasks that carry a cooperative cancel flag (file transfers —
+//! Tasks that carry a cooperative cancel flag (file transfers:
 //! docs/features/FILE_OPS.md) get a ✕ button that flips it; the
 //! worker notices at its next checkpoint. Everything else stays
-//! read-only visibility — answering "what is the app doing right
+//! read-only visibility, answering "what is the app doing right
 //! now?".
 
 use crate::text::TextScale as _;
@@ -19,14 +19,14 @@ use gpui_component::{ActiveTheme, Sizable as _, h_flex, v_flex};
 
 use crate::tasks::{Outcome, TaskProgress, TaskRegistry};
 
-/// Render the task-panel popover. Caller decides visibility — this
+/// Render the task-panel popover. Caller decides visibility: this
 /// returns `None` when the popover should be hidden so the caller can
 /// chain `.children(...)` directly.
 pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut App) -> Option<Div> {
     if !open {
         return None;
     }
-    // Snapshot every theme colour we need *before* iterating tasks —
+    // Snapshot every theme colour we need *before* iterating tasks:
     // the closure passed to `map` can't borrow `cx` again while the
     // outer reference to `theme` is alive.
     let theme = cx.theme();
@@ -39,7 +39,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
     let theme_danger = theme.danger;
     let registry = tasks.borrow();
 
-    // Only show tasks that have lived past SURFACE_DELAY — instant
+    // Only show tasks that have lived past SURFACE_DELAY: instant
     // clones never flicker a row in. (docs/features/FILE_OPS.md)
     let surfaced: Vec<&crate::tasks::ActiveTask> =
         registry.iter().filter(|t| t.is_surfaced()).collect();
@@ -97,7 +97,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                     .map(|s| s.current.clone());
                 // Cancel button for tasks that carry a cooperative
                 // flag (docs/features/FILE_OPS.md). Flipping the flag
-                // is the whole gesture — the worker notices at its
+                // is the whole gesture: the worker notices at its
                 // next checkpoint and ends the task itself.
                 let cancel = t.cancel.clone().map(|flag| {
                     gpui_component::button::Button::new(("task-cancel", t.id.raw()))
@@ -180,7 +180,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
             .into_any_element()
     };
 
-    // "Recent" — a dimmed list of the just-finished foreground tasks
+    // "Recent": a dimmed list of the just-finished foreground tasks
     // (copies, moves, searches, scans, trashes). Omitted entirely when
     // there is no history so the panel doesn't grow an empty heading.
     let recent: Option<Div> = if registry.has_history() {
@@ -196,7 +196,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                 // user sees *why* without another surface.
                 let label = match &c.outcome {
                     Outcome::Failed(msg) => {
-                        tr!("{label} \u{2014} {detail}", label = c.label, detail = msg).to_string()
+                        tr!("{label}: {detail}", label = c.label, detail = msg).to_string()
                     }
                     _ => c.label.clone(),
                 };
@@ -272,7 +272,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
         .border_color(theme_border)
         .bg(theme_bg)
         .shadow_lg()
-        // Clicking inside the popover shouldn't bubble — the outer
+        // Clicking inside the popover shouldn't bubble: the outer
         // shell uses on_mouse_down to dismiss when the click misses.
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(header)
@@ -305,7 +305,7 @@ fn humanize_secs(s: u64) -> String {
     if s < 60 {
         format!("{}s", s)
     } else if s < 3600 {
-        // Skip a zero remainder — rounded ETAs land on whole minutes
+        // Skip a zero remainder: rounded ETAs land on whole minutes
         // and "51m" reads better than "51m 0s".
         match (s / 60, s % 60) {
             (m, 0) => format!("{m}m"),

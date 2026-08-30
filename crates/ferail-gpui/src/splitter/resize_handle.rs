@@ -1,4 +1,4 @@
-//! Drag handle for the local splitter fork — a straight copy of
+//! Drag handle for the local splitter fork: a straight copy of
 //! upstream `gpui-component`'s `resizable/resize_handle.rs` minus the
 //! dock-placement special case (Ferail doesn't use the dock).
 

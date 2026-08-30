@@ -12,7 +12,7 @@ use crate::model::{DiskUsageLayoutNode, DiskUsageTree, NodeKind, SizeMode};
 
 /// Build the layout subtree rooted at `root`. `max_depth` limits
 /// recursion; depth-0 returns just the root with no children.
-/// Defaults to apparent size — for the allocated mode use
+/// Defaults to apparent size, for the allocated mode use
 /// [`build_layout_node_with_mode`].
 pub fn build_layout_node(
     tree: &DiskUsageTree,
@@ -219,7 +219,7 @@ fn build_inner(
     }
 
     if !visited.insert(id) {
-        // Already visited via another container — record as a leaf so the
+        // Already visited via another container: record as a leaf so the
         // user sees it but don't recurse again.
         return DiskUsageLayoutNode::with_mtime(
             id,

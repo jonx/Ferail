@@ -18,7 +18,7 @@ check-cfg = ['cfg(target_os, values("aros"))']
 # Prime Directive enforcement (docs/ARCHITECTURE.md#prime-directive):
 # the workspace-root clippy.toml disallows the syscalls most likely to
 # freeze the UI thread (canonicalize, blocking process waits, raw
-# notify watch registration). Denied here — in the UI crate — so every
+# notify watch registration). Denied here - in the UI crate - so every
 # use must either go through the sanctioned wrapper or carry a visible
 # `#[allow(clippy::disallowed_methods)]` with a why-this-is-off-thread
 # justification. Run `cargo clippy -p ferail-gpui` before finishing.
@@ -37,7 +37,7 @@ mpv = ["dep:ferail-video-mpv"]
 # gpui's offscreen `Window::render_to_image` for the --screenshot harness
 # and the issue reporter's window capture. Comes with gpui's leak-detection
 # (they share the test-support feature), whose exit assertion is a developer
-# diagnostic — it must not turn a user's clean quit into exit 101, as it did
+# diagnostic - it must not turn a user's clean quit into exit 101, as it did
 # for the 0.6.5 Windows tester. Default ON so dev and `cargo test` keep the
 # leak detector; packaging builds pass --no-default-features to strip it.
 # Without it, --screenshot still works on Windows via the PrintWindow
@@ -47,7 +47,7 @@ screenshot-harness = ["gpui/test-support", "gpui_platform/test-support"]
 [dependencies]
 anyhow.workspace = true
 # Bridge gpui's `.log_err()` (the `log`-crate facade) into the AROS MacRW
-# diagnostic sink — see obs.rs. On booted AROS nothing installs a `log`
+# diagnostic sink - see obs.rs. On booted AROS nothing installs a `log`
 # backend, so those swallowed failures (e.g. `paint_svg`) vanish. Same major
 # as gpui_util's transitive use, so we stay single-copy in the graph.
 log = "0.4"
@@ -56,7 +56,7 @@ gpui_platform.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
 gpui-fps.workspace = true
-# HttpClient impl behind cx.http_client() — see the workspace Cargo.toml
+# HttpClient impl behind cx.http_client() - see the workspace Cargo.toml
 # note. Update check only; everything else stays offline.
 reqwest_client.workspace = true
 # Phase 1 (next-level plan): bundle our own SVG icons alongside
@@ -77,13 +77,13 @@ notify = "7.0"
 # Streaming directory enumeration sends worker batches to a GPUI task
 # without timer polling.
 async-channel = "2.5"
-# Update check (src/update_check.rs): parse GitHub's /releases JSON — tag,
+# Update check (src/update_check.rs): parse GitHub's /releases JSON - tag,
 # assets, and the notes body the dialog shows as "What's new". Both crates
 # are already in the graph via gpui, so this adds no new code to build.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Async read of the update-download HTTP body (update_check.rs). Same
-# version smol/async-* already put in the graph — no new code compiled.
+# version smol/async-* already put in the graph - no new code compiled.
 futures-lite = "2"
 # Status-bar app-footprint segment: samples this process's CPU / RSS on the
 # background executor (docs/features/SYSTEM_STATS.md).
@@ -101,7 +101,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # `image` crate's `imageops::resize` is single-threaded with no SIMD, so a
 # Lanczos3 enlargement to the 8192 px cap stalled the UI for seconds; this
 # does the same Lanczos3 convolution with SSE4.1/AVX2/NEON. MIT OR Apache-2.0,
-# minimal deps — clean for the dual-licensed release.
+# minimal deps - clean for the dual-licensed release.
 fast_image_resize = "5"
 # The issue reporter bundles the diagnostics report + activity trail + a
 # (redacted) screenshot into a `.zip`. Same major/features as the shell crates'
@@ -129,7 +129,7 @@ ferail-meta.workspace = true
 ferail-disk-usage.workspace = true
 ferail-archive.workspace = true
 
-# Platform shell — one impl per target OS. The crate's `pub fn`
+# Platform shell - one impl per target OS. The crate's `pub fn`
 # surface mirrors between the two so `crate::platform_shell` (in
 # `lib.rs`) can alias them with a single `#[cfg]` switch; gpui call
 # sites use `platform_shell::*` and don't care which is active.
@@ -161,7 +161,7 @@ ferail-shell-linux.workspace = true
 ferail-video-mpv = { workspace = true, optional = true }
 
 # AROS (branch aros-port): the shell-linux stub scaffold re-exported under
-# the AROS name. No mpv — libmpv has no AROS build, so the `mpv` feature
+# the AROS name. No mpv - libmpv has no AROS build, so the `mpv` feature
 # stays a no-op there.
 [target.'cfg(target_os = "aros")'.dependencies]
 ferail-shell-aros.workspace = true
@@ -174,7 +174,7 @@ winresource = "0.1"
 
 [dev-dependencies]
 # Phase 2 isolation test still lives here. It now ALSO doubles as a
-# guarantee that the domain types stay dyn-safe — Phase 4 relies on
+# guarantee that the domain types stay dyn-safe - Phase 4 relies on
 # `Box<dyn FsBackend>` working.
 ferail-core.workspace = true
 ferail-fs-native.workspace = true
@@ -194,9 +194,9 @@ path = "src/main.rs"
 name = "ferail"
 path = "src/bin/ferail.rs"
 
-# Debian/Ubuntu packaging (cargo-deb). Build on a Linux host — the oldest
+# Debian/Ubuntu packaging (cargo-deb). Build on a Linux host - the oldest
 # Ubuntu LTS you want to support, since the produced .deb inherits that
-# glibc floor — with:
+# glibc floor - with:
 #
 #   cargo install cargo-deb
 #   cargo deb -p ferail-gpui
@@ -204,11 +204,11 @@ path = "src/bin/ferail.rs"
 # Ships the `ferail` bin (same program as `ferail-gpui`, see src/bin/
 # ferail.rs) plus the freedesktop identity assets. The .desktop basename,
 # the hicolor icon name, and the app_id every window sets (lib.rs
-# `APP_ID`) must all stay "ferail" — compositors match them by string.
+# `APP_ID`) must all stay "ferail" - compositors match them by string.
 [package.metadata.deb]
 name = "ferail"
 # Compile the mpv video provider into the packaged binary. It dlopens the
-# system libmpv.so.2 at runtime (never linked, never bundled — the GPL
+# system libmpv.so.2 at runtime (never linked, never bundled - the GPL
 # Homebrew/distro build stays out of this MIT/Apache package) and falls
 # back to the native player when absent; libmpv2 rides in Recommends below.
 features = ["mpv"]
@@ -219,7 +219,7 @@ priority = "optional"
 # $auto = dpkg-shlibdeps at `cargo deb` time; it only sees *linked*
 # libs (libc, xcb, xkbcommon). gpui dlopens Vulkan and libwayland at
 # runtime, so those must be spelled out or the app dies on a minimal
-# install. Only works on a Debian-family build host — which is the only
+# install. Only works on a Debian-family build host - which is the only
 # place a .deb build makes sense anyway.
 depends = "$auto, libvulkan1, libwayland-client0, libwayland-cursor0"
 # Tools the Linux shell layer execs at runtime; everything degrades
@@ -239,7 +239,7 @@ extended-description = """\
 Fast, keyboard-friendly file manager built on GPUI. Virtualized file \
 listings, magic-byte format detection, previews and thumbnails, an async \
 disk-usage treemap, archive browsing and extraction, favorites, tabs and \
-multi-window — with all filesystem and shell work kept off the UI thread."""
+multi-window, with all filesystem and shell work kept off the UI thread."""
 assets = [
     ["target/release/ferail", "usr/bin/", "755"],
     ["resources/linux/ferail.desktop", "usr/share/applications/", "644"],

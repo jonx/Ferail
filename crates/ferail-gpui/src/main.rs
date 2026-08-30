@@ -1,4 +1,4 @@
-// Ferail — GPUI shell entry point.
+// Ferail: GPUI shell entry point.
 //
 // Dispatches between the live GUI and the headless `--screenshot`
 // capture path. All real view code lives in `crate::shell`.
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     if let Some(code) = run_windows_properties_broker() {
         std::process::exit(code);
     }
-    // Pre-event-loop CLI handlers — run before the window opens.
+    // Pre-event-loop CLI handlers: run before the window opens.
     if let Some(code) = ferail_gpui::reset_db::handle_reset_db_cli() {
         std::process::exit(code);
     }
@@ -168,8 +168,8 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
         }
         // Flags that belong to the GUI / screenshot path (`--screenshot`,
         // `--theme`, `--width`, etc.) pass through to `screenshot::parse_args`.
-        // Anything else that looks like a subcommand attempt — a bare word
-        // or unknown flag — surfaces the help text and exits with code 2
+        // Anything else that looks like a subcommand attempt: a bare word
+        // or unknown flag: surfaces the help text and exits with code 2
         // rather than silently launching the GUI with confusing args.
         other if !other.starts_with('-') => {
             eprintln!("ferail: unknown subcommand: {other:?}\n");
@@ -180,7 +180,7 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
     }
 }
 
-/// `--preview-broker` worker mode — Windows-only crash containment for
+/// `--preview-broker` worker mode: Windows-only crash containment for
 /// third-party preview handlers (see `ferail_shell_win32::preview_broker_main`).
 /// The cfg-gate lives here at the single call site rather than as stubs in the
 /// other platform shell crates: this is a worker mode of the binary, not part
@@ -189,7 +189,7 @@ fn run_preview_broker(args: &[String]) -> i32 {
     #[cfg(windows)]
     {
         // A faulting third-party handler should leave a minidump that names
-        // the module (WIN-001) — quietly, so a broken previewer can't pop
+        // the module (WIN-001): quietly, so a broken previewer can't pop
         // Windows Error Reporting UI for every file it is asked about.
         if let Some(dir) = ferail_gpui::app_state::config_dir() {
             ferail_gpui::platform_shell::install_crash_dump_handler(
@@ -208,10 +208,10 @@ fn run_preview_broker(args: &[String]) -> i32 {
     }
 }
 
-/// `ferail doctor` / `ferail --doctor` — print the diagnostics health
+/// `ferail doctor` / `ferail --doctor`: print the diagnostics health
 /// report and exit. Runs before the event loop, so it works even when the GUI
 /// can't start (the common "nothing happens" case). Exit code 1 if any check
-/// FAILs, else 0 — so it's scriptable / pasteable into a bug report.
+/// FAILs, else 0, so it's scriptable / pasteable into a bug report.
 fn run_doctor_cli() -> i32 {
     let report = ferail_gpui::diagnostics::run_checks();
     print!("{}", ferail_gpui::diagnostics::render_text(&report));
@@ -439,9 +439,9 @@ fn run_disk_usage_cli(args: &[String]) -> Result<i32> {
 
 /// `ferail thumb <path> [--out <png>] [--size N] [--preview]`
 ///
-/// Calls `video_poster::fetch_content` — the same fetch every in-app
+/// Calls `video_poster::fetch_content`: the same fetch every in-app
 /// thumbnail warm path uses (the platform shell first, then the mpv
-/// poster fallback for videos) — and writes the result as a PNG. Useful
+/// poster fallback for videos), and writes the result as a PNG. Useful
 /// for testing the preview pipeline without launching the GUI and for
 /// scripting (batch thumbnail extraction). `--preview` asks for the
 /// preview pane's tier rather than the grid's; on Windows that is the
@@ -520,7 +520,7 @@ fn run_thumb_cli(args: &[String]) -> Result<i32> {
 }
 
 fn print_disk_usage(fs: &NativeFs, path: &Path, top: usize, descend_packages: bool) -> Result<()> {
-    // CLI utility path — no UI thread to freeze.
+    // CLI utility path, no UI thread to freeze.
     #[allow(clippy::disallowed_methods)]
     let root = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let root_id = fs.id_for_path(&root);

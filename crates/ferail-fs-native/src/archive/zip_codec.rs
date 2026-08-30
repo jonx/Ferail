@@ -1,6 +1,6 @@
 //! ZIP read path. The zip central directory is a real manifest we can read
 //! without inflating any payload, so both the full TOC and the bounded summary
-//! come from one cheap pass — `by_index_raw` exposes every entry's metadata
+//! come from one cheap pass: `by_index_raw` exposes every entry's metadata
 //! (name, sizes, encrypted flag) and never needs the password, which is only
 //! required to read entry *data* at extraction time.
 
@@ -31,7 +31,7 @@ pub(super) fn read_toc(archive: &Path, _password: Option<&str>) -> Result<Toc, A
     let mut needs_password = false;
     for i in 0..count {
         // `by_index_raw` reads the entry's header metadata straight from the
-        // parsed central directory — no decompression, no password.
+        // parsed central directory, no decompression, no password.
         let entry = zipf.by_index_raw(i).map_err(map_zip_err)?;
         let encrypted = entry.encrypted();
         needs_password |= encrypted;
@@ -143,7 +143,7 @@ pub(super) fn extract(
     let count = zipf.len();
 
     // Pre-pass over the central directory (metadata only, no inflation) to size
-    // the progress bar determinately — zip records every entry's size up front.
+    // the progress bar determinately: zip records every entry's size up front.
     let mut total_bytes = 0u64;
     let mut total_files = 0u64;
     for i in 0..count {
@@ -257,7 +257,7 @@ pub(super) fn create(
 /// The archive is never written in place: existing members are byte-copied
 /// (never re-encoded) into a sibling temp file, the new items are appended
 /// there, and only a validated result replaces the original atomically. An
-/// in-place append is faster — it rewrites just the central directory — but a
+/// in-place append is faster, it rewrites just the central directory, but a
 /// cancellation, vanished source, read error, or full disk part-way through
 /// would leave a truncated member inside the user's real archive while the
 /// operation reported failure. Same contract as [`rewrite`]; this path exists
@@ -266,7 +266,7 @@ pub(super) fn create(
 /// Names already present are skipped: zip permits duplicates, but a second
 /// record with the same name shadows the first rather than replacing it, and
 /// extraction (which refuses to clobber) would then write the *original*
-/// bytes — the opposite of what "add this file" means. The set grows as items
+/// bytes: the opposite of what "add this file" means. The set grows as items
 /// are written, so two dropped inputs that resolve to the same archive path
 /// cannot produce duplicate records either.
 pub(super) fn append(
@@ -310,7 +310,7 @@ pub(super) fn append(
         super::check_cancel(cancel)?;
         let key = item.rel.trim_end_matches('/').to_string();
         if !names.insert(key) {
-            // Directories that already exist are not worth reporting — only
+            // Directories that already exist are not worth reporting, only
             // files the user expected to land.
             if !item.is_dir {
                 outcome.skipped_existing.push(item.rel.clone());
@@ -337,7 +337,7 @@ pub(super) fn append(
     let output = writer.finish().map_err(map_zip_err)?;
     output.sync_all()?;
     // Windows refuses to replace a file that anyone still has open, so the
-    // staged archive's handle must be closed *before* the swap — otherwise
+    // staged archive's handle must be closed *before* the swap, otherwise
     // `ReplaceFileW` fails with ERROR_SHARING_VIOLATION. Unix does not care,
     // but the close belongs here on every platform.
     drop(output);
@@ -462,7 +462,7 @@ pub(super) fn rewrite(
     let output = writer.finish().map_err(map_zip_err)?;
     output.sync_all()?;
     // Windows refuses to replace a file that anyone still has open, so the
-    // staged archive's handle must be closed *before* the swap — otherwise
+    // staged archive's handle must be closed *before* the swap, otherwise
     // `ReplaceFileW` fails with ERROR_SHARING_VIOLATION. Unix does not care,
     // but the close belongs here on every platform.
     drop(output);

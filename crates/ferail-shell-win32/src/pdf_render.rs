@@ -1,11 +1,11 @@
-//! First-page PDF rendering through `Windows.Data.Pdf` — the WinRT
+//! First-page PDF rendering through `Windows.Data.Pdf`: the WinRT
 //! renderer that has shipped in the box since Windows 8.1, and the one
 //! Microsoft provides for exactly this job.
 //!
 //! Why not the shell? `IShellItemImageFactory` only yields a PDF
 //! thumbnail when some third-party `IThumbnailProvider` happens to be
 //! installed (Adobe's is off by default), and the `IPreviewHandler`
-//! route paints Edge's whole viewer — toolbar, scrollbars, chrome —
+//! route paints Edge's whole viewer: toolbar, scrollbars, chrome:
 //! into the capture, which is what made PDF thumbnails look like
 //! screenshots of an application. `PdfPage::RenderToStream` draws just
 //! the page, off-screen, with no window and no third-party code, so it
@@ -18,7 +18,7 @@
 //! expiry calls `IAsyncInfo::Cancel` and returns a cacheable miss. A corrupt
 //! document must never strand a thumbnail worker indefinitely.
 //!
-//! Caller must run this off the UI thread — it opens and decodes the
+//! Caller must run this off the UI thread: it opens and decodes the
 //! file.
 
 #![cfg(windows)]
@@ -60,7 +60,7 @@ pub(crate) fn render_first_page(path: &Path, size_px: u32) -> Option<(Vec<u8>, u
     }
 
     // `Windows.Data.Pdf` wants an absolute path (the CLI hands us
-    // relative ones). `std::path::absolute` is lexical — no disk access.
+    // relative ones). `std::path::absolute` is lexical, no disk access.
     let abs = std::path::absolute(path).ok()?;
     let worker = std::thread::Builder::new()
         .name("ferail-pdf-render".into())
@@ -91,7 +91,7 @@ pub(crate) fn render_first_page(path: &Path, size_px: u32) -> Option<(Vec<u8>, u
 fn render(abs: &Path, size_px: u32) -> windows::core::Result<Option<(Vec<u8>, u32, u32)>> {
     let deadline = Instant::now() + RENDER_DEADLINE;
     let hpath = HSTRING::from(abs.as_os_str());
-    // A plain file stream rather than `StorageFile` — the latter goes
+    // A plain file stream rather than `StorageFile`: the latter goes
     // through the RuntimeBroker and is noticeably slower per call.
     let Some(input) = wait_operation(
         &FileRandomAccessStream::OpenAsync(&hpath, FileAccessMode::Read)?,
@@ -195,8 +195,8 @@ fn wait_action(action: &IAsyncAction, deadline: Instant) -> windows::core::Resul
 
 /// The renderer hands back an encoded PNG; unpack it to the RGBA8 the
 /// thumbnail pipeline expects. `DestinationWidth`/`Height` are not taken
-/// literally — on a 150 % display the renderer multiplies them by the
-/// DPI scale (a 363×512 request came back 545×768) — so fit the result
+/// literally, on a 150 % display the renderer multiplies them by the
+/// DPI scale (a 363×512 request came back 545×768), so fit the result
 /// to `size_px` here; the extra resolution makes for a cleaner downscale.
 fn decode_png(png: &[u8], size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     let decoded = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;

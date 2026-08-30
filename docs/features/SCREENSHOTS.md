@@ -1,4 +1,4 @@
-# Headless Screenshots — The Visual Dev Loop
+# Headless Screenshots - The Visual Dev Loop
 
 Ferail can render any UI state to a PNG without opening a visible window.
 This is how we (human and AI) iterate on the UI: change code, render the exact
@@ -13,11 +13,11 @@ The harness lives in [`screenshot.rs`](../../crates/ferail-gpui/src/screenshot.r
 
 `main.rs` dispatches to the headless path the moment it sees `--screenshot`:
 
-1. A GPUI window is opened with `show: false, focus: false` — it never appears
+1. A GPUI window is opened with `show: false, focus: false`: it never appears
    on screen, on any platform.
 2. The requested view is built (Shell by default, or Settings / Disk Usage /
    Viewer / drag-ghost depending on flags).
-3. CLI flags are *applied* to the live entity through the real update paths —
+3. CLI flags are *applied* to the live entity through the real update paths:
    `navigate`, `select_tab`, `start_duplicate_scan`, `dispatch_keystroke`, etc.
    We drive the actual code, not a mock, so focus/keymap/subscription routing is
    exercised exactly as it is for a real user.
@@ -29,7 +29,7 @@ The harness lives in [`screenshot.rs`](../../crates/ferail-gpui/src/screenshot.r
    the process quits.
 
 Because step 3 runs real code, a screenshot run doubles as a smoke test of the
-keybinding and async-scheduling paths — if a keystroke routes to the wrong
+keybinding and async-scheduling paths: if a keystroke routes to the wrong
 focus handle or a scan deadlocks, the render reflects it.
 
 ## Invocation
@@ -42,7 +42,7 @@ Per [CLAUDE.md](../../CLAUDE.md), screenshots go in `screenshots/` (gitignored
 scratch). If a committed doc needs to reference an image, copy it into
 `docs/images/` instead, or the link breaks on GitHub.
 
-`--help` prints the full, authoritative flag list — the source of truth is
+`--help` prints the full, authoritative flag list: the source of truth is
 `print_help()` in `screenshot.rs`, not this doc.
 
 `--screenshot` is private by default. Use `--unsafe-real-data` only when a
@@ -54,32 +54,32 @@ look more interesting.
 
 ## The flag families
 
-- **Frame** — `--width`, `--height`, `--scale`, `--theme light|dark`,
+- **Frame**: `--width`, `--height`, `--scale`, `--theme light|dark`,
   `--ui-scale`.
-- **Navigation** — `--navigate <path>` (repeatable; chaining seeds realistic
+- **Navigation**: `--navigate <path>` (repeatable; chaining seeds realistic
   ant-trail visit counts), `--new-tab <path>` (repeatable), `--tab <idx>`,
   `--expand <path>` (unfurl the sidebar tree), `--show-hidden`.
-- **Selection & sort** — `--select-row N`, `--select-name <name>`,
+- **Selection & sort**: `--select-row N`, `--select-name <name>`,
   `--select-rows a,b,c` (first = anchor, last = lead), `--sort <col[-desc]>`,
   `--view grid|list`.
-- **Search & dupes** — `--filter <text>`, `--search`, `--search-subtree <needle>`,
+- **Search & dupes**: `--filter <text>`, `--search`, `--search-subtree <needle>`,
   `--find-duplicates`, `--dupe-panel`, `--similar-images`.
-- **Live input simulation** — `--breadcrumb <text>` (enters Cmd+L edit mode and
+- **Live input simulation**: `--breadcrumb <text>` (enters Cmd+L edit mode and
   *types* through the completion provider), `--keys "<gpui keystrokes>"`
   (dispatched through the real window key path; `pause` token waits out async UI
   between keys), `--context-menu-row N` (synthesises a real mouse-move +
   right-click over row N, so the row context menu builds exactly as it does for
-  a user — it lives in a mouse-event listener, so no action can open it),
+  a user: it lives in a mouse-event listener, so no action can open it),
   `--context-menu-background` (same synthesis aimed at the file-list body's
   midpoint, capturing the empty-space folder menu; point it at an empty
   folder, or one whose rows stop above the midpoint).
-- **Panels & overlays** — `--preview`, `--properties` (Get Info),
+- **Panels & overlays**: `--preview`, `--properties` (Get Info),
   `--rename`, `--new-folder`, `--shortcuts-help[-filter]`, `--simulate-toast`,
   `--simulate-progress`, `--simulate-task-panel`, `--update-dialog <state>`
   (Software Update dialog seeded with `checking` / `uptodate` / `available` /
-  `elsewhere` / `noasset` / `downloading` / `done` / `failed` — no network;
+  `elsewhere` / `noasset` / `downloading` / `done` / `failed`: no network;
   `live` runs the real GitHub check, the one networked capture).
-- **Alternate windows** — `--settings <page>`, `--disk-usage <path>`
+- **Alternate windows**: `--settings <page>`, `--disk-usage <path>`
   (`--du-depth`, `--du-coloring`), `--viewer <path>` (`--viewer-adjust`),
   `--drag-ghost N`.
 
@@ -158,7 +158,7 @@ cargo run --bin ferail-gpui -- \
 ```
 
 Opens the shortcuts/command-palette overlay pre-filtered to "new folder", then
-presses Enter to run the top match — verifying the palette's filter + dispatch
+presses Enter to run the top match, verifying the palette's filter + dispatch
 wiring headlessly. (`--shortcuts-help-filter` is applied *before* `--keys`
 precisely so the keyboard can drive the open overlay.)
 
@@ -171,8 +171,8 @@ cargo run --bin ferail-gpui -- \
 ```
 
 Opens the task panel pre-populated with two running tasks (enumeration, disk
-usage) and a seeded "Recent" history covering each outcome — succeeded,
-cancelled, failed — plus a determinate footer progress strip at 62%.
+usage) and a seeded "Recent" history covering each outcome: succeeded,
+cancelled, failed, plus a determinate footer progress strip at 62%.
 
 ### Get Info on a specific row
 
@@ -198,7 +198,7 @@ With no `--select-*` flag this captures the case that used to differ from every
 later right-click: a freshly loaded folder, nothing selected, menu built from
 scratch. Add `--select-rows 1,2` to capture the multi-selection form instead
 (bulk "Rename N Items…", no single-only commands). List view only, and the row
-must be on screen — the click point comes from the laid-out row geometry.
+must be on screen: the click point comes from the laid-out row geometry.
 
 Because the click is real, the capture also exercises the menu's async fill-in:
 "Open With" starts as a disabled submenu placeholder, then that submenu alone
@@ -234,7 +234,7 @@ cargo run --bin ferail-gpui -- \
   --screenshot screenshots/drag-ghost.png --drag-ghost 4
 ```
 
-Renders the cursor drag-ghost for a 4-item drag against a neutral backdrop —
+Renders the cursor drag-ghost for a 4-item drag against a neutral backdrop:
 the only way to capture the ghost headlessly, since it never exists outside a
 live drag.
 
@@ -243,7 +243,7 @@ live drag.
 - **Settle timing.** Selection-by-index/name waits an extra 700 ms for streamed
   enumeration batches before resolving rows; the main 2500 ms settle runs after
   all flags apply. If a capture looks empty or un-prefetched, the data was still
-  in flight — it's not a render bug.
+  in flight: it's not a render bug.
 - **Overlay compositing.** `render_to_image` does *not* fully composite
   absolute-positioned overlay layers. Toasts (`--simulate-toast`) and some
   dialogs bleed partial state in headless capture but render correctly in the
@@ -252,4 +252,4 @@ live drag.
   the literal path so navigation to a not-yet-existing path still works.
 - **Stage-deferred flags.** A few flags (`--splitter`, `--scroll`, `--ui-scale`,
   `--mac-chrome`) are recognised but emit a single log warning instead of
-  acting — they map to features not yet wired in the GPUI shell.
+  acting: they map to features not yet wired in the GPUI shell.

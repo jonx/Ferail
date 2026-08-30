@@ -142,7 +142,7 @@ impl RenderOnce for ResizablePanelGroup {
             .on_prepaint({
                 let state = state.clone();
                 move |bounds, _, cx| {
-                    // Bookkeeping only — no correction pass, no notify.
+                    // Bookkeeping only, no correction pass, no notify.
                     // Fixed panels hold their basis; flex panels absorb
                     // the container delta in this same frame via the
                     // layout engine.
@@ -245,7 +245,7 @@ impl RenderOnce for ResizablePanel {
         let size_range = self.size_range.clone();
         let is_fixed = self.initial_size.is_some();
         // A fixed panel's basis: the persisted drag size when there is
-        // one, else the initial size — clamped to the *current* range
+        // one, else the initial size: clamped to the *current* range
         // so a squeezed range (collapsed sidebar) pins it without
         // destroying the remembered width.
         let basis = panel_size

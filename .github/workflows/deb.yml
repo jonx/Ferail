@@ -1,14 +1,14 @@
 # Build the distributable .debs (docs/features/linux-port.md § packaging).
 #
-# Two legs — amd64 (Intel/AMD) and arm64 (Pi-class boxes, ARM servers, VMs on
-# Apple Silicon) — each running in an ubuntu:22.04 container, NOT on the
+# Two legs - amd64 (Intel/AMD) and arm64 (Pi-class boxes, ARM servers, VMs on
+# Apple Silicon) - each running in an ubuntu:22.04 container, NOT on the
 # runner's own OS: the binary inherits the glibc of whatever builds it, so the
 # container pins the floor at 22.04 (glibc 2.35 → the package runs on 22.04
 # LTS and later) and keeps it pinned when GitHub retires runner images. Bump
-# the container tag — never the runner label — to raise the floor deliberately.
+# the container tag - never the runner label - to raise the floor deliberately.
 #
 # On a `v*` tag the packages are also attached to that tag's GitHub release
-# (created if the tag has none yet — publishing the release from the GitHub UI
+# (created if the tag has none yet - publishing the release from the GitHub UI
 # first also works; the upload then just adds assets). Manual dispatch builds
 # and smoke-tests only, leaving the artifacts on the run page.
 #
@@ -62,7 +62,7 @@ jobs:
       # Needed only by the tag-triggered release upload; harmless otherwise.
       contents: write
     steps:
-      # The container starts bare — no git, no curl, no compiler. This list is
+      # The container starts bare - no git, no curl, no compiler. This list is
       # linux-port.md § 8 minus the Vulkan pieces (gpui dlopens Vulkan at
       # runtime; nothing links it at build time) plus dpkg-dev, which provides
       # the dpkg-shlibdeps that resolves cargo-deb's `$auto` Depends.
@@ -92,7 +92,7 @@ jobs:
 
       # Install into this same 22.04 container and exercise the CLI surface.
       # `apt-get install ./x.deb` also proves the Depends line is satisfiable
-      # from stock repos — a hand-maintained dep (the dlopen'd Vulkan/Wayland
+      # from stock repos - a hand-maintained dep (the dlopen'd Vulkan/Wayland
       # libs) with a typo'd package name would fail right here.
       - name: Install and smoke-test
         run: |

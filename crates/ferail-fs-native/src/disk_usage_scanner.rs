@@ -4,7 +4,7 @@
 //! hard failure of the top-level `read_dir`; per-subdir permission errors
 //! are absorbed so the scan reports a partial-but-complete tree.
 //!
-//! Mirrors the shape of [`NativeFs::enumerate_streaming`] — same cancel
+//! Mirrors the shape of [`NativeFs::enumerate_streaming`], same cancel
 //! flag, same batching cadence, same callback model. The host
 //! application owns the thread spawn + event-loop dispatch.
 
@@ -50,18 +50,18 @@ impl NativeFs {
     /// (`*.app`, `*.bundle`, `*.framework`, etc.) are treated as opaque
     /// leaves (default, `false`) or descended into. The leaf path
     /// classifies them as [`FileCategory::Executable`] / `Other` and
-    /// reports their immediate-`metadata` size only — proper bundle
+    /// reports their immediate-`metadata` size only: proper bundle
     /// totals via a child-only sum land in iter-6.4.
     ///
     /// Symlinks: walked via `symlink_metadata`, never followed; counted
     /// as 0-byte leaves to keep the walk cycle-safe.
     ///
     /// Counting correctness (Unix):
-    /// - **Filesystem boundaries** are not crossed — a directory whose
+    /// - **Filesystem boundaries** are not crossed: a directory whose
     ///   `st_dev` differs from its parent's is a mount point and is
     ///   emitted as a 0-byte stub instead of walked (`du -x`
     ///   semantics). Without this, scanning `/` rolled every disk
-    ///   under `/Volumes` (and network mounts — hang-prone) into the
+    ///   under `/Volumes` (and network mounts: hang-prone) into the
     ///   boot-disk number. macOS **firmlinks** (`/Users`,
     ///   `/Applications`, … per `/usr/share/firmlinks`) are the one
     ///   sanctioned crossing: they're how the merged system/data view
@@ -69,7 +69,7 @@ impl NativeFs {
     ///   `/System/Volumes/Data/...` twins then land on the boundary
     ///   rule, so nothing is walked twice.
     /// - **Hardlinks** (`st_nlink > 1`) are counted once via a
-    ///   `(dev, ino)` set — `cp -al` backups and Homebrew Cellars
+    ///   `(dev, ino)` set: `cp -al` backups and Homebrew Cellars
     ///   otherwise report N× their real size.
     pub fn scan_disk_usage(
         &self,
@@ -142,7 +142,7 @@ impl NativeFs {
     ) -> Option<EnumerationError> {
         ferail_core::path_guard::assert_off_ui_thread("NativeFs::scan_disk_usage");
         // Canonicalize so firmlink twins and `..`-laden roots land on one
-        // identity — but fall back to the path as given where the platform
+        // identity, but fall back to the path as given where the platform
         // can't (AROS's std stubs `canonicalize` as Unsupported; killing
         // the scan here made Disk Usage report "0 files" for every root).
         // A genuinely unreadable root is still caught by the read_dir
@@ -186,7 +186,7 @@ impl NativeFs {
         // Firmlink targets are the one sanctioned device crossing (see
         // the method docs). Read once per scan; empty off macOS.
         let firmlinks = firmlink_targets();
-        // Directories already walked, keyed (dev, ino) — insurance
+        // Directories already walked, keyed (dev, ino): insurance
         // against any remaining aliased-directory path (firmlink twins
         // are normally stopped by the boundary rule first).
         let mut seen_dirs: HashSet<(u64, u64)> = HashSet::new();
@@ -353,7 +353,7 @@ impl NativeFs {
     }
 }
 
-/// Sum every regular file under `root` — logical bytes
+/// Sum every regular file under `root`: logical bytes
 /// (`metadata.len()`), the same semantic Finder's "Size" column uses.
 /// Serves two callers: bundle rolled-up sizes inside the disk-usage
 /// scan, and the file-list folder-size worker in `ferail-gpui`.
@@ -368,20 +368,20 @@ pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
 
 /// Recursive rollup of a directory subtree in a single walk: byte
 /// totals on both size axes **plus** item counts. `files` and `dirs`
-/// are recursive (the whole subtree) and exclude `root` itself — every
+/// are recursive (the whole subtree) and exclude `root` itself: every
 /// regular file and every entered sub-directory found underneath.
 /// Symlinks are excluded from every field (never followed); hardlinked
 /// files count once; directories on a different device than `root`
 /// (mount points) are neither entered nor counted, matching the size
 /// axes exactly so a folder's counts and bytes always describe the same
 /// set of entries. On cancel, returns whatever was tallied before the
-/// stop — callers must treat a cancelled result as invalid (don't
+/// stop: callers must treat a cancelled result as invalid (don't
 /// cache, don't display).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SubtreeTotals {
-    /// Sum of `metadata.len()` over every counted file — Finder "Size".
+    /// Sum of `metadata.len()` over every counted file: Finder "Size".
     pub apparent: u64,
-    /// Sum of allocated (block) sizes — the "on disk" axis.
+    /// Sum of allocated (block) sizes: the "on disk" axis.
     pub allocated: u64,
     /// Regular files underneath (recursive).
     pub files: u64,
@@ -451,7 +451,7 @@ fn recursive_totals_with_workers(
 
 /// `(st_dev, st_ino, st_nlink)` on Unix; `None` where the identity
 /// triple isn't exposed (Windows would need `BY_HANDLE_FILE_INFORMATION`
-/// — opening a handle per file, which the OneDrive-hydration rule
+///, opening a handle per file, which the OneDrive-hydration rule
 /// forbids on the scan path).
 #[cfg(unix)]
 fn file_identity(meta: &fs::Metadata) -> Option<(u64, u64, u64)> {
@@ -466,7 +466,7 @@ fn file_identity(_meta: &fs::Metadata) -> Option<(u64, u64, u64)> {
 /// The system→data crossings macOS sanctions for its merged volume
 /// view, read from `/usr/share/firmlinks` (tab-separated, left column
 /// is the system-volume path, e.g. `/Users`). Empty off macOS or if
-/// the file is unreadable — the scan then simply refuses all device
+/// the file is unreadable: the scan then simply refuses all device
 /// crossings.
 fn firmlink_targets() -> Vec<PathBuf> {
     #[cfg(target_os = "macos")]
@@ -487,7 +487,7 @@ fn firmlink_targets() -> Vec<PathBuf> {
     }
 }
 
-/// Coarse iCloud-detection by path prefix — macOS stores all
+/// Coarse iCloud-detection by path prefix: macOS stores all
 /// ubiquity-managed files under `~/Library/Mobile Documents/`. Cheap
 /// (a string starts_with), no NSURL call per file. Doesn't tell us
 /// whether a given file is a downloaded copy vs a placeholder; the
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn recursive_totals_hardlink_counts_once() {
         // A second name for a.txt must not inflate the file count or
-        // the byte total — same dedup that protects the size axis.
+        // the byte total, same dedup that protects the size axis.
         let tmp = fixture();
         let root = tmp.path();
         fs::hard_link(root.join("a.txt"), root.join("a-link.txt")).unwrap();
@@ -653,7 +653,7 @@ mod tests {
     fn hardlinked_files_count_once() {
         let tmp = fixture();
         let root = tmp.path();
-        // a.txt (10 B) gains a second name — the bytes must not
+        // a.txt (10 B) gains a second name: the bytes must not
         // count twice, in either the plain sum or the fact stream.
         fs::hard_link(root.join("a.txt"), root.join("a-link.txt")).unwrap();
         let cancel = AtomicBool::new(false);

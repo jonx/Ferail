@@ -1,17 +1,17 @@
 //! Favorite icon picker window.
 //!
-//! Lists the bundled Lucide glyphs — the flat `icons/<name>.svg` set, i.e.
-//! the upstream `gpui-component-assets` library plus our few top-level adds —
+//! Lists the bundled Lucide glyphs: the flat `icons/<name>.svg` set, i.e.
+//! the upstream `gpui-component-assets` library plus our few top-level adds,
 //! in a scrollable grid. Picking one sets the target favorite's `custom_icon`
 //! to `FavoriteIcon::Lucide(name)` and closes the window.
 //!
 //! Replaces the old curated emoji submenu: the emoji clashed with the
 //! line-icon language and the curated picks were a placeholder. The picker
 //! draws from the same bundle the rest of the app does, so every glyph is an
-//! on-style Lucide line icon — see [docs/features/ICONS.md].
+//! on-style Lucide line icon: see [docs/features/ICONS.md].
 //!
 //! The favorite is identified by id (resolved once when the menu opens),
-//! and the picker holds the shared `Entity<Favorites>` directly — so the
+//! and the picker holds the shared `Entity<Favorites>` directly, so the
 //! selection writes through the same path `Reset Icon` uses, no fragile
 //! context state.
 

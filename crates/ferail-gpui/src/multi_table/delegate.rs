@@ -22,7 +22,7 @@ pub trait TableDelegate: Sized + 'static {
     /// This only call on Table prepare or refresh.
     fn column(&self, col_ix: usize, cx: &App) -> Column;
 
-    /// The text shown for the column at `col_ix` — in the header cell,
+    /// The text shown for the column at `col_ix`: in the header cell,
     /// the drag ghost, the column picker and the autofit measurement.
     /// Defaults to [`Column::name`]; a delegate whose headers are
     /// localized overrides this so the label is looked up at render time
@@ -106,8 +106,8 @@ pub trait TableDelegate: Sized + 'static {
     ///
     /// gpui allows exactly one hover style per element (a second `.hover()`
     /// is a debug assertion), and the table owns the row's. A delegate that
-    /// wants a hover ring — e.g. a drop-target highlight while a native drag
-    /// is in flight — returns it here instead of calling `.hover()` on the
+    /// wants a hover ring, e.g. a drop-target highlight while a native drag
+    /// is in flight: returns it here instead of calling `.hover()` on the
     /// `render_tr` row.
     fn render_tr_hover(
         &mut self,
@@ -129,7 +129,7 @@ pub trait TableDelegate: Sized + 'static {
         menu
     }
 
-    /// Build the context menu for a right-click on the table's empty space —
+    /// Build the context menu for a right-click on the table's empty space:
     /// below the last row, or anywhere in an empty folder's body. The header
     /// and the rows have their own menus and never reach this. Default
     /// returns the menu unchanged; an empty menu is suppressed, so a
@@ -149,7 +149,7 @@ pub trait TableDelegate: Sized + 'static {
     }
 
     /// Whether this delegate wants a context menu on the column header
-    /// (right-click). Default `false` — the header is inert.
+    /// (right-click). Default `false`: the header is inert.
     fn header_has_menu(&self, cx: &App) -> bool {
         let _ = cx;
         false
@@ -289,7 +289,7 @@ pub trait TableDelegate: Sized + 'static {
 
     /// Extra width, beyond the measured `cell_text` plus cell padding,
     /// that double-click-to-fit (`TableState::autofit_col`) should add
-    /// for this column — for leading icons / trailing badges that aren't
+    /// for this column, for leading icons / trailing badges that aren't
     /// part of the text. Defaults to 0 (pure-text columns).
     fn autofit_extra(&self, _col_ix: usize, _cx: &App) -> Pixels {
         gpui::px(0.0)

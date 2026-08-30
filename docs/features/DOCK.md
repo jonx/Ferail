@@ -3,14 +3,14 @@
 ← [Feature index](README.md) · [Architecture](../ARCHITECTURE.md)
 
 Dock the **whole Ferail window** to the **left or right** screen edge as an
-auto-hiding, always-on-top **drawer** — a Quake/iTerm-hotkey-style panel. When
+auto-hiding, always-on-top **drawer**: a Quake/iTerm-hotkey-style panel. When
 docked it floats above every other app and slides off-screen, leaving only a
 thin grab **handle** on that edge. Slamming the cursor into the docked screen
 edge slides the window back in; moving the pointer away tucks it out again. The
 point is to reach the file manager from inside any other app without cluttering
 the desktop.
 
-Left/right only by design — the top edge fights the menu bar and the horizontal
+Left/right only by design: the top edge fights the menu bar and the horizontal
 drawer is the useful shape.
 
 macOS-only in practice: it bottoms out in AppKit `NSWindow` calls, and
@@ -18,7 +18,7 @@ macOS-only in practice: it bottoms out in AppKit `NSWindow` calls, and
 The toolbar control is `cfg!(target_os = "macos")`-gated and the actions are
 bound to no key and absent from the command catalogue, so the feature is simply
 *absent* elsewhere rather than a menu that does nothing. Porting it is not
-stub-filling — the frame math below is in macOS global screen space (origin
+stub-filling: the frame math below is in macOS global screen space (origin
 bottom-left, y-up) and has to be mapped onto the target's coordinate system;
 see TODO.md § Cross-Platform.
 
@@ -28,13 +28,13 @@ see TODO.md § Cross-Platform.
   offers **Dock Left**, **Dock Right**, and **Undock**, each with an icon. The
   button shows a pressed state while docked.
 - Actions: `DockLeft`, `DockRight`, `Undock` (`shell/actions.rs`). The toolbar
-  dropdown is their only surface today — they carry no key binding and no
+  dropdown is their only surface today: they carry no key binding and no
   command-catalogue entry, so they do not appear in the Cmd+K palette.
 
 ## Behaviour
 
 - **Snap, then tuck.** Docking snaps the window flush to the edge fully shown,
-  then (unless the cursor is already at that edge) it slides out to the handle —
+  then (unless the cursor is already at that edge) it slides out to the handle,
   so the transition reads as "snap to edge → tuck away".
 - **Reveal = edge-slam.** The whole docked screen edge is the trigger, not just
   the handle, so it is easy to hit; the handle is the visual hint. Once shown,
@@ -45,7 +45,7 @@ see TODO.md § Cross-Platform.
   activates it. It also joins all Spaces and floats over full-screen apps
   (`NSWindowCollectionBehaviorCanJoinAllSpaces | FullScreenAuxiliary`), so it's
   reachable from any Space.
-- **Drawer size.** Docking NEVER resizes the window — the drawer is the
+- **Drawer size.** Docking NEVER resizes the window: the drawer is the
   window at its own size, purely translated to the edge (`y` clamped onto the
   screen). gpui's drawable doesn't follow an out-of-band AppKit `setFrame:`
   resize, so the earlier full-screen-height drawer rendered its stretched
@@ -56,25 +56,25 @@ see TODO.md § Cross-Platform.
 
 Three layers, matching the repo's boundaries:
 
-- **`shell/dock.rs` — pure geometry.** No GPUI, no AppKit, no wall-clock:
+- **`shell/dock.rs`: pure geometry.** No GPUI, no AppKit, no wall-clock:
   `DockEdge`, `DockState`, and the frame math (`revealed_frame`,
   `hidden_frame`, `cursor_in_trigger_zone`, `current_frame`, `step`,
   `wants_reveal`). All in macOS **global screen space** (origin bottom-left,
   y-up) so values from `NSEvent`/`NSScreen`/`NSWindow` flow through unflipped.
   Fully unit-tested.
-- **`shell.rs` — GPUI glue.** `Shell::set_dock` captures the window/screen
+- **`shell.rs`: GPUI glue.** `Shell::set_dock` captures the window/screen
   frames once, sets the float + all-Spaces behaviours, and starts the reveal
   poll. The poll is a **self-re-arming one-shot** (`schedule_dock_poll` →
   `dock_poll_tick`, like the viewer's slideshow timer, epoch-guarded): each tick
   reads `NSEvent.mouseLocation`, flips the drawer's revealed target, steps the
-  slide, and moves the window **only when the slide actually advanced** — a
+  slide, and moves the window **only when the slide actually advanced**: a
   settled drawer touches AppKit zero times per tick. It polls ~16 ms mid-slide,
   ~33 ms once settled, and runs **only while docked**. The window's `NSView` is
   captured as a `usize` (raw pointers aren't `Send`) so the async loop can move
   the window without a `Window` handle.
-- **`ferail-shell-mac` — the AppKit primitives.** `current_mouse_location`,
+- **`ferail-shell-mac`: the AppKit primitives.** `current_mouse_location`,
   `screen_visible_frame_for_window`, `window_frame`, `set_window_frame`
-  (deliberately *not* animated — the host drives the slide so nothing spins the
+  (deliberately *not* animated: the host drives the slide so nothing spins the
   run loop, per the Prime Directive; size stays fixed so gpui never resizes its
   drawable), and `set_window_all_spaces`. Reuses the existing
   `set_window_floating`.

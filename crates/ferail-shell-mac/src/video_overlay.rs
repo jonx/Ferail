@@ -3,19 +3,19 @@
 //!
 //! gpui has no video element, but it does have an image element backed
 //! by `RenderImage`. So rather than float a native `AVPlayerView` NSView
-//! over the gpui window (the old design — which forced a clipped wrapper,
+//! over the gpui window (the old design, which forced a clipped wrapper,
 //! a Core Animation rotation transform, hidden native controls, and a
 //! transparent-layer hack against AVPlayerView's black), we drive a
 //! headless `AVPlayer` and pull decoded frames out of an
 //! `AVPlayerItemVideoOutput` as BGRA pixel buffers. The gpui host uploads
 //! each frame as a `RenderImage` and draws it through the very same
-//! stage/zoom/pan/rotate path as still images — so the video rect is a
+//! stage/zoom/pan/rotate path as still images, so the video rect is a
 //! real gpui element: it composites in-tree, the transport buttons and
 //! seek bar hit-test correctly, and rotation is the image path.
 //!
 //! The public functions keep the `video_overlay_*` names from the old
 //! overlay design (callers in ferail-gpui), but there is no overlay
-//! NSView anymore — `AVPlayer` is windowless and `copy_frame` is the
+//! NSView anymore: `AVPlayer` is windowless and `copy_frame` is the
 //! display surface.
 //!
 //! AVKit/AVFoundation classes are reached through runtime lookup
@@ -30,7 +30,7 @@
 //! surface. Off-thread calls are no-ops. The end-of-playback callback
 //! fires on the main thread via `NSNotificationCenter`; it MUST NOT call
 //! back into this module's API synchronously (the registry borrow is
-//! held) — the gpui host forwards it through a channel, which is the
+//! held): the gpui host forwards it through a channel, which is the
 //! supported shape.
 
 use std::cell::{Cell, RefCell};
@@ -68,7 +68,7 @@ extern "C" {
 
 /// Opaque `CVPixelBufferRef` (a `CVBufferRef`), only so the return of
 /// `copyPixelBufferForItemTime:` types as `^{__CVBuffer=}` for objc2's
-/// encoding check — a bare `*mut c_void` (`^v`) is rejected. Same dance
+/// encoding check: a bare `*mut c_void` (`^v`) is rejected. Same dance
 /// as `CGColor` in the old overlay (docs/GPUI-UPSTREAM.md #5b).
 #[repr(C)]
 struct CVBuffer {
@@ -82,7 +82,7 @@ unsafe impl objc2::RefEncode for CVBuffer {
         objc2::Encoding::Pointer(&objc2::Encoding::Struct("__CVBuffer", &[]));
 }
 
-/// `kCVPixelFormatType_32BGRA` — four bytes per pixel, B,G,R,A order,
+/// `kCVPixelFormatType_32BGRA`: four bytes per pixel, B,G,R,A order,
 /// which is exactly what gpui's `RenderImage` wants (no channel swap).
 const PIXEL_FORMAT_32BGRA: u32 = 0x42475241; // 'BGRA'
 /// `kCVPixelBufferLock_ReadOnly`.
@@ -103,7 +103,7 @@ struct CMTime {
 
 // SAFETY: field layout and encoding match the system CMTime exactly.
 // The Objective-C runtime reports CMTime returns with an anonymous
-// struct name (`{?=qiIq}`), so the name here must be "?" to match —
+// struct name (`{?=qiIq}`), so the name here must be "?" to match:
 // objc2's encoding check compares the name too.
 unsafe impl objc2::Encode for CMTime {
     const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
@@ -126,7 +126,7 @@ const CM_TIME_FLAGS_VALID: u32 = 1;
 type EndedCallback = Box<dyn Fn() + 'static>;
 
 struct OverlayEntry {
-    /// The windowless `AVPlayer` (typed as NSObject — runtime class).
+    /// The windowless `AVPlayer` (typed as NSObject: runtime class).
     player: Retained<NSObject>,
     /// The `AVPlayerItemVideoOutput` attached to the player's item; held
     /// so it stays alive for the lifetime of frame pulls. `copy_frame`
@@ -166,7 +166,7 @@ declare_class!(
         fn item_ended(&self, _note: &NSNotification) {
             let id = self.ivars().get();
             OVERLAYS.with(|m| {
-                // Borrow held across the call — see module docs: the
+                // Borrow held across the call: see module docs: the
                 // callback must defer (channel), not re-enter.
                 if let Some(entry) = m.borrow().get(&id) {
                     (entry.on_ended)();
@@ -266,7 +266,7 @@ pub fn show(path: &Path, on_ended: EndedCallback) -> u64 {
 /// Pull the latest decoded frame as tightly-packed BGRA bytes plus its
 /// `(width, height)` in pixels, or `None` when there is no new frame
 /// since the last pull (the caller keeps showing the previous frame /
-/// poster — which is what masks the decode latency on a video switch).
+/// poster, which is what masks the decode latency on a video switch).
 /// Main-thread only; stale ids give `None`.
 pub fn copy_frame(id: u64) -> Option<(u32, u32, Vec<u8>)> {
     MainThreadMarker::new()?;
@@ -364,7 +364,7 @@ pub fn set_muted(id: u64, muted: bool) {
     });
 }
 
-/// Seek the player back to the start and resume — used to loop the
+/// Seek the player back to the start and resume: used to loop the
 /// current video. Main-thread only; stale ids no-op.
 pub fn restart(id: u64) {
     if MainThreadMarker::new().is_none() {

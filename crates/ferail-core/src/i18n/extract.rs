@@ -108,7 +108,7 @@ pub fn scan_source(src: &str, label: &str, out: &mut Extracted) {
                 continue;
             }
         }
-        // Advance one *character*, not one byte — sources are UTF-8 and
+        // Advance one *character*, not one byte: sources are UTF-8 and
         // `&src[i..]` above must land on a char boundary.
         i += src[i..].chars().next().map_or(1, char::len_utf8);
     }
@@ -131,7 +131,7 @@ fn is_raw_string_start(s: &str) -> bool {
 fn macro_at(src: &str, i: usize) -> Option<(&'static str, usize)> {
     let b = src.as_bytes();
     // Must start an identifier: previous char is not ident-ish (and not a
-    // `'` — lifetimes — nor part of a path like `::tr!` which is fine).
+    // `'`: lifetimes, nor part of a path like `::tr!` which is fine).
     if i > 0 {
         let p = b[i - 1];
         if p.is_ascii_alphanumeric() || p == b'_' {
@@ -158,7 +158,7 @@ fn macro_at(src: &str, i: usize) -> Option<(&'static str, usize)> {
 
 /// Parse the literal arguments of one invocation starting right after its
 /// `(`. Returns how many bytes were consumed (to the last literal), or
-/// `None` if the arguments aren't literals (a dynamic `tr!` — not allowed,
+/// `None` if the arguments aren't literals (a dynamic `tr!`: not allowed,
 /// but don't choke).
 fn parse_invocation(name: &str, rest: &str, where_: &str, out: &mut Extracted) -> Option<usize> {
     let mut pos = skip_ws(rest, 0);

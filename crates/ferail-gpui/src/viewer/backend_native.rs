@@ -1,7 +1,7 @@
 //! The built-in video provider: the platform-native player behind the
 //! [`VideoBackend`] seam.
 //!
-//! This is a thin adapter — it forwards every call to the existing
+//! This is a thin adapter: it forwards every call to the existing
 //! `platform_shell::video_overlay_*` functions (AVFoundation on macOS, a
 //! stub on win32), keyed by the opaque `u64` handle they hand back. The
 //! whole point is that the viewer no longer names these functions
@@ -70,7 +70,7 @@ impl VideoBackend for NativeBackend {
         on_ended: Box<dyn Fn() + Send + 'static>,
         _enhance: VideoEnhance,
     ) -> Option<Box<dyn VideoStream>> {
-        // AVFoundation has no denoise/sharpen filter chain — `_enhance` is
+        // AVFoundation has no denoise/sharpen filter chain: `_enhance` is
         // ignored (those controls are hidden for the native player).
         // The native layer's callback is plain `Fn`; a `Send` one coerces.
         let id = crate::platform_shell::video_overlay_show(path, on_ended);

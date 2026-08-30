@@ -1,6 +1,6 @@
 //! Slideshow playback state for the viewer window.
 //!
-//! Pure state machine — the timer itself is a `cx.spawn` loop in
+//! Pure state machine: the timer itself is a `cx.spawn` loop in
 //! `window.rs`. Staleness uses the same epoch idiom as enumeration
 //! cancel flags: every play/pause/manual-nav/interval change bumps
 //! `epoch`, and a timer that wakes up with an older epoch simply

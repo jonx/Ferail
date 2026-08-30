@@ -1,10 +1,10 @@
-//! Update check — "is there a newer Ferail on GitHub Releases?"
+//! Update check: "is there a newer Ferail on GitHub Releases?"
 //! (docs/features/UPDATES.md)
 //!
 //! Three surfaces, one state machine:
 //!
 //!  - **Manual**: Ferail ▸ Check for Updates… (`app.check_updates`) opens
-//!    the Software Update dialog and starts a check. Always available —
+//!    the Software Update dialog and starts a check. Always available:
 //!    the setting below gates only the automatic path.
 //!  - **Automatic**: an opt-in daily background check
 //!    (Settings ▸ About ▸ Updates, **off by default**). When it finds a
@@ -14,19 +14,19 @@
 //!  - **Update**: from the dialog, Download fetches the platform's asset
 //!    (macOS `.dmg`, Windows win zip, Linux `.deb` for the running arch)
 //!    into ~/Downloads, then offers Open / Show in Folder. Installing
-//!    stays a user step — Ferail doesn't replace its own binary.
+//!    stays a user step: Ferail doesn't replace its own binary.
 //!
 //! Network: gpui's `cx.http_client()` (a real `ReqwestClient` installed at
 //! boot; gpui's own default is a `NullHttpClient` that errors). The check
-//! fetches `/repos/{repo}/releases` once — the same request zed's
+//! fetches `/repos/{repo}/releases` once: the same request zed's
 //! `http_client::github` helper makes, parsed into our own struct because
-//! that helper's drops the release `body` — and keeps every published,
+//! that helper's drops the release `body`: and keeps every published,
 //! non-prerelease releases newer than the running build. The newest one
 //! with an asset for the running OS/architecture drives the download;
 //! a still-newer release for another platform is reported separately.
 //! Notes stop at the version the user can actually install.
 //! This module's only requests are that one API call and the
-//! user-initiated asset download — there is no telemetry channel here; an
+//! user-initiated asset download, there is no telemetry channel here; an
 //! update check necessarily tells GitHub an app instance asked, which is
 //! why the automatic path ships opt-in.
 //!
@@ -62,7 +62,7 @@ use crate::text::TextScale as _;
 
 /// Repository whose Releases page is the source of truth.
 const REPO: &str = "jonx/Ferail";
-/// Seconds after startup before the automatic path's first check — keep
+/// Seconds after startup before the automatic path's first check: keep
 /// the boot path free of network traffic while windows are still opening.
 const AUTO_FIRST_DELAY: Duration = Duration::from_secs(20);
 /// Cadence between automatic checks while the app stays running.
@@ -137,7 +137,7 @@ pub struct ReleaseInfo {
     /// This platform's downloadable asset, when the release carries one.
     pub asset: Option<AssetInfo>,
     /// Notes newer than the running build through this compatible release,
-    /// newest first — `notes[0]` is this release's. More than one means the
+    /// newest first: `notes[0]` is this release's. More than one means the
     /// user skipped versions; the dialog shows the whole installable span.
     pub notes: Vec<ReleaseNotes>,
     /// A globally newer release that has no asset for this target.
@@ -178,7 +178,7 @@ impl ReleasePlatform {
 pub struct ReleaseNotes {
     /// Normalized "0.5.0".
     pub version: String,
-    /// The release title on GitHub ("Ferail 0.5.0 — …"), or
+    /// The release title on GitHub ("Ferail 0.5.0, …"), or
     /// "Ferail <version>" when none was set.
     pub title: String,
     /// Markdown body; empty when the release has no notes.
@@ -248,7 +248,7 @@ pub fn auto_check_enabled() -> bool {
 
 /// Parse "1.2.3" / "v1.2.3" into a comparable triple. Anything that
 /// isn't three dot-separated integers (pre-release suffixes, garbage)
-/// returns None and is treated as not-newer — a malformed remote tag
+/// returns None and is treated as not-newer: a malformed remote tag
 /// must never produce an update prompt.
 fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
     let s = s.trim().trim_start_matches('v');
@@ -281,8 +281,8 @@ fn is_symbols_asset(name: &str) -> bool {
 
 /// Index of the asset a user on this platform should download, from the
 /// release's asset names. Mirrors what CI publishes per release:
-/// `Ferail-<v>.dmg`, `Ferail-<v>-win-x64.zip` (plus a PDB bundle —
-/// `…-x64-symbols.zip`, `…-win-x64-symbols.zip` through 0.6.6 — that must
+/// `Ferail-<v>.dmg`, `Ferail-<v>-win-x64.zip` (plus a PDB bundle
+/// (`…-x64-symbols.zip`, `…-win-x64-symbols.zip` through 0.6.6) that must
 /// never be offered), `ferail_<v>-1_<arch>.deb`.
 #[cfg(test)]
 fn pick_asset_index_for(names: &[&str], os: &str, arch: &str) -> Option<usize> {
@@ -376,13 +376,13 @@ fn tag_url(tag: &str) -> String {
 /// How many newer releases the dialog renders in full; anything older is
 /// summarized as a count with a pointer to GitHub.
 const NOTES_MAX: usize = 8;
-/// Releases to ask GitHub for — far beyond what anyone skips (the API
+/// Releases to ask GitHub for: far beyond what anyone skips (the API
 /// default is 30 anyway; this just makes the contract explicit).
 const RELEASES_PER_PAGE: u32 = 30;
 
 /// The slice of GitHub's release JSON this module reads. Our own struct
 /// rather than zed's `GithubRelease` because that one drops `body` and
-/// `name` — the release notes — which are the point of "What's new".
+/// `name`: the release notes, which are the point of "What's new".
 /// `#[serde(default)]` throughout: a field GitHub omits or nulls must
 /// degrade to "no notes", never fail the whole check.
 #[derive(Deserialize, Debug, Clone)]
@@ -488,7 +488,7 @@ enum Outcome {
 
 /// Fold the release list into the check's outcome against `current`
 /// ("0.3.0"). Only published, non-prerelease releases that carry
-/// downloads count — a tag with nothing attached isn't an update — and a
+/// downloads count, a tag with nothing attached isn't an update, and a
 /// malformed tag is skipped rather than trusted. Notes cover newer releases
 /// only through the latest version this target can install, newest first.
 fn summarize_for(
@@ -622,8 +622,8 @@ fn notes_markdown(notes: &[ReleaseNotes]) -> String {
                 out.push_str(&format!(
                     "_{}_\n",
                     trn!(
-                        "\u{2026}and {n} earlier release — see GitHub.",
-                        "\u{2026}and {n} earlier releases — see GitHub.",
+                        "\u{2026}and {n} earlier release: see GitHub.",
+                        "\u{2026}and {n} earlier releases: see GitHub.",
                         count
                     )
                 ));
@@ -639,7 +639,7 @@ fn notes_markdown(notes: &[ReleaseNotes]) -> String {
 
 /// Menu entry point: open the dialog and refresh the state behind it.
 /// A check already in flight, or a download in progress / completed, is
-/// left alone — reopening the dialog must not clobber a 90%-done
+/// left alone, reopening the dialog must not clobber a 90%-done
 /// download with a fresh "Checking…".
 pub fn manual_check(cx: &mut App) {
     open_update_dialog(cx);
@@ -679,7 +679,7 @@ pub fn start_auto_loop(cx: &mut App) {
     .detach();
 }
 
-/// Settings entry point: the user just opted in to automatic checks —
+/// Settings entry point: the user just opted in to automatic checks:
 /// answer now instead of at tomorrow's daily wake. Auto-style surfacing
 /// (a notification only if something newer exists).
 pub fn start_check_background(cx: &mut App) {
@@ -691,7 +691,7 @@ pub fn start_check_background(cx: &mut App) {
 
 /// Fire one release-list request and fold the answer into the global.
 /// `manual` only affects surfacing: manual results land in the (open)
-/// dialog, automatic ones notify — and only for a new version.
+/// dialog, automatic ones notify, and only for a new version.
 fn start_check(manual: bool, cx: &mut App) {
     mutate(cx, |st| {
         st.status = CheckStatus::Checking;
@@ -795,7 +795,7 @@ enum DlMsg {
 
 fn start_download(info: &ReleaseInfo, cx: &mut App) {
     let Some(asset) = info.asset.clone() else {
-        // No platform asset on this release — the release page is the
+        // No platform asset on this release: the release page is the
         // download surface then.
         let url = tag_url(&info.tag);
         cx.background_spawn(async move { crate::platform_shell::open_url(&url) })
@@ -1060,7 +1060,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
         .child(dialog_body(&st, cx));
 
     // Footer buttons per state. A `Dialog` only draws buttons it's
-    // given a footer for — `button_props` alone renders nothing (same
+    // given a footer for: `button_props` alone renders nothing (same
     // lesson as shell.rs's Go to Folder dialog).
     match (&st.status, &st.download) {
         // Download finished: Show in Folder / Open (primary).
@@ -1211,7 +1211,7 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
         } => v_flex()
             .gap_1()
             .child(div().text_scale_sm().text_color(fg).child(tr!(
-                "You're up to date for {platform} — {latest} is the latest release.",
+                "You're up to date for {platform}, {latest} is the latest release.",
                 platform = current_platform_name(),
                 latest = latest
             )))
@@ -1301,7 +1301,7 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
         .children(download_line)
 }
 
-/// "What's new" — release notes newer than this build through the compatible
+/// "What's new": release notes newer than this build through the compatible
 /// version on offer, rendered as markdown in a bounded scroll box, so the user
 /// decides with the changes in front of them before anything is downloaded.
 fn whats_new(info: &ReleaseInfo, cx: &App) -> impl IntoElement {
@@ -1363,7 +1363,7 @@ fn release_notes_row(tag: String) -> impl IntoElement {
         .child(tr!("Open the release page on GitHub"))
         .on_click(move |_: &ClickEvent, _window, cx| {
             let url = tag_url(&tag);
-            // LaunchServices/xdg-open can stall — worker, not UI thread.
+            // LaunchServices/xdg-open can stall: worker, not UI thread.
             cx.background_spawn(async move {
                 crate::platform_shell::open_url(&url);
             })
@@ -1410,11 +1410,11 @@ fn other_platform_release_row(release: &OtherPlatformRelease, cx: &App) -> impl 
 // Screenshot harness
 // ============================================================================
 
-/// Seed the global with a named state and open the dialog — the
+/// Seed the global with a named state and open the dialog: the
 /// `--update-dialog <state>` screenshot flag's backend. Pure UI: no
 /// network, no filesystem. States mirror the machine above.
 pub fn seed_dialog_for_screenshot(state: &str, cx: &mut App) {
-    // "live" runs the real check against GitHub — the one state that
+    // "live" runs the real check against GitHub: the one state that
     // needs the network; used to verify the whole pipe end to end.
     if state == "live" {
         manual_check(cx);
@@ -1432,8 +1432,8 @@ pub fn seed_dialog_for_screenshot(state: &str, cx: &mut App) {
         notes: vec![
             ReleaseNotes {
                 version: "9.9.9".to_string(),
-                title: "Ferail 9.9.9 \u{2014} sample release".to_string(),
-                body: "- **Sample notes** for the screenshot harness — this text \
+                title: "Ferail 9.9.9 - sample release".to_string(),
+                body: "- **Sample notes** for the screenshot harness: this text \
                        is what the GitHub release page says.\n\
                        - A second bullet with `inline code` and a \
                        [link](https://github.com/jonx/Ferail/releases).\n\
@@ -1598,7 +1598,7 @@ mod tests {
             gh("v0.6.0-rc1", &["Ferail-0.6.0.dmg"], Some("rc"), true),
             // Newer than current, no notes written.
             gh("v0.4.0", &["Ferail-0.4.0.dmg"], None, false),
-            // Current — not "new".
+            // Current, not "new".
             gh("v0.3.0", &["Ferail-0.3.0.dmg"], Some("three"), false),
             // Malformed tag: ignored, not trusted.
             gh("nightly", &["Ferail-nightly.dmg"], Some("x"), false),
@@ -1688,7 +1688,7 @@ mod tests {
 
     #[test]
     fn asset_pick_matches_ci_names() {
-        // GitHub sorts `-symbols.zip` before `.zip` — the picker must skip
+        // GitHub sorts `-symbols.zip` before `.zip`: the picker must skip
         // the PDB bundle and land on the app zip anyway.
         let names = [
             "Ferail-0.5.0-win-x64-symbols.zip",
@@ -1822,7 +1822,7 @@ mod tests {
         );
     }
 
-    /// Real network + real release asset — run explicitly with
+    /// Real network + real release asset: run explicitly with
     /// `cargo test -p ferail-gpui update_check -- --ignored`.
     /// Exercises the whole download path: redirect-following GET,
     /// content-length accounting, `.part` write, rename.

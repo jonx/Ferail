@@ -1,4 +1,4 @@
-//! Localization — an English-as-key runtime string catalog.
+//! Localization: an English-as-key runtime string catalog.
 //!
 //! Design (see `docs/features/LOCALIZATION.md`):
 //!
@@ -6,8 +6,8 @@
 //!   `tr!("Empty folder")`, never an abstract id. Rewording the English
 //!   automatically invalidates stale translations (the old key simply stops
 //!   being looked up), there is no second place to keep in sync, and a
-//!   translator — human or LLM — sees real sentences.
-//! - **A language is one JSON file** ([`pack::LanguagePack`]) — the same
+//!   translator, human or LLM, sees real sentences.
+//! - **A language is one JSON file** ([`pack::LanguagePack`]): the same
 //!   format whether it ships inside the binary (`locales/fr.json`, embedded
 //!   via `include_str!`) or sits in the user's config dir. That file is also
 //!   the import/export/translation artifact.
@@ -17,7 +17,7 @@
 //!   "untranslated" lists are exact.
 //! - **Lookups are render-safe.** The active [`Catalog`] lives in an
 //!   `ArcSwap`; `tr!` is one lock-free load plus one `HashMap` probe, and
-//!   when English is active it returns the `&'static str` untouched — no
+//!   when English is active it returns the `&'static str` untouched, no
 //!   allocation, no lock, no I/O (Prime Directive). Loading and parsing a
 //!   pack is the caller's job and belongs on a background executor.
 //!
@@ -52,7 +52,7 @@ pub use pack::{LanguagePack, PackValue, ValidationReport};
 
 /// Separator between a context and its msgid inside pack keys:
 /// `trc!("menu", "Open")` is stored as `"menu::Open"`. Lookups never split
-/// keys — a plain `tr!("a::b")` is matched literally — so the separator only
+/// keys, a plain `tr!("a::b")` is matched literally, so the separator only
 /// has to be readable, not unambiguous.
 pub const CONTEXT_SEPARATOR: &str = "::";
 
@@ -286,7 +286,7 @@ pub fn active_code() -> String {
 }
 
 /// The OS's preferred UI language as a BCP-47 tag (`"fr-FR"`), if it can be
-/// determined. Environment/registry read — cheap, but call it once at
+/// determined. Environment/registry read: cheap, but call it once at
 /// startup, not per frame.
 pub fn system_locale() -> Option<String> {
     sys_locale::get_locale()
@@ -311,8 +311,8 @@ pub fn tr_raw(msgid: &'static str) -> Text {
 
 /// Translate a msgid that is only known at runtime (a kind word such as
 /// `"Folder"` cached inside a `FileEntry`, a label persisted as data).
-/// `None` when the active language has no entry — including always under
-/// English — so the caller displays its own string without copying. The
+/// `None` when the active language has no entry, including always under
+/// English, so the caller displays its own string without copying. The
 /// literal must still appear in a `msgid!` somewhere for extraction.
 pub fn tr_dynamic(msgid: &str) -> Option<Arc<str>> {
     let cat = active_cell().load();
@@ -440,7 +440,7 @@ macro_rules! trc {
 /// is filled from the count; extra `name = value` placeholders are allowed.
 ///
 /// The plural category is chosen from the raw count, but `{n}` is
-/// *displayed* through [`crate::counts::format_count`] — a plural `{n}`
+/// *displayed* through [`crate::counts::format_count`]: a plural `{n}`
 /// is always a count of something, and Ferail counts run to the millions,
 /// so it reads "1.104.619 files" without every call site asking. Counts
 /// that ride in a named placeholder are not covered: format those with
@@ -465,7 +465,7 @@ macro_rules! trn {
     }};
 }
 
-/// Mark a literal as a translatable msgid without translating it here —
+/// Mark a literal as a translatable msgid without translating it here,
 /// for `const` tables whose display site calls [`tr_raw`] later.
 #[macro_export]
 macro_rules! msgid {
@@ -517,7 +517,7 @@ mod tests {
     }
 
     /// A plural count is displayed grouped, but the plural *category*
-    /// is still chosen from the raw number — "1.000 files", not
+    /// is still chosen from the raw number, "1.000 files", not
     /// "1.000 file" and not "1000 files".
     #[test]
     fn plural_counts_are_displayed_grouped() {
@@ -527,7 +527,7 @@ mod tests {
         );
         assert_eq!(trn!("{n} file", "{n} files", 1u64).to_string(), "1 file");
         // Named placeholders are the call site's job to format; `{n}`
-        // is not. (Real msgid — the extractor reads this file too.)
+        // is not. (Real msgid: the extractor reads this file too.)
         assert_eq!(
             trn!(
                 "Scanning: {n} file in {dirs} folders",

@@ -107,7 +107,7 @@ pub fn open_with(target: &Path, app_path: &Path) -> Result<(), String> {
 /// Open all `targets` with one `/usr/bin/open -a` invocation. `open`
 /// accepts multiple files, so a multi-selection pays the app's
 /// check-in wait once instead of once per file. Blocks until `open`
-/// exits — worker-thread only.
+/// exits: worker-thread only.
 pub fn open_with_many(targets: &[std::path::PathBuf], app_path: &Path) -> Result<(), String> {
     if targets.is_empty() {
         return Ok(());

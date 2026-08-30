@@ -1,12 +1,12 @@
 //! macOS/Windows/Linux libmpv binding. Hand-written FFI (the surface is ~14
-//! stable functions; the Phase 0 spike confirmed raw FFI is enough — no
+//! stable functions; the Phase 0 spike confirmed raw FFI is enough, no
 //! `libmpv`/`mpv` crate dep, no extra deps at all).
 //!
 //! libmpv is **pull**-based: we create a software render context once and call
 //! `mpv_render_context_render` to fill a BGRA buffer whenever
 //! `mpv_render_context_update` reports a new frame. Colour grade, enhancement
 //! filters, and the chroma key are all one live `vf` filtergraph
-//! (`rebuild_vf`) — no per-change stream re-open.
+//! (`rebuild_vf`), no per-change stream re-open.
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -403,7 +403,7 @@ impl VideoBackend for MpvBackend {
         }
 
         // Route mpv's own log stream to stderr so a crash (e.g. an assert deep
-        // in libmpv's render path) leaves a breadcrumb — the lines just before
+        // in libmpv's render path) leaves a breadcrumb: the lines just before
         // the abort name the file, decoder, hwdec, and frame geometry. Quiet by
         // default (`error`); set `FERAIL_MPV_LOG=v` (or `debug`) to see the
         // decode/VO setup. Requested before `loadfile` so setup logs are caught.
@@ -452,7 +452,7 @@ impl VideoBackend for MpvBackend {
             buf: Vec::new(),
             dims: (0, 0),
         };
-        // Apply the baked enhancement immediately (live — no re-open).
+        // Apply the baked enhancement immediately (live, no re-open).
         stream.rebuild_vf();
         Some(Box::new(stream))
     }
@@ -464,7 +464,7 @@ struct MpvStream {
     rctx: *mut c_void,
     on_ended: Box<dyn Fn() + Send + 'static>,
     ended_fired: bool,
-    /// Last polled `eof-reached` value, for rising-edge detection — the
+    /// Last polled `eof-reached` value, for rising-edge detection: the
     /// property stays true until a seek moves the playhead off the end,
     /// and firing `on_ended` on the level would re-trigger every tick.
     eof_prev: bool,
@@ -506,7 +506,7 @@ impl MpvStream {
             }
         }
         // With `keep-open=yes` a natural end never unloads the file, so
-        // MPV_EVENT_END_FILE (above) never fires for it — the core pauses on
+        // MPV_EVENT_END_FILE (above) never fires for it: the core pauses on
         // the last frame and raises the `eof-reached` property instead. Poll
         // it here and fire the same callback on the false→true edge; that is
         // what makes the viewer's loop checkbox and slideshow-advance work
@@ -637,7 +637,7 @@ impl MpvStream {
 impl VideoStream for MpvStream {
     fn copy_frame(&mut self) -> Option<(u32, u32, Vec<u8>)> {
         self.pump_events();
-        // Only render when mpv reports a fresh frame — so a poll between the
+        // Only render when mpv reports a fresh frame, so a poll between the
         // video's own frames is a cheap no-op.
         if (self.lib.rc_update)(self.rctx) & RENDER_UPDATE_FRAME == 0 {
             return None;

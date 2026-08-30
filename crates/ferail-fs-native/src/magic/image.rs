@@ -1,4 +1,4 @@
-//! Image format parsers — extract width, height, and (where cheap)
+//! Image format parsers: extract width, height, and (where cheap)
 //! alpha-channel presence.
 //!
 //! All dispatched formats keep their dimension fields in the first
@@ -89,7 +89,7 @@ fn sniff_jpeg(buf: &[u8]) -> MagicInfo {
             info.width = Some(u16::from_be_bytes([buf[pos + 7], buf[pos + 8]]) as u32);
             return info;
         }
-        // SOI / EOI / RST markers — no length field.
+        // SOI / EOI / RST markers, no length field.
         if marker == 0xd8 || marker == 0xd9 || (0xd0..=0xd7).contains(&marker) {
             pos += 2;
         } else if pos + 3 < buf.len() {
@@ -110,7 +110,7 @@ fn sniff_gif(buf: &[u8]) -> MagicInfo {
 }
 
 /// BMP: BITMAPFILEHEADER(14) + BITMAPINFOHEADER. biWidth at +18,
-/// biHeight at +22 (signed — negative means top-down DIB).
+/// biHeight at +22 (signed: negative means top-down DIB).
 fn sniff_bmp(buf: &[u8]) -> MagicInfo {
     let mut info = MagicInfo::new(MagicType::Bmp);
     let width = i32::from_le_bytes([buf[18], buf[19], buf[20], buf[21]]);
@@ -124,7 +124,7 @@ fn sniff_bmp(buf: &[u8]) -> MagicInfo {
     info
 }
 
-/// WebP comes in three flavors — VP8, VP8L, VP8X — each with its
+/// WebP comes in three flavors, VP8, VP8L, VP8X, each with its
 /// own dimension encoding.
 fn sniff_webp(buf: &[u8]) -> MagicInfo {
     let mut info = MagicInfo::new(MagicType::Webp);

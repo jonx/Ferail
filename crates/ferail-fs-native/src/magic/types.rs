@@ -26,7 +26,7 @@ pub enum MagicType {
     DocExcelMacro,
     DocPowerPoint,
     DocPowerPointMacro,
-    // Office — legacy OLE2/CFBF binary formats (.doc / .xls / .ppt).
+    // Office: legacy OLE2/CFBF binary formats (.doc / .xls / .ppt).
     // Distinct from the ZIP-based types above so the archive engine
     // never offers them for ZIP browsing.
     DocWordOle,
@@ -42,19 +42,19 @@ pub enum MagicType {
     Rar,
     SevenZip,
     Tar,
-    /// LHarc / LZH — the Amiga (and retro DOS) archive format.
+    /// LHarc / LZH: the Amiga (and retro DOS) archive format.
     Lha,
-    /// LZX — LHA's Amiga successor. Recognised for the Description column;
+    /// LZX: LHA's Amiga successor. Recognised for the Description column;
     /// Ferail has no LZX codec, so it is not browsable.
     Lzx,
 
     // AmigaOS-family formats (see `magic::amiga`). These are cross-platform
     // sniffers: an Aminet download on a Mac is still a hunk binary.
-    /// AmigaOS `HUNK_HEADER` binary — a loadable 68k program.
+    /// AmigaOS `HUNK_HEADER` binary: a loadable 68k program.
     ExeAmiga,
-    /// AmigaOS `HUNK_UNIT` — a linker object file.
+    /// AmigaOS `HUNK_UNIT`: a linker object file.
     ObjAmiga,
-    /// AmigaOS `HUNK_LIB` — a link library.
+    /// AmigaOS `HUNK_LIB`: a link library.
     LibAmiga,
     /// Workbench `.info` icon (`DiskObject`, magic `0xE310`).
     AmigaIcon,
@@ -104,7 +104,7 @@ pub enum MagicType {
     Ogg,
     Aiff,
     M4a,
-    /// Advanced Systems Format — the container for WMA (audio) and WMV
+    /// Advanced Systems Format: the container for WMA (audio) and WMV
     /// (video). `has_audio`/`has_video` distinguish them.
     Asf,
     // Data / Text containers
@@ -117,20 +117,20 @@ pub enum MagicType {
     ChecksumSfv,
     ChecksumList,
     Sqlite,
-    // Executables — Windows
+    // Executables: Windows
     ExeWindows,
     DllWindows,
     ExeWindowsNet,
-    // Executables — Linux
+    // Executables: Linux
     ExeLinux,
     SoLinux,
-    // Executables — macOS
+    // Executables: macOS
     ExeMac,
     DylibMac,
     /// A Mach-O `MH_OBJECT` linker object. It shares the Mach-O container
     /// with executables, but is not directly runnable.
     ObjMac,
-    // Universal binary (Mach-O fat / Java class — disambiguated only
+    // Universal binary (Mach-O fat / Java class: disambiguated only
     // by where they're typically found).
     MachOFat,
     // Scripts (shebang-detected)
@@ -169,7 +169,7 @@ impl MagicType {
             // Documents
             MagicType::Pdf => "PDF document",
 
-            // Office — extension is more familiar to users than
+            // Office: extension is more familiar to users than
             // "Document (Word)" style. Keep concise.
             MagicType::DocWord | MagicType::DocWordMacro | MagicType::DocWordOle => "Word document",
             MagicType::DocExcel | MagicType::DocExcelMacro | MagicType::DocExcelOle => {
@@ -180,7 +180,7 @@ impl MagicType {
             | MagicType::DocPowerPointOle => "PowerPoint presentation",
             MagicType::OleCompound => "Compound document",
 
-            // Archives — match the historical flat-table labels exactly
+            // Archives: match the historical flat-table labels exactly
             // so existing format_label tests keep passing.
             MagicType::Zip => "ZIP archive",
             MagicType::ZipEncrypted => "ZIP archive",
@@ -247,7 +247,7 @@ impl MagicType {
             MagicType::ChecksumList => "Checksum list",
             MagicType::Sqlite => "SQLite database",
 
-            // Executables — keep "executable" in the string so
+            // Executables: keep "executable" in the string so
             // icons::classify_file's substring matcher still resolves
             // to FileTypeTint::Executable.
             MagicType::ExeWindows => "PE / DOS executable",
@@ -260,7 +260,7 @@ impl MagicType {
             MagicType::ObjMac => "Mach-O object",
             MagicType::MachOFat => "Mach-O fat / Java class",
 
-            // Scripts — keep "script" in the string for the
+            // Scripts: keep "script" in the string for the
             // classifier substring matcher.
             MagicType::ScriptBash => "Shell script",
             MagicType::ScriptPython => "Python script",
@@ -304,7 +304,7 @@ pub enum CpuArch {
     Riscv,
     PowerPc,
     Mips,
-    /// Motorola 68000 family — `EM_68K` in ELF, and the implied architecture
+    /// Motorola 68000 family: `EM_68K` in ELF, and the implied architecture
     /// of every AmigaOS hunk binary.
     M68k,
 }
@@ -327,11 +327,11 @@ impl CpuArch {
 
 /// Operating-system ABI recorded in an ELF header's `e_ident[EI_OSABI]`
 /// byte. Most GNU/Linux toolchains leave this `0` (System V / "none"),
-/// so a *named* OS here is a deliberate marker worth surfacing — AROS,
+/// so a *named* OS here is a deliberate marker worth surfacing: AROS,
 /// for instance, stamps `ELFOSABI_AROS` (15) on every binary it builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ElfOs {
-    /// System V / "none" (0) or any ABI we don't name — rendered as no tag.
+    /// System V / "none" (0) or any ABI we don't name: rendered as no tag.
     #[default]
     Unknown,
     Linux,
@@ -380,7 +380,7 @@ impl PeSubsystem {
 }
 
 /// Structured facts extracted from the first 4 KB of the file. All
-/// fields are optional — populate only what was cheap to read.
+/// fields are optional: populate only what was cheap to read.
 ///
 /// The `description()` method turns this into the ` · `-joined string
 /// rendered in the Description column.
@@ -438,7 +438,7 @@ pub struct MagicInfo {
     pub checksum_algorithm: Option<&'static str>,
 
     // AmigaOS-family facts (see `magic::amiga`)
-    /// Number of hunks in an AmigaOS `HUNK_HEADER` binary — the one cheap
+    /// Number of hunks in an AmigaOS `HUNK_HEADER` binary: the one cheap
     /// structural fact the format offers.
     pub hunk_count: Option<u32>,
     /// `do_Type` of a Workbench `.info` icon: 1 disk, 2 drawer, 3 tool,
@@ -787,7 +787,7 @@ impl MagicInfo {
 
             // Windows Media (ASF): WMA when the header carries an audio
             // stream, WMV when it carries a video stream. lofty can't parse
-            // ASF, so there are no channel/rate facts to add here — the label
+            // ASF, so there are no channel/rate facts to add here: the label
             // alone is enough to keep the file out of the "Binary" bucket (and
             // its false disguise alert).
             MagicType::Asf => {

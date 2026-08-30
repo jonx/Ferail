@@ -2,7 +2,7 @@
 
 Things in [`gpui`](https://github.com/zed-industries/zed) (Zed) and
 [`gpui-component`](https://github.com/longbridge/gpui-component) that cost us
-extra work — limitations we had to work around, APIs we wish existed, and
+extra work: limitations we had to work around, APIs we wish existed, and
 behavior we had to fork or duplicate. The goal is to (a) remember *why* a
 workaround exists so we don't "simplify" it back into breakage, and (b) have a
 ready list of upstream issues/PRs to file when we get the time.
@@ -12,7 +12,7 @@ to remove the need.
 
 ---
 
-## 1. gpui-component pins `gpui` to an explicit rev — consumers must mirror it
+## 1. gpui-component pins `gpui` to an explicit rev - consumers must mirror it
 
 **Hit during:** bump from `ba44512` → `c112e7b` (2026-06-16).
 
@@ -24,7 +24,7 @@ As of upstream `c112e7b`, gpui-component's `Cargo.toml` pins gpui to an explicit
 rev (`1d217ee…`). Our still-unpinned gpui then floated to the *latest* zed
 `main` (`84b753cb…`), which is a **different source** than the rev gpui-component
 demands. Result: `cargo update` produced **three** gpui revs in the graph
-(`1d217ee` from the component, `84b753cb` from our float, `d2953a2b` stale) —
+(`1d217ee` from the component, `84b753cb` from our float, `d2953a2b` stale):
 duplicate `gpui` types that don't interoperate.
 
 **Workaround:** pin our `gpui` and `gpui_platform` to the *exact same* rev
@@ -38,7 +38,7 @@ its gpui pin again, so the rule is now conditional and both styles are
 documented in the root `Cargo.toml` comment: when gpui-component is unpinned,
 we leave ours unpinned too (both float onto one source; the committed
 `Cargo.lock` is the real pin, moved deliberately with `cargo update -p gpui`);
-when it pins, we mirror the rev. Same invariant either way — one gpui source
+when it pins, we mirror the rev. Same invariant either way, one gpui source
 in the graph.
 
 **Update (2026-08-28, bump `6d7847e` → `e8f54eb`):** the component remains
@@ -51,7 +51,7 @@ source even when the commit hash is identical.
 **What upstream could do:**
 - gpui-component could re-export the `gpui` it builds against (e.g.
   `pub use gpui;`) so consumers depend on *its* gpui transitively instead of
-  declaring their own — removing the rev-matching dance entirely.
+  declaring their own, removing the rev-matching dance entirely.
 - Or document the required gpui rev in a machine-readable spot (a
   `package.metadata` key) so a consumer can assert it rather than reading the
   Cargo.toml by hand.
@@ -60,7 +60,7 @@ source even when the commit hash is identical.
 
 ---
 
-## 2. Table events don't carry click `Modifiers` — forced a full table fork
+## 2. Table events don't carry click `Modifiers` - forced a full table fork
 
 **Filed upstream 2026-08-21:** [gpui-component#2795](https://github.com/longbridge/gpui-component/issues/2795).
 
@@ -71,7 +71,7 @@ gpui-component's `Table` emits row events (`SelectRow` etc.) that do **not**
 include the original click `Modifiers` (Cmd/Shift) or the modifier state at
 dispatch time. A file manager needs modifier-aware selection (Cmd-add,
 Shift-range), drag-select rubber-banding, a press-on-selected drag delay,
-multi-row drag payloads, and empty-area-click-to-clear — none of which the
+multi-row drag payloads, and empty-area-click-to-clear: none of which the
 upstream event surface can express.
 
 **Workaround:** we maintain a **full local fork** of the table + virtual-list
@@ -107,7 +107,7 @@ compile-and-fix exercise rather than a lockfile change.
   "discover breaks by compiling against a moving `main`" into normal semver.
   (Same root cause as #1.)
 
-## 4. `context_menu` keeps open/close state private — no callback
+## 4. `context_menu` keeps open/close state private - no callback
 
 **Filed upstream 2026-08-21:** [gpui-component#2796](https://github.com/longbridge/gpui-component/issues/2796).
 
@@ -116,12 +116,12 @@ compile-and-fix exercise rather than a lockfile change.
 `ContextMenuExt::context_menu` stores its `open` flag in private element
 state (`ContextMenuState`) and exposes no `on_open`/`on_close` callback or
 queryable "is this menu open" accessor. `Root` doesn't track open context
-menus centrally either. So a consumer can't react to the menu opening/closing —
+menus centrally either. So a consumer can't react to the menu opening/closing,
 e.g. to suppress a sibling hover tooltip on the same element while the menu is
 up (the breadcrumb crumb showed its full-path tooltip overlapping its own
 right-click menu).
 
-**Workaround:** track it ourselves — set `Shell::breadcrumb_menu_open` in the
+**Workaround:** track it ourselves: set `Shell::breadcrumb_menu_open` in the
 menu builder closure (the one place upstream calls us when the menu opens),
 gate the crumb tooltip on `!breadcrumb_menu_open`, and clear the flag on the
 next left mouse-down at the shell root (which is also how the menu dismisses).
@@ -133,7 +133,7 @@ one-liner.
 - Or expose the open state through `Root` so consumers can query "is a context
   menu currently open in this window".
 
-## 4b. Async context-menu contents — RESOLVED for Ferail
+## 4b. Async context-menu contents - RESOLVED for Ferail
 
 **Filed upstream 2026-08-21:** [gpui-component#2797](https://github.com/longbridge/gpui-component/issues/2797).
 
@@ -150,7 +150,7 @@ menu content includes data that is *illegal* to fetch on the UI thread (the
 Prime Directive): LaunchServices "Open With" candidates, per-row capabilities,
 anything that touches the shell. Those arrive from a background task
 milliseconds later. With a build-once menu, a cache miss is permanent for that
-open — the user gets a "loading" placeholder that never resolves and has to
+open: the user gets a "loading" placeholder that never resolves and has to
 close and reopen the menu. It makes a *cache* load-bearing for correctness,
 which is exactly backwards: prefetching should buy latency, never content.
 
@@ -173,7 +173,7 @@ but Ferail currently has no such need. The submenu API solves our real case.
 **Hit during:** viewer per-item rotate feature (pictures + videos).
 
 gpui's `svg` element has `.with_transformation(Transformation::rotate(..))`,
-but `img` (`Img`) exposes no rotation/transform — there's no element-level
+but `img` (`Img`) exposes no rotation/transform: there's no element-level
 transform on the image path at all. So a "rotate this photo 90°" view feature
 can't just transform the element; it has to rotate the underlying pixel buffer
 (`RenderImage`) on the CPU and hand gpui a new image.
@@ -182,13 +182,13 @@ can't just transform the element; it has to rotate the underlying pixel buffer
 and cache the rotated `RenderImage` per (item, orientation); swap stage width/
 height for 90°/270°. Since the video viewer now pulls frames into
 `RenderImage`s too (see below / VIEWER.md), video rotates by the *same* CPU
-path as stills — no separate layer-transform code.
+path as stills, no separate layer-transform code.
 
 **What upstream could do:**
 - Give `Img` the same `with_transformation` / rotation support `svg` already
   has, so 90° view-only rotation is a render-time transform, not a re-encode.
 
-### 5a. A layer transform doesn't move AppKit hit-testing — RESOLVED
+### 5a. A layer transform doesn't move AppKit hit-testing - RESOLVED
 
 *Resolved 2026-06-18 by switching video off the native overlay.* The original
 video design floated an `AVPlayerView` over the gpui window and rotated its
@@ -198,7 +198,7 @@ transport). Rather than keep fighting AppKit hit-testing under gpui chrome, the
 viewer now drives a windowless `AVPlayer` and pulls frames into `RenderImage`s,
 so the video is an ordinary gpui `img`: no overlay, no foreign hit region, and
 the transport/seek-bar hit-test normally at any rotation. The lesson stands for
-anyone tempted to overlay an interactive native view under gpui chrome —
+anyone tempted to overlay an interactive native view under gpui chrome:
 prefer pulling its content into a gpui element if a frame source exists.
 
 ### 5b. objc2 encoding checks need exact struct names for CF/CM types
@@ -206,23 +206,23 @@ prefer pulling its content into a gpui element if a frame source exists.
 Passing/returning `CMTime` and CoreVideo pixel buffers through `msg_send!`
 requires hand-rolled `Encode`/`RefEncode` impls whose struct **name** matches
 what the runtime reports, or objc2's verification aborts: `CMTime` is reported
-anonymous (`{?=qiIq}` — name must be `"?"`, not `"CMTime"`); `CMTime` is also a
+anonymous (`{?=qiIq}`: name must be `"?"`, not `"CMTime"`); `CMTime` is also a
 pointer arg (`itemTimeForDisplay:` out-param), needing a `RefEncode` whose
 pointee encoding matches; and `copyPixelBufferForItemTime:` *returns*
-`^{__CVBuffer=}`, so a bare `*mut c_void` (`^v`) is rejected — the return must
+`^{__CVBuffer=}`, so a bare `*mut c_void` (`^v`) is rejected: the return must
 type as `*mut CVBuffer` where `CVBuffer`'s `RefEncode` names the struct
 `"__CVBuffer"`. objc2's check is a genuine safety net (it caught each before it
 became a memory bug), but a small `objc2-core-media` / `objc2-core-video`
 dependency, or ready-made `CMTime` / `CVPixelBuffer` types, would remove the
 guesswork.
 
-## 6. TextView preview scroll cluster — bounded-box vs `scrollable(true)`
+## 6. TextView preview scroll cluster - bounded-box vs `scrollable(true)`
 
 **Hit during:** preview-pane polish (horizontal scroll, wheel containment,
 sluggish scroll while text is selected).
 
 `TextView` has two modes: `scrollable(false)` (our usage) expands to full
-content height with no scrollbar — we bound it in our own
+content height with no scrollbar: we bound it in our own
 `max_h + overflow_scroll` box; `scrollable(true)` virtualizes via an internal
 uniform_list with its own *vertical-only* scrollbar but "requires the parent
 to have a fixed height." Neither cleanly gives all three of: horizontal scroll
@@ -241,7 +241,7 @@ previews is already in.
 - Document/expose wheel scroll-chaining behavior so nested scroll containers
   bubble at the boundary predictably.
 
-## 7. Windows `Window::render_to_image` — RESOLVED upstream
+## 7. Windows `Window::render_to_image` - RESOLVED upstream
 
 **Merged 2026-08-26:** [zed#63012](https://github.com/zed-industries/zed/pull/63012).
 
@@ -271,7 +271,7 @@ normal screenshot path.
 
 Until then the only GPL reach was `gpui → sum_tree → ztracing`, severable by
 forking `sum_tree` (the old `vendor/sum-tree`). With `ztracing` in `gpui`'s
-own `[dependencies]`, that fork stopped being sufficient — and forking gpui
+own `[dependencies]`, that fork stopped being sufficient, and forking gpui
 itself is not a maintainable option.
 
 **Workaround:** patch `ztracing` at the source root with a clean-room
@@ -281,7 +281,7 @@ so the stub is behaviourally identical; it also drops GPL `ztracing_macro` and
 `zlog` from the graph and retired the `sum_tree` fork (no more per-bump
 re-sync). Instrumentation edges may keep spreading through zed's crates; the
 stub covers all of them at once, but a bump that fails on an unresolved
-`ztracing::…` item means upstream grew the API — add the missing name to the
+`ztracing::…` item means upstream grew the API: add the missing name to the
 stub as a no-op.
 
 **What upstream could do:** relicense the tracing shim permissively (it is
@@ -289,27 +289,27 @@ stub as a no-op.
 optional feature default-off. Tracked upstream as zed#55470 (acknowledged,
 stuck in legal).
 
-## 9. External file drag-out finally exists — via `external_drag_payload` (zed #58161)
+## 9. External file drag-out finally exists - via `external_drag_payload` (zed #58161)
 
 **Hit during:** "drag to Finder does nothing" investigation, fixed with the
 2026-08-08 bump; then the same symptom on Windows, fixed locally 2026-08-25.
 
-Not a complaint — an API note. gpui's `on_drag` is purely in-window (the app
+Not a complaint: an API note. gpui's `on_drag` is purely in-window (the app
 paints its own ghost; nothing reaches the OS). Dragging `ExternalPaths` as
-the *value* does *not* make it a native drag — a misreading we shipped for
+the *value* does *not* make it a native drag: a misreading we shipped for
 seven weeks. Real drag-out requires chaining
 `.external_drag_payload::<T>(resolver)` after `.on_drag(...)`: when the
-pointer leaves the viewport, gpui calls the resolver (UI thread — keep it
+pointer leaves the viewport, gpui calls the resolver (UI thread: keep it
 allocation-cheap and I/O-free; we feed it cached `EntryKind` dir-ness) and
 asks the platform backend to promote the gesture to a native drag. The
 platform then draws per-type file icons and the in-window ghost hands off.
-Payloads are real on-disk paths only (`ExternalDragPayload::Files`) — nothing
+Payloads are real on-disk paths only (`ExternalDragPayload::Files`), nothing
 exists yet for promise-based/deferred content. Ferail implements archive
 member drag-out directly with `NSFilePromiseProvider` on macOS; see #11 for
 the extra cross-window handoff this requires.
 
-The GPUI core contract is cross-platform, but the pinned Windows backend —
-and upstream `main` when checked on 2026-08-24 — leaves
+The GPUI core contract is cross-platform, but the pinned Windows backend
+(and upstream `main` when checked on 2026-08-24) leaves
 `can_start_external_drag`/`start_external_drag` at their default `false`.
 Ferail therefore carries a narrow `gpui_windows` patch: absolute PIDLs feed
 `SHCreateDataObject`, then `SHDoDragDrop` runs a normal OLE file drag with
@@ -327,11 +327,11 @@ run for every callback. The OLE return path always emits
 `FileDropEvent::Ended`, including cancellation and failure, so
 `platform_owned_drag` cannot remain suspended indefinitely.
 
-## 10. Drag-out operation mask is hardcoded to Copy — no move, no modifiers
+## 10. Drag-out operation mask is hardcoded to Copy - no move, no modifiers
 
 **Raised upstream 2026-08-21:** [zed discussion #63013](https://github.com/zed-industries/zed/discussions/63013) (their tracker routes feature requests to Discussions; posted in the "Zed GPUI" category, offering the PR once the API shape is agreed).
 
-**Hit during:** "drag out only copies; can a modifier make it a move?" —
+**Hit during:** "drag out only copies; can a modifier make it a move?":
 follow-up to #9.
 
 `gpui_macos`'s `NSDraggingSource` returns `NSDragOperationCopy` for the
@@ -343,7 +343,7 @@ against the source mask, and Move/Link aren't in it), and the system badge
 row (green “+” for copy, curved arrow for alias) never varies. There is no
 gpui API to widen the mask.
 
-**Workaround:** `ferail_shell_mac::install_native_drag_operations()` —
+**Workaround:** `ferail_shell_mac::install_native_drag_operations()`:
 runtime `class_replaceMethod` on `GPUIWindow` / `GPUIPanel` (registered by a
 `#[ctor]` in gpui_macos, so they always exist) swapping in a mask of
 Copy | Link | Generic | Move for the outside context, keeping upstream's
@@ -354,11 +354,11 @@ copy-only if upstream renames the classes (a boot log warns, and a
 
 **What upstream could do:** carry allowed operations on
 `ExternalDragPayload` (e.g. `Files { paths, operations }`) and return them
-from the mask callback — the source knows whether its items are movable;
+from the mask callback: the source knows whether its items are movable;
 a file manager's are, a text snippet's usually aren't.
 
 **Esc-cancel (same friction, second symptom):** once promoted, the session
-can't be cancelled either — gpui exposes no hook, and AppKit itself has no
+can't be cancelled either: gpui exposes no hook, and AppKit itself has no
 public "cancel this `NSDraggingSession`" API. The same
 `install_native_drag_operations()` pass therefore also adds
 `draggingSession:willBeginAtPoint:` and wraps
@@ -366,7 +366,7 @@ public "cancel this `NSDraggingSession`" API. The same
 liveness, and `cancel_native_drag()` cancels by the one lever a source
 owns: collapse the mask to `None`, force a destination re-query with a
 synthetic 1-px drag, then end the gesture with a delayed synthetic
-mouse-up — AppKit resolves that as a failed drag and animates the items
+mouse-up: AppKit resolves that as a failed drag and animates the items
 back. The Shell's global Esc keystroke observer routes to it when
 `has_active_drag()` is false but a native session is live. Upstream could
 expose a `Window::cancel_external_drag()` (and gpui could bind Esc itself,
@@ -383,7 +383,7 @@ carries a registered type, and `NSFilePromiseProvider` never writes the
 legacy filename list (only `com.apple.pasteboard.promised-file-*`,
 `com.apple.NSFilePromiseItemMetaData`, `Apple files promise pasteboard type`),
 so for a promised-file drag a GPUI window is simply not a destination: no
-`draggingEntered:`, no `draggingUpdated:`, no `performDragOperation:` — the
+`draggingEntered:`, no `draggingUpdated:`, no `performDragOperation:`: the
 drop lands nowhere while Finder, which registers for the promise types, works.
 This was the actual "drag to Ferail does nothing, drag to Finder works" bug;
 no amount of pasteboard marking or callback shimming can help a window AppKit
@@ -430,7 +430,7 @@ external payload API.
 For same-process cross-window drags, restore the original typed payload in any
 GPUI destination window rather than only the source window.
 
-## 12. gpui-component `Input` paint leaked strong handles — upstream shape fixed, teardown containment retained
+## 12. gpui-component `Input` paint leaked strong handles - upstream shape fixed, teardown containment retained
 
 **Hit during:** the 2026-08-24 Windows session, chasing the 0.6.5 tester's
 "crash on quit" reports (`Exited with leaked handles: … InputState`).
@@ -442,19 +442,19 @@ Two stacked problems:
    both capturing a **strong** `Entity<InputState>` clone
    (`crates/ui/src/input/element.rs`, the `Root.focused_input` dance). In a
    single-window app the next frame consumes the queue and teardown drops the
-   rest. With a **second window open** (Get Info), the handles accumulate —
+   rest. With a **second window open** (Get Info), the handles accumulate:
    deterministic repro: `--screenshot --properties` leaks one `InputState`
    handle per paint of the main window's filter input (27 in a 3 s run),
    tripping gpui's leak assertion at quit. The user-visible form: quitting
    after normal use exits 101 with a leaked-handles crash report.
 2. **Feature packaging:** gpui's `leak-detection` rides along with
    `test-support`, which we enabled workspace-wide for `render_to_image`
-   (item 7). That shipped the **diagnostic assert to end users** — the 0.6.5
+   (item 7). That shipped the **diagnostic assert to end users**: the 0.6.5
    tester's four "crash" files were exactly this assert.
 
 **Workaround:** `ferail-gpui` now owns a default-on `screenshot-harness`
 feature that forwards `gpui/test-support`; the packaging scripts build with
-`-p ferail-gpui --no-default-features` (the `-p` is load-bearing — from the
+`-p ferail-gpui --no-default-features` (the `-p` is load-bearing, from the
 virtual workspace root cargo silently ignores `--no-default-features`).
 Dev and `cargo test` keep the leak detector; users never see the assert, and
 `--screenshot` still works in packaged Windows builds via the PrintWindow

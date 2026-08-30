@@ -1,10 +1,10 @@
 //! Ferail as an AROS `C:` command.
 //!
-//! A staticlib whose C harness (`c/ferail_main.c`) owns AROS startup —
+//! A staticlib whose C harness (`c/ferail_main.c`) owns AROS startup:
 //! the rust-aros std reads argc/argv from the harness globals, so CLI
 //! flags work (`C:Ferail --theme dark --width 780 --height 560`). The
 //! harness calls [`ferail_aros_main`], which parses args and hands off
-//! to the shared GUI boot in [`ferail_gpui::boot`] — the exact same
+//! to the shared GUI boot in [`ferail_gpui::boot`]: the exact same
 //! path the desktop `main()` takes.
 //!
 //! **Launch with `Stack 16000000`** (see `ferail.startup`): AROS shells
@@ -21,7 +21,7 @@
 pub extern "C" fn ferail_aros_main() -> u32 {
     // Panic forensics: panic=abort tears the whole hosted OS down before
     // stderr reaches anything durable, so persist the report to MacRW:
-    // (the host-shared volume — readable as ~/AROS/Shared on macOS)
+    // (the host-shared volume: readable as ~/AROS/Shared on macOS)
     // before the previous hook prints and the abort fires.
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -51,7 +51,7 @@ pub extern "C" fn ferail_aros_main() -> u32 {
 /// AROS target rustflags): posixc provides a host-backed arc4random_buf
 /// CSPRNG. AROS-gated: on hosts without `arc4random_buf` in libc (MSVC)
 /// the extern would otherwise fail the *test-harness* link even though
-/// nothing calls it — the getrandom crate only references this symbol
+/// nothing calls it: the getrandom crate only references this symbol
 /// under the custom-backend cfg the AROS target sets.
 #[cfg(target_os = "aros")]
 #[unsafe(no_mangle)]

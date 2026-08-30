@@ -1,7 +1,7 @@
 //! Pure-domain test for the breadcrumb path-splitter.
 //!
 //! Lives as an integration test (not `#[cfg(test)] mod`) because the
-//! inline form crashes the compiler — gpui's type graph plus the
+//! inline form crashes the compiler: gpui's type graph plus the
 //! `#[test]` macro recursion overflows syn's parser. The integration-
 //! test path doesn't pull the same expansion.
 

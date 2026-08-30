@@ -40,13 +40,13 @@ actions!(
         VerifyChecksums,
         CreateChecksumFile,
         /// Copy the *entire* list of items currently shown in the active
-        /// tab — folder contents, duplicate-finder groups, or search
-        /// results — as newline-joined full paths, regardless of
+        /// tab: folder contents, duplicate-finder groups, or search
+        /// results, as newline-joined full paths, regardless of
         /// selection. The list-export complement to `CopyPath` (which
         /// copies just the selection). All three views populate the same
         /// table delegate, so one handler serves them all.
         CopyFileList,
-        /// Folder-only file-list context action — open a terminal at the
+        /// Folder-only file-list context action: open a terminal at the
         /// right-clicked directory. Resolves its target the same way
         /// `CopyPath` does (`action_entries_visible_order`, consuming
         /// `context_row`); the sidebar/tree equivalent is
@@ -55,31 +55,31 @@ actions!(
         MoveToTrash,
         /// Permanently delete the selected items without trashing first
         /// (Shift+Delete [win/linux], Option+Cmd+Delete [mac, Finder's
-        /// chord]), after a counted confirmation. No undo — like a targeted
+        /// chord]), after a counted confirmation. No undo, like a targeted
         /// Empty Trash. On a permission denial it offers an elevated retry
         /// (docs/features/FILE_OPS.md).
         DeleteImmediately,
-        /// Cmd+Shift+Delete — permanently delete the contents of every
+        /// Cmd+Shift+Delete: permanently delete the contents of every
         /// reachable trash, after a counted confirmation dialog. The
         /// one file operation with no undo (docs/features/FILE_OPS.md).
         EmptyTrash,
-        /// Cmd+C — selection's file URLs onto the general pasteboard
+        /// Cmd+C: selection's file URLs onto the general pasteboard
         /// (cross-app: Finder pastes what we copy). FILE_OPS.md.
         CopyFiles,
-        /// Cmd+X — like Copy, but marks the items so the next plain
+        /// Cmd+X, like Copy, but marks the items so the next plain
         /// Paste moves them (and clears the mark). FILE_OPS.md.
         CutFiles,
-        /// Cmd+V — paste the pasteboard's file URLs into the current
+        /// Cmd+V: paste the pasteboard's file URLs into the current
         /// folder; a move if those items were Cut, else a copy.
         PasteFiles,
-        /// Cmd+Option+V — Finder's "Move Items Here".
+        /// Cmd+Option+V: Finder's "Move Items Here".
         MovePasteFiles,
         RevealInFinder,
         FocusFilter,
         ClearFilter,
         NewFolder,
         RenameSelected,
-        /// Pattern-rule rename over the whole multi-selection —
+        /// Pattern-rule rename over the whole multi-selection:
         /// find/replace (literal or regex with $1..$9), case
         /// transforms, and a {name}/{ext}/{n}/{date} template, with a
         /// live before→after preview (docs/features/BULK_RENAME.md).
@@ -88,12 +88,12 @@ actions!(
         BulkRenameSelected,
         NewTab,
         CloseTab,
-        /// Cmd+Shift+W — close the entire window regardless of tab
+        /// Cmd+Shift+W: close the entire window regardless of tab
         /// count. Last-tab Cmd+W also closes the window per spec §3.4,
         /// but this is the "I mean *the window*" verb for users with
         /// many tabs open.
         CloseWindow,
-        /// Cmd+Shift+T — pop the most-recently-closed tab off
+        /// Cmd+Shift+T: pop the most-recently-closed tab off
         /// `ProcessState::closed_tabs` and reopen it (spec §3.3
         /// "Reopen closed tab"). Restores directory, history, filter,
         /// and best-effort selection; sort restore is deferred.
@@ -102,20 +102,20 @@ actions!(
         NextTab,
         PrevTab,
         QuickLook,
-        /// Cmd+Y — open the viewer window on the current folder's
+        /// Cmd+Y: open the viewer window on the current folder's
         /// files (docs/features/VIEWER.md). Space stays Quick Look.
         OpenViewer,
-        /// File-list context action — open the viewer starting at the
+        /// File-list context action: open the viewer starting at the
         /// right-clicked file and immediately begin the slideshow
         /// (docs/features/VIEWER.md). Same playlist as `OpenViewer` but
         /// anchored to the context row and auto-playing.
         SlideshowFromHere,
         GoHome,
-        /// Cmd+G — open the "Go to Folder" prompt: a modal path box
+        /// Cmd+G: open the "Go to Folder" prompt: a modal path box
         /// pre-filled with the current folder and selected, so a paste
         /// replaces it. Committing opens the path in a new tab (a new
         /// window when the app is running with none open). Cmd+L's
-        /// breadcrumb edit is the in-place twin — it retargets the
+        /// breadcrumb edit is the in-place twin: it retargets the
         /// *current* tab instead.
         GoToFolder,
         EditBreadcrumb,
@@ -137,7 +137,7 @@ actions!(
         /// Find visually similar local images under the active tab. Analysis
         /// is in-memory only and results reuse the duplicate card panel.
         FindSimilarImages,
-        /// Toolbar Sort menu (docs/features — toolbar density). Each
+        /// Toolbar Sort menu (docs/features: toolbar density). Each
         /// sets the file-table sort column; re-selecting the active
         /// column flips its direction. Dispatched from the sort
         /// dropdown and available to the command palette.
@@ -145,7 +145,7 @@ actions!(
         SortBySize,
         SortByKind,
         SortByModified,
-        /// Sort by Ant Trail heat — the folders you open most, first
+        /// Sort by Ant Trail heat: the folders you open most, first
         /// (docs/features/ANT_TRAIL.md). Unlike the other four, this
         /// column has no header to click, so the menu is its only home.
         SortByAntTrail,
@@ -155,7 +155,7 @@ actions!(
         CursorLast,
         PageUp,
         PageDown,
-        // Spec §2.5 — Shift-extend variants. The plain `Cursor*` /
+        // Spec §2.5: Shift-extend variants. The plain `Cursor*` /
         // `Page*` set above move the lead and collapse the selection
         // to just that row; the extend variants move the lead and
         // make the selection the inclusive span from anchor to lead.
@@ -178,11 +178,11 @@ actions!(
         GridRightExtend,
         GridUpExtend,
         GridDownExtend,
-        /// Cmd+A — selection becomes every row currently in the
+        /// Cmd+A: selection becomes every row currently in the
         /// (filtered) model. anchor = first visible row, lead = last
         /// visible row. Spec §2.5.
         SelectAll,
-        /// Esc on a non-empty selection — clear the selection set,
+        /// Esc on a non-empty selection: clear the selection set,
         /// anchor and lead. Higher-precedence Esc behaviors
         /// (close-shortcuts-overlay, ClearFilter) are still bound
         /// against the filter input's own focus context; this fires
@@ -196,7 +196,7 @@ actions!(
         ResetSidebarOrder,
         GetInfo,
         /// Strip the Mark-of-the-Web (and its where-from provenance)
-        /// from the selected quarantined files — `com.apple.quarantine`
+        /// from the selected quarantined files: `com.apple.quarantine`
         /// + `kMDItemWhereFroms` on macOS, the `Zone.Identifier` ADS on
         /// Windows. Worker-side I/O; the rows and the metadata-DB cache
         /// update on completion so the badge can't resurrect from cache.
@@ -208,7 +208,7 @@ actions!(
         Duplicate,
         MakeAlias,
         Compress,
-        /// Extract the selected archive(s) **here** — into the current folder.
+        /// Extract the selected archive(s) **here**: into the current folder.
         /// Reads each archive's table of contents off-thread to choose a smart
         /// destination: extract in place when the archive has one root folder,
         /// wrap in a folder named after the archive otherwise.
@@ -242,7 +242,7 @@ actions!(
         // selection.
         RevealContextPath,
         CopyContextPath,
-        /// Sidebar/tree/breadcrumb sibling of `OpenTerminalHere` — open a
+        /// Sidebar/tree/breadcrumb sibling of `OpenTerminalHere`: open a
         /// terminal at `context_target` (the right-clicked folder). Split
         /// from the file-list `OpenTerminalHere` so a dismissed sidebar
         /// menu's stale `context_target` can't hijack a file-list action.
@@ -258,10 +258,10 @@ actions!(
         /// buttons. Only shown where `lock_diagnostics_available()`.
         ShowLockHolders,
         /// Sidebar volume-row twin of `ShowLockHolders`: same dialog for
-        /// everything under the right-clicked volume (`context_target`) —
+        /// everything under the right-clicked volume (`context_target`):
         /// the "why won't it eject" answer, before the eject fails.
         ShowLockHoldersAtContext,
-        /// Sidebar/tree "Get Info" — open the Get Info window for the
+        /// Sidebar/tree "Get Info": open the Get Info window for the
         /// right-clicked row (`context_target`). Split from the
         /// file-list `GetInfo` because that one resolves through the
         /// row selection, not the right-clicked sidebar path.
@@ -294,7 +294,7 @@ actions!(
         OpenWithSlot9,
         OpenWithSlot10,
         OpenWithSlot11,
-        /// Cmd+Z — pop the most recent reversible action off
+        /// Cmd+Z: pop the most recent reversible action off
         /// Shell::undo_stack and replay its inverse. Currently handles
         /// Rename (rename back) and NewFolder (delete the created
         /// folder); Move-to-Trash undo is documented in the deferred
@@ -315,37 +315,37 @@ actions!(
         /// Append the active tab's current directory to Favorites.
         /// Backs the section-header `+` button and the menu bar item.
         AddCurrentFolderToFavorites,
-        /// Section header click handler — also reachable via menu bar
+        /// Section header click handler, also reachable via menu bar
         /// "Window → Toggle Favorites Section".
         ToggleFavoritesSection,
         // One-shot sorts (§4.5). Each rewrites every `sort_index` in
-        // place; subsequent drags continue to work — the order isn't
+        // place; subsequent drags continue to work: the order isn't
         // "locked", it's just set.
         SortFavoritesByName,
         SortFavoritesByDateAddedNewest,
         SortFavoritesByDateAddedOldest,
         SortFavoritesByKind,
-        /// Cmd+Option+Up — shift the most-recently-focused favorite
+        /// Cmd+Option+Up: shift the most-recently-focused favorite
         /// up one slot in the section list (§4.4).
         MoveFavoriteUp,
-        /// Cmd+Option+Down — shift down one slot.
+        /// Cmd+Option+Down: shift down one slot.
         MoveFavoriteDown,
-        /// Up/Down within the focused Favorites section — move keyboard
+        /// Up/Down within the focused Favorites section: move keyboard
         /// focus to the previous / next favorite row (§11.4). Sets
         /// `Shell::focused_favorite`, which drives the focus ring and is
         /// the target of `DeleteFavorite` / `ActivateFavorite`.
         FocusFavoriteUp,
         FocusFavoriteDown,
-        /// Enter on the focused favorite — navigate to it (§11.4).
+        /// Enter on the focused favorite: navigate to it (§11.4).
         ActivateFavorite,
-        /// Delete / Backspace on the focused favorite — remove it (with
+        /// Delete / Backspace on the focused favorite: remove it (with
         /// undo), the keyboard twin of the context-menu remove (§3.1).
         DeleteFavorite,
         /// Rename the favorite under `favorites_context_path` via the
         /// shared gpui text-prompt modal (§6). Sidebar labels remain modal;
         /// filesystem rows use the reusable inline editor.
         RenameFavorite,
-        /// "Locate…" (§8.2 / §8.3) — open a folder picker and repoint
+        /// "Locate…" (§8.2 / §8.3): open a folder picker and repoint
         /// the favorite under `favorites_context_path` at the chosen
         /// folder, keeping its id / name / sort_index. Reachable from
         /// the normal row context menu and the broken-state dialog.
@@ -360,21 +360,21 @@ actions!(
         /// library and writes the chosen glyph back as
         /// `custom_icon = Some(Lucide(name))`. See `favorite_icon_picker`.
         OpenFavoriteIconPicker,
-        // Recents sidebar section (docs/features — Recents). The
+        // Recents sidebar section (docs/features: Recents). The
         // section is a recency view over the Ant Trail visit log.
-        /// Header click — flip the Recents section's disclosure
+        /// Header click: flip the Recents section's disclosure
         /// triangle; the collapse state persists in app_state.
         ToggleRecentsSection,
-        /// Row context menu — drop `context_target` from Recents (and
+        /// Row context menu: drop `context_target` from Recents (and
         /// forget its visit record, which also clears its heat tint).
         RemoveFromRecents,
-        /// Header/row context menu — forget the whole visit log
+        /// Header/row context menu: forget the whole visit log
         /// (clears Recents and the Ant Trail heat).
         ClearRecents,
         // Window docking (docs/features/DOCK.md). Dock the whole window to the
         // left or right screen edge as an auto-hiding drawer that floats over
         // everything and reveals on an edge-slam; `Undock` restores it to a
-        // normal window. macOS-only in practice — the other platforms' shell
+        // normal window. macOS-only in practice: the other platforms' shell
         // stubs no-op, so these silently do nothing there.
         DockLeft,
         DockRight,

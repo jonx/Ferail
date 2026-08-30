@@ -5,6 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Design tokens (colors, spacing, typography, motion) — no rendering deps"
+description = "Design tokens (colors, spacing, typography, motion), no rendering deps"
 
 [dependencies]

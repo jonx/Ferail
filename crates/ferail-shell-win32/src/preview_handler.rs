@@ -3,26 +3,26 @@
 //! `IShellItemImageFactory` is great for files with a registered
 //! thumbnail provider (PNG, PPTX with Office installed, MP4, etc.),
 //! but lots of common types (docx, xls, rtf, …) ship only a preview
-//! handler — Word, Excel, etc. install `IPreviewHandler` COM servers
+//! handler: Word, Excel, etc. install `IPreviewHandler` COM servers
 //! that render the document's content into a host window. This
 //! module wraps the dance so callers get an RGBA buffer back.
 //!
 //! **Preview pane only.** A preview handler is a live, interactive
-//! viewer: what it paints includes its own chrome — Word's scrollbar,
-//! Excel's grid, a toolbar — and a static capture of that reads as a
+//! viewer: what it paints includes its own chrome: Word's scrollbar,
+//! Excel's grid, a toolbar, and a static capture of that reads as a
 //! screenshot of an application, not a thumbnail of a document.
 //! Explorer never uses `IPreviewHandler` for thumbnails, and neither
 //! does Ferail: only the preview pane's fetch (`fetch_preview_image`)
 //! reaches this module, and only after the shell thumbnail and the
 //! native PDF renderer (`pdf_render`) both came up empty. The proper
-//! long-term shape for the pane is Explorer's — the handler hosted
-//! *live* in a child window over the pane — which is tracked in
+//! long-term shape for the pane is Explorer's: the handler hosted
+//! *live* in a child window over the pane, which is tracked in
 //! `TODO.md`; this capture is the interim.
 //!
 //! **Containment (WIN-002).** Third-party preview handlers are
 //! arbitrary native code; the 0.6.5 tester crash was a `c0000005`
 //! inside `pdfprevhndlr.dll` hosted *in* Ferail. A thread cannot
-//! contain that — it provides scheduling isolation, not memory-safety
+//! contain that: it provides scheduling isolation, not memory-safety
 //! or termination isolation. So the parent never activates a handler
 //! in-process: [`try_capture`] resolves the provider CLSID, then
 //! re-launches the Ferail binary as a disposable `--preview-broker`
@@ -43,7 +43,7 @@
 //! `IInitializeWithItem` (the only one `.msg` and some others accept).
 //!
 //! Known limitations (broker side):
-//! - Background captured at a fixed white fill — preview handlers
+//! - Background captured at a fixed white fill: preview handlers
 //!   that paint partially-transparent content end up with white
 //!   showing through.
 //! - Message-pump budget of 3.5 s for `DoPreview` to render, probed
@@ -120,8 +120,8 @@ fn strike(clsid: &str, why: &str) {
 /// is quarantined, or the broker failed/crashed/timed out.
 ///
 /// The child owns COM activation, the STA message pump, and the
-/// capture. The 6 s deadline here — the broker's 3.5 s pump budget
-/// plus headroom for process and handler startup — is enforced by
+/// capture. The 6 s deadline here: the broker's 3.5 s pump budget
+/// plus headroom for process and handler startup: is enforced by
 /// terminating the child, so a hung provider never leaves detached
 /// work behind in this process.
 pub(crate) fn try_capture(
@@ -141,7 +141,7 @@ pub(crate) fn try_capture(
     }
     if quarantine().lock().unwrap().is_quarantined(&clsid) {
         if debug() {
-            eprintln!("preview_handler: {{{clsid}}} is quarantined — icon fallback");
+            eprintln!("preview_handler: {{{clsid}}} is quarantined: icon fallback");
         }
         return None;
     }
@@ -166,7 +166,7 @@ pub(crate) fn try_capture(
     }
     let mut child = cmd.spawn().ok()?;
 
-    // Drain stdout concurrently — the frame can be several MB, far
+    // Drain stdout concurrently: the frame can be several MB, far
     // beyond the pipe buffer, so reading after exit would deadlock a
     // healthy child. The reader always terminates: child exit or our
     // kill() closes the pipe. `take` caps a misbehaving child at just
@@ -237,7 +237,7 @@ pub(crate) fn try_capture(
                 }
             }
         }
-        // Clean "no preview available" — not the provider's fault.
+        // Clean "no preview available", not the provider's fault.
         Some(broker_proto::EXIT_NO_PREVIEW) => None,
         // Argument-contract bug on our side; don't punish the provider.
         Some(broker_proto::EXIT_USAGE) => None,
@@ -322,7 +322,7 @@ pub fn preview_broker_main(args: &[String]) -> i32 {
                 .and_then(|()| stdout.flush())
                 .is_err()
             {
-                // Parent went away or the pipe broke — report a clean
+                // Parent went away or the pipe broke: report a clean
                 // miss so a partial frame is never mistaken for output.
                 return broker_proto::EXIT_NO_PREVIEW;
             }
@@ -351,7 +351,7 @@ unsafe fn try_capture_inner(
     size_px: u32,
 ) -> Option<(Vec<u8>, u32, u32)> {
     // In-proc first: this process is the disposable containment boundary.
-    // Loading the provider here gives the parent deterministic ownership —
+    // Loading the provider here gives the parent deterministic ownership,
     // killing the broker also kills the hung/crashed DLL. Asking COM for a
     // local server first can move the fault into SCM-owned prevhost.exe, whose
     // lifetime the parent cannot bound. Retain LOCAL_SERVER only for unusual
@@ -370,7 +370,7 @@ unsafe fn try_capture_inner(
         Err(inproc_err) => {
             if debug() {
                 eprintln!(
-                    "preview_handler: in-proc activation failed: {inproc_err:?} — trying local server"
+                    "preview_handler: in-proc activation failed: {inproc_err:?}, trying local server"
                 );
             }
             match CoCreateInstance::<_, IPreviewHandler>(clsid, None, CLSCTX_LOCAL_SERVER) {
@@ -429,10 +429,10 @@ unsafe fn try_capture_inner(
     }
 
     // Pump messages so async-rendering handlers can complete. Some
-    // handlers (PDF, Excel) post async work and need extra time —
+    // handlers (PDF, Excel) post async work and need extra time:
     // large PDFs can take a second or two on cold starts. Cap at 3.5s
     // so a broken handler doesn't hang the worker (the outer
-    // try_capture timeout is 6s) — but don't burn the whole budget
+    // try_capture timeout is 6s), but don't burn the whole budget
     // blindly: every ~250ms of pumping, capture the host window and
     // stop as soon as non-background pixels appear. When content
     // first shows up, pump one extra slice and re-capture so
@@ -463,7 +463,7 @@ unsafe fn try_capture_inner(
             break capture_window(hwnd, size_px, size_px).or(shot);
         }
         if Instant::now() >= deadline {
-            // Budget exhausted with no visible content — return the
+            // Budget exhausted with no visible content: return the
             // last capture anyway (a handler may legitimately render
             // an all-white page).
             if debug() {
@@ -482,7 +482,7 @@ unsafe fn try_capture_inner(
 /// pre-fills (see the FillRect calls in [`try_capture_inner`] and
 /// [`capture_window`]). The small threshold ignores stray one-pixel
 /// artifacts while still triggering on the first line of rendered
-/// text or chrome. Alpha is ignored — `capture_window` already
+/// text or chrome. Alpha is ignored: `capture_window` already
 /// normalizes the all-alpha-zero case to opaque.
 fn has_non_background_pixels(rgba: &[u8]) -> bool {
     const THRESHOLD: usize = 32;
@@ -499,11 +499,11 @@ fn has_non_background_pixels(rgba: &[u8]) -> bool {
 }
 
 /// Resolve the preview-handler CLSID registered for an extension.
-/// Returns the brace-less string form — the parent keys the quarantine
+/// Returns the brace-less string form: the parent keys the quarantine
 /// on it and passes it to the broker verbatim, so both sides agree on
 /// the identity byte-for-byte.
 fn lookup_handler_clsid(ext_lower: &str) -> Option<String> {
-    // IPreviewHandler IID — the shell exposes it as a verb-like
+    // IPreviewHandler IID: the shell exposes it as a verb-like
     // string under the file's ProgID via AssocQueryString.
     const IPREVIEW_HANDLER_IID_STR: &str = "{8895b1c6-b41f-4c1c-a562-0d564250836f}";
 
@@ -535,7 +535,7 @@ fn lookup_handler_clsid(ext_lower: &str) -> Option<String> {
 
     // `len` includes the null terminator; trim it. AssocQueryString
     // returns the CLSID with surrounding `{}` braces (and possibly
-    // mixed case) — `GUID::try_from` in windows-0.58 wants a bare
+    // mixed case): `GUID::try_from` in windows-0.58 wants a bare
     // hex format without braces.
     let raw = String::from_utf16_lossy(&buf[..(len as usize - 1)]);
     let cleaned = raw.trim_matches(|c| c == '{' || c == '}').to_string();
@@ -689,7 +689,7 @@ unsafe fn pump_messages_until(deadline: Instant) {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         } else {
-            // No messages — short sleep to yield to other threads
+            // No messages: short sleep to yield to other threads
             // (in particular, the preview handler's worker threads
             // posting completion).
             std::thread::sleep(Duration::from_millis(8));
@@ -698,14 +698,14 @@ unsafe fn pump_messages_until(deadline: Instant) {
 }
 
 unsafe fn capture_window(hwnd: HWND, w: u32, h: u32) -> Option<(Vec<u8>, u32, u32)> {
-    // Skip the compatible-bitmap intermediate — create a top-down
+    // Skip the compatible-bitmap intermediate: create a top-down
     // DIB section straight away, select it into the memory DC, and
     // let PrintWindow paint directly into it. The intermediate
     // CompatibleBitmap path was double-transferring and somewhere in
     // the GDI driver chain the result came out flipped 180° for
     // out-of-proc preview handlers (PowerPoint, Excel). Going
     // straight to a DIB section avoids the question.
-    // Check both DCs — under GDI handle pressure either call can
+    // Check both DCs, under GDI handle pressure either call can
     // fail (null DC), and every downstream call would then fail
     // silently with no way to diagnose. capture.rs already does
     // this; mirror it.
@@ -777,7 +777,7 @@ unsafe fn capture_window(hwnd: HWND, w: u32, h: u32) -> Option<(Vec<u8>, u32, u3
         // Empirically: GDI / preview-handler `PrintWindow` output is
         // top-down regardless of the biHeight sign reported on the
         // DIB. Walk in source order. (Same fix as `lib.rs`'s
-        // IShellItemImageFactory path — biHeight is unreliable here.)
+        // IShellItemImageFactory path: biHeight is unreliable here.)
         let mut pixels = vec![0u8; (w as usize) * (h as usize) * 4];
         for y in 0..(h as usize) {
             std::ptr::copy_nonoverlapping(

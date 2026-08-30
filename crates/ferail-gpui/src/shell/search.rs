@@ -32,7 +32,7 @@ use crate::tasks::TaskKind;
 pub(super) enum SearchMsg {
     /// The engine the worker actually resolved to, sent before the
     /// first batch. Engine resolution probes for `mdfind` (a blocking
-    /// process spawn), so it happens on the worker — the UI shows an
+    /// process spawn), so it happens on the worker: the UI shows an
     /// optimistic label until this corrects it (Prime Directive:
     /// launching a search must not block on the probe).
     Engine(&'static str),
@@ -228,7 +228,7 @@ pub(super) fn run_search_load(
     let expr = FilterExpr::parse(needle.trim(), super::loading::filter_date_ctx());
     let error = if let Some(tag) = tag {
         // Tag favorites (§9): a Spotlight `kMDItemUserTags` query. Finder
-        // tags are a macOS concept, so there is no walker fallback — a
+        // tags are a macOS concept, so there is no walker fallback: a
         // system without Spotlight simply returns no results.
         let _ = tx.send_blocking(SearchMsg::Engine(ferail_core::msgid!("Tag")));
         run_tag_search(&fs, &config, &root, &tag, &cancel, &tx)
@@ -734,7 +734,7 @@ impl Shell {
         let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
         };
-        // `load()` reads the memoized in-memory AppState — no disk. The
+        // `load()` reads the memoized in-memory AppState, no disk. The
         // engine itself resolves on the worker (probing for `mdfind`
         // spawns a process); this label is the optimistic guess shown
         // until the worker's `SearchMsg::Engine` confirms/corrects it.
@@ -960,7 +960,7 @@ impl Shell {
         });
         self.refresh_file_list_selection_in_tab(idx, cx);
         // Land any deferred selection (keyboard / screenshot seed) once
-        // its row has streamed in — same as the directory load path.
+        // its row has streamed in, same as the directory load path.
         self.apply_pending_select_row_in_tab(idx, cx);
         if visible {
             cx.notify();

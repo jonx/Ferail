@@ -32,18 +32,18 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 kamadak-exif = "0.6"
 
 # Archive codec layer (crates/ferail-fs-native/src/archive). Pure-Rust
-# codecs, all platforms — Ferail no longer shells out to `ditto` for
+# codecs, all platforms - Ferail no longer shells out to `ditto` for
 # compression. Formats and their read/write capabilities are declared in
 # ferail-archive::Format; this is where the bytes actually move.
 # - zip: read + write, AES password (aes-crypto), deflate + bzip2 members.
 # - tar: the uncompressed archive container; combined with the stream codecs
 #   below for .tar.gz / .tar.bz2 / .tar.xz.
 # - flate2: gzip stream (already transitive; pinned here explicitly).
-# - bzip2 0.6: bzip2 stream — pure-Rust libbz2-rs-sys backend (no C).
-# - xz2: xz/LZMA stream — the one C edge, accepted like the app's other C
+# - bzip2 0.6: bzip2 stream - pure-Rust libbz2-rs-sys backend (no C).
+# - xz2: xz/LZMA stream - the one C edge, accepted like the app's other C
 #   deps (tree-sitter). MUST stay on the "static" feature: without it lzma-sys
 #   probes pkg-config and links whatever liblzma the build machine happens to
-#   have — on a dev Mac that is Homebrew's liblzma.5.dylib, which does not
+#   have - on a dev Mac that is Homebrew's liblzma.5.dylib, which does not
 #   exist on a clean Mac, so the shipped app dies at launch with a dyld
 #   "Library not loaded" abort. "static" vendors and builds liblzma in.
 #   scripts/package-mac.sh re-checks this with otool before packaging.
@@ -57,13 +57,13 @@ zip = { version = "2", default-features = false, features = ["deflate", "bzip2",
 tar = "0.4"
 flate2 = "1"
 bzip2 = "0.6"
-# Builds for AROS too since pthread_sigmask landed in the OS's libpthread —
+# Builds for AROS too since pthread_sigmask landed in the OS's libpthread:
 # it was an unimplemented, undeclared stub, which is what liblzma's
 # mythread.h tripped over.
 xz2 = { version = "0.1", features = ["static"] }
 sevenz-rust = "0.6"
 # LHA/LZH read + extract (Amiga/Aminet's native archive format). Pure Rust and
-# no C, so it builds for every target including AROS — but `default-features`
+# no C, so it builds for every target including AROS - but `default-features`
 # must stay off: delharc's `std` feature turns on `chrono/clock`, which reaches
 # for platform time APIs (iana-time-zone and friends) that AROS has no arm for.
 # Without it, delharc uses its own tiny Read trait (see `archive/lha.rs`'s
@@ -113,7 +113,7 @@ windows = { version = "0.58", features = [
 
 # stat_info.rs reads ownership / mode / timestamps via libc on ALL unix
 # (lstat, getpwuid_r, chmod, localtime_r), and getuid() backs the per-volume
-# `.Trashes/<uid>` path on macOS — so libc is a unix-wide dep, not macOS-only.
+# `.Trashes/<uid>` path on macOS - so libc is a unix-wide dep, not macOS-only.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 # xattr_info.rs reads download-provenance / quarantine xattrs on unix:

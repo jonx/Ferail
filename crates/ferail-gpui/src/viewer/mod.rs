@@ -1,7 +1,7 @@
 //! Viewer window: big preview, slideshow, and sticky zoom.
 //!
 //! Design and iteration plan: docs/features/VIEWER.md. The module is
-//! built in layers — `loader` (full-resolution decode + byte-budget
+//! built in layers: `loader` (full-resolution decode + byte-budget
 //! cache), `stage` (pure zoom/pan geometry), `window` (the GPUI
 //! entity), `playback` (slideshow timer state).
 //!
@@ -32,12 +32,12 @@ static VIEWER_CASCADE: AtomicU32 = AtomicU32::new(0);
 /// Open the viewer on `playlist`, starting at `start`. Each call opens a
 /// *new* window (cascaded from the previous one), so several files can be
 /// viewed side by side; closing a window just drops its entity. `window` is
-/// the window the viewer is opened from — the new window lands on its display.
+/// the window the viewer is opened from: the new window lands on its display.
 pub fn open_viewer(playlist: Vec<PlaylistEntry>, start: usize, window: &Window, cx: &mut App) {
     open_viewer_inner(playlist, start, false, window, cx);
 }
 
-/// Like [`open_viewer`] but begins the slideshow immediately — used by
+/// Like [`open_viewer`] but begins the slideshow immediately: used by
 /// the "Slideshow from Here" context action (docs/features/VIEWER.md).
 pub fn open_viewer_playing(
     playlist: Vec<PlaylistEntry>,
@@ -63,7 +63,7 @@ fn open_viewer_inner(
     // handful) so a fresh window doesn't land exactly atop the last.
     //
     // Platform wart: gpui's mac backend anchors `window_bounds` to
-    // `WindowOptions::display_id` — the origin is *display-relative*, and a
+    // `WindowOptions::display_id`: the origin is *display-relative*, and a
     // `None` display id means the primary screen (which is why global
     // coordinates alone always landed there). Windows/X11 take global
     // coordinates. So pass the display id AND, on macOS, strip the display's
@@ -93,7 +93,7 @@ fn open_viewer_inner(
         // "Transparent" toggle flips the backing live via
         // `set_background_appearance`, which updates both the NSWindow and the
         // CAMetalLayer's opacity (see `MetalRenderer::update_transparency`), so
-        // creating it transparent up front is unnecessary — and a permanently
+        // creating it transparent up front is unnecessary, and a permanently
         // non-opaque backing makes the macOS fullscreen animation janky. Opaque
         // by default keeps the fullscreen transition clean; the toggle grants
         // see-through only when the user asks for it.

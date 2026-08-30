@@ -1,4 +1,4 @@
-//! Terminal launch preferences — the platform-neutral half of the
+//! Terminal launch preferences: the platform-neutral half of the
 //! "Open Terminal Here" command (docs/features/CONTEXT_MENU.md).
 //!
 //! The GPUI app resolves the persisted settings into a [`TerminalSpec`]
@@ -69,7 +69,7 @@ impl TerminalSpec {
     }
 
     /// Expand [`DIR_PLACEHOLDER`] in every arg token. Returns the tokens
-    /// and whether any token contained the placeholder — callers that got
+    /// and whether any token contained the placeholder: callers that got
     /// `false` should still set the child's working directory to `dir`.
     pub fn resolved_args(&self, dir: &str) -> (Vec<String>, bool) {
         let mut had_placeholder = false;
@@ -91,7 +91,7 @@ impl TerminalSpec {
 
 /// Split a user-typed params string into argv tokens: whitespace
 /// separates, double quotes group (and may open mid-token, as in
-/// `--title="my term"`). No backslash escapes — a literal `"` inside an
+/// `--title="my term"`). No backslash escapes: a literal `"` inside an
 /// argument isn't representable, which no terminal flag needs.
 pub fn split_args(s: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -119,7 +119,7 @@ pub fn split_args(s: &str) -> Vec<String> {
     out
 }
 
-/// The file name of a program path, lowercased, without a `.exe` suffix —
+/// The file name of a program path, lowercased, without a `.exe` suffix,
 /// `/usr/bin/gnome-terminal` → `gnome-terminal`, `C:\WT\wt.exe` → `wt`.
 /// Both separators are handled so a Windows-style value parses on any host.
 pub fn program_basename(program: &str) -> String {

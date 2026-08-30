@@ -1,4 +1,4 @@
-//! Archive workbench — an embedded tool-result view (peer to Disk Usage and
+//! Archive workbench: an embedded tool-result view (peer to Disk Usage and
 //! the Duplicate panel) for browsing an archive's contents and extracting from
 //! it. Opened via the "Open as Archive" context action; docked into the tab's
 //! `tool_result` seam (docs/features/TOOL_RESULTS.md) and closed the same way
@@ -16,7 +16,7 @@
 //!
 //! # Tree, not a flat dump
 //!
-//! A real archive is deep — a macOS app bundle runs to thousands of entries —
+//! A real archive is deep: a macOS app bundle runs to thousands of entries,
 //! so [`ferail_archive::ArchiveTree`] indexes the flat table of contents and
 //! this view projects only the levels the user has expanded.
 //!
@@ -57,11 +57,11 @@ const FILTER_MIN_WIDTH: f32 = 1180.0;
 /// Above this, previewing asks first. An archive entry has to be written out
 /// before Quick Look can read it (it is an OS service that takes a file URL),
 /// and the table of contents gives us the uncompressed size *before* we spend
-/// anything — so the check is free and also caps decompression bombs.
+/// anything, so the check is free and also caps decompression bombs.
 const PREVIEW_CONFIRM_BYTES: u64 = 100 * 1024 * 1024;
 
 /// Ceiling for decoding an entry in memory. Above this we stage to disk
-/// instead of holding the whole thing — text and images worth previewing are
+/// instead of holding the whole thing: text and images worth previewing are
 /// far below it.
 const PREVIEW_INMEMORY_CAP: u64 = 16 * 1024 * 1024;
 
@@ -102,7 +102,7 @@ enum ArchiveLoad {
 
 pub struct ArchiveView {
     archive_path: PathBuf,
-    /// Resolved off-thread — by extension when it names a format, otherwise by
+    /// Resolved off-thread, by extension when it names a format, otherwise by
     /// content, so a `.docx` / `.jar` / `.apk` opens as the zip it is.
     format: Option<Format>,
     load: ArchiveLoad,
@@ -120,7 +120,7 @@ pub struct ArchiveView {
     /// is what lets the workbench move between a docked tab and a standalone
     /// window without either host losing its listing.
     table: Entity<TableState<FileListDelegate>>,
-    /// Kept alive for the lifetime of the view — dropping it stops selection.
+    /// Kept alive for the lifetime of the view, dropping it stops selection.
     _table_sub: Subscription,
     /// Where this view currently lives, and how to dock it back when windowed.
     host: ToolHostContext,
@@ -149,7 +149,7 @@ pub struct ArchiveView {
     /// rejected: releasing there must never bubble into the docked folder
     /// pane and accidentally extract into its current directory.
     drop_feedback_allowed: bool,
-    /// Own preview panel, used when this workbench lives in its own window —
+    /// Own preview panel, used when this workbench lives in its own window,
     /// there is no Shell pane there to borrow. `None` while docked, where the
     /// Shell's pane shows the entry instead.
     preview_panel: Option<Entity<crate::preview_panel::PreviewPanel>>,
@@ -346,7 +346,7 @@ impl ArchiveView {
         cx.notify();
     }
 
-    /// Record the pane width. Guarded so an unchanged width doesn't notify —
+    /// Record the pane width. Guarded so an unchanged width doesn't notify:
     /// prepaint runs every frame and an unconditional notify would loop.
     fn update_host_width(&mut self, width: f32, cx: &mut Context<Self>) {
         let next = width.round();
@@ -395,7 +395,7 @@ impl ArchiveView {
         }
     }
 
-    /// Force the preview toggle off — used when the preview pane is closed
+    /// Force the preview toggle off: used when the preview pane is closed
     /// from its own header, so the two controls can't disagree.
     pub fn set_preview_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if self.preview_enabled == enabled {
@@ -469,7 +469,7 @@ impl ArchiveView {
         }
     }
 
-    /// The selected row when it is exactly one non-directory entry — preview is
+    /// The selected row when it is exactly one non-directory entry: preview is
     /// meaningless for a folder or a multi-selection.
     fn single_selected_file(&self, cx: &App) -> Option<TreeRow> {
         let table = self.table.read(cx);
@@ -520,7 +520,7 @@ impl ArchiveView {
         });
     }
 
-    /// Decode an entry in memory when one of our own renderers can draw it —
+    /// Decode an entry in memory when one of our own renderers can draw it:
     /// text and images, which is most of what anyone peeks at. Nothing touches
     /// disk on this path. Returns false when the entry needs Quick Look, which
     /// only reads files.
@@ -572,7 +572,7 @@ impl ArchiveView {
                 })
                 .await;
             let Some((size, content)) = decoded else {
-                // Not something we can draw — stage it for Quick Look.
+                // Not something we can draw: stage it for Quick Look.
                 let _ = this.update(cx, |this: &mut ArchiveView, cx| {
                     this.stage_preview(entry_for_fallback.clone(), cx);
                 });
@@ -619,7 +619,7 @@ impl ArchiveView {
             return;
         };
         let scratch = self.scratch.clone();
-        // Supersede the previous one immediately — never two at once.
+        // Supersede the previous one immediately, never two at once.
         self.discard_staged(cx);
         self.previewed = Some(entry.clone());
         let display_name = entry
@@ -668,7 +668,7 @@ impl ArchiveView {
                         return None;
                     }
                     ferail_fs_native::scratch::set_private_permissions(&staged, 0o600);
-                    // The entry's own directory chain is now empty — drop it so
+                    // The entry's own directory chain is now empty: drop it so
                     // the folder names don't linger either.
                     if let Some(top) = entry.split('/').next() {
                         if top != entry {
@@ -734,7 +734,7 @@ impl ArchiveView {
         &self.table
     }
 
-    /// The archive this view is showing — the shell needs it to re-dock.
+    /// The archive this view is showing: the shell needs it to re-dock.
     pub fn archive_path(&self) -> &std::path::Path {
         &self.archive_path
     }
@@ -782,7 +782,7 @@ impl ArchiveView {
                         this.pending_entries.clear();
                         this.saving = false;
                         this.tree = ArchiveTree::build(&toc);
-                        // Open the single root folder straight away — an
+                        // Open the single root folder straight away: an
                         // archive with one wrapper directory should not greet
                         // the user with a single collapsed row.
                         if let Some(root) = toc.single_root() {
@@ -798,7 +798,7 @@ impl ArchiveView {
                     }
                     Err(ArchiveError::WrongPassword) => {
                         this.load = ArchiveLoad::NeedsPassword {
-                            error: Some(tr!("Incorrect password — try again.").to_string()),
+                            error: Some(tr!("Incorrect password: try again.").to_string()),
                         }
                     }
                     Err(e) => this.load = ArchiveLoad::Failed(e.to_string()),
@@ -1031,7 +1031,7 @@ impl ArchiveView {
     /// Extract to a folder the user picks, rather than next to the archive.
     ///
     /// Extract All / Extract Selected both write into the archive's own
-    /// folder, which fails outright when that volume is read-only or full —
+    /// folder, which fails outright when that volume is read-only or full,
     /// on AROS the shared host folder is mounted twice, `MacRO:` read-only
     /// and `MacRW:` writable, so an archive opened through `MacRO:` can never
     /// extract in place. This is the way out, and it honours the current
@@ -1700,7 +1700,7 @@ impl ArchiveView {
                     // Floor the name's share: with four controls to its right
                     // an unbounded flex child collapses to a couple of glyphs.
                     .min_w(px(112.0))
-                    // Filenames truncate in the middle (house style — keeps the
+                    // Filenames truncate in the middle (house style: keeps the
                     // start and the extension); the subtitle is free-form, so
                     // its tail is expendable. Without these the text wrapped a
                     // character per line once the pane got narrow.
@@ -2016,7 +2016,7 @@ impl Render for ArchiveView {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
             window.set_window_title(&tr!(
-                "Archive — {name}",
+                "Archive: {name}",
                 name = crate::private_mode::present_leaf_str(&raw_name, false)
             ));
         }
@@ -2067,7 +2067,7 @@ impl Render for ArchiveView {
                     .into_any_element()
             }
             ArchiveLoad::Failed(e) => self.centered_message(e.clone(), cx),
-            // The contents ARE the app's normal file table — columns,
+            // The contents ARE the app's normal file table: columns,
             // selection, sort and row lines all come from it.
             ArchiveLoad::Loaded(_) => DataTable::new(&self.table)
                 .bordered(false)
@@ -2279,7 +2279,7 @@ pub fn open_existing_window(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     let menu_label = tr!(
-        "Archive \u{2014} {name}",
+        "Archive: {name}",
         name = crate::private_mode::present_leaf_str(&raw_name, false)
     );
     let opts = WindowOptions {

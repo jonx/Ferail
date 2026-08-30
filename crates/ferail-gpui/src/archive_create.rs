@@ -1,4 +1,4 @@
-//! "New Archive…" dialog — create an archive from the current selection with
+//! "New Archive…" dialog: create an archive from the current selection with
 //! the options that suit most people: format, compression level, and an
 //! optional password.
 //!
@@ -264,7 +264,7 @@ pub fn open_dialog(sources: Vec<PathBuf>, window: &mut Window, cx: &mut Context<
             .on_ok(move |_, window, cx: &mut App| {
                 let plan = state.read(cx);
                 let Some(output) = plan.output_path(cx) else {
-                    // Empty name — keep the dialog open so it can be fixed.
+                    // Empty name: keep the dialog open so it can be fixed.
                     return false;
                 };
                 let sources = plan.sources.clone();

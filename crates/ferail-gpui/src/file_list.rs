@@ -1,4 +1,4 @@
-//! File-list table delegate — Phase 4.c.
+//! File-list table delegate: Phase 4.c.
 //!
 //! Wraps `ferail-fs-native` enumeration in a `TableDelegate` so
 //! `gpui-component`'s virtualized `Table` renders the entries
@@ -6,7 +6,7 @@
 //! are Name / Size / Kind / Modified. Size/Kind are pre-formatted on the
 //! domain side per the UI_NONBLOCKING contract; Modified is the exception,
 //! rendered live from `mtime_unix` so its relative label keeps counting
-//! (pure arithmetic, bounded to visible rows — still nonblocking).
+//! (pure arithmetic, bounded to visible rows, still nonblocking).
 
 use crate::text::{IconScale as _, TextScale as _, TruncateMiddle as _, elide_label};
 use std::cell::{Cell, RefCell};
@@ -39,16 +39,16 @@ use crate::tasks::{TaskKind, TaskRegistry};
 use crate::thumbnails::{THUMB_PX, ThumbnailCache, is_thumbnailable, show_thumbnails};
 
 /// The floating ghost shown under the cursor while dragging rows out of
-/// the list (or to an in-app drop target) — gpui's `on_drag` needs an
+/// the list (or to an in-app drop target): gpui's `on_drag` needs an
 /// `Entity<impl Render>` for the drag image. A single-row drag shows the
 /// item's icon/thumbnail + name as a labelled chip; a multi-row drag
 /// renders the *actual* item images as a loose Finder-style stack
-/// (capped at [`GHOST_STACK_CAP`]) with a red count badge — no "N items"
+/// (capped at [`GHOST_STACK_CAP`]) with a red count badge, no "N items"
 /// string. The images come straight from the already-warm thumbnail/icon
 /// caches, so building the ghost never touches the filesystem.
 ///
 /// gpui paints the drag view at `mouse − cursor_offset`, and
-/// `cursor_offset` is the grab point within the *dragged element* — for
+/// `cursor_offset` is the grab point within the *dragged element*, for
 /// a full-width row that lands the ghost at the row's left edge. So we
 /// re-anchor the chip back under the cursor by absolutely positioning it
 /// at `offset` (= the `cursor_offset` gpui hands the constructor), plus
@@ -124,7 +124,7 @@ impl Render for DragBadge {
         } else {
             // Multiple items: a loose stack of the real item images (drawn
             // back-to-front so the lead lands on top) with a red count
-            // badge, beside a short list of the names — the Finder stack,
+            // badge, beside a short list of the names: the Finder stack,
             // plus the "which files" the user asked for.
             const ICON: f32 = 40.0;
             const SPREAD: f32 = 7.0;
@@ -214,7 +214,7 @@ impl Render for DragBadge {
 }
 
 /// One target row's capability snapshot for context-menu gating,
-/// projected from the cached `FileEntry` at right-click time — no I/O,
+/// projected from the cached `FileEntry` at right-click time, no I/O,
 /// no path resolution. Add a field here when a command needs to gate on
 /// a new per-file capability (e.g. `is_symlink`, `is_app`).
 #[derive(Clone, Copy)]
@@ -289,7 +289,7 @@ impl MenuTargets {
         self.count == 0
     }
 
-    /// Exactly one target — the gate for commands that only make sense
+    /// Exactly one target: the gate for commands that only make sense
     /// per single file (Copy Path, Rename, Open With).
     pub fn is_single(&self) -> bool {
         self.count == 1
@@ -317,14 +317,14 @@ const MAX_MENU_CAP_SCAN_ROWS: usize = 65_536;
 /// This is the menu-side twin of `Shell::resolve_targets` and must agree
 /// with it row for row (spec §2.4): a right-click **inside** the selection
 /// targets the whole set; a right-click on an unselected row targets only
-/// that row — because the click collapses the selection onto it before any
+/// that row, because the click collapses the selection onto it before any
 /// command dispatches.
 ///
 /// Deliberately a pure function of `(entries, selected, row_ix)` rather
 /// than a snapshot staged ahead of time: gpui-component builds the menu in
 /// a `window.defer` callback that is queued *before* the table's
 /// `RightClickedRow` event reaches the Shell, so anything the Shell stages
-/// from that event arrives one right-click too late — which is what left
+/// from that event arrives one right-click too late, which is what left
 /// the first menu after a folder load missing every gated command
 /// (Rename, Copy Path, Extract, Open With, …).
 ///
@@ -415,14 +415,14 @@ fn resolve_menu_targets_with_mode(
 
 /// Availability rule for a context command whose visibility depends on
 /// the resolved selection (docs/features/CONTEXT_MENU.md). Commands that
-/// always apply to a group — whether as one batch op (Compress, Trash)
-/// or fanned out per file (Open, Quick Look, Get Info) — need no rule
+/// always apply to a group: whether as one batch op (Compress, Trash)
+/// or fanned out per file (Open, Quick Look, Get Info): need no rule
 /// and are added unconditionally; only the two cases below gate.
 pub enum Availability {
     /// Meaningful for exactly one file; hidden once more than one row is
     /// targeted (Copy Path, Rename, Open With).
     SingleOnly,
-    /// Per-command callback over the resolved targets — the escape hatch
+    /// Per-command callback over the resolved targets: the escape hatch
     /// for capability and anchor rules (Clear Quarantine = any
     /// quarantined; Open Terminal Here = anchor is a folder; Slideshow =
     /// anchor is a file).
@@ -445,20 +445,20 @@ fn avail_any_quarantined(t: &MenuTargets) -> bool {
     t.any_quarantined() || matches!(t.anchor.map(|cap| cap.kind), Some(EntryKind::Directory))
 }
 
-/// Bulk rule: at least one target is an archive file — offer Extract, which
+/// Bulk rule: at least one target is an archive file: offer Extract, which
 /// acts on the archive subset (mixed selections extract only their archives),
 /// mirroring how Clear Quarantine acts on the quarantined subset.
 fn avail_any_archive(t: &MenuTargets) -> bool {
     t.any_archive()
 }
 
-/// Anchor rule: the right-clicked (else lead) row is a folder — for
+/// Anchor rule: the right-clicked (else lead) row is a folder, for
 /// commands that act on one directory (Open Terminal Here, Favorites).
 fn avail_anchor_dir(t: &MenuTargets) -> bool {
     matches!(t.anchor.map(|c| c.kind), Some(EntryKind::Directory))
 }
 
-/// Anchor rule: the right-clicked (else lead) row is a non-directory —
+/// Anchor rule: the right-clicked (else lead) row is a non-directory,
 /// for file-anchored commands (Slideshow from Here).
 fn avail_anchor_file(t: &MenuTargets) -> bool {
     t.anchor
@@ -469,7 +469,7 @@ fn avail_anchor_file(t: &MenuTargets) -> bool {
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
 /// every `navigate()`. The Vec is already filtered by both
-/// `show_hidden` and `filter_text` at `load()` time — the Table
+/// `show_hidden` and `filter_text` at `load()` time: the Table
 /// always sees the user-visible subset, no per-cell skipping.
 pub struct FileListDelegate {
     pub entries: Vec<FileEntry>,
@@ -483,8 +483,8 @@ pub struct FileListDelegate {
     pub archive_view: Option<WeakEntity<crate::archive::ArchiveView>>,
     pub columns: Vec<Column>,
     /// Columns the user has hidden (header right-click → uncheck). Kept
-    /// out of `columns` — the table only ever sees the visible set, so
-    /// its index-based reorder/sort/resize logic stays untouched — but
+    /// out of `columns`: the table only ever sees the visible set, so
+    /// its index-based reorder/sort/resize logic stays untouched, but
     /// retained here (with identity + width) so re-showing restores them
     /// and they persist across launches. See [`split_persisted_columns`].
     pub hidden_columns: Vec<Column>,
@@ -553,7 +553,7 @@ pub struct FileListDelegate {
     /// row's slot with the name cell to draw small coloured dots.
     pub tags: Vec<Vec<ferail_core::commands::TagColor>>,
     /// `is_favorited[row]` is `true` when the entry's path is currently
-    /// in the user-curated Favorites list — drives the §5 star indicator
+    /// in the user-curated Favorites list: drives the §5 star indicator
     /// on the Name cell. Recomputed by `Shell::refresh_file_list_favorited`
     /// on every load and whenever the Favorites entity changes (the
     /// `cx.observe` subscription in `Shell::new`).
@@ -572,7 +572,7 @@ pub struct FileListDelegate {
     /// so a symbolic whole-list context menu never scans the model.
     all_menu_caps: MenuCapCounts,
     /// The keyboard-cursor / range-lead, mirrored from the active
-    /// tab. At most one. Cosmetic only — the Table primitive's
+    /// tab. At most one. Cosmetic only: the Table primitive's
     /// `selected_row` overlay is the visible focus ring.
     pub lead: Option<NodeId>,
     /// One persistent filename editor shared by the Shell's tabs.  The
@@ -581,7 +581,7 @@ pub struct FileListDelegate {
     pub inline_name_edit: Option<InlineNameEditBinding>,
     /// Warm cache for the right-click "Open With" submenu: the most
     /// recently fetched `(path, LaunchServices candidates)` pair.
-    /// Populated off the UI thread by [`spawn_open_with_warm`] —
+    /// Populated off the UI thread by [`spawn_open_with_warm`]:
     /// triggered on selection-lead changes and on a cache-miss menu
     /// build. The menu builder reads ONLY this cache (prime
     /// directive: no shell queries at menu-open time); a miss shows
@@ -591,7 +591,7 @@ pub struct FileListDelegate {
     ///
     /// Dispatch handlers (`Shell::open_with_slot`) resolve slot
     /// indices against this same cache so the app at slot N when
-    /// the menu was BUILT is the app that opens — re-fetching at
+    /// the menu was BUILT is the app that opens: re-fetching at
     /// dispatch could reorder candidates and launch the wrong app.
     pub open_with_warm: Option<(PathBuf, Vec<crate::platform_shell::OpenWithCandidate>)>,
     /// The user's active column sort, recorded by `perform_sort` /
@@ -608,7 +608,7 @@ pub struct FileListDelegate {
     /// `action_context` so gpui-component resolves each item's
     /// keyboard-shortcut hint against the shell's (stable, always-
     /// painted) dispatch path instead of the focus-sensitive
-    /// previous-frame fallback — which left shortcuts blank for the
+    /// previous-frame fallback, which left shortcuts blank for the
     /// first frame or two after the menu opened.
     pub shell_focus: gpui::FocusHandle,
     /// Lazily-built drag payload for the CURRENT selection, shared by
@@ -625,7 +625,7 @@ pub struct FileListDelegate {
     /// `drag_snapshot`, plus when folder sizes stream in.
     pub cached_total_size: std::cell::Cell<Option<u64>>,
     pub cached_selected_size: std::cell::Cell<Option<u64>>,
-    /// `Some(folder name)` while a *slow* directory load is in flight —
+    /// `Some(folder name)` while a *slow* directory load is in flight:
     /// set by `Shell`'s slow-load timer when the first enumeration batch
     /// hasn't landed after `SLOW_LOAD_INDICATOR_DELAY` (a spun-down
     /// external drive, a cold network mount). Flips the table into its
@@ -707,7 +707,7 @@ pub(crate) fn native_archive_drag_active() -> bool {
 /// How a file row should treat something dropped **onto** it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArchiveDropTarget {
-    /// Not an archive by name — the row is not a drop target at all.
+    /// Not an archive by name: the row is not a drop target at all.
     No,
     /// An archive this build can add entries to in place (ZIP).
     Accepts,
@@ -815,13 +815,13 @@ mod archive_promise_tests {
 /// See [`FileListDelegate::drag_snapshot`].
 #[derive(Clone, Default)]
 pub(crate) struct DragSnapshot {
-    /// Visible-order paths of the whole selection — the real OS drag
+    /// Visible-order paths of the whole selection: the real OS drag
     /// payload. Rows still clone this into their `ExternalPaths`
     /// value (gpui's mac backend needs it by value), but the walk,
     /// membership probes, and ghost assembly happen once.
     pub(crate) paths: Rc<Vec<PathBuf>>,
     /// Parallel to `paths`: whether each entry is a directory, from the
-    /// already-listed `EntryKind` — so promoting the drag to a native
+    /// already-listed `EntryKind`: so promoting the drag to a native
     /// session (`external_drag_payload`) never stats anything.
     pub(crate) dirs: Rc<Vec<bool>>,
     pub(crate) names: SmallVec<[SharedString; GHOST_STACK_CAP]>,
@@ -1156,7 +1156,7 @@ impl FileListDelegate {
         // Column order + widths + visibility survive across launches
         // (drag-reorder, drag-resize, and header show/hide all write
         // through the shell's table-event bridge). app_state::load() is
-        // the in-memory cache — no I/O.
+        // the in-memory cache, no I/O.
         let (columns, hidden_columns) =
             split_persisted_columns(crate::app_state::load().list_columns.as_deref());
         Self {
@@ -1221,7 +1221,7 @@ impl FileListDelegate {
     /// it into `hidden_columns` retaining its width; showing appends it
     /// back to the visible set. The primary `name` column can't be
     /// hidden, nor can the last remaining visible column. Returns whether
-    /// the set changed — the caller then `refresh`es and persists.
+    /// the set changed: the caller then `refresh`es and persists.
     pub fn toggle_column(&mut self, key: &str) -> bool {
         if let Some(pos) = self.columns.iter().position(|c| c.key.as_ref() == key) {
             if key == "name" || self.columns.len() <= 1 {
@@ -1304,7 +1304,7 @@ impl FileListDelegate {
         self.all_menu_caps.quarantined = self.all_menu_caps.quarantined.saturating_sub(count);
     }
 
-    /// Build the shared drag payload for the current selection —
+    /// Build the shared drag payload for the current selection:
     /// visible-order paths plus the capped ghost images/names. Ghost
     /// images come only from already-warm caches (thumbnail when
     /// cached, else the workspace type icon), per the UI_NONBLOCKING
@@ -1335,7 +1335,7 @@ impl FileListDelegate {
             paths.push(path);
             dirs.push(matches!(entry.kind, EntryKind::Directory));
         }
-        // Names shown on the ghost, lead-first and capped — the
+        // Names shown on the ghost, lead-first and capped: the
         // single chip uses the first; the multi list shows up to
         // GHOST_NAME_CAP with a "+N more" overflow.
         let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = paths
@@ -1524,8 +1524,8 @@ impl FileListDelegate {
         }
     }
 
-    // (The old synchronous `load()` — enumerate + up-to-200 inline xattr
-    // tag reads on the UI thread — was dead code; the streaming pipeline in
+    // (The old synchronous `load()`: enumerate + up-to-200 inline xattr
+    // tag reads on the UI thread: was dead code; the streaming pipeline in
     // `Shell::load_path_for_tab` is the only listing path. Deleted so nobody
     // resurrects a Prime Directive violation.)
 
@@ -1581,7 +1581,7 @@ impl FileListDelegate {
         // ...and Flat, whose Path column and path arena belong to that
         // surface alone. Without this, a prefetched load arriving after
         // Include Subfolders closed kept an empty Path column and a
-        // delegate that still believed it was a flat surface — which
+        // delegate that still believed it was a flat surface, which
         // then took the flat sort path for ordinary directory rows.
         let leaving_flat = self.flat_paths.take().is_some();
         clear_row_buffer(&mut self.flat_filtered_entries, leaving_flat);
@@ -1634,7 +1634,7 @@ impl FileListDelegate {
         self.heats.extend(heats);
         self.tags.extend((0..n).map(|_| Vec::new()));
         self.is_favorited.extend(favorites);
-        // selected_set / lead untouched — NodeId-keyed, not row-keyed.
+        // selected_set / lead untouched: NodeId-keyed, not row-keyed.
     }
 
     pub fn append_entries_sorted(
@@ -1879,7 +1879,7 @@ impl FileListDelegate {
 
     /// Show the contents of an archive instead of a directory listing.
     ///
-    /// `entries` are synthesized rows (no on-disk path — the `paths` map is
+    /// `entries` are synthesized rows (no on-disk path: the `paths` map is
     /// deliberately left empty, so `path_for_entry` returns `None` and every
     /// path-dependent affordance degrades to its "unknown" branch), and
     /// `rows` carries the tree metadata the Name cell draws.
@@ -1959,7 +1959,7 @@ impl FileListDelegate {
     /// The Shell drives selection for tab listings through its richer path
     /// (`apply_row_click_gesture`), which also moves the preview pane and warms
     /// the Open With cache. A **windowed** archive workbench has no Shell to
-    /// route through, so it needs the core gesture on its own — this is that
+    /// route through, so it needs the core gesture on its own: this is that
     /// core, and nothing else calls it.
     pub fn apply_click_gesture(&mut self, row_ix: usize, modifiers: gpui::Modifiers) {
         let Some(id) = self.entries.get(row_ix).map(|e| e.id) else {
@@ -2267,7 +2267,7 @@ impl TableDelegate for FileListDelegate {
     ) -> Stateful<Div> {
         let _path_guard = ferail_core::path_guard::enter_render();
         // Ant Trail heat tint (Stage 9.b). Renders only on directory
-        // rows — files aren't tracked in the trail. 0.0 → no tint;
+        // rows: files aren't tracked in the trail. 0.0 → no tint;
         // up to ~0.30 warm-orange opacity at full heat. The warm
         // hue matches the "heat" metaphor (frequently-visited
         // folders glow brighter); accent / primary blend too far
@@ -2290,7 +2290,7 @@ impl TableDelegate for FileListDelegate {
                 .and_then(|id| self.path_for_entry(id))
                 .is_some_and(|path| self.cut_marker.borrow().iter().any(|cut| cut == &path));
         // Hidden entries (visible because show-hidden is on) dim more
-        // gently — text and icon in one stroke — so they read as
+        // gently, text and icon in one stroke, so they read as
         // distinct from normal files, Finder-style. `else if`: a cut
         // hidden row keeps the stronger cut treatment (opacity doesn't
         // compound; the last call would win).
@@ -2316,7 +2316,7 @@ impl TableDelegate for FileListDelegate {
         let archive_entry_drop_allowed = !self.is_archive_mode();
         // Archive **file** rows accept dropped files/folders: a ZIP adds them,
         // a format that can't be edited in place refuses visibly. Only in the
-        // real filesystem list — inside an open archive, rows are members, and
+        // real filesystem list: inside an open archive, rows are members, and
         // nesting an add into a member is not a gesture we support.
         let archive_add_target = if self.is_archive_mode() {
             ArchiveDropTarget::No
@@ -2536,7 +2536,7 @@ impl TableDelegate for FileListDelegate {
                     }),
                 );
             // The matching hover ring for the native promise session lives in
-            // `render_tr_hover` below — the table owns the row's single
+            // `render_tr_hover` below: the table owns the row's single
             // `.hover()` slot, so it cannot be set here.
         }
         if kind_is_dir && heat > 0.0 && crate::ant_trail::enabled(cx) {
@@ -2547,7 +2547,7 @@ impl TableDelegate for FileListDelegate {
             row = row.bg(crate::ant_trail::tint(crate::ant_trail::base(cx), heat));
         }
         // Spec §2 multi-select fill. Painted for every set member
-        // EXCEPT the lead — the Table primitive draws its own
+        // EXCEPT the lead: the Table primitive draws its own
         // `selected_row` overlay on the lead, which serves as the
         // distinct focus ring spec §2.3 calls for.
         //
@@ -2559,7 +2559,7 @@ impl TableDelegate for FileListDelegate {
         if in_set && !is_lead {
             row = row.bg(crate::selection_colors::fill(cx));
         }
-        // OS drag-out: `on_drag` alone is a purely in-window gpui drag —
+        // OS drag-out: `on_drag` alone is a purely in-window gpui drag:
         // the `external_drag_payload` chained below is what promotes it
         // to a native platform drag (AppKit on macOS, Shell/OLE on Windows)
         // the moment the pointer leaves the viewport, so dragging rows
@@ -2741,7 +2741,7 @@ impl TableDelegate for FileListDelegate {
                         });
                 }
             } else if let Some(path) = self.path_for_entry(entry.id) {
-                // Unselected row: drags just itself — cheap, no snapshot.
+                // Unselected row: drags just itself: cheap, no snapshot.
                 let mut ghost_icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
                 self.push_ghost_icon(entry, &path, show_thumbnails(cx), &mut ghost_icons);
                 let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = smallvec![ghost_name(&path)];
@@ -2775,7 +2775,7 @@ impl TableDelegate for FileListDelegate {
     }
 
     /// Accent/danger ring on folder rows while a native promise session is in
-    /// flight — the twin of the `drag_over::<ArchiveEntryDrag>` style in
+    /// flight: the twin of the `drag_over::<ArchiveEntryDrag>` style in
     /// `render_tr`. GPUI has no typed drag during that session, so
     /// `drag_over` never fires; the row's `on_mouse_move` repaints and the
     /// table merges this into its single hover slot so the ring follows the
@@ -2828,7 +2828,7 @@ impl TableDelegate for FileListDelegate {
             .unwrap_or("");
 
         match col_key {
-            // Name — Lucide line-art icon tinted by category (files +
+            // Name: Lucide line-art icon tinted by category (files +
             // symlinks); macOS NSWorkspace bitmap for folders so
             // user-customised folder icons and cloud-sync overlays
             // still render. Optional quarantine badge in the top-right
@@ -2848,7 +2848,7 @@ impl TableDelegate for FileListDelegate {
                     EntryKind::Directory => {
                         let icon = self.icons.borrow_mut().icon_for(entry, &path);
                         // Platforms whose icon bridge is still a stub (Linux
-                        // scaffold, AROS) yield the blank placeholder — show
+                        // scaffold, AROS) yield the blank placeholder: show
                         // the Lucide folder glyph instead of an empty slot.
                         let inner: gpui::AnyElement = if self.icons.borrow().is_blank(&icon) {
                             let fi = file_type_icon(entry);
@@ -2874,7 +2874,7 @@ impl TableDelegate for FileListDelegate {
                     EntryKind::File | EntryKind::Symlink => {
                         // Real Quick Look thumbnail if one is ready in
                         // the cache; otherwise the generic type icon.
-                        // `get` is a non-mutating HashMap read — the
+                        // `get` is a non-mutating HashMap read: the
                         // fetch itself happens off the render path in
                         // `visible_rows_changed`.
                         let thumb = if thumbs_on && !crate::private_mode::enabled() {
@@ -2910,7 +2910,7 @@ impl TableDelegate for FileListDelegate {
                 // Render the *display* leaf (macOS shows an on-disk `:` as
                 // `/`, Finder-style); when the name hides deceptive characters
                 // draw the same highlighted treatment the preview pane uses, so
-                // the list — scanned first — never shows an invisible-char name
+                // the list, scanned first, never shows an invisible-char name
                 // as innocuous. `name_has_hazards` is precomputed at enumerate
                 // time, so the row paint just reads a bool.
                 let display_name: SharedString = crate::private_mode::present_leaf_str(
@@ -2977,7 +2977,7 @@ impl TableDelegate for FileListDelegate {
                         .child(elided_name)
                         .into_any_element()
                 };
-                // Inline tag chips — 6-DIP coloured dots after the
+                // Inline tag chips, 6-DIP coloured dots after the
                 // filename, one per applied Finder tag (max 7). Read
                 // synchronously at load() time and stored in the
                 // delegate; render only consumes the cached Vec.
@@ -3068,7 +3068,7 @@ impl TableDelegate for FileListDelegate {
                 .into_any_element(),
             // Unified Format column: replaces the old Kind + Magic
             // duplication. The trailing indicator grades how the
-            // extension and the content-detected type relate — a red
+            // extension and the content-detected type relate: a red
             // danger triangle only for genuine disguises (dangerous
             // content under an innocent extension), a quiet neutral cue
             // for benign renamed/resaved files. See
@@ -3108,7 +3108,7 @@ impl TableDelegate for FileListDelegate {
                             )
                             .tooltip(move |window, cx| {
                                 Tooltip::new(tr!(
-                                    "Extension says \u{201C}{kind}\u{201D} but the content is \u{201C}{magic}\u{201D} — possible disguised file.",
+                                    "Extension says \u{201C}{kind}\u{201D} but the content is \u{201C}{magic}\u{201D}: possible disguised file.",
                                     kind = tip_kind,
                                     magic = tip_magic
                                 ))
@@ -3141,7 +3141,7 @@ impl TableDelegate for FileListDelegate {
             // the label ("4 seconds ago") stays live; the shell's relative-
             // time tick repaints on a cadence so it counts up even while the
             // user is idle.
-            // A non-positive stamp means "unknown", not 1970 — some archive
+            // A non-positive stamp means "unknown", not 1970: some archive
             // formats simply don't record per-entry times. Render nothing
             // rather than a misleading epoch date.
             "modified" => div()
@@ -3163,7 +3163,7 @@ impl TableDelegate for FileListDelegate {
                 .into_any_element(),
             // Description: rich facts from the magic-byte parse,
             // populated lazily by the prefetch worker. Empty string
-            // renders as an empty cell — no skeleton shimmer in v1.
+            // renders as an empty cell, no skeleton shimmer in v1.
             "description" => div()
                 .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
@@ -3206,7 +3206,7 @@ impl TableDelegate for FileListDelegate {
         }
     }
 
-    /// Plain text of a cell — the same strings `render_td` paints,
+    /// Plain text of a cell: the same strings `render_td` paints,
     /// minus decorations (icon, tag chips, star, mismatch badge). Powers
     /// double-click-to-fit column sizing (and is the export hook). Must
     /// stay in sync with `render_td`'s per-column text.
@@ -3239,7 +3239,7 @@ impl TableDelegate for FileListDelegate {
     /// Viewport-driven thumbnail warming (prime directive: expensive
     /// work scheduled from a semantic event, off the UI thread, dropped
     /// if it lands late). Called by the table whenever the visible row
-    /// range changes — first layout and every scroll. We fetch Quick
+    /// range changes: first layout and every scroll. We fetch Quick
     /// Look thumbnails for the *visible* thumbnailable rows only, never
     /// the whole (possibly thousands-deep) folder.
     fn visible_rows_changed(
@@ -3378,18 +3378,18 @@ impl TableDelegate for FileListDelegate {
         // a frame or two later. See `shell_focus`'s doc comment.
         let menu = menu.action_context(self.shell_focus.clone());
 
-        // Prime directive: menu building is read-only — no shell or
+        // Prime directive: menu building is read-only, no shell or
         // filesystem queries at menu-open time.
         //
         // Tags come from the per-row `self.tags` slots the bulk load
         // already populated; the checkmarks therefore always agree
         // with the row's visible tag dots (rows past the load cap
-        // show no dots and no checkmarks — consistent).
+        // show no dots and no checkmarks: consistent).
         //
         // Open With candidates come from the `open_with_warm` cache,
         // populated off-thread on selection-lead changes (see
-        // `Shell::warm_open_with_for_row`). On a cache miss — e.g.
-        // a direct right-click on a row that was never selected — we
+        // `Shell::warm_open_with_for_row`). On a cache miss, e.g.
+        // a direct right-click on a row that was never selected: we
         // kick the warm fetch and show a disabled "loading" item inside a
         // retained submenu; when the fetch reports back only that submenu
         // rebuilds, preserving the root menu and its selection.
@@ -3405,7 +3405,7 @@ impl TableDelegate for FileListDelegate {
         let applied_tags: Vec<ferail_core::commands::TagColor> =
             self.tags.get(row_ix).cloned().unwrap_or_default();
 
-        // Tags submenu — built as a nested PopupMenu Entity via
+        // Tags submenu: built as a nested PopupMenu Entity via
         // PopupMenu::build. Each colour is a `menu_with_check` so
         // applied tags render with a leading checkmark. Click
         // toggles via the ToggleTagX action.
@@ -3423,7 +3423,7 @@ impl TableDelegate for FileListDelegate {
         // rules use the whole set. See docs/features/CONTEXT_MENU.md.
         //
         // Resolved HERE, at build time, from the delegate's own mirrored
-        // selection — not from a snapshot the Shell stages on right-click,
+        // selection, not from a snapshot the Shell stages on right-click,
         // which lands a frame too late (see `resolve_menu_targets`).
         let targets = resolve_menu_targets_with_mode(
             &self.entries,
@@ -3488,7 +3488,7 @@ impl TableDelegate for FileListDelegate {
             // Built-in lightweight editor first (docs/features/TEXT_EDITOR.md),
             // then the explicit system-editor escape hatch. Image files the
             // bundled codecs can round-trip also get the redaction/annotation
-            // editor (docs/features/IMAGE_EDITOR.md) — extension check only,
+            // editor (docs/features/IMAGE_EDITOR.md): extension check only,
             // over the already-cached row name.
             menu = menu.menu(tr!("Edit"), Box::new(EditFile));
             let anchor_editable_image = self
@@ -3615,7 +3615,7 @@ impl TableDelegate for FileListDelegate {
             // ANY row in the resolved target set carries the
             // Mark-of-the-Web, matching `Shell::on_clear_quarantine`, which
             // strips it from the quarantined subset. Reads the caps
-            // projected from the loaded rows — no xattr query at
+            // projected from the loaded rows, no xattr query at
             // menu-open time. Right-clicking the clean file in a
             // mixed selection now offers the command too, instead of hiding
             // it based on the single clicked row.
@@ -3671,7 +3671,7 @@ impl TableDelegate for FileListDelegate {
         }
 
         if crate::platform_shell::SUPPORTS_TAGS {
-            // Names of the tags applied to the clicked row — offered for
+            // Names of the tags applied to the clicked row: offered for
             // pinning to the sidebar as Tag favorites (§9).
             let applied_tag_names: Vec<String> =
                 applied_tags.iter().map(|c| c.name().to_string()).collect();
@@ -3685,7 +3685,7 @@ impl TableDelegate for FileListDelegate {
                     .menu_with_check(tr!("Purple"), tag_purple_on, Box::new(ToggleTagPurple))
                     .menu_with_check(tr!("Gray"), tag_gray_on, Box::new(ToggleTagGray));
                 // Pin each applied tag to the sidebar. Closure items add the
-                // Tag favorite directly through the process-global entity —
+                // Tag favorite directly through the process-global entity,
                 // no per-tag action needed (writes are off the paint path).
                 if !applied_tag_names.is_empty() {
                     m = m.separator();
@@ -3735,7 +3735,7 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
-        // Archive rows are virtual — the "current folder" lives inside an
+        // Archive rows are virtual: the "current folder" lives inside an
         // archive, so the folder verbs below have no real path to act on.
         // Returning the menu unchanged keeps the empty space inert there.
         if self.is_archive_mode() {
@@ -3752,7 +3752,7 @@ impl TableDelegate for FileListDelegate {
         // the four context-path verbs act on `Shell::context_target`,
         // which the `RightClickedBackground` subscriber staged to the
         // current directory the instant this menu opened. Prime
-        // directive: labels and actions only — no filesystem or shell
+        // directive: labels and actions only, no filesystem or shell
         // queries at menu-open time.
         menu.action_context(self.shell_focus.clone())
             .menu(tr!("New Folder"), Box::new(NewFolder))
@@ -3790,7 +3790,7 @@ impl TableDelegate for FileListDelegate {
         self.columns.insert(to_ix, column);
     }
 
-    /// Click on a header runs this — we delegate to the existing
+    /// Click on a header runs this: we delegate to the existing
     /// `sort_in_place` helper, mapping the column index back to a
     /// `SortColumn` via the `columns` vec's index → key lookup. The
     /// Table's column moves shift indices around, which is why we
@@ -3810,7 +3810,7 @@ impl TableDelegate for FileListDelegate {
         };
         match sort {
             ColumnSort::Default => {
-                // "Reset to natural order" — sort by name ascending
+                // "Reset to natural order": sort by name ascending
                 // (Finder convention) as a deterministic fallback,
                 // since we don't retain the load-time order.
                 self.reset_sort();
@@ -3834,9 +3834,9 @@ impl TableDelegate for FileListDelegate {
         // than "we forgot to handle this case."
         //
         // A folder whose rows were all excluded by the filter field is
-        // not an empty folder — saying so sends the user looking for
+        // not an empty folder, saying so sends the user looking for
         // missing files. Name the filter as the cause instead.
-        // Same words as the status bar's chip — "hidden" is already
+        // Same words as the status bar's chip: "hidden" is already
         // taken by the show-hidden toggle and would read as that.
         let message = match (self.flat_paths.is_some(), self.filtered_out) {
             (true, 0) => tr!("No files found in this location or its subfolders."),
@@ -3865,14 +3865,14 @@ impl TableDelegate for FileListDelegate {
     /// Swap the whole table body for the loading view while a slow
     /// device (spun-down external drive, cold network mount) is waking
     /// up. Also removes the previous directory's stale rows from the
-    /// screen — they belong to the path the breadcrumb no longer shows
+    /// screen: they belong to the path the breadcrumb no longer shows
     /// and must not stay clickable.
     fn loading(&self, _cx: &App) -> bool {
         self.slow_load.is_some()
     }
 
     /// The built-in pulsing skeleton rows (the in-pane "still working"
-    /// signal — the status bar runs its indeterminate stripe in
+    /// signal: the status bar runs its indeterminate stripe in
     /// parallel) topped with a line naming what we're waiting on.
     fn render_loading(
         &mut self,
@@ -3906,8 +3906,8 @@ impl TableDelegate for FileListDelegate {
 /// and store them in the delegate's [`FileListDelegate::open_with_warm`]
 /// cache. The fetch (`open_with_candidates`, ~10–50 ms of
 /// LaunchServices / IAssocHandler work) never runs on the UI thread.
-/// Last-writer-wins by design: the cache holds one entry — the most
-/// recently warmed path — which is always the row the user is about
+/// Last-writer-wins by design: the cache holds one entry: the most
+/// recently warmed path, which is always the row the user is about
 /// to right-click.
 pub fn spawn_open_with_warm(
     table: gpui::Entity<TableState<FileListDelegate>>,
@@ -4005,7 +4005,7 @@ fn spawn_open_with_submenu(
     .detach();
 }
 
-/// Lookup helper for double-click open / Enter key — turn a row
+/// Lookup helper for double-click open / Enter key: turn a row
 /// selection into the path that should be navigated to (for a folder)
 /// or opened with the default app (for a file).
 pub fn entry_at(delegate: &FileListDelegate, row_ix: usize) -> Option<&FileEntry> {
@@ -4069,7 +4069,7 @@ pub(crate) fn tag_color_rgba(c: ferail_core::commands::TagColor) -> gpui::Rgba {
     }
 }
 
-/// Mark-of-the-Web quarantine badge — small red dot in the icon's
+/// Mark-of-the-Web quarantine badge: small red dot in the icon's
 /// top-right corner. Pulled out of `render_td` so the file-icon and
 /// folder-icon paths share one stylesheet.
 pub(crate) fn badge_overlay(this: Div) -> Div {
@@ -4090,14 +4090,14 @@ pub(crate) fn badge_overlay(this: Div) -> Div {
 pub enum SortColumn {
     Name,
     Size,
-    /// Unified Format column (next-level Phase 1) — sorts by the
+    /// Unified Format column (next-level Phase 1): sorts by the
     /// magic-detected description, falling back to the extension-
     /// derived kind. Replaces the old `Kind` + `Magic` sort options.
     Format,
     Modified,
     /// Relative parent directory, available only on a Flat surface.
     Path,
-    /// Ant Trail heat — how often the user has visited a folder
+    /// Ant Trail heat: how often the user has visited a folder
     /// (docs/features/ANT_TRAIL.md). Directory-only by nature: files
     /// have no heat, so they sort among themselves by name below the
     /// folders. The key is not on `FileEntry`; it lives in the
@@ -4126,8 +4126,8 @@ impl std::str::FromStr for SortColumn {
 
 /// The header label (English msgid) for a column key. The persisted key
 /// (`"name"`, `"size"`, …) is the identity; the label is translated where
-/// it is shown — `column_name` for the header / drag ghost / autofit, and
-/// the header's show-hide menu — so a language switch repaints without
+/// it is shown: `column_name` for the header / drag ghost / autofit, and
+/// the header's show-hide menu, so a language switch repaints without
 /// rebuilding the columns.
 fn column_title(key: &str) -> &'static str {
     match key {
@@ -4160,7 +4160,7 @@ fn default_columns() -> Vec<Column> {
         // Description column: rich ` · `-joined facts derived
         // from the magic-byte parse (bitness/arch/subsystem
         // for binaries, w×h for images, channels/kHz/duration
-        // for audio, etc.). Populated by the prefetch worker —
+        // for audio, etc.). Populated by the prefetch worker:
         // empty until the worker batch lands, then never
         // touched by paint. Not sortable in v1: lex sort of
         // description strings groups MP3s near MP4s but
@@ -4176,7 +4176,7 @@ fn flat_path_column() -> Column {
         .sortable()
 }
 
-/// Column width clamp for persisted values — a corrupt entry can't
+/// Column width clamp for persisted values: a corrupt entry can't
 /// collapse a column to 0 or blow the layout out.
 const COLUMN_WIDTH_MIN: f32 = 60.0;
 const COLUMN_WIDTH_MAX: f32 = 1200.0;
@@ -4204,10 +4204,10 @@ pub fn split_persisted_columns(spec: Option<&str>) -> (Vec<Column>, Vec<Column>)
             continue;
         }
         let Some(pos) = pool.iter().position(|c| c.key.as_ref() == key) else {
-            continue; // unknown key (older/newer build) — skip
+            continue; // unknown key (older/newer build): skip
         };
         let mut col = pool.remove(pos);
-        // `"NaN".parse::<f32>()` succeeds — filter non-finite values
+        // `"NaN".parse::<f32>()` succeeds: filter non-finite values
         // or the clamp propagates NaN into the layout.
         if let Some(w) = parts
             .next()
@@ -4267,7 +4267,7 @@ fn ghost_name(path: &std::path::Path) -> SharedString {
 /// Sort with `sort_by_cached_key`: each element's key (its casefolded
 /// name, plus the format label for the Format column) is built ONCE
 /// per element, not per comparison. The previous comparator allocated
-/// 2–4 lowercase Strings per COMPARISON — and the streaming pipeline
+/// 2–4 lowercase Strings per COMPARISON, and the streaming pipeline
 /// re-sorts the whole accumulated listing per 256-entry batch, so a
 /// 100k-entry directory paid billions of allocations on the UI thread
 /// while loading. (Next step if profiling still shows this hot: merge
@@ -4334,7 +4334,7 @@ pub fn sort_in_place(entries: &mut [ferail_core::FileEntry], col: SortColumn, as
             });
         }
         // Path ordering needs the Flat surface's directory arena, and Ant
-        // Trail ordering needs the delegate's row-parallel `heats` — both
+        // Trail ordering needs the delegate's row-parallel `heats`: both
         // are handled by `FileListDelegate::sort_model` above.
         (SortColumn::Path, _) | (SortColumn::AntTrail, _) => {}
     }
@@ -4342,7 +4342,7 @@ pub fn sort_in_place(entries: &mut [ferail_core::FileEntry], col: SortColumn, as
 
 /// Resolve an Ant Trail pick against the rows actually in hand.
 ///
-/// Ant Trail ranks by per-row heat, which a surface may simply not have —
+/// Ant Trail ranks by per-row heat, which a surface may simply not have:
 /// Flat keeps `heats` empty on purpose. The decision is made from the
 /// data, never from which surface we think we are: a surface flag that
 /// disagrees with the rows (a stale `flat_paths` left behind when Include
@@ -4362,7 +4362,7 @@ fn resolve_ant_sort(col: SortColumn, asc: bool, has_heat: bool) -> (SortColumn, 
 
 /// Order rows by Ant Trail heat (docs/features/ANT_TRAIL.md).
 ///
-/// Heat is not a `FileEntry` field — it is looked up per row through
+/// Heat is not a `FileEntry` field: it is looked up per row through
 /// `heat_of`, which the delegate backs with its row-parallel `heats`
 /// vector (an in-memory read, no I/O). Only directories ever carry
 /// heat, so the folders-first grouping every other column uses doubles
@@ -4381,7 +4381,7 @@ fn sort_by_heat(
     fn non_dir(e: &ferail_core::FileEntry) -> bool {
         !matches!(e.kind, ferail_core::EntryKind::Directory)
     }
-    // f32 is not `Ord`, and heat is a normalized 0.0..=1.0 ratio — quantize
+    // f32 is not `Ord`, and heat is a normalized 0.0..=1.0 ratio: quantize
     // to a u32 so the rows can ride the same `sort_by_cached_key` fast path
     // as every other column instead of a per-comparison float comparator.
     let key = |e: &ferail_core::FileEntry| (heat_of(e.id).clamp(0.0, 1.0) * 1_000_000.0) as u32;
@@ -4437,7 +4437,7 @@ pub fn apply_sort<C: gpui::AppContext>(
     apply_sort_column(table, col, ascending, cx);
 }
 
-// Compile-time sanity check that FontWeight stays in scope — used
+// Compile-time sanity check that FontWeight stays in scope: used
 // transitively by render_td when we add bold-name styling for
 // directories in a future polish pass.
 #[allow(dead_code)]
@@ -4629,7 +4629,7 @@ mod sort_tests {
 
     /// Ant Trail sorting ranks folders by visit heat, hottest first on
     /// the default (descending) pick. Files carry no heat, so they stay
-    /// below the folders in name order — a cold listing still reads
+    /// below the folders in name order: a cold listing still reads
     /// like a normal one.
     #[test]
     fn ant_trail_sort_ranks_hot_folders_first() {
@@ -4652,8 +4652,8 @@ mod sort_tests {
         assert_eq!(ids(&rows), vec![1, 5, 3, 4, 2]);
     }
 
-    /// The bug this guards: picking Ant Trail did nothing — the list
-    /// stayed in name order with the warm folder still in the middle —
+    /// The bug this guards: picking Ant Trail did nothing: the list
+    /// stayed in name order with the warm folder still in the middle,
     /// while the *same* pick worked after changing directory. The
     /// delegate was still carrying a Flat surface flag from a closed
     /// Include Subfolders view, and the flat sort path swallowed the
@@ -4782,8 +4782,8 @@ mod menu_targets_tests {
     }
 
     /// The regression this resolver exists for: right-clicking a row in a
-    /// freshly loaded folder — nothing selected yet, nothing staged by any
-    /// earlier click — must still resolve that row, so the gated commands
+    /// freshly loaded folder, nothing selected yet, nothing staged by any
+    /// earlier click: must still resolve that row, so the gated commands
     /// (Rename, Copy Path, Extract, Open With) appear on the FIRST menu,
     /// not only on the second. Before, the caps arrived a right-click late
     /// and the first menu after a view switch was silently short.
@@ -4797,7 +4797,7 @@ mod menu_targets_tests {
     }
 
     /// Right-click on a row OUTSIDE the current selection targets just
-    /// that row — matching the click that collapses the selection onto it
+    /// that row, matching the click that collapses the selection onto it
     /// (spec §2.4), so the menu and the later handler agree.
     #[test]
     fn click_outside_selection_targets_only_that_row() {
@@ -4830,7 +4830,7 @@ mod menu_targets_tests {
 
     /// The reported bug: a mixed selection (one quarantined, one clean)
     /// must offer Clear Quarantine no matter which row was right-clicked.
-    /// `any` is the gate, so the order of the set is irrelevant — that is
+    /// `any` is the gate, so the order of the set is irrelevant: that is
     /// exactly what decouples the menu from "the file selected last".
     #[test]
     fn any_shows_on_mixed_selection_regardless_of_order() {
@@ -4869,7 +4869,7 @@ mod menu_targets_tests {
     }
 
     /// SingleOnly (Copy Path, Rename, Open With) shows for exactly one
-    /// target and hides for zero or many — the Type-B rule.
+    /// target and hides for zero or many: the Type-B rule.
     #[test]
     fn single_only_shows_for_exactly_one() {
         assert!(!Availability::SingleOnly.allows(&targets(vec![])));

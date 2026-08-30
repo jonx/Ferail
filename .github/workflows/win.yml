@@ -1,7 +1,7 @@
-# Build the Windows portable ZIP via scripts/package-win.ps1 — the same script
+# Build the Windows portable ZIP via scripts/package-win.ps1 - the same script
 # a local Windows box would run, so CI and hand-built artifacts stay identical.
 # The build is UNSIGNED (no Authenticode cert in CI; see the SmartScreen note
-# in README.md § Windows) — publish the ZIP's SHA-256 with the release so
+# in README.md § Windows) - publish the ZIP's SHA-256 with the release so
 # downloads are at least verifiable.
 #
 # On a `v*` tag the ZIP is attached to that tag's GitHub release, same
@@ -51,7 +51,7 @@ jobs:
         shell: pwsh
         run: ./scripts/package-win.ps1
 
-      # The second glob picks up Ferail-<version>-x64-symbols.zip — the
+      # The second glob picks up Ferail-<version>-x64-symbols.zip - the
       # PDB bundle whose manifest ties CodeView identity to this commit, so
       # tester crash dumps stay symbolizable. Ship it with every release.
       # Its name deliberately lacks "win": updaters up to 0.6.6 grab the
@@ -83,8 +83,8 @@ jobs:
           }
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      # The release title comes from the notes' H1 ("Ferail <v> — …") so
-      # automated releases match the hand-titled ones in the release list —
+      # The release title comes from the notes' H1 ("Ferail <v> - …") so
+      # automated releases match the hand-titled ones in the release list:
       # without this, action-gh-release names the release after the bare tag
       # (v0.6.6 and v0.6.7 shipped that way and were retitled by hand).
       - name: Release title from the notes

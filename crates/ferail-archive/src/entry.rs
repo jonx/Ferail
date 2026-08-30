@@ -1,10 +1,10 @@
 //! The archive table-of-contents model.
 //!
-//! An [`ArchiveEntry`] is one record parsed from an archive's directory — a
+//! An [`ArchiveEntry`] is one record parsed from an archive's directory: a
 //! *virtual* file that has no path on disk until extracted. The codec layer in
 //! `ferail-fs-native` produces a [`Toc`] off-thread; the archive view renders
 //! it by synthesizing file-list rows from these records (they carry
-//! pre-computed display fields for exactly that reason — the render path never
+//! pre-computed display fields for exactly that reason: the render path never
 //! recomputes anything).
 //!
 //! Entry paths use forward slashes as the internal separator regardless of the
@@ -15,7 +15,7 @@
 pub struct ArchiveEntry {
     /// Full path of the entry inside the archive, `/`-separated
     /// (e.g. `"project/src/main.rs"`). This is the stored path *before* any
-    /// zip-slip validation — extraction must still sanitize it against the
+    /// zip-slip validation: extraction must still sanitize it against the
     /// destination.
     pub path: String,
     /// Whether this entry is a directory.
@@ -52,7 +52,7 @@ impl ArchiveEntry {
         trimmed.rsplit('/').next().unwrap_or(trimmed)
     }
 
-    /// Depth in the entry tree — number of `/`-separated ancestors. A
+    /// Depth in the entry tree: number of `/`-separated ancestors. A
     /// top-level entry has depth 0. Used to detect the single-root case.
     pub fn depth(&self) -> usize {
         self.path.trim_end_matches('/').matches('/').count()
@@ -80,7 +80,7 @@ pub struct Toc {
 
 impl Toc {
     /// The single distinct top-level component shared by every entry, if one
-    /// exists — the "does this archive have one root folder" question that
+    /// exists: the "does this archive have one root folder" question that
     /// drives smart extraction. `Some("project")` means every entry lives
     /// under `project/`, so extraction can land in place without wrapping;
     /// `None` means the archive has multiple top-level items and extraction

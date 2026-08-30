@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# bundle-mac.sh — assemble a Ferail.app bundle so macOS treats Ferail
+# bundle-mac.sh - assemble a Ferail.app bundle so macOS treats Ferail
 # as a real signed app and shows the automatic TCC consent prompts
 # ("Ferail would like to access files in your Documents folder") instead
 # of just failing with EPERM.
@@ -8,7 +8,7 @@
 # Why this is needed: the consent prompt only appears for a code-signed
 # .app bundle whose Info.plist declares the matching NS*UsageDescription
 # strings (see packaging/macos/Info.plist). Running the loose binary via
-# `cargo run` from a terminal can't prompt — it inherits the terminal's
+# `cargo run` from a terminal can't prompt - it inherits the terminal's
 # privacy identity and has no usage strings to show.
 #
 # Usage:
@@ -34,14 +34,14 @@ IDENTITY="${CODESIGN_IDENTITY:--}" # "-" == ad-hoc
 
 # Extra cargo flags. Defaults to compiling the mpv video provider in: it is
 # a runtime dlopen (no build-time link, no bundled library), so a build that
-# carries it still runs on a machine with no libmpv — the viewer just falls
+# carries it still runs on a machine with no libmpv - the viewer just falls
 # back to the native player. FEATURES="" builds without it.
 FEATURES="${FEATURES---features mpv}"
 
 echo "==> Building ${BIN_NAME} (${PROFILE})"
 if [[ "${PROFILE}" == "release" ]]; then
 	# --no-default-features strips the dev-only screenshot-harness feature,
-	# and with it gpui's leak-detection exit assertion — a distributed app
+	# and with it gpui's leak-detection exit assertion - a distributed app
 	# must never turn a clean quit into exit 101 over a diagnostic assert.
 	# (-p is load-bearing: from the virtual workspace root cargo silently
 	# ignores --no-default-features without an explicit package.) Debug
@@ -73,7 +73,7 @@ cp "${REPO_ROOT}/packaging/macos/Info.plist" "${CONTENTS}/Info.plist"
 
 # Licenses travel with the binary. MIT/Apache-2.0 (and the MIT tree-sitter
 # grammars, the ISC/MIT icon artwork) require their notices to accompany a
-# redistributed copy — a DMG containing only the executable does not
+# redistributed copy - a DMG containing only the executable does not
 # satisfy that. Ship them inside the bundle so every copy carries them.
 LIC_DIR="${RES_DIR}/licenses"
 mkdir -p "${LIC_DIR}"
@@ -81,7 +81,7 @@ for f in LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md; do
 	if [[ -f "${REPO_ROOT}/${f}" ]]; then
 		cp "${REPO_ROOT}/${f}" "${LIC_DIR}/${f}"
 	else
-		echo "warning: ${f} missing — bundle will under-attribute" >&2
+		echo "warning: ${f} missing: bundle will under-attribute" >&2
 	fi
 done
 echo "==> Copied Resources/licenses ($(ls -1 "${LIC_DIR}" | wc -l | tr -d ' ') files)"
@@ -124,7 +124,7 @@ echo "==> Signing (identity: ${IDENTITY})"
 #     let an mpv build dlopen an unsigned libmpv. Used by package-mac.sh.
 #   default    -> ad-hoc / quick dev signing. No hardened runtime: TCC
 #     consent prompts don't need it, and re-signs stay fast. (This is NOT
-#     the sandbox either way — a file manager needs broad file access.)
+#     the sandbox either way - a file manager needs broad file access.)
 if [[ "${HARDENED:-0}" == "1" ]]; then
 	ENTITLEMENTS="${REPO_ROOT}/packaging/macos/Ferail.entitlements"
 	codesign --force --options runtime --timestamp \
@@ -141,5 +141,5 @@ echo "Run it with:  open \"${APP_DIR}\""
 echo
 echo "First time you open a protected folder (Desktop/Documents/Downloads/"
 echo "removable/network), macOS will show the access prompt. If you ever"
-echo "click \"Don't Allow\", macOS won't ask again — use the in-app"
+echo "click \"Don't Allow\", macOS won't ask again: use the in-app"
 echo "\"Open Full Disk Access settings\" link to grant it manually."

@@ -1,8 +1,8 @@
 #!/bin/sh
-# make-ferail-icon.sh — cut the macOS app-icon assets from the source artwork.
+# make-ferail-icon.sh - cut the macOS app-icon assets from the source artwork.
 #
 # Input : ferail-macos-source.png  (the raw brushed-steel + rust artwork; may be a
-#         full-bleed square OR an already-rounded tile on transparency — both work,
+#         full-bleed square OR an already-rounded tile on transparency - both work,
 #         because we trim + re-square + re-round from scratch here).
 # Output: (written next to this script, in resources/)
 #   ferail-macos.png    macOS-spec 1024 master (transparent squircle); also the
@@ -10,12 +10,12 @@
 #                         (see src/app_icon.rs).
 #   ferail-macos.icns   multi-resolution icon for the .app bundle (CFBundleIconFile).
 #
-# macOS 11+ (Big Sur) app-icon grid — baked into the art because, unlike iOS, macOS does
+# macOS 11+ (Big Sur) app-icon grid - baked into the art because, unlike iOS, macOS does
 # NOT auto-mask app icons. Get this wrong and the tile renders oversized and overflows the
-# Dock selection box (which is exactly what the old hand-cut tile did — 887x846, off-centre):
+# Dock selection box (which is exactly what the old hand-cut tile did - 887x846, off-centre):
 #   canvas 1024x1024 · tile (rounded body) 824x824 (80.5%) · 100px margin each side ·
 #   CONTINUOUS (squircle) corners at RAD=278 (Apple's nominal radius is 185.4 = 0.225 x 824;
-#   we cut ~50% rounder on purpose — picked by eye, the spec value read too square here).
+#   we cut ~50% rounder on purpose - picked by eye, the spec value read too square here).
 #   Unlike the macaron generator this was adapted from, we do NOT approximate the corner with a
 #   circular arc: a circular arc is tangent-continuous but has a curvature *jump* where it joins
 #   the straight edge, which reads as a subtle kink at Dock sizes. Instead we cut Apple's
@@ -50,7 +50,7 @@ SMOOTH=0.6                       # figma corner-smoothing (Apple's continuous-co
 G=40                             # overscan margin cropped off each side (see step 2)
 
 # figma corner-smoothing: emit ONE quadrant of the squircle (its top-right corner), as an SVG
-# path in supersampled space. Only this single corner is hand-written — the full mask is then
+# path in supersampled space. Only this single corner is hand-written - the full mask is then
 # assembled by flip/flop mirroring, so all four corners are identical BY CONSTRUCTION (an
 # earlier version hand-mirrored the path for each corner and got each one subtly wrong).
 # Geometry is the figma-squircle top-right corner verbatim; s=SMOOTH, and the base radius is
@@ -73,7 +73,7 @@ squircle_quadrant_path() {
 }
 
 # 1. If the source has an opaque white background (a fresh full-bleed render), lift it to
-#    transparency with a connected flood-fill from the four corners — this preserves any
+#    transparency with a connected flood-fill from the four corners - this preserves any
 #    near-white highlight a global "-transparent white" would eat. On our already-transparent
 #    tile the corners aren't white, so this is a harmless no-op. Then trim the frame.
 W="$(magick identify -format '%w' "$SRC")"; H="$(magick identify -format '%h' "$SRC")"
@@ -108,7 +108,7 @@ magick \( "$TMP/quad.png" -flop \) "$TMP/quad.png" +append "$TMP/tophalf.png"
 magick "$TMP/tophalf.png" \( "$TMP/tophalf.png" -flip \) -append \
   -filter Lanczos -resize "${T}x${T}" "$TMP/mask.png"
 
-# 4. Clip the art to the tile (mask forced to sRGB — see header note). Apple's squircle is
+# 4. Clip the art to the tile (mask forced to sRGB - see header note). Apple's squircle is
 #    equal-or-rounder than the old hand-cut corner, so this only ever removes corner pixels;
 #    it never has to invent any.
 magick "$TMP/art.png" \( "$TMP/mask.png" -colorspace sRGB \) \
@@ -118,7 +118,7 @@ magick "$TMP/art.png" \( "$TMP/mask.png" -colorspace sRGB \) \
 magick "$TMP/tile824.png" -background none -gravity center -extent 1024x1024 \
   "$HERE/ferail-macos.png"
 
-# 6. .icns — every size derived from the 1024 master.
+# 6. .icns - every size derived from the 1024 master.
 IS="$TMP/ferail.iconset"; mkdir -p "$IS"
 for pair in "16 16x16" "32 16x16@2x" "32 32x32" "64 32x32@2x" "128 128x128" \
             "256 128x128@2x" "256 256x256" "512 256x256@2x" "512 512x512" "1024 512x512@2x"; do
@@ -131,7 +131,7 @@ echo ">> wrote ferail-macos.png, ferail-macos.icns in $HERE"
 echo ">> master: $(magick "$HERE/ferail-macos.png" -format '%@ on %wx%h' info:)  (expect 824x824+100+100 on 1024x1024)"
 
 # Self-check: the four cut corners of the SHIPPED master must be identical (mirror-compare
-# its alpha — checking the mask alone is not enough, since the art's own alpha could still
+# its alpha - checking the mask alone is not enough, since the art's own alpha could still
 # bleed through DstIn if the overscan ever stops clearing the old cut).
 magick "$HERE/ferail-macos.png" -alpha extract "$TMP/MA.png"
 magick "$TMP/MA.png" -crop "260x260+100+100" +repage "$TMP/m_tl.png"
@@ -144,4 +144,4 @@ for c in m_tr m_bl m_br; do
   echo ">> corner check $c vs m_tl: ${D} differing px (expect 0)"
   [ "$D" = "0" ] || FAIL=1
 done
-[ "$FAIL" = "0" ] || { echo ">> CORNER CHECK FAILED — the four corners are not identical" >&2; exit 1; }
+[ "$FAIL" = "0" ] || { echo ">> CORNER CHECK FAILED: the four corners are not identical" >&2; exit 1; }

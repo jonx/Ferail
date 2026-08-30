@@ -11,7 +11,7 @@
 //! and writing files all run on the background executor; the render path
 //! only reads the [`Languages`] global and the lock-free active catalog.
 //! The one deliberate exception is [`init`], which loads the persisted
-//! language synchronously during boot, before any window exists — same
+//! language synchronously during boot, before any window exists, same
 //! class of startup read as `app_state::load`.
 
 use std::path::PathBuf;
@@ -190,7 +190,7 @@ fn languages_mut(cx: &mut App) -> &mut Languages {
 }
 
 /// The folder user language packs live in (`<config_dir>/languages`).
-/// Not created here — see [`ensure_user_dir`].
+/// Not created here: see [`ensure_user_dir`].
 pub fn user_dir() -> Option<PathBuf> {
     app_state::config_dir().map(|d| d.join("languages"))
 }
@@ -245,7 +245,7 @@ pub const PRESET_LANGUAGES: &[(&str, &str, &str)] = &[
 // =============================================================================
 
 /// Install the persisted language before the first window renders. Reads
-/// at most the bundled packs (embedded) and the user's languages folder —
+/// at most the bundled packs (embedded) and the user's languages folder:
 /// a startup read of the same kind as `app_state::load`.
 pub fn init(cx: &mut App) {
     // `FERAIL_LANGUAGE=fr` overrides the persisted choice for this process
@@ -298,7 +298,7 @@ pub fn set_selection(selection: &str, cx: &mut App) {
     apply(cx);
 }
 
-/// Re-scan the languages folder (background) and re-apply the selection —
+/// Re-scan the languages folder (background) and re-apply the selection,
 /// after an import, a new template, or the user editing files by hand.
 pub fn reload(cx: &mut App) {
     let generation = {
@@ -479,7 +479,7 @@ pub enum Outcome {
 }
 
 /// Show an [`Outcome`] as a toast in `window`. Details, when present, are
-/// revealed on demand and can be copied — same shape as the shell's error
+/// revealed on demand and can be copied, same shape as the shell's error
 /// toasts.
 pub fn notify(outcome: Outcome, window: &mut Window, cx: &mut App) {
     use gpui_component::WindowExt as _;
@@ -611,7 +611,7 @@ fn import_path(path: &std::path::Path) -> Result<(LanguageInfo, ValidationReport
 }
 
 /// "Export…": save the selected language as a translation template (its
-/// translations plus everything still untranslated, with instructions) —
+/// translations plus everything still untranslated, with instructions),
 /// for handing to a translator/LLM or contributing back.
 pub fn export_current(window: &mut Window, cx: &mut App) {
     let langs = languages(cx);

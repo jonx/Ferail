@@ -11,7 +11,7 @@
 //!    IShellItemImageFactory parity lands).
 //!
 //! Decoded frames live in a byte-budget LRU ([`ViewerCache`]) owned by
-//! the viewer window entity — big photo libraries must not accumulate
+//! the viewer window entity: big photo libraries must not accumulate
 //! gigabytes of BGRA. `Pending` markers prevent duplicate in-flight
 //! decodes and are never evicted; the entry that was just inserted is
 //! likewise protected so a single over-budget image still displays.
@@ -37,7 +37,7 @@ pub const MAX_EDGE_PX: u32 = 8192;
 /// *generate* a thumbnail above ~1536 px on a cold request for large
 /// HEICs (a 2048 px request returns nil unless a smaller size was
 /// already cached), and it caps its own output around 1536–1600 px
-/// anyway — so asking for more bought no quality, only intermittent
+/// anyway, so asking for more bought no quality, only intermittent
 /// "No preview available" failures on the first view. 1536 generates
 /// reliably cold and stays crisp on retina.
 pub const QL_FALLBACK_PX: u32 = 1536;
@@ -121,7 +121,7 @@ impl ViewerCache {
         Some(state)
     }
 
-    /// Peek without refreshing recency — for render paths that probe
+    /// Peek without refreshing recency, for render paths that probe
     /// neighbours without intending to keep them hot.
     pub fn peek(&self, path: &Path) -> Option<&FrameState> {
         self.by_path.get(path)
@@ -172,7 +172,7 @@ impl ViewerCache {
     }
 }
 
-/// Blocking decode — call on the background executor only.
+/// Blocking decode: call on the background executor only.
 ///
 /// Returns RGBA bytes + dimensions (channel swap to BGRA happens in
 /// [`build_frame`], same split as `preview::build_render_image`).
@@ -183,7 +183,7 @@ pub fn decode_full_res(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     {
         return Some(frame);
     }
-    // AROS: videos go through C:FFThumb (native ffmpeg) — same frame the
+    // AROS: videos go through C:FFThumb (native ffmpeg), same frame the
     // preview pane shows, at a viewer-worthy edge. Without this the viewer
     // said "No preview available" for files whose pane thumbnail worked.
     #[cfg(target_os = "aros")]
@@ -200,7 +200,7 @@ pub fn decode_full_res(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
 /// Decode any raster format the `image` crate is built with, capping
 /// the longest edge at [`MAX_EDGE_PX`]. `None` for formats it can't
-/// parse (HEIC, PDF, …) — the caller falls back to Quick Look.
+/// parse (HEIC, PDF, …): the caller falls back to Quick Look.
 fn decode_raster(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let decoded = image::load_from_memory(bytes).ok()?;
     let (w, h) = (decoded.width(), decoded.height());

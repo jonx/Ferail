@@ -1,4 +1,4 @@
-//! Persisted UI state for the GPUI shell — last directory, show-
+//! Persisted UI state for the GPUI shell: last directory, show-
 //! hidden, etc. A simple `key=value` text file.
 //!
 //! File: `~/Library/Application Support/Ferail/gpui-state.txt`
@@ -12,7 +12,7 @@
 //! and [`save`] updates the cache synchronously then hands the disk
 //! write to a coalescing writer thread. Callers may therefore use
 //! `load()`/`save()` freely from click handlers and render-time value
-//! getters — the previous implementation re-read the file (and
+//! getters: the previous implementation re-read the file (and
 //! stat'ed `last_dir`, hanging on dead network mounts) on every call,
 //! which turned sidebar clicks, splitter drags, new tabs, and the
 //! settings window's getters into filesystem I/O on the UI thread.
@@ -58,7 +58,7 @@ fn writer() -> &'static Sender<String> {
         if !spawned {
             // Writer thread failed to spawn (resource exhaustion):
             // fall back to synchronous writes by keeping a detached
-            // receiver-less channel — sends fail, and save() writes
+            // receiver-less channel: sends fail, and save() writes
             // inline below via the send error path.
         }
         tx
@@ -69,7 +69,7 @@ fn write_atomic(contents: &str) {
     let Some(dir) = config_dir() else { return };
     // Component-wise mkdir: plain create_dir_all can't create
     // `SYS:/.config/ferail` on AROS (emul-handler missing-parent IoErr
-    // bug, UPSTREAM-NOTES item 40) — which silently disabled ALL settings
+    // bug, UPSTREAM-NOTES item 40), which silently disabled ALL settings
     // persistence there (column widths, theme, toggles reset every run).
     if !dir.exists() && ferail_meta::create_dir_all_compat(&dir).is_err() {
         return;
@@ -179,11 +179,11 @@ pub struct AppState {
     /// Ant Trail base tint, as a `#RRGGBB(AA)` hex string (same format
     /// as `selection_color`). `None` == never set, in which case the
     /// list and grid fall back to the original warm orange. The alpha
-    /// is ignored — heat drives the tint's translucency. See
+    /// is ignored: heat drives the tint's translucency. See
     /// [`crate::ant_trail`].
     pub ant_trail_color: Option<String>,
     /// When `true` (the default), reaching a folder by clicking its
-    /// favorite is *not* recorded as a visit — it neither bumps the
+    /// favorite is *not* recorded as a visit: it neither bumps the
     /// Ant Trail heat nor pushes the folder into Recents. `None` ==
     /// never set (defaults to `true`). See [`crate::ant_trail`].
     pub exclude_favorites_from_tracking: Option<bool>,
@@ -259,7 +259,7 @@ pub struct AppState {
     // ---- Updates ----
     /// Opt-in automatic update check: once a day, ask GitHub Releases
     /// whether a newer Ferail exists (docs/features/UPDATES.md). `None` ==
-    /// never set, which means **off** — no background network traffic
+    /// never set, which means **off**: no background network traffic
     /// unless the user asked for it. The menu's manual Check for
     /// Updates… works regardless of this flag.
     pub update_check: Option<bool>,
@@ -286,7 +286,7 @@ pub fn config_dir() -> Option<PathBuf> {
 
 #[cfg(target_os = "windows")]
 pub fn config_dir() -> Option<PathBuf> {
-    // Windows has no $HOME — per-user app config lives under %APPDATA%
+    // Windows has no $HOME, per-user app config lives under %APPDATA%
     // (Roaming). Without this the whole settings store silently no-ops:
     // save() bails when config_dir() is None and load() returns defaults, so
     // every toggle/dropdown "snaps back" because nothing is ever persisted.
@@ -316,7 +316,7 @@ pub fn config_dir() -> Option<PathBuf> {
     Some(p)
 }
 
-/// Current state — from the in-memory cache after the first call
+/// Current state, from the in-memory cache after the first call
 /// (see the module docs' caching contract). Cheap enough for click
 /// handlers and render-time getters.
 pub fn load() -> AppState {
@@ -347,7 +347,7 @@ fn load_from_disk() -> AppState {
         match key {
             "last_dir" => {
                 // Stored raw. Validation (is_dir) + canonicalization
-                // happen at the single startup consumer (Shell::new) —
+                // happen at the single startup consumer (Shell::new),
                 // stat'ing here made EVERY load() a filesystem touch,
                 // and a dead network mount in last_dir hung the UI on
                 // each one.
@@ -554,7 +554,7 @@ pub fn save(state: &AppState) {
     }
     let serialized = serialize(state);
     if writer().send(serialized.clone()).is_err() {
-        // Writer thread unavailable — degrade to a synchronous
+        // Writer thread unavailable: degrade to a synchronous
         // atomic write rather than dropping the save.
         write_atomic(&serialized);
     }

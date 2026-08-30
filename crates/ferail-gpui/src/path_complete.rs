@@ -3,16 +3,16 @@
 //! As the user types, a background worker lists the
 //! parent directory of the typed prefix and offers matching folder
 //! names in the input's completion menu (Up/Down to pick, Enter to
-//! accept — the menu owns the keys while it's open). Accepting a
+//! accept: the menu owns the keys while it's open). Accepting a
 //! suggestion replaces only the partial segment and appends a
 //! separator so the user can keep drilling down.
 //!
 //! Prime directive: callers run directory enumeration on the background
-//! executor — the input handler itself never touches the filesystem.
+//! executor: the input handler itself never touches the filesystem.
 
 use std::path::PathBuf;
 
-/// Cap on suggestions per keystroke — a directory with thousands of
+/// Cap on suggestions per keystroke: a directory with thousands of
 /// children must not flood the menu (or the worker's sort).
 const MAX_SUGGESTIONS: usize = 50;
 
@@ -21,7 +21,7 @@ const MAX_SUGGESTIONS: usize = 50;
 /// offset where the segment starts)`. `~` expands for the lookup but
 /// the replacement range only covers the segment, so the visible text
 /// keeps whatever prefix the user typed. Returns `None` when there's
-/// no separator yet — without one we don't know the base directory.
+/// no separator yet, without one we don't know the base directory.
 fn split_for_completion(typed: &str) -> Option<(PathBuf, String, usize)> {
     let sep_idx = typed.rfind(['/', '\\'])?;
     let (dir_str, partial) = typed.split_at(sep_idx + 1);
@@ -59,7 +59,7 @@ fn folder_matches(dir: &PathBuf, partial: &str) -> Vec<String> {
                 return None;
             }
             // `is_dir` follows symlinks so a link-to-folder still
-            // completes — it's a navigation target.
+            // completes: it's a navigation target.
             if !e.path().is_dir() {
                 return None;
             }
@@ -131,7 +131,7 @@ mod tests {
         let (dir, partial, seg_start) = split_for_completion("~/Doc").unwrap();
         assert_eq!(dir, ferail_fs_native::home_dir());
         assert_eq!(partial, "Doc");
-        // Replacement starts after "~/" — the visible `~` is kept.
+        // Replacement starts after "~/": the visible `~` is kept.
         assert_eq!(seg_start, 2);
     }
 

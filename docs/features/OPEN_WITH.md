@@ -3,27 +3,27 @@
 ← [Feature notes](README.md) · [Architecture](../ARCHITECTURE.md) ·
 [Context menus](CONTEXT_MENU.md) · [Open work (TODO)](../TODO.md)
 
-**Status: Open With (system apps) ships. Custom tools are a study —
+**Status: Open With (system apps) ships. Custom tools are a study,
 nothing in §5 onward is implemented.**
 
 The idea: keep double-click on the system default, and let **Open With**
 offer, alongside the apps the OS registers, a list of **user-defined
-tools** — "run this program on this file", with the user's own arguments.
+tools**: "run this program on this file", with the user's own arguments.
 
 Two questions were asked of this note:
 
-1. Can we get the handler list from the system? **Yes — and it is already
+1. Can we get the handler list from the system? **Yes, and it is already
    built, on all three platforms.** §2 explains what each OS actually
    registers and §3 shows what we already call.
 2. Can the user add their own tools? Not today. §5 designs it.
 
 **Short answer.** The system half is done; the gap is everything around
-it — no way to pick an app that isn't in the list, no user-defined
+it, no way to pick an app that isn't in the list, no user-defined
 commands, no "always open with", and the submenu hides itself on a
 multi-selection even though the dispatch already handles many files. The
 custom-tool half should be a sibling of the shipped
 [`ferail_core::terminal::TerminalSpec`](../../crates/ferail-core/src/terminal.rs)
-— same "program + pre-split argv tokens + `{placeholder}` substituted per
+the same "program + pre-split argv tokens + `{placeholder}` substituted per
 token" model, which already solves the quoting problem this feature would
 otherwise re-invent badly.
 
@@ -40,13 +40,13 @@ matters because it decides what we can *read* and what we can *write*.
 | How an app registers | `CFBundleDocumentTypes` / `LSItemContentTypes` in its `Info.plist`, indexed by Launch Services when the bundle appears | registry: a **ProgID** under `HKCR`, plus `OpenWithProgids` / `OpenWithList` per extension | a `.desktop` entry declaring `MimeType=`, indexed into `mimeinfo.cache` by `update-desktop-database` |
 | Enumerate handlers | `NSWorkspace.URLsForApplicationsToOpenURL:` | `SHAssocEnumHandlers` (`ASSOC_FILTER_RECOMMENDED`) | scan XDG app dirs for entries matching the MIME |
 | Read the default | `NSWorkspace.URLForApplicationToOpenURL:` | first recommended handler | `xdg-mime query default` |
-| **Set** the default | `LSSetDefaultRoleHandlerForContentType` — allowed | **not programmatically settable** (Win10+ deliberately blocks it; apps must send the user to Settings → Default apps) | `xdg-mime default` — allowed |
+| **Set** the default | `LSSetDefaultRoleHandlerForContentType`: allowed | **not programmatically settable** (Win10+ deliberately blocks it; apps must send the user to Settings → Default apps) | `xdg-mime default`: allowed |
 
 Two consequences worth stating up front:
 
 - The three registries key on **three different things**. A tool-matching
   rule of our own should therefore key on what we already hold in
-  `FileEntry` — extension, kind, name — and treat the OS type as a
+  `FileEntry`: extension, kind, name, and treat the OS type as a
   platform detail, or we inherit three incompatible vocabularies.
 - **"Always Open With" is not portable.** macOS and Linux can set the
   default; Windows can only *open the OS UI*. Any such command must
@@ -60,9 +60,9 @@ All three shell crates implement the same
 
 | Platform | Implementation |
 |---|---|
-| macOS | [`ferail-shell-mac/src/open_with.rs`](../../crates/ferail-shell-mac/src/open_with.rs) — `URLsForApplicationsToOpenURL:` + `URLForApplicationToOpenURL:`, deduped, default pinned first |
-| Windows | [`ferail-shell-win32/src/lib.rs:1406`](../../crates/ferail-shell-win32/src/lib.rs#L1406) — `SHAssocEnumHandlers` with `ASSOC_FILTER_RECOMMENDED`, capped at 12 |
-| Linux | [`ferail-shell-linux/src/lib.rs:262`](../../crates/ferail-shell-linux/src/lib.rs#L262) — `xdg-mime` for the type + default, then a pure-`std` scan of `.desktop` entries (unit-tested) |
+| macOS | [`ferail-shell-mac/src/open_with.rs`](../../crates/ferail-shell-mac/src/open_with.rs): `URLsForApplicationsToOpenURL:` + `URLForApplicationToOpenURL:`, deduped, default pinned first |
+| Windows | [`ferail-shell-win32/src/lib.rs:1406`](../../crates/ferail-shell-win32/src/lib.rs#L1406): `SHAssocEnumHandlers` with `ASSOC_FILTER_RECOMMENDED`, capped at 12 |
+| Linux | [`ferail-shell-linux/src/lib.rs:262`](../../crates/ferail-shell-linux/src/lib.rs#L262): `xdg-mime` for the type + default, then a pure-`std` scan of `.desktop` entries (unit-tested) |
 
 The GPUI side is Prime-Directive-clean already:
 
@@ -71,7 +71,7 @@ The GPUI side is Prime-Directive-clean already:
   ([file_list.rs:2300](../../crates/ferail-gpui/src/file_list.rs#L2300)).
 - A cache miss opens a retained submenu with a disabled *"Loading…"* row.
   When the fetch lands, only that submenu is rebuilt through upstream
-  `PopupMenu::rebuild` — Finder's "Fetching…" behaviour, without polling or
+  `PopupMenu::rebuild`: Finder's "Fetching…" behaviour, without polling or
   replacing the root menu.
 - Picking an entry dispatches `OpenWithSlot0..11`, resolved against *the
   same warm snapshot the menu was built from* (a re-fetch could reorder
@@ -99,8 +99,8 @@ Two findings:
   comment says "~10–50 ms typical"; the real cost is a one-time ~5–10 ms
   client bootstrap and then **tens of microseconds**. The warm-cache
   machinery is still right (the first call in a process, and cold
-  bundles on slow volumes, are unbounded), but richer uses — enumerating
-  for several types, precomputing a per-extension default map — are
+  bundles on slow volumes, are unbounded), but richer uses, enumerating
+  for several types, precomputing a per-extension default map: are
   effectively free once LS is warm.
 - **An unknown extension yields zero candidates and no default**, and the
   current code omits the submenu entirely for an empty set. So the file
@@ -111,15 +111,15 @@ Two findings:
 
 | Gap | Detail |
 |---|---|
-| No **"Other…"** | The user cannot pick an app the OS didn't offer. Note `gpui::PathPromptOptions` has only `files` / `directories` / `multiple` / `prompt` — **no type filter**, and a macOS `.app` is a *directory*, so a portable chooser needs a platform entry point (`NSOpenPanel` with `allowedContentTypes` + `treatsFilePackagesAsDirectories`), not just the gpui prompt. |
+| No **"Other…"** | The user cannot pick an app the OS didn't offer. Note `gpui::PathPromptOptions` has only `files` / `directories` / `multiple` / `prompt`: **no type filter**, and a macOS `.app` is a *directory*, so a portable chooser needs a platform entry point (`NSOpenPanel` with `allowedContentTypes` + `treatsFilePackagesAsDirectories`), not just the gpui prompt. |
 | No **custom tools** | The whole subject of §5. |
 | No **"Always Open With"** | Nothing calls `LSSetDefaultRoleHandlerForContentType` / `xdg-mime default`; there is no per-extension override of our own either. |
 | **Hidden on multi-selection** | The submenu is `SingleOnly`, yet `open_with_slot` already resolves the full selection and calls `open_with_app_many`. The restriction is the *menu*, not the machinery. |
 | **Empty set ⇒ no submenu** | See the `.zzqq` row above. |
-| **12-slot ceiling** | `OpenWithSlot0..11` are twelve unit actions; the menu `take(12)`s. Custom tools would double the pressure on that scheme — see §5.6. |
+| **12-slot ceiling** | `OpenWithSlot0..11` are twelve unit actions; the menu `take(12)`s. Custom tools would double the pressure on that scheme: see §5.6. |
 | Only in the file pane | The disk-usage treemap menu has Open/Reveal/Quick Look but no Open With. |
 
-## 5. Design proposal — custom tools
+## 5. Design proposal - custom tools
 
 ### 5.1 The model: a `ToolSpec` sibling of `TerminalSpec`
 
@@ -131,7 +131,7 @@ that shape into `ferail_core::tools`:
 ```rust
 pub struct ToolSpec {
     pub id: ToolId,                 // uuid, stable across renames
-    pub name: String,               // user-facing label (user data — never localized)
+    pub name: String,               // user-facing label (user data, never localized)
     pub program: String,            // absolute path, .app bundle, .desktop, or PATH name
     pub args: Vec<String>,          // split_args() tokens; may contain placeholders
     pub match_rule: MatchRule,      // when to offer it
@@ -149,7 +149,7 @@ pub struct ToolSpec {
 contain no placeholder gets the paths appended, matching how
 `resolved_args` reports `had_placeholder` today.
 
-### 5.2 Matching — and the Prime Directive constraint on it
+### 5.2 Matching - and the Prime Directive constraint on it
 
 ```rust
 pub enum MatchRule {
@@ -157,13 +157,13 @@ pub enum MatchRule {
     Kinds(Vec<EntryKind>),          // file / folder / symlink
     Extensions(Vec<String>),        // lowercased, no dot
     NameGlob(String),
-    FormatLabel(Vec<String>),       // magic-derived, cached-only — see below
+    FormatLabel(Vec<String>),       // magic-derived, cached-only: see below
 }
 ```
 
 Matching **must read only fields already cached on `FileEntry`**. The
-tempting rule — "offer this tool for anything the magic sniffer calls a
-*PNG image*" — is a genuine differentiator over Finder, but
+tempting rule: "offer this tool for anything the magic sniffer calls a
+*PNG image*": is a genuine differentiator over Finder, but
 `display_magic` is filled *lazily* by the prefetch worker and is empty
 when Settings → Performance has file-detail scanning off. So the rule is:
 match on it **when present, never compute it at menu time**. A tool that
@@ -178,7 +178,7 @@ rule.
   substitution gives argv directly, and that is what makes filenames with
   spaces, quotes, `$`, and newlines safe by construction.
 - `Command::status` / `Command::output` are **banned in `ferail-gpui`** by
-  the clippy wall — spawn on `cx.background_executor()`, exactly as
+  the clippy wall: spawn on `cx.background_executor()`, exactly as
   `open_with_slot` already does.
 - `RunMode::Detached` for GUI apps (spawn and forget, the current
   behaviour). `RunMode::Tracked` registers a `TaskKind` in the existing
@@ -189,7 +189,7 @@ rule.
   lands in the user's terminal instead of nowhere.
 - Multi-selection: `AllAtOnce` mirrors `open_with_app_many`'s single
   invocation; `OnePerFile` should be **counted and confirmed above a
-  threshold** — "Run *Convert* on 412 items?" — because a per-file tool
+  threshold**, "Run *Convert* on 412 items?", because a per-file tool
   over a large selection is a fork bomb the user did not intend.
 
 ### 5.4 Persistence
@@ -197,18 +197,18 @@ rule.
 Recommend a **`tools.json`** beside `gpui-state.txt`, not the metadata DB
 and not `app_state`:
 
-- `app_state` is a flat `key=value` file — a list of structured records
+- `app_state` is a flat `key=value` file: a list of structured records
   does not belong there.
 - The metadata DB is explicitly cache-shaped: a version mismatch renames
   it to `.bak` and recreates it ([db.rs:236](../../crates/ferail-meta/src/db.rs#L241)).
-  Favorites already accept that risk; hand-authored tool definitions —
-  which the user cannot reconstruct — should not.
+  Favorites already accept that risk; hand-authored tool definitions
+  (which the user cannot reconstruct) should not.
 - JSON makes tools **shareable and hand-editable**, and the app already
   ships an export → edit → import workflow for JSON language packs, so
   the pattern and its UI are precedented.
 
 Load it once into an in-memory cache with the same contract as
-`app_state::load()` — **the menu builder must never touch the disk**.
+`app_state::load()`: **the menu builder must never touch the disk**.
 
 ### 5.5 Menu shape
 
@@ -225,7 +225,7 @@ Open With ▸
     Always Open With ▸      ← macOS/Linux only; Windows opens Settings
 ```
 
-Also give tools a **top-level presence** for the ones used constantly —
+Also give tools a **top-level presence** for the ones used constantly,
 either directly in the row menu above the submenu, or via a per-tool
 "show at top level" flag. Burying a daily tool two levels deep is the
 main way this feature fails in other file managers.
@@ -242,7 +242,7 @@ both already available in-tree:
   be bound in the keymap.
 - **A payload-carrying action.** `ferail_core::commands::CommandPayload`
   *already* models exactly this (`OpenWithApp { app_path }`) and currently
-  has **no users** anywhere in the shell crates — a leftover seam from the
+  has **no users** anywhere in the shell crates: a leftover seam from the
   Win32-era menu plan. Reviving it for `file.run_tool { tool_id }` keeps
   dispatch uniform and keymap-bindable.
 
@@ -256,7 +256,7 @@ only the video-backend/mpv settings, so the name is already aspirational)
 or its own page: a list with add/edit/remove/reorder, and an editor with
 Name, Program (+ Browse…), Arguments, "Show for", multi-select behaviour,
 run mode, and a **live preview of the exact argv** that will be executed.
-That preview is the single best safety feature in the whole design — it
+That preview is the single best safety feature in the whole design: it
 makes "what will this actually run?" answerable before it runs.
 
 Icons: a tool needs its own glyph per [ICONS.md](ICONS.md); the spare
@@ -264,7 +264,7 @@ upstream pool has nothing tool-shaped (`wrench`/`hammer` are absent), so
 expect to vendor one in house style. Chrome strings go through `tr!`;
 **tool names and arguments are user data and are never localized.**
 
-## 6. Security — the part that must not be hand-waved
+## 6. Security - the part that must not be hand-waved
 
 A custom tool is *arbitrary code execution configured through the UI*.
 That is legitimate (every serious file manager has it) but it changes the
@@ -283,7 +283,7 @@ threat model, so the rules are non-negotiable:
 4. **Confirm bulk runs**, per §5.3.
 5. **Quarantined and downloaded files**: running a user tool *on* a
    quarantined file is fine; making the *program* a quarantined binary the
-   user just downloaded is worth a warning — `is_quarantined` is already
+   user just downloaded is worth a warning: `is_quarantined` is already
    on `FileEntry` and the badge machinery exists.
 6. **No elevation.** Tools run as the user. The privileged-worker path in
    [FILE_OPS.md](FILE_OPS.md) exists for file operations with a specific,
@@ -291,17 +291,17 @@ threat model, so the rules are non-negotiable:
 
 ## 7. Phasing
 
-1. **Close the cheap gaps first** — they are small and independently
+1. **Close the cheap gaps first**: they are small and independently
    useful: allow the submenu on multi-selection (the dispatch already
    handles it), add **Other…** (needs the platform app-chooser entry
    point), and stop hiding the submenu when the candidate set is empty.
-2. **Custom tools, v1** — `ToolSpec` + `tools.json` + matching + the
+2. **Custom tools, v1**: `ToolSpec` + `tools.json` + matching + the
    Settings editor with argv preview + closure-backed menu items.
    `Detached` and `InTerminal` run modes.
-3. **Polish** — `Tracked` mode with task/notification integration,
+3. **Polish**: `Tracked` mode with task/notification integration,
    top-level pinning, per-tool icons, tools in the disk-usage menu, and
    import/export of tool sets.
-4. **"Always Open With"** — macOS `LSSetDefaultRoleHandlerForContentType`,
+4. **"Always Open With"**: macOS `LSSetDefaultRoleHandlerForContentType`,
    Linux `xdg-mime default`, Windows: open the Settings pane and say so.
    Last because it is the least portable and the easiest to get subtly
    wrong.
@@ -311,7 +311,7 @@ threat model, so the rules are non-negotiable:
 - **Don't build a plugin runtime.** A tool is a program plus arguments.
   Anything that starts to look like an embedded scripting host is a
   different, much larger feature.
-- **Don't sniff, stat, or read the tool file at menu-open time** — match
+- **Don't sniff, stat, or read the tool file at menu-open time**: match
   on cached `FileEntry` fields only.
 - **Don't re-fetch candidates at dispatch.** The existing code documents
   why (a fresh fetch can reorder and launch the wrong app); tools must
@@ -322,7 +322,7 @@ threat model, so the rules are non-negotiable:
 ## 9. Verification plan (when built)
 
 - Unit tests in `ferail-core::tools` for placeholder expansion (spaces,
-  quotes, unicode, multi-file `{paths}`) and for `MatchRule` — mirroring
+  quotes, unicode, multi-file `{paths}`) and for `MatchRule`: mirroring
   the existing `terminal.rs` tests.
 - A test asserting menu construction performs **no I/O** (the path guard
   already panics on path resolution during render).

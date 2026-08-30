@@ -28,7 +28,7 @@ memory/performance gates remain hardware qualification, not claims inferred
 from unit tests. Authenticode qualification is also still open: the current
 portable helper is unsigned, so a same-publisher signature check at launch
 cannot yet distinguish it from a replacement in the user-writable package
-directory. An interim salted-digest check now stands in its place — see
+directory. An interim salted-digest check now stands in its place: see
 [Interim helper attestation](#interim-helper-attestation) for what it does and
 does not cover.
 
@@ -107,7 +107,7 @@ Ordering constraints the packaging script must keep:
 
 Use three layers; do not put NTFS parsing or Win32 calls in GPUI rendering code.
 
-1. `ferail-ntfs` — a new pure, non-UI crate. It owns bounded parsing, compact
+1. `ferail-ntfs`: a new pure, non-UI crate. It owns bounded parsing, compact
    records, subtree construction and fixtures. It must compile and run parser
    tests on macOS/Linux from byte-backed fixtures. Evaluate and pin the
    read-only `ntfs` crate only after its license, workspace MSRV, malformed
@@ -155,7 +155,7 @@ The unelevated parent performs the cheap eligibility probe off the UI thread:
    overlapped I/O and a DACL limited to the invoking user, Administrators and
    SYSTEM. Cap every wait and make it cancellation-aware.
 4. Start the exact sibling helper path with `ShellExecuteExW(..., "runas")`.
-   The command line contains only protocol version and the random pipe name —
+   The command line contains only protocol version and the random pipe name,
    never the requested filesystem path or an MFT-derived name.
 5. After connection, use `GetNamedPipeClientProcessId` and compare it with the
    PID returned by `ShellExecuteExW`. A nonce visible in the command line is
@@ -357,7 +357,7 @@ Also verify:
   helper replaced or truncated after packaging falls back to Portable with the
   "does not match this build" banner; and holding the helper with
   `FILE_SHARE_READ` across `ShellExecuteExW` does not itself provoke a sharing
-  violation on any supported Windows version — this last one is unverified from
+  violation on any supported Windows version: this last one is unverified from
   a macOS development host and must be exercised on real hardware;
 - logs, reports, metadata DB and crash bundles contain no requested path,
   filename, raw record, pipe identifier or protocol payload.

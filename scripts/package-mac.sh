@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# package-mac.sh — produce a distributable, signed + notarized + stapled
+# package-mac.sh - produce a distributable, signed + notarized + stapled
 # Ferail DMG for direct (non-App-Store) macOS distribution.
 #
 # Pipeline (see docs and Apple's notarization guide):
@@ -12,7 +12,7 @@
 #      ticket, and staple it so Gatekeeper validates offline.
 #   4. Verify with codesign + spctl.
 #
-# Prerequisites (one-time, account-level — see ~/Source/apple-codesigning.md):
+# Prerequisites (one-time, account-level - see ~/Source/apple-codesigning.md):
 #   - A "Developer ID Application" certificate in the login keychain.
 #   - A stored notary credential profile (xcrun notarytool store-credentials).
 #
@@ -22,7 +22,7 @@
 #   FEATURES="" scripts/package-mac.sh     # build without the mpv provider
 #
 # The mpv video provider is compiled in by default (bundle-mac.sh's FEATURES
-# default). libmpv itself is NOT bundled — the provider dlopens a
+# default). libmpv itself is NOT bundled - the provider dlopens a
 # user-installed libmpv at runtime and falls back to the native player
 # without one, so the DMG stays MIT/Apache-clean.
 #
@@ -93,14 +93,14 @@ if [[ -n "${FOREIGN}" ]]; then
 	echo "or bundle + relocate the dylib into Contents/Frameworks." >&2
 	exit 1
 fi
-echo "    ok — only /usr/lib and /System references"
+echo "    ok, only /usr/lib and /System references"
 
 # --- 2. Notarize + staple the .app itself ---------------------------------
 # Staple the ticket onto the .app BEFORE packing it, so a user who drags it
 # out of the DMG can still first-launch it offline (Gatekeeper reads the
 # stapled ticket instead of needing an online notarization check).
 if [[ "${NOTARIZE}" == "1" ]]; then
-	echo "==> [2/4] Notarizing ${APP_NAME}.app (profile: ${APPLE_NOTARY_PROFILE}) — a few minutes"
+	echo "==> [2/4] Notarizing ${APP_NAME}.app (profile: ${APPLE_NOTARY_PROFILE}): a few minutes"
 	APP_ZIP="${DIST_DIR}/${APP_NAME}-app.zip"
 	ditto -c -k --keepParent "${APP_DIR}" "${APP_ZIP}"
 	xcrun notarytool submit "${APP_ZIP}" \

@@ -1,4 +1,4 @@
-//! Headless mpv-backend probe — the diagnostic harness for video decode/render
+//! Headless mpv-backend probe: the diagnostic harness for video decode/render
 //! bugs that don't need the GUI.
 //!
 //! It drives the *same* pull path the viewer uses (`backend → open →
@@ -18,7 +18,7 @@
 //!   FERAIL_MPV_LOG=v lldb --batch -o run -k 'bt' -k 'quit' -- \
 //!          target/debug/examples/probe /tmp/rot90.mp4
 //!
-//! `FERAIL_MPV_LOG=v` (handled in imp.rs) prints mpv's decoder/VO setup —
+//! `FERAIL_MPV_LOG=v` (handled in imp.rs) prints mpv's decoder/VO setup:
 //! the lines that name the frame geometry, hwdec, and rotation.
 
 use std::path::Path;
@@ -90,8 +90,8 @@ fn main() {
     }
 
     if got == 0 {
-        eprintln!("probe: FAIL — no frame within 15s");
+        eprintln!("probe: FAIL, no frame within 15s");
         std::process::exit(1);
     }
-    println!("probe: OK — pulled {got} frame(s) without crashing");
+    println!("probe: OK: pulled {got} frame(s) without crashing");
 }

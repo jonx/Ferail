@@ -55,12 +55,12 @@ impl LoadUiUpdate {
     }
 }
 
-/// Aggregate of the entries the hidden filter dropped from a load —
+/// Aggregate of the entries the hidden filter dropped from a load:
 /// what the status bar shows ("N hidden · X B") when *show hidden* is
 /// off, so hidden content is discoverable without unhiding it. Zero
 /// when the toggle is on (nothing is skipped). `bytes` sums
 /// `FileEntry::size`, so hidden *folders* count at their dirent size,
-/// not their subtree total — same property as the status bar's item
+/// not their subtree total, same property as the status bar's item
 /// total.
 // `pub` (not `pub(crate)`) only to satisfy private-interfaces on the
 // `Tab::hidden_summary` field; the private `loading` module bounds the
@@ -71,7 +71,7 @@ pub struct HiddenSummary {
     pub bytes: u64,
 }
 
-/// Aggregate of the entries the *filter field* dropped from a load —
+/// Aggregate of the entries the *filter field* dropped from a load:
 /// what the status bar shows ("N filtered out · X B") while a filter is
 /// typed, so the count and size stay honest about the whole folder
 /// instead of only the matches. Zero when the field is empty.
@@ -89,7 +89,7 @@ pub struct FilterSummary {
 pub(super) enum LoadMsg {
     Batch(LoadBatch),
     /// End of stream: the enumeration error (if any) and the totals of
-    /// entries skipped across the whole load — hidden ones, then the
+    /// entries skipped across the whole load: hidden ones, then the
     /// ones the filter field excluded. Carried on `Done` rather than
     /// per-batch because `Done` is sent exactly once and never dropped
     /// (empty batches are), and the status bar only needs the final
@@ -141,7 +141,7 @@ fn filter_directory_batch(
     // must not change while the user types a filter, so it counts every
     // hidden entry the listing dropped, needle or no needle.
     // `hidden` carries platform semantics (BSD UF_HIDDEN on macOS,
-    // FILE_ATTRIBUTE_HIDDEN on Windows) resolved at enumerate time —
+    // FILE_ATTRIBUTE_HIDDEN on Windows) resolved at enumerate time,
     // never re-derive from the name here.
     let (visible, skipped): (Vec<FileEntry>, Vec<FileEntry>) =
         entries.into_iter().partition(|e| show_hidden || !e.hidden);
@@ -149,11 +149,11 @@ fn filter_directory_batch(
         count: skipped.len(),
         bytes: skipped.iter().map(|e| e.size).sum(),
     };
-    // `matches_entry` searches the visible Format value too —
+    // `matches_entry` searches the visible Format value too,
     // otherwise typing "pdf document" or "zip archive" misses rows
     // where the magic-detected text is the only place those phrases
     // appear. Structured tokens (size:, mod:, locked:, …) test the
-    // row's cached metadata fields — never fresh I/O.
+    // row's cached metadata fields, never fresh I/O.
     let (entries, excluded): (Vec<FileEntry>, Vec<FileEntry>) =
         visible.into_iter().partition(|e| expr.matches_entry(e));
     let filtered = FilterSummary {
@@ -331,7 +331,7 @@ mod filter_tests {
     #[test]
     fn hidden_entries_are_not_counted_twice() {
         // `.env` fails the needle too, but it was already dropped as
-        // hidden — the filter aggregate must not claim it as well.
+        // hidden: the filter aggregate must not claim it as well.
         let (names, hidden, filtered) = batch_full(
             vec![entry("a.txt", 10, false), entry(".env", 5, true)],
             false,
@@ -391,7 +391,7 @@ pub(super) fn run_tree_children_load(fs: Arc<NativeFs>, path: PathBuf) -> Vec<Tr
 /// Whether `path` has at least one directory child (symlinks-to-dir
 /// count, matching the tree's own child filter). Early-exits on the
 /// first hit so the common case touches a handful of dirents; an
-/// unreadable directory reports `false` — expanding it would show
+/// unreadable directory reports `false`: expanding it would show
 /// nothing anyway. Worker-thread only: this is a real read_dir.
 pub(super) fn dir_has_subdir(path: &Path) -> bool {
     let Ok(rd) = std::fs::read_dir(path) else {

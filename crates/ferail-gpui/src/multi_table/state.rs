@@ -76,7 +76,7 @@ pub enum TableEvent {
     /// OS file paths were dropped onto an **archive file** row, which means
     /// "add these to that archive" rather than the folder-row transfer
     /// [`TableEvent::ExternalDrop`] carries. Kept a separate event so the
-    /// delegate — which knows each row's kind — decides, instead of the host
+    /// delegate, which knows each row's kind, decides, instead of the host
     /// re-deriving it from a path.
     ArchiveAddDrop {
         row_ix: usize,
@@ -145,7 +145,7 @@ pub enum TableEvent {
     /// first so selection/context targeting is already correct.
     NativeContextMenuRequested(Option<usize>),
     /// Fork addition: the table's empty space (below the rows, or the empty
-    /// folder view — not a row, not the header) has been right-clicked and
+    /// folder view, not a row, not the header) has been right-clicked and
     /// the delegate's background context menu is about to open. Emitted at
     /// menu-build time so a subscriber can stage what the menu's actions
     /// need (the file list's Shell stages the current directory as
@@ -278,7 +278,7 @@ pub struct TableState<D: TableDelegate> {
     /// default is `true`.
     ///
     /// Set to `false` to hide the narrow leftmost selector column while keeping cell
-    /// selection — useful when you want to put your own content (e.g. a row index
+    /// selection: useful when you want to put your own content (e.g. a row index
     /// column) on the left. When hidden, clicking the already-selected cell again
     /// escalates the selection to the whole row so users can still pick rows; row
     /// escalation requires `row_selectable` to be enabled.
@@ -299,7 +299,7 @@ pub struct TableState<D: TableDelegate> {
     selection_mode: SelectionMode,
     right_clicked_row: Option<usize>,
     /// Fork addition: `true` while the last right-click inside the table
-    /// landed on none of the interactive regions — no data row (set in the
+    /// landed on none of the interactive regions, no data row (set in the
     /// capture phase, before a row's bubble handler can claim the click)
     /// and not the header (whose bubble handler clears it again). The
     /// context-menu builder reads it to offer the delegate's *background*
@@ -437,7 +437,7 @@ where
 
     /// Set whether the row selector column is shown, default is `true`.
     ///
-    /// Only effective when `cell_selectable` is `true` — otherwise the row selector
+    /// Only effective when `cell_selectable` is `true`: otherwise the row selector
     /// column is never rendered. Hide it when you want to use the leftmost column
     /// for your own content (e.g. a row index column).
     ///
@@ -494,7 +494,7 @@ where
     ///
     /// The screenshot-harness sibling of [`Self::row_center`]
     /// (`--context-menu-background`): a synthesised right-click here opens
-    /// the delegate's background context menu — provided the caller pointed
+    /// the delegate's background context menu: provided the caller pointed
     /// the harness at a folder whose rows don't reach the body's midpoint
     /// (an empty folder being the canonical case). Derived from the table's
     /// prepaint bounds rather than the row list's, because an empty folder
@@ -573,7 +573,7 @@ where
         //
         // The header and the rows share `horizontal_scroll_handle`, but only
         // the rows are a `VirtualList`, and a deferred `scroll_to_item` is
-        // applied during that list's prepaint — after the header has already
+        // applied during that list's prepaint, after the header has already
         // used the old offset. That left the header one frame behind the rows.
         match self.horizontal_offset_for_col(col_ix) {
             Some(offset_x) => {
@@ -647,11 +647,11 @@ where
     /// pretending the user clicked: `right_clicked_row` survives.
     ///
     /// Fork addition. The Shell mirrors its lead row here after *every*
-    /// selection mutation — including the one a right-click itself causes.
+    /// selection mutation, including the one a right-click itself causes.
     /// Plain `set_selected_row` clears `right_clicked_row`, which would
     /// leave the open context menu not knowing which row it belongs to;
     /// harmless while a menu was built exactly once, fatal now that it can
-    /// rebuild (see [`super::context_menu`]) — the rebuild would produce an
+    /// rebuild (see [`super::context_menu`]): the rebuild would produce an
     /// empty menu and the popup would vanish mid-use.
     pub fn mirror_lead_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
         let right_clicked = self.right_clicked_row;
@@ -693,7 +693,7 @@ where
 
     /// Set or clear the right-clicked row state.
     ///
-    /// Pass `None` to clear — useful when opening a header context menu
+    /// Pass `None` to clear: useful when opening a header context menu
     /// to prevent the row context menu from appearing simultaneously.
     pub fn set_right_clicked_row(&mut self, row: Option<usize>, cx: &mut Context<Self>) {
         self.right_clicked_row = row;
@@ -953,7 +953,7 @@ where
 
     fn on_col_head_click(&mut self, col_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         // Finder-style: a plain click anywhere on a sortable column
-        // header cycles its sort — you don't have to hit the small sort
+        // header cycles its sort: you don't have to hit the small sort
         // icon. `perform_sort` no-ops on non-sortable columns, and the
         // icon's own click stops propagation so it doesn't double-toggle
         // back through here.
@@ -991,7 +991,7 @@ where
         let is_double_click = e.click_count() == 2;
 
         // When the row selector column is hidden, a single click on the
-        // already-selected cell escalates the selection to the entire row —
+        // already-selected cell escalates the selection to the entire row,
         // giving users a way to pick rows without the dedicated selector column.
         // Double-clicks are passed through to `DoubleClickedCell` and never
         // trigger the escalation.
@@ -1334,7 +1334,7 @@ where
     }
 
     /// Auto-scroll the row list vertically when a drag hovers near the
-    /// top or bottom edge of the table — so a file dragged onto the list
+    /// top or bottom edge of the table, so a file dragged onto the list
     /// can reach rows that are currently scrolled off-screen (the file
     /// list's `ExternalPaths` drags drive this). Mirrors the horizontal
     /// `scroll_table_by_col_resizing` edge-scroll, against the vertical
@@ -1397,7 +1397,7 @@ where
 
     /// Live column widths in display order (col_groups carry the
     /// drag-resized values; `delegate.columns[..].width` only holds
-    /// the construction seed). Fork addition — backs column
+    /// the construction seed). Fork addition: backs column
     /// order/width persistence in the host shell.
     pub fn col_widths(&self) -> Vec<Pixels> {
         self.col_groups.iter().map(|g| g.width).collect()
@@ -1430,7 +1430,7 @@ where
     /// How many rows to measure when auto-fitting a column to its
     /// content (double-click the resize handle). Shaping text is
     /// CPU-only but not free, so a giant folder measures a bounded
-    /// window of rows rather than every one — the visible content is
+    /// window of rows rather than every one: the visible content is
     /// what the fit is really for, and the user can still drag to tune.
     const AUTOFIT_SAMPLE_ROWS: usize = 500;
 
@@ -1452,7 +1452,7 @@ where
         }
         let header = self.delegate.column_name(ix, cx);
 
-        // Measure against the window's current text style — an
+        // Measure against the window's current text style: an
         // approximation of the cell font (good enough for a fit hint;
         // exact per-cell fonts aren't exposed here).
         let text_style = window.text_style();
@@ -2028,8 +2028,8 @@ where
             .text_color(cx.theme().table_head_foreground)
             .refine_style(&style)
             // Un-flag the capture-phase "background right-click" (see
-            // `render`): the header owns its clicks — its own `.context_menu`
-            // below decides whether a menu opens — so the table's background
+            // `render`): the header owns its clicks: its own `.context_menu`
+            // below decides whether a menu opens, so the table's background
             // menu must not also fire here.
             .on_mouse_down(
                 MouseButton::Right,
@@ -2229,7 +2229,7 @@ where
                 .w_full()
                 .h(row_height)
                 // Clicking a row must not start gpui-component's
-                // window-level text selection — without this opt-out the
+                // window-level text selection, without this opt-out the
                 // press anchors a selection that then "follows" the mouse
                 // onto a TextView (e.g. the preview pane), selecting text
                 // as if you'd clicked there. Same mechanism `Button` and
@@ -2746,8 +2746,8 @@ where
                         })
                     } else if view.read(cx).right_clicked_background {
                         // Empty-space click: the delegate's background menu
-                        // (folder-scoped commands for the file list; empty —
-                        // and therefore suppressed — by default).
+                        // (folder-scoped commands for the file list; empty
+                        // (and therefore suppressed) by default).
                         view.update(cx, |table, cx| {
                             cx.emit(TableEvent::RightClickedBackground);
                             table
@@ -2802,7 +2802,7 @@ where
                                         // shrank under it. With stripe filler the
                                         // visible range's END legitimately extends past
                                         // `rows_count` whenever the rows don't fill the
-                                        // viewport — testing `end` here made this branch
+                                        // viewport, testing `end` here made this branch
                                         // scroll_to_row + notify on every frame, keeping
                                         // the table repainting forever on short folders.
                                         // Only a range that *starts* past the last real
@@ -2862,8 +2862,8 @@ where
             })
             // Record the table's window-space bounds. Not `on_prepaint`:
             // that helper's probe canvas is absolute with *auto* offsets,
-            // so it sits at its static position — after the full-height
-            // body, i.e. at the table's BOTTOM edge — and the recorded
+            // so it sits at its static position, after the full-height
+            // body, i.e. at the table's BOTTOM edge, and the recorded
             // `origin.y` was the bottom, not the top. Everything reading
             // only `bounds.size` never noticed; `scroll_list_by_drag`'s
             // edge zones and `body_center` need the real origin, so the

@@ -1,4 +1,4 @@
-//! dnd-lab — a two-window gpui harness for native promised-file drags.
+//! dnd-lab: a two-window gpui harness for native promised-file drags.
 //!
 //! Ferail's archive workbench drags entries out as `NSFilePromiseProvider`
 //! items (no file exists until a destination accepts the drop). The same
@@ -6,7 +6,7 @@
 //! has to route a pathless promise drag to a gpui window and gpui's
 //! `draggingUpdated:` / `performDragOperation:` have to turn it into
 //! MouseMove/MouseUp for an in-process payload. Getting that right blind,
-//! inside the full app, proved slow — so this lab reproduces the exact
+//! inside the full app, proved slow, so this lab reproduces the exact
 //! mechanism with the exact `ferail-shell-mac` code (path dependency, not a
 //! copy) and logs every callback AppKit and gpui make.
 //!
@@ -250,7 +250,7 @@ mod lab {
                 // Fixed-height layout so synthetic-event drivers can compute
                 // row centres: header 40, status 24, rows 40 each, zone rest.
                 .child(div().h(px(40.)).px_2().flex().items_center().child(
-                    "SOURCE — drag a row out of this window (to Target, Finder, or back here)",
+                    "SOURCE: drag a row out of this window (to Target, Finder, or back here)",
                 ))
                 .child(div().h(px(24.)).px_2().text_sm().child(self.status.clone()))
                 .children(rows.into_iter().enumerate().map(|(ix, (name, is_dir))| {
@@ -403,7 +403,7 @@ mod lab {
                         .px_2()
                         .flex()
                         .items_center()
-                        .child("TARGET — drop here"),
+                        .child("TARGET: drop here"),
                 )
                 .child(div().h(px(24.)).px_2().text_sm().child(self.status.clone()))
                 .child(drop_zone("Target", cx, |this, drag, _, cx| {
@@ -467,7 +467,7 @@ mod lab {
     type EnteredFn = extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize;
     type VoidInfoFn = extern "C" fn(*mut AnyObject, Sel, *mut AnyObject);
     /// Objective-C `BOOL`. On ARM64 (and modern arm64e) it is C `bool`, but on
-    /// Intel macOS it is a signed `char` — so the probe uses `i8` and compares
+    /// Intel macOS it is a signed `char`: so the probe uses `i8` and compares
     /// against 0 rather than Rust's `bool`, which would misread the return on
     /// x86_64. (Production never replaces `performDragOperation:`; this is the
     /// lab's diagnostic chain only.)
@@ -612,7 +612,7 @@ mod lab {
                     &ORIG_EXITED,
                 );
                 // Type encoding: "B" (C99 _Bool) on arm64, "c" (signed char)
-                // on x86_64 — the same split as `ObjcBool` above.
+                // on x86_64: the same split as `ObjcBool` above.
                 #[cfg(target_arch = "aarch64")]
                 let bool_encoding = c"B@:@";
                 #[cfg(not(target_arch = "aarch64"))]

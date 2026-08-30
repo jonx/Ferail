@@ -34,8 +34,8 @@ callback, stays inside that tool instead of leaking into the shared host event.
 
 The shared actions are in the command catalogue:
 
-- `view.close_results` — closes the active result surface.
-- `disk_usage.open_in_window` — pops docked Disk Usage into a standalone
+- `view.close_results`: closes the active result surface.
+- `disk_usage.open_in_window`: pops docked Disk Usage into a standalone
   window.
 
 Standalone Disk Usage windows opened from the shell also show a Dock in Tab

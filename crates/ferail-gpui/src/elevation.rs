@@ -3,17 +3,17 @@
 //! When a copy/move fails because the process lacks rights
 //! ([`FileOpErrorKind::PermissionDenied`]), the user can re-run *just the
 //! failed items* with administrator privileges. We don't (can't, on Windows)
-//! elevate the running process — instead we re-launch this same binary
+//! elevate the running process, instead we re-launch this same binary
 //! elevated with `--elevated-op <descriptor>`, which performs the op as
 //! root/admin and writes a result file the parent reads back.
 //!
 //! The platform primitive ([`crate::platform_shell::run_elevated_self`]) only
-//! knows how to "re-launch self elevated and wait" — it never sees the op
+//! knows how to "re-launch self elevated and wait": it never sees the op
 //! type. Everything about *what* to run lives here, so the shell crates stay
 //! free of any dependency on this descriptor.
 //!
 //! No serde in this workspace (settings use a hand-rolled `key=value` format),
-//! so the descriptor and result use a small NUL-separated encoding — robust
+//! so the descriptor and result use a small NUL-separated encoding: robust
 //! against any path on unix, where the bytes round-trip losslessly.
 //!
 //! ## Handshake hardening
@@ -21,7 +21,7 @@
 //! The descriptor tells a **root** process what to move/copy/delete, so the
 //! files it travels through must not be plantable or swappable by another
 //! local user (macOS's per-user mode-700 `$TMPDIR` masks this, but a shared
-//! `/tmp` — the future Linux pkexec path — does not):
+//! `/tmp`: the future Linux pkexec path: does not):
 //!
 //! - Each op gets a fresh private directory `ferail-elev-<random>` in
 //!   `temp_dir()`, created **exclusively** with mode `0o700` on unix
@@ -33,8 +33,8 @@
 //!   (`--elevated-uid`, read off the directory the parent just created) and
 //!   refuses to read the descriptor or create the result unless the private
 //!   directory is a real (non-symlink) directory owned by that uid with no
-//!   group/other access, and the descriptor itself — opened `O_NOFOLLOW`,
-//!   then re-checked on the open fd — is a regular file owned by that uid
+//!   group/other access, and the descriptor itself: opened `O_NOFOLLOW`,
+//!   then re-checked on the open fd: is a regular file owned by that uid
 //!   and not group/other writable.
 //! - The worker creates the result file with `O_EXCL` (which never follows
 //!   a planted symlink), so root's write cannot be redirected.
@@ -61,7 +61,7 @@ pub struct ElevatedOp {
 
 /// What the elevated worker reported back: how many items it completed, and
 /// the ones that still failed (so the parent can show "2 of 3 done as admin,
-/// 1 still failed — locked").
+/// 1 still failed: locked").
 #[derive(Clone, Debug, Default)]
 pub struct ElevatedResult {
     pub ok: usize,
@@ -71,11 +71,11 @@ pub struct ElevatedResult {
 /// A privileged trash-or-delete of specific items, re-run elevated after the
 /// unprivileged process hit a permission denial (a root-owned app, a
 /// root-owned item in the Trash). Built from just the *permission-denied*
-/// failures — the only class elevation can fix.
+/// failures: the only class elevation can fix.
 ///
 /// `delete == false`: **move** each item into `trash_dir` (the user's `~/.Trash`)
 /// so it lands where they expect, recoverable. The worker runs as root, so this
-/// is an explicit move — root's own `trashItemAtURL` would target *root's*
+/// is an explicit move: root's own `trashItemAtURL` would target *root's*
 /// Trash. `delete == true`: **remove** each item permanently (Shift+Delete /
 /// Empty Trash on protected items); `trash_dir` is then unused.
 #[derive(Clone, Debug)]
@@ -116,7 +116,7 @@ fn bytes_to_path(b: &[u8]) -> PathBuf {
 }
 
 impl ElevatedOp {
-    /// `<MODE>\0<DEST>\0<SRC>\0<SRC>…` — MODE is `MOVE` or `COPY`.
+    /// `<MODE>\0<DEST>\0<SRC>\0<SRC>…`: MODE is `MOVE` or `COPY`.
     fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(if self.is_move { b"MOVE" } else { b"COPY" });
@@ -154,7 +154,7 @@ impl ElevatedOp {
 // ---- field escaping for the line-delimited result files --------------------
 //
 // Result files are one record per line, fields NUL-separated. A filename
-// containing `\n` (legal on unix) would otherwise split a record — letting a
+// containing `\n` (legal on unix) would otherwise split a record, letting a
 // crafted name truncate the report or spoof extra records when the parent
 // parses what root wrote. Path fields are therefore escaped on encode:
 // `\` → `\\`, newline → `\n`, NUL → `\0` (the kernel forbids NUL in real
@@ -264,7 +264,7 @@ impl ElevatedResult {
 }
 
 impl ElevatedTrashOp {
-    /// `<MODE>\0<TRASH_DIR>\0<SRC>\0<SRC>…` — MODE is `TRASH` or `DELETE`.
+    /// `<MODE>\0<TRASH_DIR>\0<SRC>\0<SRC>…`: MODE is `TRASH` or `DELETE`.
     fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(if self.delete { b"DELETE" } else { b"TRASH" });
@@ -357,7 +357,7 @@ impl ElevatedTrashResult {
 // ---- private handshake directory -------------------------------------------
 
 /// Random hex token for the private directory name. Prefers real OS
-/// randomness — 16 bytes of `/dev/urandom` via `std::fs` (this workspace
+/// randomness, 16 bytes of `/dev/urandom` via `std::fs` (this workspace
 /// avoids new deps, so no `rand`/`getrandom` crate). The fallback hashes
 /// `SystemTime` + pid + a process-local counter + a stack address (ASLR)
 /// through `DefaultHasher`; it is *not* cryptographic, but the name only
@@ -403,7 +403,7 @@ fn random_token() -> String {
 /// result. See the module docs ("Handshake hardening") for the threat model;
 /// in short, the directory name is unpredictable, its creation is exclusive
 /// with mode `0o700` on unix, and the descriptor is `O_EXCL` + `0o600` before
-/// content lands — so on a shared `/tmp` no other user can pre-create, read,
+/// content lands, so on a shared `/tmp` no other user can pre-create, read,
 /// or swap any part of the handshake.
 struct ElevFiles {
     dir: PathBuf,
@@ -451,7 +451,7 @@ impl ElevFiles {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     // Collision (astronomically unlikely with urandom; possible
-                    // under the hash fallback) — try a fresh token.
+                    // under the hash fallback): try a fresh token.
                     last_err = format!("create private dir: {e}");
                 }
                 Err(e) => return Err(format!("create private dir: {e}")),
@@ -460,7 +460,7 @@ impl ElevFiles {
         Err(last_err)
     }
 
-    /// The uid the elevated worker must see as owner of the handshake dir —
+    /// The uid the elevated worker must see as owner of the handshake dir,
     /// i.e. OUR uid, read back from the directory we just created (std
     /// exposes no `getuid` without libc, and this crate has no libc dep).
     #[cfg(unix)]
@@ -529,7 +529,7 @@ const O_NOFOLLOW: i32 = 0; // unknown unix: the metadata checks still apply
 
 /// Root side: refuse to trust the handshake dir unless it is a real
 /// (non-symlink) directory owned by the invoking user with zero group/other
-/// access — exactly what [`ElevFiles::create`] made. On a shared `/tmp` this
+/// access, exactly what [`ElevFiles::create`] made. On a shared `/tmp` this
 /// is what stops another local user from staging a descriptor for root to
 /// execute, or from redirecting where root writes the result.
 #[cfg(unix)]
@@ -616,9 +616,9 @@ fn read_descriptor_verified(desc_path: &str, args: &[String]) -> Result<Vec<u8>,
     }
 }
 
-/// Write the result as the (possibly root) worker. Exclusive create —
+/// Write the result as the (possibly root) worker. Exclusive create:
 /// `O_CREAT|O_EXCL` never follows a planted symlink, so root's write cannot
-/// be redirected — after re-verifying the private dir on unix. Mode `0o644`
+/// be redirected, after re-verifying the private dir on unix. Mode `0o644`
 /// (set explicitly on the fd, immune to the root shell's umask) so the
 /// root-owned file is readable back by the invoking user; the `0o700`
 /// directory keeps it private from everyone else.
@@ -652,7 +652,7 @@ fn write_result_verified(result_path: &str, bytes: &[u8], args: &[String]) -> Re
 }
 
 /// Parent side: serialise `op` to a temp descriptor, run the elevated worker
-/// (blocks on the OS auth prompt — call from a background thread), and read
+/// (blocks on the OS auth prompt: call from a background thread), and read
 /// back which items still failed. An empty `failures` means everything landed.
 pub fn run_elevated_op(op: &ElevatedOp) -> Result<ElevatedResult, String> {
     let files = ElevFiles::create(&op.encode())?;
@@ -735,7 +735,7 @@ pub fn run_elevated_op_worker(args: &[String]) -> i32 {
 }
 
 /// Parent side: serialise a trash/delete `op`, run the elevated worker (blocks
-/// on the OS auth prompt — call from a background thread), and read back which
+/// on the OS auth prompt: call from a background thread), and read back which
 /// items landed in the Trash and which still failed.
 pub fn run_elevated_trash_op(op: &ElevatedTrashOp) -> Result<ElevatedTrashResult, String> {
     let files = ElevFiles::create(&op.encode())?;
@@ -976,7 +976,7 @@ mod tests {
     }
 
     /// A `\n` in a filename must not split, truncate, or spoof result
-    /// records — the class of bug that would let the elevated worker's
+    /// records: the class of bug that would let the elevated worker's
     /// report be forged by a crafted name.
     #[test]
     fn newline_in_paths_cannot_spoof_result_records() {
@@ -1002,7 +1002,7 @@ mod tests {
     }
 
     /// End-to-end over the private handshake dir: what the parent stages is
-    /// exactly what a verifying worker reads back — and tampered ownership /
+    /// exactly what a verifying worker reads back, and tampered ownership /
     /// permissions / symlinked descriptors are refused.
     #[cfg(unix)]
     #[test]

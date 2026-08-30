@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "mpv (libmpv) video provider for Ferail's viewer — any format, live filters, alpha keying."
+description = "mpv (libmpv) video provider for Ferail's viewer, any format, live filters, alpha keying."
 
 [dependencies]
 ferail-core = { workspace = true }

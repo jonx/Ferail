@@ -1,12 +1,12 @@
 //! SQLite-backed persistent metadata. Schema lifted from the Ferail
-//! predecessor with macOS-flavored adjustments — `ino`/`dev` columns
+//! predecessor with macOS-flavored adjustments: `ino`/`dev` columns
 //! on the `files` table for future move-aware identity, no Windows
 //! drive-letter assumptions in `tabs.path`, and a `magic_label`
 //! column so the magic cache can hydrate without a second table.
 //!
 //! Schema bumps: increment [`DB_VERSION`] when changing column shape.
 //! On open, a stored version mismatch deletes the file and recreates
-//! it — same hard-reset policy as Ferail. Caches built on top are
+//! it, same hard-reset policy as Ferail. Caches built on top are
 //! all derived data, so a recreate is cheap.
 
 use std::path::Path;
@@ -18,16 +18,16 @@ use rusqlite::{params, Connection};
 ///
 /// `2` adds the `favorites` table (separate from the older
 /// `pinned_items` placeholder, which is now unused). Migration from
-/// `1 → 2` is additive — `init_schema` is idempotent (`CREATE TABLE
+/// `1 → 2` is additive: `init_schema` is idempotent (`CREATE TABLE
 /// IF NOT EXISTS`), so existing caches survive the upgrade.
 ///
 /// `3` adds the `files.description` column for the structured
 /// magic-derived Description column. Forward migration is also
-/// additive — `init_schema` issues an `ALTER TABLE ... ADD COLUMN`
+/// additive: `init_schema` issues an `ALTER TABLE ... ADD COLUMN`
 /// and tolerates "duplicate column" on already-migrated DBs.
 ///
 /// `4` adds the `folder_sizes` table (recursive folder-size cache
-/// for the file list's Size column). Additive — `CREATE TABLE IF
+/// for the file list's Size column). Additive: `CREATE TABLE IF
 /// NOT EXISTS` covers the `3 → 4` migration.
 ///
 /// `5` adds `folder_sizes.file_count` / `dir_count` (recursive item
@@ -35,7 +35,7 @@ use rusqlite::{params, Connection};
 /// ... ADD COLUMN`; the same walk that computes the size fills them.
 /// The migration also clears any pre-existing rows once, since a v4
 /// row has no counts and would otherwise render "0 files" until its
-/// mtime/TTL forced a recompute — pure cache data, safe to drop.
+/// mtime/TTL forced a recompute: pure cache data, safe to drop.
 pub const DB_VERSION: u32 = 5;
 
 #[derive(Debug)]
@@ -68,7 +68,7 @@ pub type Result<T> = std::result::Result<T, MetadataError>;
 
 /// Scope of a [`MetadataDb::reset`] call. Maps to the user-facing
 /// `--reset-db <scope>` CLI flag and to the in-app "Reset…" menu
-/// items if/when those land. Picking a narrow scope is the point —
+/// items if/when those land. Picking a narrow scope is the point,
 /// most users wanting "fresh layout" don't also want to throw away
 /// cached magic / quarantine / Ant Trail signal.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -82,7 +82,7 @@ pub enum ResetScope {
     Ui,
     /// All derived caches: files + folder_usage. UI state survives.
     Caches,
-    /// Only `folder_usage` — the Ant Trail heat map.
+    /// Only `folder_usage`: the Ant Trail heat map.
     AntTrail,
     /// `files.magic_label` only. Keeps quarantine + hash data.
     Magic,
@@ -124,7 +124,7 @@ impl ResetScope {
     }
 }
 
-/// One row from the `folder_usage` table — Ant Trail heat snapshot.
+/// One row from the `folder_usage` table: Ant Trail heat snapshot.
 #[derive(Debug, Clone)]
 pub struct AntTrailEntry {
     pub folder_path: String,
@@ -132,7 +132,7 @@ pub struct AntTrailEntry {
     pub last_access_unix: i64,
 }
 
-/// One row from the `files` table — derived metadata cache. All
+/// One row from the `files` table: derived metadata cache. All
 /// fields except `path` are optional so callers can update one
 /// dimension at a time (write magic, write hash, write quarantine
 /// independently).
@@ -163,7 +163,7 @@ pub struct FileMetaRecord {
     pub indexed_at_unix: i64,
 }
 
-/// One row from the `folder_sizes` table — cached recursive folder
+/// One row from the `folder_sizes` table: cached recursive folder
 /// size for the file list's Size column. `mtime_unix` is the folder's
 /// own mtime at compute time; the caller compares it against the live
 /// filesystem to decide whether the row is still valid. Note the
@@ -173,7 +173,7 @@ pub struct FileMetaRecord {
 pub struct FolderSizeRecord {
     pub path: String,
     pub mtime_unix: i64,
-    /// Logical bytes — sum of `metadata.len()` over every regular
+    /// Logical bytes: sum of `metadata.len()` over every regular
     /// file underneath, symlinks excluded. Finder "Size" semantics.
     pub size: u64,
     pub computed_at_unix: i64,
@@ -216,14 +216,14 @@ pub struct TabState {
 
 /// Append `suffix` to the *full* file name (`metadata.db` +
 /// `"-journal"` → `metadata.db-journal`), matching SQLite's sibling
-/// naming — `Path::with_extension` would replace `.db` instead.
+/// naming: `Path::with_extension` would replace `.db` instead.
 fn sibling_path(path: &Path, suffix: &str) -> std::path::PathBuf {
     let mut s = path.as_os_str().to_os_string();
     s.push(suffix);
     std::path::PathBuf::from(s)
 }
 
-/// SQLite-backed metadata store. Single connection — wrap in a
+/// SQLite-backed metadata store. Single connection: wrap in a
 /// `Mutex` at the call site if cross-thread access is needed.
 pub struct MetadataDb {
     conn: Connection,
@@ -232,7 +232,7 @@ pub struct MetadataDb {
 impl MetadataDb {
     /// Open or create the database at `path`. If the on-disk schema
     /// version doesn't match [`DB_VERSION`], the file is set aside as
-    /// `<name>.bak` and recreated — never silently destroyed, because
+    /// `<name>.bak` and recreated, never silently destroyed, because
     /// user-curated rows (favorites) live here alongside cache data.
     /// Caller is responsible for ensuring the parent directory exists
     /// ([`crate::ensure_parent_dir`]).
@@ -269,7 +269,7 @@ impl MetadataDb {
                 // Rename to .bak (one-deep) instead of deleting: a
                 // downgrade to an older build or a corrupt header must
                 // not cost the user their favorites. The journal/WAL
-                // siblings go with the main file — a stale `-journal`
+                // siblings go with the main file: a stale `-journal`
                 // next to a freshly created same-name DB is a
                 // documented SQLite corruption vector.
                 let bak = sibling_path(path, ".bak");
@@ -290,7 +290,7 @@ impl MetadataDb {
         // on. 250ms rides out lock handoffs without wedging workers.
         conn.busy_timeout(std::time::Duration::from_millis(250))?;
         // WAL + NORMAL: the hot write paths (prefetch upserts, dupe
-        // hash cache) are many small autocommit statements — under the
+        // hash cache) are many small autocommit statements, under the
         // default DELETE journal each costs ~2 fsyncs. WAL brings that
         // to one WAL append, and readers stop blocking on writers.
         // journal_mode returns the resulting mode as a row, so it
@@ -367,7 +367,7 @@ impl MetadataDb {
             );
             CREATE INDEX IF NOT EXISTS idx_folder_hits ON folder_usage(hits DESC);
 
-            -- Window state — single row.
+            -- Window state: single row.
             CREATE TABLE IF NOT EXISTS window_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 width INTEGER NOT NULL DEFAULT 1180,
@@ -375,7 +375,7 @@ impl MetadataDb {
                 maximized INTEGER NOT NULL DEFAULT 0
             );
 
-            -- Layout state — single row.
+            -- Layout state: single row.
             CREATE TABLE IF NOT EXISTS layout_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 sidebar_width INTEGER NOT NULL DEFAULT 220,
@@ -411,7 +411,7 @@ impl MetadataDb {
             -- (target_kind, target_value) is FavoriteTarget split into
             -- discriminant + payload; `display_name` NULL means "follow
             -- target basename"; `custom_icon` NULL means "default for kind".
-            -- `sort_index` is a fractional order key — reorders touch one
+            -- `sort_index` is a fractional order key: reorders touch one
             -- row, not the whole list.
             CREATE TABLE IF NOT EXISTS favorites (
                 id TEXT PRIMARY KEY,
@@ -436,7 +436,7 @@ impl MetadataDb {
         // counts. Probe for the columns rather than relying on the
         // ADD-COLUMN error, so a crash between the two ALTERs still
         // heals. When they're absent (an old v4 DB), add them and clear
-        // the count-less rows once — a fresh v5 DB already has the
+        // the count-less rows once: a fresh v5 DB already has the
         // columns via the CREATE above, so this whole block is skipped
         // and the cache survives every subsequent open.
         let has_counts = self
@@ -542,8 +542,8 @@ impl MetadataDb {
     /// Drop a single folder from Recents *without* forgetting its Ant
     /// Trail heat. Recents (recency) and heat (frequency) are two
     /// columns of the same `folder_usage` row, so this zeroes only the
-    /// recency signal (`last_access_unix`) and leaves `hits` — and thus
-    /// the heat tint — untouched. A `last_access_unix` of 0 is the
+    /// recency signal (`last_access_unix`) and leaves `hits`: and thus
+    /// the heat tint: untouched. A `last_access_unix` of 0 is the
     /// "cleared" sentinel `load_recent_folders` filters out (real visits
     /// always stamp a positive epoch). Backs "Remove from Recents".
     pub fn forget_recent_access(&self, path: &str) -> Result<()> {
@@ -568,7 +568,7 @@ impl MetadataDb {
     /// `limit`. Drives the Recents sidebar section's startup hydration.
     /// Rows whose recency was cleared (`last_access_unix == 0`, the
     /// sentinel set by [`Self::clear_recent_access`] /
-    /// [`Self::forget_recent_access`]) are excluded — they may still
+    /// [`Self::forget_recent_access`]) are excluded: they may still
     /// carry heat via `hits`, but they're no longer "recent".
     pub fn load_recent_folders(&self, limit: usize) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
@@ -623,8 +623,8 @@ impl MetadataDb {
         // is effectively replaced (stale derived data must not ride
         // alongside a changed file), otherwise incoming NULLs preserve
         // existing derived fields. The previous SELECT + DELETE +
-        // INSERT shape cost three autocommit statements per row —
-        // ~6 fsyncs pre-WAL — and wasn't atomic (a crash between
+        // INSERT shape cost three autocommit statements per row
+        // (~6 fsyncs pre-WAL) and wasn't atomic (a crash between
         // DELETE and INSERT dropped the row).
         self.conn.execute(
             "INSERT INTO files (path, mtime_unix, size, magic_label, description, partial_hash, \
@@ -675,7 +675,7 @@ impl MetadataDb {
     /// Upsert a batch of file records in ONE transaction. The hot
     /// writers (magic/quarantine prefetch over a whole directory, the
     /// dupe hash cache) call this instead of per-row [`Self::upsert_file`]
-    /// autocommits — a 5,000-entry folder was ~10k autocommit
+    /// autocommits: a 5,000-entry folder was ~10k autocommit
     /// statements serialized behind the connection mutex.
     pub fn upsert_files(&self, recs: &[FileMetaRecord]) -> Result<()> {
         if recs.is_empty() {
@@ -695,7 +695,7 @@ impl MetadataDb {
     /// Age out cache rows so the store stops growing without bound:
     /// `files` and `folder_sizes` entries not refreshed in 90 days are
     /// dead weight (their mtime checks would re-derive anyway), and
-    /// `folder_usage` — loaded wholesale into memory at startup — is
+    /// `folder_usage`: loaded wholesale into memory at startup: is
     /// capped to its most recent 4,096 rows. User-curated tables
     /// (favorites, pinned items) are never touched. Run once per
     /// launch on the background executor.
@@ -1002,7 +1002,7 @@ impl MetadataDb {
     /// skipped and logged to stderr; the table itself is never wiped
     /// or corrupted by a single bad row. If the SQL query itself fails
     /// (e.g. the table is structurally damaged), the error propagates
-    /// to the caller — `ferail-gpui` is responsible for the
+    /// to the caller: `ferail-gpui` is responsible for the
     /// load-empty-and-keep-`.bak` recovery policy at that layer.
     pub fn load_favorites(&self) -> Result<Vec<Favorite>> {
         let mut stmt = self.conn.prepare(
@@ -1239,7 +1239,7 @@ mod tests {
         assert_eq!(r.file_count, 7);
         assert_eq!(r.dir_count, 2);
 
-        // Recompute after the folder changed — whole-row replace.
+        // Recompute after the folder changed: whole-row replace.
         db.upsert_folder_size(&FolderSizeRecord {
             path: "/dir".into(),
             mtime_unix: 200,
@@ -1310,7 +1310,7 @@ mod tests {
             indexed_at_unix: 100,
         })
         .unwrap();
-        // Same mtime, partial update — old hash preserved.
+        // Same mtime, partial update: old hash preserved.
         db.upsert_file(&FileMetaRecord {
             path: "/x.txt".into(),
             mtime_unix: 100,
@@ -1332,7 +1332,7 @@ mod tests {
         assert_eq!(r.full_hash.as_deref(), Some("def"));
         assert_eq!(r.mime.as_deref(), Some("text/plain"));
 
-        // mtime changed — stale derived data must be cleared.
+        // mtime changed: stale derived data must be cleared.
         db.upsert_file(&FileMetaRecord {
             path: "/x.txt".into(),
             mtime_unix: 999,
@@ -1594,7 +1594,7 @@ mod tests {
         let a = fav("Alpha", "/a", 1024.0);
         let b = fav("Beta", "/b", 2048.0);
         let c = fav("Gamma", "/c", 3072.0);
-        // Save out of order — load_favorites must sort by sort_index.
+        // Save out of order: load_favorites must sort by sort_index.
         db.save_favorite(&c).unwrap();
         db.save_favorite(&a).unwrap();
         db.save_favorite(&b).unwrap();

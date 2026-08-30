@@ -3,18 +3,18 @@
 //! The progressive funnel every serious dedup tool converges on, because
 //! it minimizes I/O:
 //!
-//! 1. **Walk + group by size** — a unique size cannot be a duplicate, so
+//! 1. **Walk + group by size**: a unique size cannot be a duplicate, so
 //!    it is dropped with zero hashing.
 //! 2. **Partial hash** (first 64 KB, xxh3) on size-collision groups only.
-//! 3. **Full hash** (BLAKE3) on partial-hash-collision groups only — or,
+//! 3. **Full hash** (BLAKE3) on partial-hash-collision groups only, or,
 //!    with `paranoid`, a byte-for-byte confirm that removes any
 //!    hash-collision doubt.
 //! 4. **Group by full hash** and emit.
 //!
 //! Duplicate finding is I/O-bound, not CPU-bound: hashing runs at
 //! multi-GB/s, the disk is the bottleneck. The two levers that matter are
-//! therefore (a) reading as little as possible — the funnel — and (b) not
-//! re-reading across runs — the optional [`DupeHashCache`], which the
+//! therefore (a) reading as little as possible, the funnel, and (b) not
+//! re-reading across runs: the optional [`DupeHashCache`], which the
 //! GPUI layer backs with the `files` table so a rescan skips full hashing
 //! entirely.
 //!
@@ -22,7 +22,7 @@
 //! are skipped (never downloaded to hash), packages are opaque by
 //! default, symlinks are never followed, per-dir read errors are
 //! absorbed. Hard links (and, later, APFS clones) are flagged because
-//! they share storage — they are duplicate *file IDs*, not duplicate
+//! they share storage: they are duplicate *file IDs*, not duplicate
 //! *bytes*, and reclaim no space if deleted.
 
 use std::collections::{BTreeSet, HashMap};
@@ -60,7 +60,7 @@ pub struct DupeOpts {
     /// the cost of re-reading confirmed groups.
     pub paranoid: bool,
     /// Hash undownloaded iCloud placeholders too (forces a download).
-    /// Off by default — the prime directive forbids surprise downloads.
+    /// Off by default: the prime directive forbids surprise downloads.
     pub scan_cloud: bool,
     /// Descend into macOS packages (`*.app`, `*.bundle`, …) and compare
     /// their inner files. Off by default: packages are opaque leaves and
@@ -94,7 +94,7 @@ pub struct DupeMember {
     /// groups do not.
     pub bytes: u64,
     /// `(dev, inode)` identity. Members sharing this are hard links to the
-    /// same bytes — one occupant of disk, several names.
+    /// same bytes, one occupant of disk, several names.
     pub file_id: Option<(u64, u64)>,
     /// This member's `(dev, inode)` already appeared earlier in the
     /// group: it is a hard link, so deleting it reclaims nothing.
@@ -138,7 +138,7 @@ pub struct SimilarImageIndexEntry {
 }
 
 impl DupeMember {
-    /// True for a member that occupies no storage of its own — a hard
+    /// True for a member that occupies no storage of its own: a hard
     /// link or a clone of an earlier member. The reclaimable total
     /// counts only the others.
     pub fn shares_storage(&self) -> bool {
@@ -591,7 +591,7 @@ fn mark_clones(members: &mut [DupeMember]) {
 /// Reclaim a duplicate's bytes *without deleting its name*: remove the
 /// `victim` and recreate it as an APFS clone of `keeper`. The clone
 /// shares the keeper's blocks, so the victim's independent copy is freed
-/// while the file stays present and byte-identical — the zero-copy
+/// while the file stays present and byte-identical: the zero-copy
 /// counterpart to trashing. macOS/APFS only.
 ///
 /// **Destructive and only safe within a confirmed duplicate group.** The
@@ -633,7 +633,7 @@ pub fn clone_dedup(_keeper: &Path, _victim: &Path) -> Result<(), String> {
 /// Paranoid mode: split a same-hash group into byte-equal clusters,
 /// guarding against the (astronomically unlikely) hash collision.
 /// Streams each comparison in fixed 256 KB chunks against each
-/// cluster's representative — `fs::read`-ing whole members held one
+/// cluster's representative: `fs::read`-ing whole members held one
 /// full copy per cluster simultaneously, which OOM'd on groups of
 /// multi-GB videos.
 fn byte_verify_split(members: Vec<Candidate>) -> Vec<Vec<Candidate>> {
@@ -651,7 +651,7 @@ fn byte_verify_split(members: Vec<Candidate>) -> Vec<Vec<Candidate>> {
     clusters
 }
 
-/// Byte-equality of two files via two 256 KB buffers — constant
+/// Byte-equality of two files via two 256 KB buffers: constant
 /// memory regardless of file size. `Err` on any read failure (the
 /// caller treats the pair as unequal).
 fn files_equal_streaming(a: &Path, b: &Path) -> std::io::Result<bool> {
@@ -740,7 +740,7 @@ fn file_id(_meta: &fs::Metadata) -> Option<(u64, u64)> {
     None
 }
 
-/// Undownloaded cloud placeholder (APFS `SF_DATALESS`) — reading it would
+/// Undownloaded cloud placeholder (APFS `SF_DATALESS`), reading it would
 /// trigger a network download.
 #[cfg(target_os = "macos")]
 fn is_dataless(meta: &fs::Metadata) -> bool {
@@ -760,7 +760,7 @@ fn is_dataless(_meta: &fs::Metadata) -> bool {
 /// what distinguishes a *clone* (`clonefile`) from an independent copy is
 /// that the clone shares the same physical blocks. We probe the device
 /// offset of each member's first logical byte with `fcntl(F_LOG2PHYS_EXT)`
-/// — two storage-owning members on the same device that map block 0 to
+///, two storage-owning members on the same device that map block 0 to
 /// the same physical offset are clones of one another, so all but the
 /// first reclaim nothing and must be excluded from the reclaim total,
 /// exactly like hard links.
@@ -809,7 +809,7 @@ mod clone_detect {
 
     /// Physical device byte offset backing logical offset 0, or `None`
     /// when it can't be determined (open/fcntl failure, or a sparse /
-    /// unmapped / compressed extent that reports no real block — treated
+    /// unmapped / compressed extent that reports no real block: treated
     /// conservatively as "not provably a clone").
     fn first_block_phys(path: &Path) -> Option<i64> {
         let file = File::open(path).ok()?;
@@ -983,7 +983,7 @@ mod tests {
     #[test]
     fn same_size_different_content_is_not_a_dupe() {
         let fx = fixture();
-        // Same length, different bytes — survives size grouping, killed by
+        // Same length, different bytes: survives size grouping, killed by
         // hashing.
         fx.write("a.bin", b"AAAAAAAAAAAAAAAA");
         fx.write("b.bin", b"BBBBBBBBBBBBBBBB");
@@ -1028,7 +1028,7 @@ mod tests {
         #[cfg(not(unix))]
         assert_eq!(
             *distinct_occupants, 2,
-            "no file identity off-unix — two names are two occupants"
+            "no file identity off-unix, two names are two occupants"
         );
     }
 

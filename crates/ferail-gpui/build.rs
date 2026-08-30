@@ -23,7 +23,7 @@ fn main() {
             // Don't fail the build on hosts without a usable
             // resource compiler (the windows-msvc toolchain ships
             // rc.exe; the windows-gnu toolchain ships windres). Log
-            // and continue — the .exe just won't have its icon.
+            // and continue: the .exe just won't have its icon.
             println!("cargo:warning=winresource compile failed: {e}");
         }
     }
@@ -35,7 +35,7 @@ fn main() {
 /// `scripts/package-win.ps1` builds `ferail-ntfs-helper.exe` first, draws a
 /// fresh 32-byte salt, hashes the helper as `SHA-256(salt ‖ file ‖ salt)`, and
 /// exports both as environment variables before building this crate. The
-/// values therefore land in `.rdata` like any other constant — there is no
+/// values therefore land in `.rdata` like any other constant, there is no
 /// sidecar file to edit and no magic marker to search for.
 ///
 /// An ordinary `cargo build` sets neither variable, so a development tree

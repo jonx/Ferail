@@ -1,5 +1,5 @@
 //! Filename hazard analysis: surface the characters malware and phishing use
-//! to disguise a file's true name — leading/trailing or unusual whitespace,
+//! to disguise a file's true name, leading/trailing or unusual whitespace,
 //! zero-width and control characters, bidirectional overrides (the classic
 //! "exe→txt" trick), Unicode homoglyphs (Cyrillic/Greek/fullwidth letters
 //! that mimic ASCII), and stray combining marks.
@@ -8,7 +8,7 @@
 //! interleaved with single flagged characters. Each flagged segment carries a
 //! human label (for a tooltip) and a visible substitute (`render`) so an
 //! otherwise-invisible character can actually be shown. This crate is data
-//! only — the UI decides how to color and lay the segments out.
+//! only: the UI decides how to color and lay the segments out.
 
 /// What makes a character suspicious in a filename.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,13 +18,13 @@ pub enum HazardKind {
     /// Whitespace after the last visible character.
     TrailingSpace,
     /// Internal whitespace that isn't a plain ASCII space (tab, NBSP, the
-    /// Unicode space zoo) — visually a space but not one.
+    /// Unicode space zoo): visually a space but not one.
     UnusualWhitespace,
     /// Zero-width space / joiner / non-joiner / BOM / word-joiner.
     ZeroWidth,
     /// C0/C1 control character or DEL.
     Control,
-    /// Bidirectional control (RLO/LRO/RLI/PDF/…) — reorders the visible text.
+    /// Bidirectional control (RLO/LRO/RLI/PDF/…): reorders the visible text.
     Bidi,
     /// A non-ASCII letter that mimics an ASCII/Latin one (homoglyph).
     Homoglyph,
@@ -36,7 +36,7 @@ pub enum HazardKind {
 }
 
 impl HazardKind {
-    /// Short human description for the segment's tooltip prefix — a msgid;
+    /// Short human description for the segment's tooltip prefix: a msgid;
     /// translate at the display site with `ferail_core::i18n::tr_raw`.
     pub fn summary(self) -> &'static str {
         match self {
@@ -58,7 +58,7 @@ pub struct NameSegment {
     /// The literal characters this segment covers.
     pub text: String,
     pub hazard: Option<HazardKind>,
-    /// Tooltip detail, e.g. `Cyrillic 'а' (U+0430) — looks like Latin 'a'`.
+    /// Tooltip detail, e.g. `Cyrillic 'а' (U+0430): looks like Latin 'a'`.
     pub label: Option<String>,
     /// A visible stand-in for an otherwise invisible/ambiguous character,
     /// e.g. `␣`, `⇥`, `⟨ZWSP⟩`. `None` means render `text` as-is.
@@ -105,9 +105,9 @@ pub fn analyze(name: &str) -> Vec<NameSegment> {
 
     let mixed = mixed_script_flags(&chars);
     // Combining-mark context: a mark is anchored (benign) when it rides on a
-    // letter and at most one other mark already sits on that base — the NFD
+    // letter and at most one other mark already sits on that base: the NFD
     // shapes real accents take (Vietnamese stacks two, e.g. "ế"). Anything
-    // else — a mark on whitespace/punctuation/nothing, or a Zalgo pile — is
+    // else, a mark on whitespace/punctuation/nothing, or a Zalgo pile, is
     // stray and stays flagged.
     let mut base_is_letter = false;
     let mut stacked_marks = 0usize;
@@ -135,7 +135,7 @@ pub fn analyze(name: &str) -> Vec<NameSegment> {
 }
 
 /// Per-char homoglyph context: `true` when the char's alphabetic token
-/// mixes ASCII Latin letters with confusable non-ASCII letters — a
+/// mixes ASCII Latin letters with confusable non-ASCII letters: a
 /// UTS #39-style mixed-script heuristic. An all-Cyrillic or all-Greek
 /// word is just a name in that language; unconditionally flagging it
 /// painted a Russian user's entire Documents folder with the
@@ -186,7 +186,7 @@ fn classify(
 ) -> Option<NameSegment> {
     let cp = c as u32;
 
-    // Bidirectional controls — the headline trick (reverses gpj.exe ⇒ exe.jpg).
+    // Bidirectional controls: the headline trick (reverses gpj.exe ⇒ exe.jpg).
     if matches!(cp, 0x202A..=0x202E | 0x2066..=0x2069 | 0x200E | 0x200F) {
         return Some(hazard(
             c,
@@ -247,7 +247,7 @@ fn classify(
     }
     // Combining marks: an accent on a letter is ordinary NFD text (kept in
     // the plain run so it shapes with its base, e.g. "congé"); only stray
-    // marks — on whitespace/punctuation/nothing, or Zalgo stacks — flag.
+    // marks, on whitespace/punctuation/nothing, or Zalgo stacks, flag.
     if is_combining_mark(cp) {
         if mark_anchored {
             return None;
@@ -263,7 +263,7 @@ fn classify(
             Some(visible_codepoint(cp)),
         ));
     }
-    // Homoglyphs — non-ASCII letters that mimic an ASCII one, flagged
+    // Homoglyphs: non-ASCII letters that mimic an ASCII one, flagged
     // only inside a token that also carries ASCII Latin letters.
     if in_mixed_token {
         if let Some((ascii, script)) = confusable(c) {
@@ -271,7 +271,7 @@ fn classify(
                 c,
                 HazardKind::Homoglyph,
                 tr!(
-                    "{script} '{c}' (U+{code}) — looks like '{ascii}'",
+                    "{script} '{c}' (U+{code}): looks like '{ascii}'",
                     script = crate::i18n::tr_raw(script),
                     c = c,
                     code = format_args!("{cp:04X}"),
@@ -370,7 +370,7 @@ fn bidi_name(cp: u32) -> String {
 }
 
 /// Map a known confusable codepoint to (ascii lookalike, script name).
-/// Curated rather than exhaustive — covers the common Cyrillic/Greek/
+/// Curated rather than exhaustive: covers the common Cyrillic/Greek/
 /// fullwidth attacks (e.g. "раypal").
 fn confusable(c: char) -> Option<(char, &'static str)> {
     // Fullwidth Latin (U+FF21..FF3A, U+FF41..FF5A).
@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn cyrillic_homoglyph_flagged() {
-        // "раypal" — first two letters are Cyrillic.
+        // "раypal": first two letters are Cyrillic.
         let segs = analyze("\u{0440}\u{0430}ypal.exe");
         let homos: Vec<_> = segs
             .iter()
@@ -497,7 +497,7 @@ mod tests {
     fn all_cyrillic_name_is_clean() {
         // A normal Russian document name: single-script tokens are a
         // language, not an attack (extension token "pdf" is pure
-        // ASCII, stem is pure Cyrillic — never mixed).
+        // ASCII, stem is pure Cyrillic, never mixed).
         assert!(!has_hazards("Договор аренды.pdf"));
         assert!(!has_hazards("Отчёт_2024.docx"));
         // Greek too.
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn mixed_token_still_flagged() {
-        // Cyrillic 'о' hidden inside a Latin word — the actual attack.
+        // Cyrillic 'о' hidden inside a Latin word: the actual attack.
         assert!(has_hazards("inv\u{043E}ice.pdf"));
     }
 
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn stray_combining_marks_flagged() {
-        // A mark riding on a space — nothing legitimate combines there.
+        // A mark riding on a space, nothing legitimate combines there.
         assert!(analyze("inv \u{0301}oice.pdf")
             .iter()
             .any(|s| s.hazard == Some(HazardKind::CombiningMark)));

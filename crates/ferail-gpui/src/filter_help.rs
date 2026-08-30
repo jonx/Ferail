@@ -1,11 +1,11 @@
-//! Filter-syntax cheat sheet — the (?) button beside the filter field.
+//! Filter-syntax cheat sheet: the (?) button beside the filter field.
 //!
 //! A stopgap until the filter box grows chips / a richer query UI:
 //! a gpui-component `Dialog` listing every structured token the
 //! filter understands, built from `ferail_core::filter_expr::TOKEN_HELP`
 //! (the same table the parser's tests round-trip and the autocomplete
 //! menu reads), plus the handful of grammar rules that don't fit a
-//! token row. Static content, no I/O, no state — safe to open from
+//! token row. Static content, no I/O, no state: safe to open from
 //! any click handler.
 
 use crate::text::TextScale as _;
@@ -59,7 +59,7 @@ fn body(cx: &App) -> impl IntoElement {
     }
     rows = rows.child(token_row(
         "\"…\"",
-        tr!("quoted phrase — match the words together, spaces included"),
+        tr!("quoted phrase: match the words together, spaces included"),
         tr!("\"final report\"").to_string(),
         muted,
     ));
@@ -79,7 +79,7 @@ fn body(cx: &App) -> impl IntoElement {
                 .gap_1()
                 .text_scale_xs()
                 .text_color(muted)
-                .child(tr!("Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b — or today, yesterday, week, month, year."))
+                .child(tr!("Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b, or today, yesterday, week, month, year."))
                 .child(tr!("Sizes: b, kb, mb, gb, tb (1024-based, like the Size column); >, <, >=, <= or a range a..b."))
                 .child(tr!("Anything unrecognised is matched as plain text. Press \u{23CE} to run the same query as a search of subfolders.")),
         )

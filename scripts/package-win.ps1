@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Produce a distributable Windows build of Ferail — the Windows twin of
+    Produce a distributable Windows build of Ferail: the Windows twin of
     scripts/package-mac.sh.
 
 .DESCRIPTION
@@ -21,7 +21,7 @@
 
     macOS parity note: the Apple side has to satisfy Gatekeeper, so
     package-mac.sh signs with a Developer ID, notarizes, and staples. Windows
-    has no notarization service — the equivalent trust signal is an
+    has no notarization service: the equivalent trust signal is an
     Authenticode signature plus SmartScreen reputation, which accrues to the
     signing certificate over downloads. An UNSIGNED build is fully functional
     but every downloader gets a "Windows protected your PC" SmartScreen
@@ -53,7 +53,7 @@
 .PARAMETER Features
     Cargo features for the build. Defaults to "mpv": the mpv video provider
     is a runtime dlopen (no build-time link, no bundled DLL), so the package
-    still runs on a machine with no libmpv — the viewer just falls back to
+    still runs on a machine with no libmpv: the viewer just falls back to
     the native player. -Features '' builds without it.
 
 .EXAMPLE
@@ -94,11 +94,11 @@ if ($dirty -and -not $AllowDirty) {
     throw "working tree is DIRTY ($($dirtyFiles.Count) path(s)); commit/stash it or pass -AllowDirty for a local-only package"
 }
 if ($dirty) {
-    Write-Warn "working tree is DIRTY ($($dirtyFiles.Count) path(s)) — artifact is local-only and not reproducible from its commit"
+    Write-Warn "working tree is DIRTY ($($dirtyFiles.Count) path(s)): artifact is local-only and not reproducible from its commit"
 }
 
 # ---------------------------------------------------------------------------
-# Version — single source of truth is [workspace.package] in Cargo.toml.
+# Version - single source of truth is [workspace.package] in Cargo.toml.
 # ---------------------------------------------------------------------------
 $cargoToml = Get-Content (Join-Path $RepoRoot 'Cargo.toml') -Raw
 if ($cargoToml -notmatch '(?m)^\s*version\s*=\s*"([^"]+)"') {
@@ -144,7 +144,7 @@ function Invoke-CargoRelease {
 
 if (-not $SkipBuild) {
     # --no-default-features strips ferail-gpui's dev-only screenshot-harness
-    # feature, and with it gpui's leak-detection exit assertion — users must
+    # feature, and with it gpui's leak-detection exit assertion - users must
     # never see a clean quit turn into exit 101 over a diagnostic assert.
     # --screenshot keeps working in the packaged exe via PrintWindow.
     # -p is load-bearing: from the virtual workspace root, cargo silently
@@ -249,14 +249,14 @@ New-Item -ItemType Directory -Path $StageDir -Force | Out-Null
 # Side effect worth knowing: build.rs stamps VERSIONINFO `OriginalFilename` as
 # `ferail-gpui.exe` for every binary in the crate, so the shipped GUI reports a
 # name it no longer has. Cosmetic (Explorer's Properties tab). Left alone
-# because winresource applies one block per crate, not per binary — setting it
+# because winresource applies one block per crate, not per binary - setting it
 # to `Ferail.exe` would just move the inaccuracy onto the CLI.
 $GuiDst = Join-Path $StageDir 'Ferail.exe'
 $HelperDst = Join-Path $StageDir 'ferail-ntfs-helper.exe'
 # The CLI keeps its own name (every doc says `ferail magic` / `ferail du`) but
 # CANNOT sit next to the GUI: Windows filesystems are case-insensitive, so
 # `ferail.exe` and `Ferail.exe` are one path and the second copy silently wins.
-# A `cli\` subdirectory keeps both natural names. (This is not hypothetical —
+# A `cli\` subdirectory keeps both natural names. (This is not hypothetical:
 # it shipped a package whose `Ferail.exe` was actually the CLI.)
 $CliDir = Join-Path $StageDir 'cli'
 New-Item -ItemType Directory -Path $CliDir -Force | Out-Null
@@ -270,7 +270,7 @@ Copy-Item $HelperSrc $HelperDst
 # path again (a rename, a flattened layout), fail loudly here instead of
 # shipping one binary under the other's name.
 if ((Get-FileHash $GuiDst -Algorithm SHA256).Hash -eq (Get-FileHash $CliDst -Algorithm SHA256).Hash) {
-    throw "staged GUI and CLI are the same file — case-insensitive name collision"
+    throw "staged GUI and CLI are the same file: case-insensitive name collision"
 }
 if ((Get-FileHash $GuiDst -Algorithm SHA256).Hash -ne (Get-FileHash $GuiSrc -Algorithm SHA256).Hash) {
     throw "staged Ferail.exe does not match target\release\ferail-gpui.exe"
@@ -285,7 +285,7 @@ $licCount = 0
 foreach ($f in @('LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md')) {
     $src = Join-Path $RepoRoot $f
     if (Test-Path $src) { Copy-Item $src (Join-Path $LicDir $f); $licCount++ }
-    else { Write-Warn "$f missing — package will under-attribute" }
+    else { Write-Warn "$f missing: package will under-attribute" }
 }
 Write-Step "Copied licenses ($licCount files)"
 
@@ -295,7 +295,7 @@ Write-Step "Copied licenses ($licCount files)"
 function Resolve-SignTool {
     $cmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
-    # Not on PATH outside a Developer Prompt — search the SDK, newest first.
+    # Not on PATH outside a Developer Prompt - search the SDK, newest first.
     $roots = @(
         "${env:ProgramFiles(x86)}\Windows Kits\10\bin",
         "$env:ProgramFiles\Windows Kits\10\bin"
@@ -313,7 +313,7 @@ function Resolve-SignTool {
 function Invoke-Sign {
     param([string[]]$Files)
     if (-not $SignCert) {
-        Write-Warn 'no -SignCert / $env:FERAIL_SIGN_CERT — producing an UNSIGNED build.'
+        Write-Warn 'no -SignCert / $env:FERAIL_SIGN_CERT, producing an UNSIGNED build.'
         Write-Warn 'SmartScreen will warn every downloader. Do not publish this artifact.'
         return $false
     }
@@ -325,7 +325,7 @@ function Invoke-Sign {
         $args += @('/f', $SignCert)
         if ($SignPassword) { $args += @('/p', $SignPassword) }
     } else {
-        # Not a file — treat as a store thumbprint.
+        # Not a file - treat as a store thumbprint.
         $args += @('/sha1', $SignCert)
     }
     $args += $Files
@@ -349,7 +349,7 @@ $signed = Invoke-Sign -Files @($GuiDst, $CliDst, $HelperDst)
 # This runs AFTER signing on purpose: signtool rewrites the helper, so a digest
 # taken before it would describe a file that no longer exists. The GUI is then
 # rebuilt to carry the value and re-signed. Only ferail-gpui is rebuilt, so the
-# helper staged and hashed above is not touched — the check below proves it.
+# helper staged and hashed above is not touched - the check below proves it.
 function Get-SaltedDigest {
     param([string]$Path, [byte[]]$Salt)
     $hash = [System.Security.Cryptography.IncrementalHash]::CreateHash(
@@ -403,7 +403,7 @@ if ($SkipBuild) {
     }
     # The rebuild selected only ferail-gpui, so the helper must be byte-identical
     # to the file we hashed. If cargo ever relinks it here, the baked digest is
-    # stale and every Fast NTFS launch would fail closed — catch that now.
+    # stale and every Fast NTFS launch would fail closed - catch that now.
     if ((Get-FileHash $HelperDst -Algorithm SHA256).Hash -ne $helperBefore) {
         throw 'the Fast NTFS helper changed after its digest was taken'
     }
@@ -481,7 +481,7 @@ $symbolManifest | ConvertTo-Json -Depth 8 | Set-Content $ManifestPath -Encoding 
 
 # Deliberately no "win" in the symbols name: updaters up to 0.6.6 pick the
 # first release asset matching *win*.zip, and GitHub lists "-symbols" before
-# ".zip" — with the old "win-x64-symbols" name they downloaded PDBs instead
+# ".zip" - with the old "win-x64-symbols" name they downloaded PDBs instead
 # of the app. Keep it that way so shipped builds keep updating correctly.
 $SymbolsZipPath = Join-Path $StageRoot "Ferail-$Version-x64-symbols.zip"
 Write-Step "Writing $SymbolsZipPath"
@@ -489,7 +489,7 @@ if (Test-Path $SymbolsZipPath) { Remove-Item $SymbolsZipPath -Force }
 Compress-Archive -Path $SymbolsDir -DestinationPath $SymbolsZipPath -CompressionLevel Optimal
 
 # ---------------------------------------------------------------------------
-# 6. Installer (optional — needs Inno Setup's iscc)
+# 6. Installer (optional - needs Inno Setup's iscc)
 # ---------------------------------------------------------------------------
 function Resolve-Iscc {
     $cmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
@@ -508,7 +508,7 @@ if ($NoInstaller) {
 } else {
     $iscc = Resolve-Iscc
     if (-not $iscc) {
-        Write-Warn 'Inno Setup (iscc.exe) not found — portable ZIP only.'
+        Write-Warn 'Inno Setup (iscc.exe) not found: portable ZIP only.'
         Write-Warn 'Install it for an installer: winget install JRSoftware.InnoSetup'
     } else {
         $iss = Join-Path $RepoRoot 'packaging\windows\ferail.iss'
@@ -518,7 +518,7 @@ if ($NoInstaller) {
         $InstallerPath = Join-Path $StageRoot "Ferail-$Version-win-x64-setup.exe"
         if (Test-Path $InstallerPath) {
             # The installer is the file users actually download, so it needs a
-            # signature of its own — signing the payload inside it is not
+            # signature of its own - signing the payload inside it is not
             # enough for SmartScreen.
             [void](Invoke-Sign -Files @($InstallerPath))
         } else {
@@ -543,15 +543,15 @@ foreach ($a in @($GuiDst, $CliDst, $HelperDst, $InstallerPath) | Where-Object { 
     Write-Host ("  {0}: {1}" -f (Split-Path $a -Leaf), $sig.Status)
 }
 if (-not $signed) {
-    Write-Warn 'UNSIGNED build — for local testing only.'
+    Write-Warn 'UNSIGNED build, for local testing only.'
 }
 
 Write-Step 'Fast NTFS helper verification'
 if ($attested) {
     Write-Host '  Ferail.exe carries the staged helper digest; a substituted helper fails closed to Portable.'
-    Write-Host '  Interim measure only — it raises the cost of tampering, it is not an Authenticode boundary.'
+    Write-Host '  Interim measure only: it raises the cost of tampering, it is not an Authenticode boundary.'
 } else {
-    Write-Warn 'Ferail.exe carries NO helper digest — it will elevate whatever helper sits beside it.'
+    Write-Warn 'Ferail.exe carries NO helper digest: it will elevate whatever helper sits beside it.'
     Write-Warn 'Do not publish this artifact.'
 }
 Write-Step 'Done'

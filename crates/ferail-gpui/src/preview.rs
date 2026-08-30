@@ -28,7 +28,7 @@ use crate::shell::Shell;
 pub const PREVIEW_PX: u32 = 512;
 
 /// Maximum number of cached previews kept around. LRU-evicted when
-/// over capacity — the preview pane only ever shows one at a time
+/// over capacity: the preview pane only ever shows one at a time
 /// so even 16 is generous.
 const CACHE_CAP: usize = 16;
 
@@ -135,10 +135,10 @@ impl PreviewCache {
 /// Call sites already hold `&mut Shell` (we're inside a shell
 /// update closure), so the cache mutation goes straight against
 /// `shell.process.preview_cache` rather than re-reading the entity
-/// through `cx.entity()` — that would trigger the GPUI re-entrancy
+/// through `cx.entity()`: that would trigger the GPUI re-entrancy
 /// guard.
 pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) {
-    // Text/code preview rides the same selection event — the worker
+    // Text/code preview rides the same selection event: the worker
     // decides text-vs-binary, so the render shows inline text for
     // source files and the thumbnail for everything else.
     crate::text_preview::request(shell, path.clone(), cx);
@@ -194,7 +194,7 @@ fn start_request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>
 
 /// The preview pane's 512 px content fetch: the synchronous tier (Quick
 /// Look / cover art) right here on the pool, or an awaited poster-worker
-/// decode for videos Quick Look refuses — never a blocked pool thread.
+/// decode for videos Quick Look refuses, never a blocked pool thread.
 /// Asks for the shell's *preview* tier: on Windows that may be a brokered
 /// `IPreviewHandler` capture, which the grid deliberately never gets.
 async fn fetch_preview_thumbnail(
@@ -215,7 +215,7 @@ async fn fetch_preview_thumbnail(
     }
 }
 
-/// Warm the preview cache for `path` from a non-`Shell` entity — the
+/// Warm the preview cache for `path` from a non-`Shell` entity: the
 /// viewer's slideshow prefetch runs on the `ViewerWindow` entity but
 /// shares the process-wide cache. While a slide is on screen this
 /// renders the *next* file's cheap 512 px thumbnail; it lands well
@@ -225,7 +225,7 @@ async fn fetch_preview_thumbnail(
 /// Mirrors [`request`] but notifies the caller's entity (any view)
 /// rather than the Shell, and skips the text-preview side-channel the
 /// viewer never renders. The result is written to the shared cache
-/// regardless of whether the entity is still alive — the thumbnail
+/// regardless of whether the entity is still alive: the thumbnail
 /// stays useful to the browser's preview pane either way.
 pub fn warm<T: 'static>(
     process: &std::rc::Rc<crate::process_state::ProcessState>,

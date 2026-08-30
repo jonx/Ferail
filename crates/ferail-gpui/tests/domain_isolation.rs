@@ -2,7 +2,7 @@
 //! end-to-end with zero GPUI involvement.
 //!
 //! This integration test opens a directory, indexes it, and walks the
-//! file list — entirely through the domain crates, without GPUI
+//! file list: entirely through the domain crates, without GPUI
 //! involvement.
 //!
 //! The test is in the `ferail-gpui` crate (the *consumer* of both
@@ -28,7 +28,7 @@ fn enumerate_home_via_domain_layer_only() {
     // fresh containers), but `enumerate` should always return a
     // handle. The error slot is the only thing we hard-assert on:
     // a TCC/permission denial is acceptable here because the test
-    // may be run sandboxed — what we care about is that the domain
+    // may be run sandboxed: what we care about is that the domain
     // layer *works without rendering*.
     if let Some(err) = &handle.error {
         eprintln!("note: enumeration returned error: {err:?}");
@@ -64,7 +64,7 @@ fn path_for_root_round_trips() {
     let root = fs.root();
     let path: PathBuf = fs.path_for(root).expect("root path");
     // After `id_for_path`, the id should match the one we started
-    // with — domain layer is self-consistent.
+    // with: domain layer is self-consistent.
     let again = fs.id_for_path(&path);
     assert_eq!(root, again);
 }

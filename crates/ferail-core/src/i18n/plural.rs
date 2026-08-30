@@ -1,5 +1,5 @@
 //! CLDR plural categories for integer counts, for the languages Ferail is
-//! likely to be translated into. Integer rules only — UI counts are whole
+//! likely to be translated into. Integer rules only: UI counts are whole
 //! numbers. Unknown languages get the English rule (`one` for exactly 1).
 //!
 //! Extend [`category`] when a new language needs it; the rest of the
@@ -52,7 +52,7 @@ impl Category {
 }
 
 /// Which plural form `n` takes in language `lang` (a bare subtag: `"fr"`,
-/// not `"fr-FR"` — use [`super::language_subtag`]).
+/// not `"fr-FR"`: use [`super::language_subtag`]).
 pub fn category(lang: &str, n: u64) -> Category {
     use Category::*;
     let n10 = n % 10;

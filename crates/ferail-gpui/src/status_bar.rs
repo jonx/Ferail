@@ -1,4 +1,4 @@
-//! Bottom-of-window status bar — task count + progress indicator.
+//! Bottom-of-window status bar: task count + progress indicator.
 //!
 //! Reads from `Shell::tasks` (a shared
 //! `Rc<RefCell<TaskRegistry>>`), so its text + progress always reflect
@@ -14,7 +14,7 @@
 //!   determinate fill at the latest task's fraction.
 //!
 //! Clicking the count region toggles the (future) task panel popover;
-//! today it's a no-op placeholder — the popover lands in Stage 5.c
+//! today it's a no-op placeholder: the popover lands in Stage 5.c
 //! alongside the toast surface.
 
 use crate::text::TextScale as _;
@@ -58,7 +58,7 @@ pub(crate) fn humanize_bytes(b: u64) -> String {
 /// is `Some(_)` only when the `--simulate-progress` CLI flag is set
 /// (used to visualise the strip in screenshots without spinning up
 /// real work). `on_toggle_task_panel` fires when the user clicks the
-/// task region or progress strip — `None` when the host doesn't want
+/// task region or progress strip: `None` when the host doesn't want
 /// the panel (screenshots, etc.).
 /// Density-of-decisions metrics surfaced by the status bar
 /// (Phase 8). Each field is precomputed by the Shell so the render
@@ -75,17 +75,17 @@ pub struct StatusMetrics {
     pub free_bytes: Option<u64>,
     pub volume_name: Option<SharedString>,
     /// The tab's volume is mounted read-only (CD/DVD, locked card,
-    /// read-only image, `ro` mount). Replaces the free-space label —
+    /// read-only image, `ro` mount). Replaces the free-space label,
     /// "0 B free" on a CD is true but buries the actual story.
     pub volume_read_only: bool,
-    /// Hidden entries the current listing skipped (show-hidden off) —
+    /// Hidden entries the current listing skipped (show-hidden off):
     /// count and summed sizes. Zero when the toggle is on or the folder
     /// has none, which also hides the chip. Passive discoverability:
     /// the user learns hidden content exists (and how much) without
     /// unhiding it.
     pub hidden_count: usize,
     pub hidden_bytes: u64,
-    /// Entries the filter field excluded from the current listing —
+    /// Entries the filter field excluded from the current listing:
     /// count and summed sizes. Zero when the field is empty. Keeps the
     /// count and total honest about the whole folder: without it, "12
     /// items · 3.2 MB" while a filter is typed reads as the folder's
@@ -101,16 +101,16 @@ pub struct StatusMetrics {
 /// How much room the status bar has to say what it has to say.
 ///
 /// The bar carries a lot of small readouts, and translation swells them
-/// unevenly — English "up 3m" is French "en service depuis 3m". Rather
+/// unevenly: English "up 3m" is French "en service depuis 3m". Rather
 /// than let the tail run off a narrow window, every wordy segment has
 /// three wordings, and [`plan`] picks the widest one that fits.
 ///
-/// - [`Density::Full`] — the sentence: "126.3 GB free on Macintosh HD".
-/// - [`Density::Short`] — the same fact without the parts the context
+/// - [`Density::Full`]: the sentence: "126.3 GB free on Macintosh HD".
+/// - [`Density::Short`]: the same fact without the parts the context
 ///   already supplies: "126.3 GB free".
-/// - [`Density::Minimal`] — the figure plus, at most, a universal token:
+/// - [`Density::Minimal`]: the figure plus, at most, a universal token:
 ///   "126.3 GB", "UP 3m". Deliberately untranslated where that token is
-///   an acronym — the bar already ships `CPU` / `MEM`
+///   an acronym: the bar already ships `CPU` / `MEM`
 ///   unlocalized, and a two-letter code beats a truncated word.
 ///
 /// Narrower still and [`plan`] starts dropping segments outright, in
@@ -142,7 +142,7 @@ pub(crate) struct Segments {
     pub free: Option<String>,
     pub hidden: Option<String>,
     pub stats: Option<StatsTexts>,
-    /// `None` at [`Density::Minimal`] — the switch keeps its meaning
+    /// `None` at [`Density::Minimal`]: the switch keeps its meaning
     /// through a tooltip there rather than a word.
     pub switch_label: Option<SharedString>,
 }
@@ -164,7 +164,7 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
-    /// The roomiest plan — what a wide window gets, and the fallback for
+    /// The roomiest plan: what a wide window gets, and the fallback for
     /// callers that have no width to work from.
     pub(crate) fn full() -> Self {
         Self {
@@ -179,7 +179,7 @@ impl Plan {
     }
 
     /// Gap between segments, in logical px at `ui_scale == 1`. Tightening
-    /// it is free — nobody reads the whitespace — so a degraded bar buys
+    /// it is free, nobody reads the whitespace, so a degraded bar buys
     /// room back here before it starts cutting words.
     pub(crate) fn gap_px(&self) -> f32 {
         match self.density {
@@ -227,7 +227,7 @@ impl Plan {
 /// The count and total describe *what is on screen*; the companion
 /// carries the rest of the folder, so a filtered view never passes
 /// itself off as the whole thing. When the needle matches nothing, the
-/// count itself becomes the explanation — "Empty folder" would send the
+/// count itself becomes the explanation: "Empty folder" would send the
 /// user hunting for files that are merely filtered.
 ///
 /// At [`Density::Minimal`] the words go and the figures stay: "12 · 3.0
@@ -409,7 +409,7 @@ pub(crate) fn segments(metrics: &StatusMetrics, density: Density) -> Segments {
 
 /// Rough advance width of one character, as a fraction of the font size.
 /// The bar is proportional text, so this is an average over mixed
-/// digits, lowercase and separators — deliberately on the generous side,
+/// digits, lowercase and separators: deliberately on the generous side,
 /// because under-estimating pushes the tail off the window while
 /// over-estimating only degrades a step early.
 const AVG_CHAR_W: f32 = 0.55;
@@ -485,7 +485,7 @@ fn estimated_width(
 /// logical width) and return it with the segment texts it chose.
 ///
 /// The ladder, in order: shorten the wording, then minimalize it, then
-/// give up one type tier, then start hiding — stats first (developer
+/// give up one type tier, then start hiding: stats first (developer
 /// telemetry), then the hidden chip, the filtered chip, free space, and
 /// last of all the task label. The entry count and the Show-Hidden
 /// switch are not on the ladder at all; they survive every width.
@@ -535,7 +535,7 @@ pub(crate) fn plan(
         }
     }
     // Last resort: the task label goes too. The count and the switch stay
-    // whatever happens — past here the window is narrower than they are,
+    // whatever happens: past here the window is narrower than they are,
     // and truncating them is the honest answer, not another tier.
     chosen.show_task = false;
     (chosen, seg)
@@ -556,7 +556,7 @@ pub fn render(
     window: &Window,
     cx: &mut App,
 ) -> Div {
-    // Snapshot theme colours up-front — the later progress_strip
+    // Snapshot theme colours up-front: the later progress_strip
     // call takes `&mut App`, which would otherwise conflict with the
     // outstanding `theme` borrow inside `when_some(free_label, ...)`.
     let theme_border = cx.theme().border;
@@ -564,7 +564,7 @@ pub fn render(
     let theme_muted_fg = cx.theme().muted_foreground;
     let registry = tasks.borrow();
 
-    // Middle: task summary. Only surfaced tasks count — sub-perceptual
+    // Middle: task summary. Only surfaced tasks count: sub-perceptual
     // work (instant clones) begins and ends inside SURFACE_DELAY and
     // never flickers a label into view.
     let surfaced = registry.iter().filter(|t| t.is_surfaced()).count();
@@ -603,7 +603,7 @@ pub fn render(
     let rem_px = window.rem_size().as_f32();
     let ui_scale = rem_px / crate::text::BASE_REM_PX;
     // The plan's widths are logical px at `ui_scale == 1`, so compare
-    // against the viewport in those same units — UI zoom shrinks the
+    // against the viewport in those same units: UI zoom shrinks the
     // room the bar has just as surely as a narrower window does.
     let avail = window.viewport_size().width.as_f32() / ui_scale.max(0.01);
     let (plan, seg) = plan(
@@ -648,7 +648,7 @@ pub fn render(
         // this folder, and how big it is.
         .child(div().flex_shrink_0().child(seg.count))
         // What the filter field is holding back, sitting next to the
-        // count it qualifies — same muted treatment as the hidden chip.
+        // count it qualifies, same muted treatment as the hidden chip.
         .when_some(
             seg.filtered.filter(|_| plan.show_filtered),
             |this, label| {
@@ -661,7 +661,7 @@ pub fn render(
             },
         )
         // Task label and progress strip hug the left, right after the
-        // counts — the strip belongs to the sentence it quantifies, not
+        // counts: the strip belongs to the sentence it quantifies, not
         // to the app-stats cluster on the far edge. The elastic filler
         // inside the cluster then pushes everything after it to the
         // right edge; without a cluster a bare filler does the same.
@@ -690,7 +690,7 @@ pub fn render(
         .when(!has_left_cluster, |this| this.child(div().flex_1()))
         // Phase 8: free-disk-space label sits between the task
         // summary and the Show-Hidden toggle. Only rendered when we
-        // could query the volume info — non-macOS / sandboxed
+        // could query the volume info: non-macOS / sandboxed
         // builds skip it gracefully.
         .when_some(seg.free.filter(|_| plan.show_free), |this, label| {
             this.child(
@@ -701,7 +701,7 @@ pub fn render(
             )
         })
         // App-footprint stats (up · CPU · MEM · redraws/s), precomputed by
-        // the off-thread sampler (system_stats.rs) — render only
+        // the off-thread sampler (system_stats.rs): render only
         // formats a cached snapshot. Absent until the sampler's first
         // real reading, and always absent in screenshot mode unless
         // `--simulate-stats` pins deterministic values. First on the
@@ -752,7 +752,7 @@ pub fn render(
         // and lives here next to the count + task summary. View-mode
         // toggle belongs alongside the rest of the status-bar state.
         // Its word is the last text to go and the switch itself never
-        // does — at the narrowest widths a tooltip carries the meaning.
+        // does, at the narrowest widths a tooltip carries the meaning.
         .when_some(seg.switch_label, |this, label| {
             this.child(div().flex_shrink_0().child(label))
         })
@@ -773,7 +773,7 @@ pub fn render(
                         .when_some(on_toggle_hidden, |sw, cb| {
                             sw.on_click(move |_state, window, cx| {
                                 // Switch's on_click hands us the new bool
-                                // value; we don't need it here — Shell's
+                                // value; we don't need it here: Shell's
                                 // toggle_hidden flips its own state from
                                 // whatever the current Shell value is.
                                 cb(window, cx);
@@ -806,7 +806,7 @@ fn humanize_secs(s: u64) -> String {
     if s < 60 {
         format!("{s}s")
     } else if s < 3600 {
-        // Skip a zero remainder — rounded ETAs land on whole minutes
+        // Skip a zero remainder: rounded ETAs land on whole minutes
         // and "51m" reads better than "51m 0s".
         match (s / 60, s % 60) {
             (m, 0) => format!("{m}m"),
@@ -827,7 +827,7 @@ fn compute_progress(registry: &TaskRegistry, simulated_progress: Option<f32>) ->
         }
         return (true, false, p.clamp(0.0, 1.0));
     }
-    // Only surfaced tasks drive the strip — an instant clone that lives
+    // Only surfaced tasks drive the strip: an instant clone that lives
     // <150ms never paints a bar.
     if !registry.iter().any(|t| t.is_surfaced()) {
         return (false, false, 0.0);
@@ -839,7 +839,7 @@ fn compute_progress(registry: &TaskRegistry, simulated_progress: Option<f32>) ->
     if any_indeterminate {
         return (true, true, 0.0);
     }
-    // All determinate — show the primary task's fraction.
+    // All determinate: show the primary task's fraction.
     let fraction = match registry
         .primary()
         .filter(|t| t.is_surfaced())
@@ -851,7 +851,7 @@ fn compute_progress(registry: &TaskRegistry, simulated_progress: Option<f32>) ->
     (true, false, fraction)
 }
 
-/// Status-bar progress strip — a thin accent strip on the right, sized
+/// Status-bar progress strip: a thin accent strip on the right, sized
 /// by the density plan (120 DIP at full width, narrower as the bar
 /// tightens).
 /// Uses `gpui_component::Progress` so the indeterminate state gets
@@ -959,7 +959,7 @@ mod count_label_tests {
     }
 
     /// The minimal wording keeps every figure and drops only the words
-    /// around them — a narrow bar must still answer "how many, how big".
+    /// around them: a narrow bar must still answer "how many, how big".
     #[test]
     fn minimal_count_keeps_the_figures() {
         let (count, chip) = count_labels(
@@ -1051,7 +1051,7 @@ mod density_ladder_tests {
 
     /// Whatever the width, the two things the user needs survive: the
     /// count is always built, and the Show-Hidden switch is not on the
-    /// ladder at all — only its *word* is.
+    /// ladder at all, only its *word* is.
     #[test]
     fn the_narrowest_bar_still_carries_count_and_switch() {
         let (p, seg) = plan(&busy(), 200.0, crate::text::BASE_REM_PX, true, true);

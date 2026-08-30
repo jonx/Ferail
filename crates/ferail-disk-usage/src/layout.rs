@@ -2,7 +2,7 @@
 //!
 //! Pure transform: input `(DiskUsageLayoutNode, bounds, max_depth)`,
 //! output `Vec<TreemapRect>`. Recomputed only when bounds, zoom path, or
-//! the underlying tree epoch change — never on hover or selection.
+//! the underlying tree epoch change, never on hover or selection.
 
 use std::time::SystemTime;
 
@@ -98,7 +98,7 @@ pub fn compute_treemap(
 }
 
 /// Hit-test: prefer the deepest rect that contains the point. Pinned by
-/// unit test — clicking on a leaf inside a parent picks the leaf.
+/// unit test, clicking on a leaf inside a parent picks the leaf.
 pub fn hit_test(rects: &[TreemapRect], px: f32, py: f32) -> Option<&TreemapRect> {
     rects.iter().rev().find(|r| r.contains(px, py))
 }
@@ -435,7 +435,7 @@ mod tests {
         let rects = vec![parent, child];
         let hit = hit_test(&rects, 15.0, 15.0).unwrap();
         assert_eq!(hit.node_id, nid(2));
-        // Outside the child but inside the parent — picks the parent.
+        // Outside the child but inside the parent: picks the parent.
         let hit = hit_test(&rects, 60.0, 60.0).unwrap();
         assert_eq!(hit.node_id, nid(1));
         // Fully outside.

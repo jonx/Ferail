@@ -1,4 +1,4 @@
-//! Finder colour tags. Reads and writes via `URLTagNamesKey` —
+//! Finder colour tags. Reads and writes via `URLTagNamesKey`:
 //! the public Cocoa API that round-trips through Launch Services
 //! so a tag we set here shows up with the right colour in Finder
 //! and vice-versa.
@@ -25,7 +25,7 @@ pub fn read_tags(path: &Path) -> Vec<String> {
     use objc2_foundation::{NSArray, NSError, NSString, NSURL};
 
     // Worker-callable: drain the autoreleased Cocoa objects (NSError,
-    // the returned tag array) per call — a large tag sweep otherwise
+    // the returned tag array) per call: a large tag sweep otherwise
     // accumulates them until the worker queue idles.
     autoreleasepool(|_| unsafe {
         let path_ns = NSString::from_str(&path.to_string_lossy());
@@ -89,7 +89,7 @@ pub fn write_tags(path: &Path, names: &[&str]) -> Result<(), String> {
         let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&path_ns, path.is_dir());
 
         // NSString has an NSMutableString subclass so it's not
-        // `IsRetainable` — `NSArray::from_vec` takes ownership of
+        // `IsRetainable`: `NSArray::from_vec` takes ownership of
         // `Vec<Retained<T>>` and works around that.
         let strings: Vec<Retained<NSString>> =
             names.iter().map(|n| NSString::from_str(n)).collect();

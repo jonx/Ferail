@@ -1220,8 +1220,8 @@ fn zip_container_packages_are_browseable_but_never_rewritten() {
 
 #[test]
 fn probe_detects_zip_containers_by_content_not_extension() {
-    // A file whose extension says nothing about being an archive — the
-    // shape of every .docx/.xlsx/.jar/.apk — must still open as a zip.
+    // A file whose extension says nothing about being an archive: the
+    // shape of every .docx/.xlsx/.jar/.apk: must still open as a zip.
     let disguised = TempFile::new("report.docx");
     build_zip(
         disguised.path(),
@@ -1264,12 +1264,12 @@ fn zip_entries_carry_real_modification_times() {
     let skew = (now - stamp).abs();
     assert!(
         skew < 86_400,
-        "decoded {stamp} is {skew}s from now ({now}) — conversion looks wrong"
+        "decoded {stamp} is {skew}s from now ({now}): conversion looks wrong"
     );
     // Pin the arithmetic itself against a known value: the DOS epoch
     // (1980-01-01T00:00:00Z) is 315_532_800 in unix seconds.
     // Grouped by the MS-DOS date field layout (7-bit year-since-1980, 4-bit
-    // month, 5-bit day), not in even nibbles — the field boundaries are the
+    // month, 5-bit day), not in even nibbles: the field boundaries are the
     // point of the literal, so the "unusual grouping" here is deliberate.
     #[allow(clippy::unusual_byte_groupings)]
     let dos_epoch = zip::DateTime::try_from_msdos(0b0000000_0001_00001, 0).unwrap();
@@ -1284,7 +1284,7 @@ fn zip_entries_carry_real_modification_times() {
 /// Written by hand rather than shipped as a binary fixture: `delharc` decodes
 /// but cannot compress, so there is no way to generate one in-tree, and a
 /// checked-in blob would be unreviewable. Stored members keep the encoder
-/// trivial — the payload is the file's own bytes — while still exercising the
+/// trivial, the payload is the file's own bytes, while still exercising the
 /// real header parser, CRC check and streaming walk.
 ///
 /// Level-0 header layout (LHA spec):
@@ -1475,7 +1475,7 @@ fn cancelled_add_leaves_the_original_archive_untouched() {
 
 /// Review finding 3: duplicate detection consulted only the names that existed
 /// before the operation, so two inputs resolving to the same archive path could
-/// both be written — zip allows that, but the second record shadows the first.
+/// both be written: zip allows that, but the second record shadows the first.
 #[test]
 fn adding_two_inputs_with_the_same_leaf_keeps_only_the_first() {
     let src = TempDir::new("src-dup-leaf");
@@ -1522,7 +1522,7 @@ fn adding_two_inputs_with_the_same_leaf_keeps_only_the_first() {
 }
 
 /// Review finding 2: a local name may legitimately contain a backslash on
-/// Unix. Translating it to `/` invented archive structure — the real file
+/// Unix. Translating it to `/` invented archive structure: the real file
 /// `..\payload` became the entry `../payload`, a traversal path Ferail would
 /// refuse on extraction but another tool might not. Ferail must never write
 /// one.
@@ -1566,8 +1566,8 @@ fn a_local_name_with_a_backslash_never_becomes_a_traversal_entry() {
 }
 
 /// Review finding 5: dropping archive members on a ZIP row adds them to that
-/// ZIP. The GUI worker does exactly this — cherry-pick the members into a
-/// private staging directory, then append them by leaf name — so the two
+/// ZIP. The GUI worker does exactly this: cherry-pick the members into a
+/// private staging directory, then append them by leaf name, so the two
 /// primitives are exercised here in the same order, including a member picked
 /// out of an inner folder (which must land beside its new siblings, not
 /// recreate the folder).

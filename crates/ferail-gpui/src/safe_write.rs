@@ -3,9 +3,9 @@
 //!
 //! Two steps: (1) the full new contents go to a unique hidden sibling, so
 //! the bytes are durably on disk before the original is touched; (2) the
-//! original is rewritten **in place** — same inode, so Finder tags, ACLs,
+//! original is rewritten **in place**, same inode, so Finder tags, ACLs,
 //! permissions, and the creation date all survive, which a rename-over
-//! would silently drop — then the sibling is removed. If step 2 fails
+//! would silently drop. Then the sibling is removed. If step 2 fails
 //! midway the sibling stays behind; the caller composes the user-facing
 //! message and names it as the recovery copy.
 
@@ -19,7 +19,7 @@ pub(crate) struct SafeWriteError {
     pub backup: Option<PathBuf>,
 }
 
-/// Blocking — background executor only.
+/// Blocking: background executor only.
 pub(crate) fn write_bytes_in_place(
     path: &Path,
     bytes: &[u8],

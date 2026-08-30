@@ -5,8 +5,8 @@
 //! divergence: Shift+right-click on Windows must not also open Ferail's menu,
 //! because that gesture is reserved for the native extended Shell menu.
 //!
-//! Everything else — the deferred first build, dismiss handling, positioning,
-//! and snapping — stays deliberately close to upstream. Dynamic content is
+//! Everything else: the deferred first build, dismiss handling, positioning,
+//! and snapping: stays deliberately close to upstream. Dynamic content is
 //! not handled here: async submenus retain their identity and update through
 //! `PopupMenu::rebuild`, so the root menu never needs polling or replacement.
 
@@ -151,7 +151,7 @@ fn schedule_build(
 
         // Weak capture, deliberately: the App holds this closure for as long
         // as the PopupMenu entity lives, and `SharedState.menu_view` holds
-        // that entity — a strong `shared_state` here is therefore a cycle
+        // that entity: a strong `shared_state` here is therefore a cycle
         // (App → closure → SharedState → Entity → App) that leaked the menu
         // past app quit (GPUI's "Exited with leaked handles" assertion, seen
         // on Windows 0.6.5). Dropping the menu handle on dismiss also
@@ -172,7 +172,7 @@ fn schedule_build(
         {
             let mut state = shared_state.borrow_mut();
             // A dismiss (or a fresh right-click elsewhere) may have landed
-            // while this build was in flight — don't resurrect the menu.
+            // while this build was in flight: don't resurrect the menu.
             if !state.open {
                 return;
             }

@@ -21,8 +21,8 @@ use std::collections::HashMap;
 /// mismatched parent/broker pair fails closed instead of misparsing.
 pub const FRAME_MAGIC: &[u8; 4] = b"FPB1";
 
-/// Broker process exit codes. Anything else — including Windows
-/// exception codes like `0xC0000005` — counts as a provider failure
+/// Broker process exit codes. Anything else, including Windows
+/// exception codes like `0xC0000005`: counts as a provider failure
 /// and feeds the quarantine.
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_NO_PREVIEW: i32 = 1;
@@ -47,7 +47,7 @@ pub fn encode_frame(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
 /// Parse and validate a frame. Returns `None` for anything that is not
 /// exactly a well-formed frame: wrong magic, zero or oversized
 /// dimensions, or a byte count that disagrees with `w * h * 4`.
-/// Trailing bytes after the payload are rejected too — a well-behaved
+/// Trailing bytes after the payload are rejected too: a well-behaved
 /// broker writes one frame and exits.
 pub fn parse_frame(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     if bytes.len() < 16 || &bytes[..4] != FRAME_MAGIC {

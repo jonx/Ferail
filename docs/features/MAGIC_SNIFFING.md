@@ -57,7 +57,7 @@ and **WMA/WMV** (the ASF container, split into "Windows Media Audio"/"Video" by
 its stream-type GUIDs). Recognizing these keeps container audio out of the
 "Binary" bucket, which otherwise trips the disguise alert against a media
 extension. Note that rich per-file tag/property facts (title, bitrate, cover
-art) come from `lofty` via the media-tags path, not this detector — see
+art) come from `lofty` via the media-tags path, not this detector: see
 [MEDIA-TAGS.md](MEDIA-TAGS.md); ASF is the one common audio container lofty
 can't parse, so a `.wma` shows only its detector label with no tag facts.
 
@@ -70,7 +70,7 @@ The public split is intentional:
 
 The Format column compares the extension-derived kind against the
 content-detected type and grades the relationship. The model is
-**directional risk escalation, not symmetric disagreement** — a file is
+**directional risk escalation, not symmetric disagreement**: a file is
 only alarming when its real content is *more dangerous* than its extension
 lets on. `FileEntry::format_label` returns a [`FormatFlag`] with three
 tiers, computed by `classify_format` in `ferail-core`:
@@ -80,14 +80,14 @@ tiers, computed by `classify_format` in `ferail-core`:
   Mach-O, `setup.jpg` that is a shell script), macros hidden in a plain
   `.docx`/`.xlsx`/`.pptx`, or an archive/opaque binary smuggled inside a
   media / document / text file (`invoice.pdf` that is a ZIP).
-- **Notice** (muted `circle-help`): a benign disagreement — a renamed or
+- **Notice** (muted `circle-help`): a benign disagreement: a renamed or
   resaved file with no danger. A `.config` that is really XML, a PNG kept
   as `.txt`. Surfaced quietly so it never drowns out the real disguises.
 - **None**: extension and content agree, it's an honest executable
   (`.exe` → PE, `.py` → script), or there is no extension claim
   (`File`/`Folder`/`Symlink`).
 
-The danger judgment reads three already-cached display strings —
+The danger judgment reads three already-cached display strings:
 `display_kind`, `display_magic`, and `display_description` (the macro flag
 rides in the description as `… · macro-enabled`). No new I/O, schema, or
 `FileEntry` field. `content_risk` classifies the content (Executable /
@@ -120,13 +120,13 @@ sniffs file content.
 `crates/ferail-gpui/src/prefetch.rs` starts after directory enumeration. It:
 
 1. Snapshots rows into sendable seeds (`path`, row index, mtime, size, current
-   cached flags). Directories are seeded for quarantine only — never sniffed:
+   cached flags). Directories are seeded for quarantine only, never sniffed:
    on cd9660 `open()`+`read()` on a directory *succeeds* and returns raw
    directory records, which the sniffer would confidently call "Binary".
 2. Registers a `TaskKind::MagicPrefetch` task.
 3. Runs on the background executor.
 4. Reads `MetadataDb` first. A cached row is honoured only when its stored
-   mtime matches the live file's — a mismatched row describes different
+   mtime matches the live file's: a mismatched row describes different
    bytes and is dropped so the fresh derive heals it.
 5. Falls back to `detect_magic_info` and quarantine xattr lookup.
 6. Writes fresh data back to SQLite.
@@ -134,7 +134,7 @@ sniffs file content.
 
 ### Cache Healing Across Sniffer Upgrades
 
-Cache rows only invalidate on file mtime — and files don't change when
+Cache rows only invalidate on file mtime, and files don't change when
 Ferail does. So a label cached by an older build ("Binary") would shadow
 a detector improvement ("Amiga executable") forever. To prevent that,
 `ferail_fs_native::MAGIC_REVISION` stamps the sniffer's knowledge level:

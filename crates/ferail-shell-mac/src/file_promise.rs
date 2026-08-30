@@ -10,13 +10,13 @@
 //! drag-destination callbacks to a window registered (`registerForDraggedTypes:`)
 //! for a type that is actually on the session pasteboard. gpui registers its
 //! windows for `NSFilenamesPboardType` alone, and a promised file never carries
-//! that type — no path exists yet — so without help AppKit would never call
+//! that type, no path exists yet, so without help AppKit would never call
 //! `draggingEntered:` on a gpui window: the drop would silently do nothing
 //! while Finder (which registers for promise types) keeps working. Two pieces
 //! make Ferail windows valid destinations without materializing anything:
 //!
 //! * [`ArchivePromiseProvider`] subclasses `NSFilePromiseProvider` to also
-//!   declare a private, data-free marker type on the session pasteboard —
+//!   declare a private, data-free marker type on the session pasteboard:
 //!   the documented way to add types to a promised item. Finder keeps
 //!   reading the standard promise types and ignores the marker.
 //! * [`register_archive_promise_destinations`] registers every gpui window
@@ -240,7 +240,7 @@ impl ArchivePromiseProvider {
 /// Ferail window and the drop lands nowhere. `registerForDraggedTypes:`
 /// accumulates, but the legacy filename type is passed again regardless so
 /// Finder→Ferail file drops can never lose their registration. Only gpui's
-/// window classes are touched — other AppKit windows keep their own types.
+/// window classes are touched: other AppKit windows keep their own types.
 /// Called on the main thread at drag start, so windows opened later are
 /// covered by the next drag. Returns how many windows were registered.
 fn register_archive_promise_destinations(app: &NSApplication) -> usize {
@@ -319,7 +319,7 @@ pub fn start(ns_view: *mut std::ffi::c_void, promises: Vec<FilePromise>) -> bool
     }
 
     // Ferail windows must be registered for the marker type before AppKit
-    // starts destination tracking — when the popped-out workbench overlaps
+    // starts destination tracking: when the popped-out workbench overlaps
     // its parent, the pointer may already be over the underlying window as
     // the session begins.
     let registered = register_archive_promise_destinations(&app);
@@ -334,7 +334,7 @@ pub fn start(ns_view: *mut std::ffi::c_void, promises: Vec<FilePromise>) -> bool
 
     let items = NSArray::from_vec(items);
     // Raised before the session starts so a destination's `draggingEntered:`
-    // — possibly delivered before `beginDraggingSession` returns — already
+    //, possibly delivered before `beginDraggingSession` returns, already
     // sees the in-process flag; the pasteboard marker declared by every
     // provider is the fallback. `session_ended` in `lib.rs` lowers it.
     super::native_drag::ARCHIVE_PROMISE_ACTIVE.store(true, std::sync::atomic::Ordering::SeqCst);

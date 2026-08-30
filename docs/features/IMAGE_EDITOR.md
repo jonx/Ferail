@@ -1,6 +1,6 @@
 # Built-in Image Editor (Redact / Annotate)
 
-A deliberately small "black it out, circle it, save" editor for images —
+A deliberately small "black it out, circle it, save" editor for images,
 not a paint program. Two modes (Redact: opaque black; Annotate: coloured),
 two tools (rectangle, brush), undo, and two save gestures: Cmd+S writes an
 "edited" copy beside the original, Cmd+Shift+S overwrites the original
@@ -13,7 +13,7 @@ after a confirmation.
 
 - **Entry points.** Row context menu **Edit Image** (single file whose
   extension the bundled codecs can round-trip: png, jpg/jpeg/jpe, bmp,
-  tif/tiff, webp — GIF is deliberately excluded because re-encoding would
+  tif/tiff, webp. GIF is deliberately excluded because re-encoding would
   silently drop animation), plus `file.edit_image` in the File menu and
   command palette. The action safely declines an incompatible selection.
 - **The window.** Spiral-cascaded standalone window; toolbar with
@@ -35,7 +35,7 @@ after a confirmation.
   original with `create_new` (race-safe, never clobbers, localized
   suffix), keeps the source format, flattens alpha for JPEG (quality 90),
   and toasts the new name. Overwrite rewrites the original through
-  `safe_write` — backup sibling first, then in place (same inode: tags,
+  `safe_write`: backup sibling first, then in place (same inode: tags,
   permissions, creation date survive); a midway failure leaves the backup
   behind and the error names it.
 
@@ -43,8 +43,8 @@ after a confirmation.
 
 The window keeps only a **display-resolution copy** (longest edge
 2048 px) of the decoded image. Interactive repaints composite the strokes
-over that copy off-thread — single-flight, latest-wins, reconverging on
-completion (the viewer's `schedule_process` shape) — so a fast brush drag
+over that copy off-thread (single-flight, latest-wins, reconverging on
+completion, the viewer's `schedule_process` shape), so a fast brush drag
 coalesces instead of queueing. The **full-resolution** image is re-decoded
 from the file only inside the save worker and never rides the UI thread;
 saving from the preview buffer would silently downsample, which is why the
@@ -60,23 +60,24 @@ overwrite-leaves-no-temp invariant.
 
 ## Relationship to the bug-reporter redaction modal
 
-TODO's Diagnostics follow-up (a) — drag-to-black-box over the issue
-screenshot before bundling — is a strict subset of this editor (Redact
+TODO's Diagnostics follow-up (a), drag-to-black-box over the issue
+screenshot before bundling, is a strict subset of this editor (Redact
 mode, rectangle tool, in-memory image). Point that modal at this module's
 stroke/composite core rather than building a second canvas.
 
 ## Deliberate non-features (v1)
 
-No zoom/pan (the stage fits the window), no layers, no redo, no text or
-arrow shapes, no EXIF editing (see the separate "Remove location data"
-TODO item), no HEIC/AVIF/RAW (no bundled encoder). Note that redacting a
-JPEG rewrites the whole file — location EXIF is currently preserved
+No layers, no redo, no text or arrow shapes, no EXIF editing (see the
+separate "Remove location data" TODO item), no HEIC/AVIF/RAW (no bundled
+encoder). Zoom and pan *do* ship (toolbar buttons, Cmd+= / Cmd+- /
+Cmd+0, wheel-to-cursor, right-drag to pan), sharing the viewer's
+`viewer::stage` geometry model. Note that redacting a
+JPEG rewrites the whole file: location EXIF is currently preserved
 verbatim; combining redaction with metadata stripping is the EXIF item's
 scope.
 
 ## Follow-ups if wanted
 
 - Arrow + text annotation shapes; a highlighter (multiply) brush.
-- Zoom/pan for precise work on large screenshots.
 - Redo, and stroke-level hit-testing to move/delete a shape.
 - Feed the diagnostics redaction modal from this module.

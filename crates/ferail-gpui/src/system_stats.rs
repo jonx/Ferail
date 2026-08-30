@@ -1,13 +1,13 @@
 //! App-footprint sampler behind the status bar's stats segment
 //! (`up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 redraws/s`).
 //!
-//! Everything shown is **app-centric** — what Ferail itself costs, not
+//! Everything shown is **app-centric**: what Ferail itself costs, not
 //! the machine: time since this process launched, the process's CPU
 //! share, its resident memory, and how often the window redraws. macOS
 //! keeps Activity Monitor's one-core convention; Windows normalizes
 //! across the process's available logical processors so its figure
 //! agrees with Task Manager and cannot alarmingly read 700%. The last
-//! figure is deliberately **redraws per second — not "fps"**: gpui
+//! figure is deliberately **redraws per second, not "fps"**: gpui
 //! only draws invalidated frames, so
 //! the honest measurement is a plain count of `Window::draw`s over
 //! the sample window (from gpui's frame-timing profiler). Calling
@@ -65,13 +65,13 @@ impl StatsSnapshot {
 
 /// The four status-bar figures, pre-formatted. Split (rather than one
 /// joined string) so the status bar can sit each in a fixed-min-width
-/// box — a live readout whose width breathes on every tick makes the
+/// box: a live readout whose width breathes on every tick makes the
 /// whole bar jitter.
 #[derive(Clone, Debug)]
 pub struct SegmentParts {
     /// `up 3d 4h`
     pub up: SharedString,
-    /// The bare uptime figure, `3d 4h` — what the status bar's minimal
+    /// The bare uptime figure, `3d 4h`: what the status bar's minimal
     /// density prefixes with the universal `UP` token when the
     /// translated "up" wording ("en service depuis"…) no longer fits.
     pub uptime: SharedString,
@@ -106,7 +106,7 @@ impl SegmentParts {
     }
 }
 
-/// One decimal below 10% (where the decimal carries real signal —
+/// One decimal below 10% (where the decimal carries real signal,
 /// "0.2%" vs "0%"), whole numbers above.
 fn format_cpu(pct: f32) -> String {
     if pct < 10.0 {
@@ -117,7 +117,7 @@ fn format_cpu(pct: f32) -> String {
 }
 
 /// Two coarsest units, largest first: `45s` → `12m` → `4h 12m` →
-/// `3d 4h`. Days don't roll into weeks — "up 19d 7h" reads fine.
+/// `3d 4h`. Days don't roll into weeks, "up 19d 7h" reads fine.
 pub fn format_uptime(secs: u64) -> String {
     let d = secs / 86_400;
     let h = (secs / 3_600) % 24;
@@ -135,7 +135,7 @@ pub fn format_uptime(secs: u64) -> String {
 
 /// Start the process-wide sampler loop. Called once at boot (skipped
 /// in screenshot mode, where `--simulate-stats` supplies a fixed
-/// label instead — live numbers would make captures nondeterministic).
+/// label instead: live numbers would make captures nondeterministic).
 pub fn start_sampler(cx: &mut App) {
     // Frame tracing feeds the rps figure. Cheap: one 40-byte ring
     // push per drawn frame, nothing at all while idle.
@@ -162,7 +162,7 @@ pub fn start_sampler(cx: &mut App) {
         loop {
             cx.background_executor().timer(SAMPLE_INTERVAL).await;
             // rps divides by the *actual* elapsed time, not the
-            // nominal interval — timer wakeups drift under load.
+            // nominal interval: timer wakeups drift under load.
             let elapsed = last_sample.elapsed();
             last_sample = Instant::now();
             let (returned_sys, returned_collector, snapshot) = cx
@@ -214,7 +214,7 @@ fn sample(
     // it holds at most one tick's worth of frames (~KBs) instead of
     // creeping toward its 16 MiB cap over a long session. A frame
     // landing in the microseconds between drain and re-enable is
-    // dropped — an off-by-one nobody can see in an rps figure.
+    // dropped: an off-by-one nobody can see in an rps figure.
     let frames = collector.collect_unseen();
     gpui::profiler::set_trace_enabled(false);
     gpui::profiler::set_trace_enabled(true);
@@ -222,7 +222,7 @@ fn sample(
 
     // Redraw count per window over the window's actual duration. A
     // plain average, deliberately: this is a redraw *counter* (rps),
-    // not a smoothness claim — see the module docs for why it is not
+    // not a smoothness claim: see the module docs for why it is not
     // called "fps".
     let secs = elapsed.as_secs_f32().max(0.001);
     let mut rps: HashMap<WindowId, f32> = HashMap::new();
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(&*p.mem, "MEM 184.0 MB");
         assert_eq!(&*p.rps, "58 redraws/s");
         // Idle: the only redraws are the sampler's own notify ticks
-        // (~0.5/s) — must floor to an honest 0.
+        // (~0.5/s): must floor to an honest 0.
         let p = SegmentParts::from_values(30, 0.2, 3_774_874, 0.5);
         assert_eq!(&*p.up, "up 30s");
         assert_eq!(&*p.mem, "MEM 3.6 MB");

@@ -30,7 +30,7 @@ pub use ferail_core::favorites::{
 ///   other   `$XDG_DATA_HOME/ferail/metadata.db`, falling back to
 ///           `~/.local/share/ferail/metadata.db`
 /// Returns `None` when the platform's base env var is unset (bare
-/// test / CI environments) — callers fall back to
+/// test / CI environments): callers fall back to
 /// `MetadataDb::in_memory` in that case, losing persistence but
 /// keeping every feature functional.
 #[cfg(target_os = "macos")]
@@ -46,7 +46,7 @@ pub fn default_db_path() -> Option<std::path::PathBuf> {
 
 #[cfg(windows)]
 pub fn default_db_path() -> Option<std::path::PathBuf> {
-    // Roaming AppData — the conventional home for per-user app state
+    // Roaming AppData: the conventional home for per-user app state
     // that isn't cache (caches would go to %LOCALAPPDATA%). The DB is
     // small (KBs of preferences + Ant Trail counts), so roaming is
     // appropriate and survives profile-synced enterprise setups.
@@ -74,7 +74,7 @@ pub fn default_db_path() -> Option<std::path::PathBuf> {
     p.push("metadata.db");
     // AROS: sqlite passes this string RAW to posixc open(), which (unlike
     // the Rust fs pal's own normalization) rejects the `dev:/x` unix-join
-    // artifact — `SYS:/.local/...` means "parent of the device root" to
+    // artifact: `SYS:/.local/...` means "parent of the device root" to
     // DOS. Collapse the slash after the device colon so the C side gets a
     // well-formed AROS path.
     #[cfg(target_os = "aros")]
@@ -100,7 +100,7 @@ pub fn ensure_parent_dir(path: &std::path::Path) -> std::io::Result<()> {
 
 /// `std::fs::create_dir_all` replacement that creates one component at a
 /// time. On AROS, emul-handler returns the wrong IoErr for a mkdir whose
-/// parent is missing (EINVAL — or even 0 — instead of ENOENT;
+/// parent is missing (EINVAL, or even 0, instead of ENOENT;
 /// aros-aarch64 UPSTREAM-NOTES item 40), which breaks `create_dir_all`'s
 /// recover-on-NotFound recursion and with it every settings/metadata
 /// persistence path (`SYS:/.config`, `SYS:/.local/share`). Component-wise

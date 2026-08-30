@@ -1,4 +1,4 @@
-//! Diagnostics — health checks for the app's environment and storage.
+//! Diagnostics: health checks for the app's environment and storage.
 //!
 //! One `run_checks()` powers two front-ends: the Settings → Diagnostics page
 //! (Phase 2) and the `--doctor` CLI flag, so there is a single source of truth
@@ -41,12 +41,12 @@ pub struct Check {
     pub name: String,
     pub status: Status,
     pub detail: String,
-    /// The filesystem location this check is about, when it has one —
+    /// The filesystem location this check is about, when it has one:
     /// drives the Diagnostics page's "Reveal" jump button. Structured
     /// here (never re-parsed out of the prose `detail`, whose shape
     /// varies per status and gets username-scrubbed in reports).
     /// [`render_text`] ignores it, so text output is unchanged. May
-    /// point at a not-yet-created file — reveal then shows the parent.
+    /// point at a not-yet-created file: reveal then shows the parent.
     pub path: Option<PathBuf>,
 }
 
@@ -111,7 +111,7 @@ impl Report {
     }
 }
 
-/// Run every health check. Blocking I/O — call off the UI thread.
+/// Run every health check. Blocking I/O: call off the UI thread.
 pub fn run_checks() -> Report {
     Report {
         app_version: env!("CARGO_PKG_VERSION"),
@@ -144,10 +144,10 @@ fn app_group() -> Group {
         Check::new(
             "mpv support",
             Status::Warn,
-            "not compiled in — rebuild with --features mpv to use the mpv player",
+            "not compiled in: rebuild with --features mpv to use the mpv player",
         )
     };
-    // The running artifact itself — the `.app` bundle on macOS, the
+    // The running artifact itself: the `.app` bundle on macOS, the
     // executable elsewhere. Answers "which build am I actually running?"
     // (a stale copy in ~/Downloads vs the one in /Applications).
     let exe = match crate::platform_shell::app_bundle_path() {
@@ -194,14 +194,14 @@ fn dependencies_group() -> Group {
             Check::new(
                 "mpv install",
                 Status::Fail,
-                format!("{path} — not found; video will fall back to the built-in player"),
+                format!("{path}, not found; video will fall back to the built-in player"),
             )
         }
     } else {
         Check::new(
             "Video player",
             Status::Ok,
-            "built-in (platform media framework — no external dependency)",
+            "built-in (platform media framework, no external dependency)",
         )
     };
     Group {
@@ -216,7 +216,7 @@ fn environment_group() -> Group {
         Status::Ok,
         format!("{} / {}", std::env::consts::OS, std::env::consts::ARCH),
     )];
-    // Presence only — never the values, to keep usernames/paths out of a report.
+    // Presence only, never the values, to keep usernames/paths out of a report.
     for var in env_vars_of_interest() {
         let present = std::env::var_os(var).is_some();
         checks.push(Check::new(
@@ -248,7 +248,7 @@ fn check_config_dir() -> Check {
         None => Check::new(
             "Config directory",
             Status::Fail,
-            "could not resolve a config directory (no APPDATA/HOME) — \
+            "could not resolve a config directory (no APPDATA/HOME), \
              settings will NOT persist",
         ),
         Some(dir) => match dir_writable(&dir) {
@@ -262,7 +262,7 @@ fn check_config_dir() -> Check {
                 "Config directory",
                 Status::Fail,
                 format!(
-                    "{} — NOT writable: {e}; settings will not persist",
+                    "{}, NOT writable: {e}; settings will not persist",
                     dir.display()
                 ),
             )
@@ -293,7 +293,7 @@ fn check_settings_file() -> Check {
             "Settings file",
             Status::Warn,
             format!(
-                "{} (not created yet — written on first change)",
+                "{} (not created yet: written on first change)",
                 path.display()
             ),
         )
@@ -306,7 +306,7 @@ fn check_metadata_db() -> Check {
         return Check::new(
             "Metadata database",
             Status::Warn,
-            "no path resolved — running with an in-memory DB (tags/Ant-Trail won't persist)",
+            "no path resolved, running with an in-memory DB (tags/Ant-Trail won't persist)",
         );
     };
     let parent_ok = path.parent().map(dir_writable).transpose();
@@ -321,7 +321,7 @@ fn check_metadata_db() -> Check {
             "Metadata database",
             Status::Warn,
             format!(
-                "{} (not created yet — written on first use)",
+                "{} (not created yet: written on first use)",
                 path.display()
             ),
         )
@@ -329,7 +329,7 @@ fn check_metadata_db() -> Check {
         (false, Err(e)) => Check::new(
             "Metadata database",
             Status::Fail,
-            format!("{} — directory not writable: {e}", path.display()),
+            format!("{}: directory not writable: {e}", path.display()),
         )
         .with_path(path),
     }
@@ -349,7 +349,7 @@ fn dir_writable(dir: &Path) -> Result<(), String> {
 
 // ---- rendering --------------------------------------------------------------
 
-/// Render the report as plain text — for `--doctor`, the "Copy report" button,
+/// Render the report as plain text, for `--doctor`, the "Copy report" button,
 /// and the bundled report in an issue report.
 pub fn render_text(report: &Report) -> String {
     use std::fmt::Write as _;
@@ -361,7 +361,7 @@ pub fn render_text(report: &Report) -> String {
     };
     let _ = writeln!(
         s,
-        "Ferail diagnostics — v{} ({build}, {}/{})",
+        "Ferail diagnostics: v{} ({build}, {}/{})",
         report.app_version, report.os, report.arch
     );
     for group in &report.groups {

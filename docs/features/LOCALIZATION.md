@@ -2,7 +2,7 @@
 
 Ferail's UI can be shown in any language for which a **language pack** exists.
 Packs are plain JSON files; two (French, German) ship inside the app, and
-anyone can create another one without touching the code — typically by
+anyone can create another one without touching the code, typically by
 handing a generated template to a translator or to an AI assistant (Claude,
 ChatGPT, a local model…) and importing the result. Ferail itself never calls
 an LLM.
@@ -14,10 +14,10 @@ an LLM.
 
 | Control | What it does |
 | --- | --- |
-| **Language** dropdown | *System* (follow the OS language, falling back to English when no pack matches), *English*, or any installed pack — shown with its coverage, e.g. *Français (87 %)*. Takes effect immediately: every window repaints and the menu bar is rebuilt. Strings a pack does not cover stay in English. |
-| **New language…** | Pick a language; Ferail writes `<code>.json` — a template with every string still in English, plus the translation instructions — into your languages folder and reveals it. |
+| **Language** dropdown | *System* (follow the OS language, falling back to English when no pack matches), *English*, or any installed pack: shown with its coverage, e.g. *Français (87 %)*. Takes effect immediately: every window repaints and the menu bar is rebuilt. Strings a pack does not cover stay in English. |
+| **New language…** | Pick a language; Ferail writes `<code>.json`: a template with every string still in English, plus the translation instructions: into your languages folder and reveals it. |
 | **Import…** | Pick a translated `.json`. It is validated (unknown keys, lost `{placeholders}`, bad plural categories are reported, none are fatal), copied into the languages folder as `<code>.json`, and selected. |
-| **Export…** | Save the selected language as a template: its translations plus the strings still untranslated (with instructions) — to finish a partial pack, fix a bundled one, or contribute it back. With *English* selected it saves the source catalog. |
+| **Export…** | Save the selected language as a template: its translations plus the strings still untranslated (with instructions), to finish a partial pack, fix a bundled one, or contribute it back. With *English* selected it saves the source catalog. |
 | **Show folder** | Reveal the languages folder. |
 | **Reload** | Re-scan the folder (after editing a file by hand). |
 | **Copy instructions** | Put the translator brief on the clipboard, for pasting into a chat along with the file. |
@@ -86,7 +86,7 @@ trn!("{n} item", "{n} items", count)          // {n} is filled automatically
 trc!("menu", "Open")                          // same English, different meaning
 crate::i18n::tr_static(spec.title)            // a msgid from a static table
 
-// ferail-core / shell crates (returns ferail_core::i18n::Text — Deref<str>,
+// ferail-core / shell crates (returns ferail_core::i18n::Text: Deref<str>,
 // Display, Into<String>):
 use ferail_core::{tr, trc, trn, msgid};
 let label = tr!("Move to Trash");
@@ -105,7 +105,7 @@ Rules:
 - **Arguments must be string literals.** The extractor (see below) only sees
   literals; a dynamic `tr!(x)` does not compile. For a `&'static str` that
   came from a `msgid!` table, call `tr_raw` / `tr_static`.
-- **Whole sentences, with placeholders** — never concatenate fragments
+- **Whole sentences, with placeholders**: never concatenate fragments
   (`tr!("Copied ") + n + tr!(" files")` is untranslatable); word order differs
   between languages.
 - **Keep the English exactly as it is displayed today** when converting an
@@ -113,12 +113,12 @@ Rules:
   translation, by design).
 - Use `trn!` for anything with a count; use `trc!` only when one English word
   genuinely needs two translations.
-- **What is translated:** everything the user reads in the UI — labels, menu
+- **What is translated:** everything the user reads in the UI: labels, menu
   items, titles, descriptions, tooltips, placeholders, column headers, status
   text, empty states, dialog text, toasts and their advice.
 - **What stays English:** log lines, the activity trail, the diagnostics
   report / `--doctor`, report bundles, CLI `--help`, element ids, icon paths,
-  persisted values (`"list"`, `"grid"`), env vars, test code, and — for now —
+  persisted values (`"list"`, `"grid"`), env vars, test code, and, for now:
   error text coming from the backend crates (`ferail-fs-native`,
   `ferail-archive`): a bug report must stay readable by the maintainers.
 - `tr!` is render-safe: one lock-free load and one hash probe, zero-copy
@@ -150,7 +150,7 @@ translated" rather than silently wrong text.
 - `ferail_gpui::i18n::init` runs at boot before any window: reads the
   persisted choice (`app_state.language`: `system` / `en` / code), probes the
   OS locale (`sys-locale`), scans bundled + user packs, and installs the
-  catalog synchronously — the same class of startup read as `app_state::load`,
+  catalog synchronously: the same class of startup read as `app_state::load`,
   and it avoids a flash of English.
 - Every later change (`set_selection`, `reload`, import) scans/parses on the
   background executor and lands through `cx.update`, guarded by a generation
@@ -158,7 +158,7 @@ translated" rather than silently wrong text.
   (so the widgets' own OK/Cancel follow where gpui-component has them),
   rebuilds the menu bar (`boot::install_app_menus`) and `refresh_windows()`.
 - `FERAIL_LANGUAGE=<code|en|system>` overrides the persisted choice for one
-  process (not saved) — handy for `--screenshot` runs and for trying a pack.
+  process (not saved): handy for `--screenshot` runs and for trying a pack.
 - Because menus, the command palette and the shortcuts page all translate
   `CommandSpec.title` at display time, the catalogue itself stays static.
 
@@ -168,7 +168,7 @@ translated" rather than silently wrong text.
   failure-report bodies are English by design for now.
 - `trn!` plural support is CLDR-correct for the languages listed in
   `plural.rs`; unlisted ones get the English one/other rule.
-- RTL layout (Arabic, Hebrew) is not mirrored — gpui has no RTL layout
+- RTL layout (Arabic, Hebrew) is not mirrored: gpui has no RTL layout
   support; text renders correctly but alignment stays LTR.
 - Dates, sizes and numbers are not locale-formatted.
 - gpui-component's built-in widget strings only exist for the locales the

@@ -5,7 +5,7 @@
 //! Public API:
 //!
 //! - [`detect_magic`] returns a friendly label string for the Format
-//!   column. Same return shape as the pre-Description detector — all
+//!   column. Same return shape as the pre-Description detector, all
 //!   existing callers keep working unchanged.
 //! - [`detect_magic_info`] returns the full structured [`MagicInfo`]
 //!   from which the Description column is rendered.
@@ -14,7 +14,7 @@
 //! parsers enough buffer to find their metadata fields (JPEG SOF
 //! markers can sit after EXIF; PE optional headers + CLR data dirs
 //! land around 0x200; ZIP local file headers iterate through the
-//! buffer for Office macro detection). The cost is negligible — one
+//! buffer for Office macro detection). The cost is negligible, one
 //! disk block on most filesystems.
 //!
 //! Ported from bfe-explorer (`crates/ferail-ui/src/magic/`); see
@@ -36,12 +36,12 @@ mod zip;
 pub use types::{CpuArch, ElfOs, MagicInfo, MagicType, PeSubsystem};
 
 /// Revision of the sniffer's knowledge. **Bump this whenever detection
-/// improves** — new signatures, refined labels, richer descriptions —
+/// improves**: new signatures, refined labels, richer descriptions,
 /// so the metadata DB's magic cache heals: at startup the app compares
 /// the revision stored in the DB against this one and, on mismatch,
 /// drops every cached label/description so rows re-sniff lazily with
 /// the current detector. Without the stamp, a label cached by an older
-/// build shadows the better answer forever — cache rows only invalidate
+/// build shadows the better answer forever: cache rows only invalidate
 /// on file mtime, and files don't change when Ferail does.
 pub const MAGIC_REVISION: u32 = 4;
 
@@ -62,7 +62,7 @@ pub fn detect_magic(path: &Path) -> Option<&'static str> {
 }
 
 /// Return full structured info derived from the file's first ~4 KB,
-/// plus — for ZIP-based types — a second 4 KB read at the file tail
+/// plus, for ZIP-based types, a second 4 KB read at the file tail
 /// to walk the central directory and fill `file_count` / `zip_root` /
 /// reclassify into Office / JAR / APK as appropriate.
 ///
@@ -72,9 +72,9 @@ pub fn detect_magic(path: &Path) -> Option<&'static str> {
 pub fn detect_magic_info(path: &Path) -> Option<MagicInfo> {
     ferail_core::path_guard::assert_off_ui_thread("detect_magic_info");
     // Never sniff a directory (this also catches symlinks resolving to
-    // one — `is_dir` follows links). `read()` on a directory fails with
+    // one: `is_dir` follows links). `read()` on a directory fails with
     // EISDIR on APFS/ext4, but *succeeds* on cd9660 and some legacy
-    // filesystems, handing raw dirent bytes to the classifier — which
+    // filesystems, handing raw dirent bytes to the classifier, which
     // then confidently labels a folder as an archive. Callers pass
     // directories on purpose (the prefetch worker sends every row for
     // its quarantine read), so the guard belongs here at the entry.
@@ -99,20 +99,20 @@ pub fn detect_magic_info(path: &Path) -> Option<MagicInfo> {
     } else if info.magic_type == MagicType::OleCompound {
         // CFBF containers (legacy .doc/.xls/.ppt, password-protected
         // OOXML) name their app in the directory sector, which usually
-        // sits outside the first 4 KB — one more targeted read.
+        // sits outside the first 4 KB, one more targeted read.
         ole::refine_with_directory(&mut info, &header[..n_header], &mut |offset, len| {
             read_at(path, offset, len)
         });
     } else if info.magic_type == MagicType::SevenZip {
         // 7z keeps its file list in a footer we can read without inflating
         // payloads, so the Description gains a count / root / encrypted flag
-        // the same way ZIP does. Best-effort — a failure (e.g. a header-
+        // the same way ZIP does. Best-effort: a failure (e.g. a header-
         // encrypted archive with no counts) leaves the bare "7-Zip archive"
         // label, and `read_summary` still reports `encrypted` in that case.
         // Other archive families are intentionally *not* enriched here: gzip
         // /bzip2/xz single members have a trivial count of one, and tar-family
         // counts would require streaming the whole archive (the bounded-read
-        // cost guard — see `archive::read_summary`).
+        // cost guard: see `archive::read_summary`).
         if let Ok(s) = crate::archive::read_summary(path) {
             info.file_count = info.file_count.or(s.file_count);
             info.zip_root = info.zip_root.take().or(s.root);
@@ -138,7 +138,7 @@ fn is_zip_family(mt: MagicType) -> bool {
     )
 }
 
-/// One bounded read at an absolute offset — used for a ZIP central
+/// One bounded read at an absolute offset: used for a ZIP central
 /// directory or a CFBF directory sector that sits outside the
 /// header/tail windows. Returns however many bytes were available
 /// (possibly fewer than `len`), or `None` on error / empty.
@@ -198,7 +198,7 @@ pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo {
         return MagicInfo::new(MagicType::Unknown);
     }
 
-    // 1. Executables — full structured parse.
+    // 1. Executables: full structured parse.
     if let Some(info) = exe::sniff(buf) {
         return info;
     }
@@ -223,17 +223,17 @@ pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo {
         return info;
     }
 
-    // 4. Images — extract dimensions + alpha.
+    // 4. Images: extract dimensions + alpha.
     if let Some(info) = image::sniff(buf) {
         return info;
     }
 
-    // 5. Audio — channels / sample rate / duration where cheap.
+    // 5. Audio: channels / sample rate / duration where cheap.
     if let Some(info) = audio::sniff(buf) {
         return info;
     }
 
-    // 6. Video containers — has_video / has_audio.
+    // 6. Video containers: has_video / has_audio.
     if let Some(info) = video::sniff(buf) {
         return info;
     }
@@ -267,7 +267,7 @@ pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo {
 }
 
 /// Plain byte-pattern lookup for formats where the dispatcher hasn't
-/// already claimed the buffer. Wildcards aren't expressed here — every
+/// already claimed the buffer. Wildcards aren't expressed here: every
 /// pattern is a literal byte run at a fixed offset.
 fn sniff_signature_table(buf: &[u8]) -> Option<MagicType> {
     const fn b_(c: u8) -> u8 {
@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn wma_asf_audio_detected_not_binary() {
         // ASF header GUID at offset 0, with the audio stream-type GUID later
-        // in the header — a WMA. Must be "Windows Media Audio", not "Binary".
+        // in the header: a WMA. Must be "Windows Media Audio", not "Binary".
         let header = [
             0x30u8, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62,
             0xCE, 0x6C,
@@ -672,7 +672,7 @@ mod amiga_tests {
     }
 
     /// A 68k ELF (rather than a hunk binary) must report the architecture
-    /// rather than dropping it — `EM_68K` was missing from the table.
+    /// rather than dropping it: `EM_68K` was missing from the table.
     #[test]
     fn elf_m68k_reports_its_architecture() {
         let mut buf = vec![0u8; 32];
@@ -702,7 +702,7 @@ mod amiga_tests {
         );
     }
 
-    /// ILBM with a BMHD chunk — the classic 320x256, 5 planes (32 colours).
+    /// ILBM with a BMHD chunk: the classic 320x256, 5 planes (32 colours).
     #[test]
     fn ilbm_reports_dimensions_and_planar_depth() {
         let mut buf = vec![0u8; 40];
@@ -738,7 +738,7 @@ mod amiga_tests {
         );
     }
 
-    /// AIFF is IFF too, but the audio parser handles it properly — the Amiga
+    /// AIFF is IFF too, but the audio parser handles it properly: the Amiga
     /// sniffer must decline it rather than shadowing channels and duration.
     #[test]
     fn aiff_still_goes_to_the_audio_parser() {

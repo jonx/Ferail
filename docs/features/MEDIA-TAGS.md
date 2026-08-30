@@ -1,6 +1,6 @@
 # Media Tags
 
-Embedded audio metadata — ID3v1/v2, MP4 atoms, Vorbis comments, APE — plus
+Embedded audio metadata, ID3v1/v2, MP4 atoms, Vorbis comments, APE, plus
 decoded audio properties and cover art, read once off the UI thread and surfaced
 in Get Info, the Description column, and the preview pane. One parser
 ([`lofty`](https://crates.io/crates/lofty)) covers every standard container, so
@@ -11,7 +11,7 @@ per-format grab-bag of crates.
 
 **Shipped (2026-07-14):** reader + core model, Get Info **Media** section,
 cross-platform cover art in the preview/grid, the rich audio Description line,
-and **in-viewer playback** — audio files open in the viewer with their cover on
+and **in-viewer playback**: audio files open in the viewer with their cover on
 the stage, a play/pause + mute + loop + seek transport, and unmuted autoplay.
 
 **Deferred (tracked in [TODO.md](../../TODO.md)):** a SoundCloud-style
@@ -19,11 +19,11 @@ the stage, a play/pause + mute + loop + seek transport, and unmuted autoplay.
 
 ## Why lofty
 
-`lofty` is pure Rust (MIT/Apache-2.0 — clean for the dual-licensed release), reads
+`lofty` is pure Rust (MIT/Apache-2.0: clean for the dual-licensed release), reads
 tags *and* audio properties (duration, bitrate, sample rate, channels, bit depth)
 *and* embedded pictures through one `read_from_path`, across MP3, the ID3 chunks
 in WAV/AIFF, MP4/M4A/ALAC, FLAC/OGG/Opus/Speex, APE, WavPack, and Musepack. The
-runner-up `id3` crate is ID3-only; `symphonia` is a full decoder framework — kept
+runner-up `id3` crate is ID3-only; `symphonia` is a full decoder framework: kept
 in mind for the deferred waveform (lofty does not decode samples), overkill for
 tags. lofty's MSRV (1.85) is what set the workspace `rust-version`.
 
@@ -32,19 +32,19 @@ tags. lofty's MSRV (1.85) is what set the workspace `rust-version`.
 The dependency and the parsing live behind the existing crate boundaries; no new
 crate, no new cache, no new worker.
 
-- **`ferail-core::media`** — `MediaTags`, a platform- and UI-free data record
+- **`ferail-core::media`**: `MediaTags`, a platform- and UI-free data record
   (codec, title/artist/album/genre, track/disc, year, comment, duration, bitrate,
   sample rate, channels, bit depth) plus pure formatting helpers
   (`description()`, `duration_label()`, `sample_rate_label()`, …). Zero deps, unit
-  tested. Cover-art *bytes* are deliberately **not** a field — see below.
-- **`ferail-fs-native::media`** — the one place `lofty` is used. Two entry
+  tested. Cover-art *bytes* are deliberately **not** a field: see below.
+- **`ferail-fs-native::media`**: the one place `lofty` is used. Two entry
   points split by cost:
-  - `read_media_tags(path)` — tags + audio properties, `read_cover_art(false)`
+  - `read_media_tags(path)`: tags + audio properties, `read_cover_art(false)`
     so it never pulls a multi-megabyte picture into memory. Safe to call per
     file (Get Info) or per row (prefetch). `guess_file_type()` falls back to
     content sniffing so a mis-named track still reads. Returns `None` for
     non-audio.
-  - `read_cover_art(path)` — the expensive read, on demand for the previewed
+  - `read_cover_art(path)`: the expensive read, on demand for the previewed
     file only. Prefers `PictureType::CoverFront`, else the first picture;
     returns the raw encoded (PNG/JPEG) bytes for the host to decode.
 
@@ -58,17 +58,17 @@ avoiding), so the preview simply attempts the read and shows whatever comes back
 
 ## Surfaces
 
-### Get Info — "Media" section
+### Get Info - "Media" section
 
 `entry_info::gather` (already on the background executor) calls `read_media_tags`
-for files and appends a **Media** `InfoSection` — Title, Artist, Album, Genre,
+for files and appends a **Media** `InfoSection`: Title, Artist, Album, Genre,
 Year, Track ("3 of 11"), Disc ("1 of 2"), Duration, Format, Channels, Sample
 rate, Bit depth, Bit rate. Non-audio files yield `None`, so the section's rows
 are empty and the existing `filter(!rows.is_empty())` drops it. No new render
-code — the neutral `InfoValue::Text` rows paint through the same path as every
+code: the neutral `InfoValue::Text` rows paint through the same path as every
 other Get Info row.
 
-### Preview / grid — cover art
+### Preview / grid - cover art
 
 The preview and thumbnail warms already funnel through one choke point,
 `video_poster::fetch_content_thumbnail` (Quick Look → poster). A cover-art step
@@ -76,15 +76,15 @@ was inserted there: after Quick Look comes up empty (or on a platform without
 it), an audio file's embedded picture is read with `lofty`, decoded, and shrunk
 through the **same** `PreviewCache` / BGRA `RenderImage` path everything else
 uses. macOS Quick Look already extracts audio cover art, so this step only fires
-where it must — **Windows/Linux/AROS** — giving album art in the preview pane
+where it must: **Windows/Linux/AROS**: giving album art in the preview pane
 and the icon grid on every platform, and the still-image stage in the viewer
 draws it for free.
 
-### File list — Description column
+### File list - Description column
 
 `prefetch::run_worker` replaces the generic magic description ("MPEG audio,
-layer III") with the rich media line — `"MP3 · stereo · 44.1 kHz · 192 kbps ·
-03:24"` — for audio files, only on a fresh derive (the value persists to the
+layer III") with the rich media line: `"MP3 · stereo · 44.1 kHz · 192 kbps ·
+03:24"`, for audio files, only on a fresh derive (the value persists to the
 same `description` field in the metadata DB, so a revisit never re-reads tags).
 Mirrors the magic-description contract exactly; see
 [MAGIC_DESCRIPTION.md](MAGIC_DESCRIPTION.md).
@@ -109,7 +109,7 @@ Mirrors the magic-description contract exactly; see
 
 ## In-viewer audio playback
 
-Playback reuses the viewer's `VideoBackend`/`VideoStream` seam — it was never a
+Playback reuses the viewer's `VideoBackend`/`VideoStream` seam: it was never a
 new engine. The native macOS `AVPlayer` decodes an audio-only URL (the video
 path had been calling `set_muted` on it all along), and libmpv plays audio
 natively. What was missing was routing + the stage surface:
@@ -117,12 +117,12 @@ natively. What was missing was routing + the stage surface:
 - **Routing.** `is_audio_path` (native [`AUDIO_EXTS`] always, plus
   [`MPV_AUDIO_EXTS`] when the mpv backend is selected) sits beside
   `is_video_path`. `sync_video` opens a stream for either. `current_is_playable`
-  (`video || audio`) gates the *playback* machinery — stream open/teardown, the
-  transport, self-driven slideshow advance — while `current_is_video` stays the
+  (`video || audio`) gates the *playback* machinery: stream open/teardown, the
+  transport, self-driven slideshow advance, while `current_is_video` stays the
   gate for *frame rendering*. That split is the whole design: audio is a stream
   with no pixels.
 - **Stage.** `copy_frame` returns `None` for audio, so `video_frame_image` stays
-  empty and the stage falls through to the still path — which draws the cover
+  empty and the stage falls through to the still path, which draws the cover
   from the preview cache (the same cover the grid/preview show). No frame
   surface, no "undecodable" branding (that check now excludes audio).
 - **Transport.** Play/pause, mute, loop, and the seek bar show for any playable
@@ -131,20 +131,20 @@ natively. What was missing was routing + the stage surface:
 - **Autoplay unmuted.** Opening an audio file unmutes the window (`set_muted`
   applied at open); video stays muted-by-default so stacked viewers don't all
   blare. The mute toggle drives the real backend: `AVPlayer setMuted:` on macOS,
-  `IMFMediaEngine::SetMuted` on Windows, and libmpv's `mute` property — no
+  `IMFMediaEngine::SetMuted` on Windows, and libmpv's `mute` property, no
   longer a no-op on the native players.
 
 ### Backend coverage
 
 Because routing goes through the *active* backend, an audio file plays on
-whichever backend the user runs — mirroring how video already picks native vs.
+whichever backend the user runs, mirroring how video already picks native vs.
 mpv:
 
 | Backend | Plays | Notes |
 | --- | --- | --- |
 | Native macOS (AVFoundation) | MP3, AAC/M4A, ALAC, AIFF, WAV, CAF, FLAC | No WMA; no Vorbis/Opus/APE. |
 | Native Windows (Media Foundation) | MP3, AAC/M4A, WAV, WMA, FLAC | WMA is native here. |
-| Native Linux | — | The shell's video overlay is a stub; needs mpv. |
+| Native Linux |, | The shell's video overlay is a stub; needs mpv. |
 | mpv (all OSes) | everything, incl. WMA/Vorbis/Opus/APE/… | The uniform option; libmpv must be installed + selected. |
 
 So [`MPV_AUDIO_EXTS`] (ogg/opus/wma/ape/…) only route to the viewer when mpv is
@@ -155,7 +155,7 @@ mpv-only video containers.
 
 Verified structurally in the headless harness (stream opens, duration +
 position advance, cover + transport render, unmuted). Audible output and the
-mute toggle's *effect* need a real run — the `setMuted:`/`SetMuted` calls are
+mute toggle's *effect* need a real run: the `setMuted:`/`SetMuted` calls are
 wired through the same registry as the working `set_paused`, but silence can't
 be observed in a screenshot.
 
@@ -169,9 +169,9 @@ Rides the same preview-cache/staleness machinery when it lands. Tracked under
 
 ## Tests
 
-- `ferail-core::media` — duration / kHz / track-of / channel formatting and the
+- `ferail-core::media`: duration / kHz / track-of / channel formatting and the
   `description()` composition (lossy, lossless, empty-segment cases).
-- `ferail-fs-native::media` — real round-trips against a hand-built minimal
+- `ferail-fs-native::media`: real round-trips against a hand-built minimal
   WAV: audio properties, non-audio → `None`, missing file → `None`, and a tagged
   WAV whose two embedded pictures verify front-cover preference in
   `read_cover_art`.

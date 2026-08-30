@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Persistent metadata store for Ferail — SQLite-backed, schema-versioned, used as the substrate for Ant Trail heat, magic cache, quarantine cache, recent folders, window/layout state, and tabs."
+description = "Persistent metadata store for Ferail: SQLite-backed, schema-versioned, used as the substrate for Ant Trail heat, magic cache, quarantine cache, recent folders, window/layout state, and tabs."
 
 # "aros" is a custom-JSON target (branch aros-port); register its target_os
 # value so host builds don't warn on the cfg arm (same as ferail-fs-native).

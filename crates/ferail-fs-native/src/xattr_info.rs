@@ -42,7 +42,7 @@ impl QuarantineInfo {
 ///
 /// Never panics: missing attrs and parse failures yield default values.
 /// The returned `quarantined` flag reflects only whether the
-/// `com.apple.quarantine` attribute is present — agent / timestamp
+/// `com.apple.quarantine` attribute is present: agent / timestamp
 /// fields may still be `None` even when `quarantined` is true.
 #[cfg(target_os = "macos")]
 pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
@@ -96,7 +96,7 @@ pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
 /// ```
 ///
 /// ZoneId values: 0=Local, 1=Intranet, 2=Trusted, 3=Internet,
-/// 4=Restricted. We treat 3+ as "quarantined" — the cases Windows
+/// 4=Restricted. We treat 3+ as "quarantined": the cases Windows
 /// itself flags in Explorer's Security tab.
 ///
 /// File timestamps don't live in the ADS; the file's own creation
@@ -118,7 +118,7 @@ pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
     let zt = parse_zone_identifier(&text);
 
     if !zt.internet_or_restricted() && zt.host_url.is_none() && zt.referrer.is_none() {
-        // ADS present but contains nothing actionable — leave as
+        // ADS present but contains nothing actionable: leave as
         // not-quarantined.
         return info;
     }
@@ -181,7 +181,7 @@ fn clear_quarantine_status(path: &Path) -> std::io::Result<bool> {
         "com.apple.quarantine",
         "com.apple.metadata:kMDItemWhereFroms",
     ] {
-        // Only attempt removal when present — xattr::remove on a
+        // Only attempt removal when present: xattr::remove on a
         // missing attr returns ENOATTR, which isn't a failure for us.
         if let Ok(Some(_)) = xattr::get(path, attr) {
             if let Err(e) = xattr::remove(path, attr) {
@@ -212,7 +212,7 @@ fn clear_quarantine_status(path: &Path) -> std::io::Result<bool> {
 }
 
 /// Linux: drop the freedesktop provenance xattrs (the "Unblock" equivalent).
-/// Best-effort and idempotent — a missing attribute is success.
+/// Best-effort and idempotent: a missing attribute is success.
 #[cfg(target_os = "linux")]
 pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
     clear_quarantine_status(path).map(|_| ())
@@ -224,7 +224,7 @@ fn clear_quarantine_status(path: &Path) -> std::io::Result<bool> {
     for attr in ["user.xdg.origin.url", "user.xdg.referrer.url"] {
         match xattr::remove(path, attr) {
             Ok(()) => removed = true,
-            // Missing attr (ENODATA/ENOATTR) or unsupported FS — nothing to do.
+            // Missing attr (ENODATA/ENOATTR) or unsupported FS, nothing to do.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => {}
         }
@@ -399,7 +399,7 @@ pub fn parse_url_host(url: &str) -> Option<&str> {
 
 /// Linux: freedesktop download provenance. Browsers (Firefox, Chromium, …)
 /// set the `user.xdg.origin.url` xattr (and optionally `user.xdg.referrer.url`)
-/// on downloaded files — the Linux analogue of macOS quarantine / Windows
+/// on downloaded files: the Linux analogue of macOS quarantine / Windows
 /// Mark-of-the-Web. Presence of an origin URL marks the file as "downloaded".
 /// There's no agent name or timestamp in this scheme, so those stay `None`.
 #[cfg(target_os = "linux")]

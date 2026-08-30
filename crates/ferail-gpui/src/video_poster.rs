@@ -2,7 +2,7 @@
 //! frames and embedded audio cover art.
 //!
 //! macOS's `QLThumbnailGenerator` only thumbnails what AVFoundation can
-//! decode — it refuses whole container families (AVI, WMV/ASF, MKV, …)
+//! decode: it refuses whole container families (AVI, WMV/ASF, MKV, …)
 //! instantly, so a folder of DivX rips shows nothing but type glyphs. When
 //! the user has selected the mpv video provider (Settings → Plugins), the
 //! same libmpv that plays those files in the viewer can also pull one frame
@@ -21,13 +21,13 @@
 //!
 //! Prime-directive shape: [`fetch_content_thumbnail`] (Quick Look + cover
 //! art, bounded blocking) keeps the background pool's existing contract,
-//! but poster decodes must NOT park pool tasks — a folder of 90 rips would
+//! but poster decodes must NOT park pool tasks: a folder of 90 rips would
 //! queue minutes of serialized mpv work, and a convoy of blocked pool
 //! threads starves prefetch/folder-sizes/timers until navigation itself
 //! stops responding (the exact freeze this design replaced). So posters
 //! run on **one dedicated OS thread**: `fetch_content_thumbnail` answers
 //! [`Fetched::NeedsPoster`] and the caller *awaits* [`fetch_poster`], which
-//! queues a job and yields — no pool thread is held while the worker
+//! queues a job and yields, no pool thread is held while the worker
 //! churns. The single worker also means one libmpv instance at a time, and
 //! a file libmpv can't decode costs one bounded deadline before it is
 //! negative-cached by [`crate::thumbnails::ThumbnailCache`].
@@ -41,7 +41,7 @@ pub type ThumbPayload = (Vec<u8>, u32, u32);
 /// Outcome of the synchronous fetch tier.
 pub enum Fetched {
     /// Resolved here (Quick Look hit, embedded cover art, or nothing left
-    /// to try) — `None` means "no thumbnail", which callers negative-cache.
+    /// to try): `None` means "no thumbnail", which callers negative-cache.
     Done(Option<ThumbPayload>),
     /// A video the mpv poster worker should decode: `await`
     /// [`fetch_poster`] for the result. Only returned when the mpv
@@ -50,7 +50,7 @@ pub enum Fetched {
     NeedsPoster,
 }
 
-/// Video containers/streams worth handing to the mpv poster fallback —
+/// Video containers/streams worth handing to the mpv poster fallback:
 /// the viewer's built-in set plus its broad mpv container set. Quick Look
 /// already succeeds for the AVFoundation-friendly ones, so membership here
 /// only matters after it returned nothing.
@@ -70,7 +70,7 @@ pub fn is_poster_candidate(path: &Path) -> bool {
 }
 
 /// Raster formats the bundled `image` crate is compiled with (Cargo
-/// features: png/jpeg/gif/webp/bmp/tiff) — the same decoder set the
+/// features: png/jpeg/gif/webp/bmp/tiff): the same decoder set the
 /// viewer's `decode_raster` relies on. Case-insensitive.
 const RASTER_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif"];
 
@@ -82,7 +82,7 @@ fn is_bundled_raster(path: &Path) -> bool {
 }
 
 /// Decode + downscale an image file to a `size_px`-bounded RGBA thumbnail.
-/// Blocking (file read + decode) — background pool only, same contract as
+/// Blocking (file read + decode): background pool only, same contract as
 /// the Quick Look tier above.
 fn fetch_raster_thumbnail(path: &Path, size_px: u32) -> Option<ThumbPayload> {
     let bytes = std::fs::read(path).ok()?;
@@ -106,7 +106,7 @@ fn fetch_raster_thumbnail(path: &Path, size_px: u32) -> Option<ThumbPayload> {
 /// two differently: on Windows a grid thumbnail is what Explorer would
 /// show (shell thumbnail, native PDF page, else the type icon), while
 /// the preview pane may additionally fall back to a brokered
-/// `IPreviewHandler` capture — a document rendering with the handler's
+/// `IPreviewHandler` capture: a document rendering with the handler's
 /// own chrome, acceptable in the pane, wrong in a grid cell. macOS and
 /// Linux answer both the same way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -123,7 +123,7 @@ pub fn fetch_content_thumbnail(path: &Path, size_px: u32) -> Fetched {
     fetch_content(path, size_px, Tier::Thumbnail)
 }
 
-/// The preview pane's fetch — same tiers as [`fetch_content_thumbnail`],
+/// The preview pane's fetch, same tiers as [`fetch_content_thumbnail`],
 /// but the platform shell is asked for its richer [`Tier::Preview`] image.
 pub fn fetch_content_preview(path: &Path, size_px: u32) -> Fetched {
     fetch_content(path, size_px, Tier::Preview)
@@ -144,7 +144,7 @@ pub fn fetch_content_preview_cancellable(
 /// The synchronous content fetch: the platform shell (Quick Look on
 /// macOS; the shell thumbnail / native PDF page / preview capture on
 /// Windows, per `tier`), then the bundled raster decoders, then embedded
-/// audio cover art. Bounded blocking — background pool only. Videos the
+/// audio cover art. Bounded blocking: background pool only. Videos the
 /// shell refuses are NOT decoded here: they come back as
 /// [`Fetched::NeedsPoster`] so the caller can `await` [`fetch_poster`]
 /// without parking a pool thread behind the (slow, serialized) mpv worker.
@@ -187,14 +187,14 @@ fn fetch_content_inner(
     }
     // Pure-Rust raster tier: platforms without Quick Look (AROS, Windows,
     // Linux stubs return None above) still get real image thumbnails via
-    // the bundled `image` crate — and on macOS this catches files
+    // the bundled `image` crate, and on macOS this catches files
     // Quick Look refuses.
     if is_bundled_raster(path) {
         if let Some(hit) = fetch_raster_thumbnail(path, size_px) {
             return Fetched::Done(Some(hit));
         }
     }
-    // The shell came up empty (or this platform has none) — try embedded
+    // The shell came up empty (or this platform has none): try embedded
     // cover art. The shared media reader uses the extension as its fast path
     // and a bounded content check for renamed files. This path only runs for
     // viewport-owned thumbnail requests, never across an entire listing.
@@ -206,7 +206,7 @@ fn fetch_content_inner(
     }
     // True last resort, and deliberately *after* every decoder above: the
     // platform's large file-type image. On Windows this is
-    // `IShellItemImageFactory` without `THUMBNAILONLY` — asked for any
+    // `IShellItemImageFactory` without `THUMBNAILONLY`: asked for any
     // earlier it would mask a decodable image (the shell declines a 512 px
     // extraction for some files whose 256 px grid thumbnail works, e.g. on
     // OneDrive, and the bundled decoder must get its turn first). macOS
@@ -217,7 +217,7 @@ fn fetch_content_inner(
 /// Is there a poster decoder on this platform? Desktop: the mpv provider
 /// (feature + user preference). AROS: the `C:FFThumb` helper from the
 /// native ffmpeg port (aros-aarch64 `hosted/ffmpeg/ffthumb.c`), probed
-/// once — deployed alongside FFViewX, absent on minimal boot images.
+/// once: deployed alongside FFViewX, absent on minimal boot images.
 fn poster_provider_available() -> bool {
     #[cfg(target_os = "aros")]
     {
@@ -232,7 +232,7 @@ fn poster_provider_available() -> bool {
 
 /// Await the mpv poster frame for a [`Fetched::NeedsPoster`] file. Queues
 /// the job on the dedicated poster worker thread and yields until it is
-/// done — safe to await from a pooled task (no thread is held).
+/// done: safe to await from a pooled task (no thread is held).
 pub async fn fetch_poster(path: PathBuf, size_px: u32) -> Option<ThumbPayload> {
     let (tx, rx) = async_channel::bounded(1);
     enqueue_poster(PosterJob { path, size_px, tx });
@@ -263,7 +263,7 @@ struct PosterJob {
 /// LIFO is the queue policy, deliberately: navigating to a new folder
 /// pushes its rows on top, so the view the user is looking at thumbnails
 /// first, while jobs for rows browsed away from sink to the bottom and
-/// still complete eventually — their results are cached for the next
+/// still complete eventually: their results are cached for the next
 /// visit. Nothing is ever *cancelled*: a dropped job would resolve to
 /// `None` at its awaiting call site and be negative-cached as "this file
 /// has no thumbnail", permanently wrong. Finishing stale jobs is bounded,
@@ -296,7 +296,7 @@ fn poster_queue() -> &'static PosterQueue {
                         }
                     };
                     let result = poster_decode(&job.path, job.size_px);
-                    // Capacity-1 channel, sole send — try_send can't fail
+                    // Capacity-1 channel, sole send: try_send can't fail
                     // except when the requester is gone, which is fine.
                     let _ = job.tx.try_send(result);
                 }
@@ -321,7 +321,7 @@ fn enqueue_poster(job: PosterJob) {
 /// Read the embedded cover art for an audio `path` and decode + shrink it to
 /// fit within `size_px` on its longest edge (aspect preserved). Returns
 /// RGBA8 + dimensions, or `None` when there is no cover or the picture bytes
-/// won't decode. Blocking — background pool only.
+/// won't decode. Blocking: background pool only.
 fn fetch_audio_cover(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     let encoded = ferail_fs_native::media::read_cover_art(path)?;
     // The image crate sniffs the format from the bytes (cover art is almost
@@ -337,7 +337,7 @@ fn fetch_audio_cover(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
 /// Read the persisted video-provider choice: `Some(libmpv hint path)` when
 /// the user picked the mpv provider in Settings → Plugins, `None` for the
 /// built-in player. Refused outright in a build without the `mpv` feature,
-/// where the preference is unhonourable — otherwise the viewer would route
+/// where the preference is unhonourable, otherwise the viewer would route
 /// the broad mpv container set (MKV/AVI/3GP…) to the native player, which
 /// can't decode it. `app_state::load` is served from an in-memory cache
 /// after first read, so this is cheap enough for per-fetch use.
@@ -358,7 +358,7 @@ pub fn resolve_mpv_pref() -> Option<PathBuf> {
 /// `size_px` (longest edge). `None` when libmpv can't be loaded or the file
 /// yields no decodable video within the deadline (corrupt files open fine
 /// but never produce a frame). Runs on the poster worker thread (or the
-/// caller's own thread via the `_blocking` CLI variant) — never on the
+/// caller's own thread via the `_blocking` CLI variant), never on the
 /// pool.
 #[cfg(all(feature = "mpv", not(target_os = "aros")))]
 fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
@@ -371,7 +371,7 @@ fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
     /// first frame even on removable media; corrupt ones never deliver.
     const FIRST_FRAME_DEADLINE: Duration = Duration::from_secs(5);
     /// Grace for the post-seek frame. The seek lands mid-stream, so this
-    /// is a decode away — much shorter than the cold open.
+    /// is a decode away: much shorter than the cold open.
     const SEEK_FRAME_DEADLINE: Duration = Duration::from_secs(2);
     /// Where the poster is taken from. A few seconds in skips the black
     /// lead-in / encoder logo most rips open with; mpv clamps a seek past
@@ -407,7 +407,7 @@ fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
 
 /// Without the `mpv` feature [`fetch_content_thumbnail`] never answers
 /// `NeedsPoster` (the pref resolves to `None`), so this is only reachable
-/// through the blocking CLI variant — and correctly finds nothing.
+/// through the blocking CLI variant, and correctly finds nothing.
 #[cfg(all(not(feature = "mpv"), not(target_os = "aros")))]
 fn poster_decode(_path: &Path, _size_px: u32) -> Option<ThumbPayload> {
     None
@@ -416,7 +416,7 @@ fn poster_decode(_path: &Path, _size_px: u32) -> Option<ThumbPayload> {
 /// AROS poster decoder: shell out to `C:FFThumb` (the native ffmpeg port's
 /// headless one-frame thumbnailer, aros-aarch64 `hosted/ffmpeg/ffthumb.c`)
 /// and read back the PPM it writes to `T:` (RAM-backed). The decoder runs
-/// in ITS OWN process — the same crash-isolation qlmanage gives macOS,
+/// in ITS OWN process: the same crash-isolation qlmanage gives macOS,
 /// which matters here because the h264/hevc decoders still fault on this
 /// target. Runs on the dedicated poster worker thread; the child blocking
 /// blocks only that worker, same contract as the mpv path.
@@ -424,12 +424,12 @@ fn poster_decode(_path: &Path, _size_px: u32) -> Option<ThumbPayload> {
 fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// Frames FFThumb skips before taking the poster — past the black
+    /// Frames FFThumb skips before taking the poster: past the black
     /// fade-in most clips open with (the mpv path seeks 3s for the same
     /// reason; frame-skipping avoids a seek through the custom AVIO).
     const POSTER_SKIP_FRAMES: u32 = 8;
 
-    // RAM: (always mounted), NOT `T:` — the T assign only exists once the
+    // RAM: (always mounted), NOT `T:`: the T assign only exists once the
     // full startup-sequence ran, and referencing a missing assign pops a
     // DOS "please insert volume" requester over the app.
     static SEQ: AtomicU32 = AtomicU32::new(0);
@@ -461,7 +461,7 @@ fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
             return None;
         }
     };
-    // Exit code + a parseable PPM are the success signal — stdout capture
+    // Exit code + a parseable PPM are the success signal: stdout capture
     // is unreliable through the AROS process pal (observed empty even on
     // success), and read_ppm_rgba validates the payload anyway.
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -484,7 +484,7 @@ fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
 }
 
 /// Viewer-window fallback: a big FFThumb frame for video files the raster
-/// tier can't decode. Bounded blocking (one spawn + decode) — background
+/// tier can't decode. Bounded blocking (one spawn + decode): background
 /// executor only; the viewer opens one file at a time so this can't convoy
 /// the pool the way batch poster jobs would.
 #[cfg(target_os = "aros")]
@@ -544,7 +544,7 @@ fn read_ppm_rgba(path: &Path) -> Option<ThumbPayload> {
 
 /// Convert one mpv frame (tightly packed BGRA) into the straight-RGBA
 /// thumbnail payload, downscaled so the longest edge is `size_px` (never
-/// upscaled). Alpha is forced opaque — the sw render path's alpha channel
+/// upscaled). Alpha is forced opaque: the sw render path's alpha channel
 /// is unspecified for plain video and a transparent thumbnail would paint
 /// as an empty slot.
 #[cfg(feature = "mpv")]

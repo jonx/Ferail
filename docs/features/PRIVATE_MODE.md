@@ -3,7 +3,7 @@
 ← [Feature notes](README.md) · [Screenshot harness](SCREENSHOTS.md) ·
 [Diagnostics privacy](DIAGNOSTICS.md) · [Architecture](../ARCHITECTURE.md)
 
-**Status: implemented — semantic live projection, August 2026.** Private Mode is a process-wide,
+**Status: implemented: semantic live projection, August 2026.** Private Mode is a process-wide,
 session-only presentation lock for making screenshots of a real Ferail session
 without displaying personal names, paths, content or identifying metadata. It
 is not a second file-browser mode and it never changes the filesystem model.
@@ -256,10 +256,10 @@ the ordinary user-facing string. Visible GPUI code requests a projected value
 from `PrivatePresenter`; operation and model code never consults Private Mode.
 Call sites are classified as one of:
 
-- **operation/indexing** — raw display name is correct;
-- **rendered text** — must use the presenter;
-- **structured message** — present sensitive arguments before formatting;
-- **test fixture** — state explicitly whether raw or private output is under
+- **operation/indexing**: raw display name is correct;
+- **rendered text**: must use the presenter;
+- **structured message**: present sensitive arguments before formatting;
+- **test fixture**: state explicitly whether raw or private output is under
   test.
 
 Sorting, filtering, type-ahead and file operations continue to use raw data.
@@ -463,7 +463,7 @@ is exercised.
 Each phase may land as an isolated commit, but the command/toggle stays hidden
 until the release gate in Phase 6 passes.
 
-### Phase 0 — inventory and canary corpus
+### Phase 0 - inventory and canary corpus
 
 - Freeze this contract and enumerate every render root/action-dispatch path.
 - Add private canary fixtures: unique names, paths, favorite/volume/account
@@ -471,7 +471,7 @@ until the release gate in Phase 6 passes.
   image pixels.
 - Record the four-million-row activation/memory baseline.
 
-### Phase 1 — core presenter and lifecycle
+### Phase 1 - core presenter and lifecycle
 
 - Add the pure `PrivateSession` and deterministic presentation tests.
 - Add the GPUI Global, `Off/Arming/Active` state and bounded LRU.
@@ -479,7 +479,7 @@ until the release gate in Phase 6 passes.
 - Implement multi-window repaint/generation acknowledgement.
 - Keep the entry point hidden from ordinary users.
 
-### Phase 2 — interaction lock
+### Phase 2 - interaction lock
 
 - Add the reusable root interaction shield to Shell, Settings, Viewer and all
   secondary Ferail windows.
@@ -487,7 +487,7 @@ until the release gate in Phase 6 passes.
 - Allow only toggle/Escape/close/quit.
 - Add opacity and playback entry/exit hooks.
 
-### Phase 3 — names, paths and structured messages
+### Phase 3 - names, paths and structured messages
 
 - Rename `FileEntry.display_name` to `display_name_raw` and classify all broken
   call sites.
@@ -495,21 +495,21 @@ until the release gate in Phase 6 passes.
 - Convert task/toast/dialog builders away from raw free-form formatting.
 - Audit native OS window titles separately from custom title bars.
 
-### Phase 4 — content and metadata
+### Phase 4 - content and metadata
 
 - Override thumbnails, previews, viewer and preview-handler pixels.
 - Present or fail-close Get Info, diagnostics, Settings, checksum/SFV,
   archive, duplicate/similar and Disk Usage values.
 - Ensure caches never paint a stale content frame after arming.
 
-### Phase 5 — screenshot secure default
+### Phase 5 - screenshot secure default
 
 - Add `--unsafe-real-data` and the prepare→arm→ack→capture lifecycle.
 - Make Windows' first visible screenshot frame private.
 - Verify PNG output contains no text chunks or raw canary bytes.
 - Update screenshot examples and documentation.
 
-### Phase 6 — enforcement and public enablement
+### Phase 6 - enforcement and public enablement
 
 - Run the complete surface/action/multi-window canary matrix.
 - Run macOS, Windows and Linux screenshot qualification.

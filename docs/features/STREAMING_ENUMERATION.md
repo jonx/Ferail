@@ -75,9 +75,9 @@ push or callback shape.
 
 ## Cross-References
 
-- [docs/ARCHITECTURE.md](../ARCHITECTURE.md) — nonblocking rules.
-- [LAZY_METADATA.md](LAZY_METADATA.md) — NodeStore and identity model.
+- [docs/ARCHITECTURE.md](../ARCHITECTURE.md), nonblocking rules.
+- [LAZY_METADATA.md](LAZY_METADATA.md): NodeStore and identity model.
 - [crates/ferail-fs-native/src/lib.rs](../../crates/ferail-fs-native/src/lib.rs)
-  — streaming native enumerator.
+ , streaming native enumerator.
 - [crates/ferail-gpui/src/shell.rs](../../crates/ferail-gpui/src/shell.rs)
-  — GPUI channel bridge and stale-result gate.
+ : GPUI channel bridge and stale-result gate.

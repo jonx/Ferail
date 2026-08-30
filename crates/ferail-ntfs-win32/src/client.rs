@@ -52,7 +52,7 @@ pub enum ClientError {
     Cancelled,
     UacCancelled,
     HelperMissing,
-    /// The helper is present but is not the binary this build shipped with —
+    /// The helper is present but is not the binary this build shipped with:
     /// a stale copy from an older version, a partial update, or a
     /// substitution. Fails closed into the Portable engine. See
     /// [`crate::attest`].

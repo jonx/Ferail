@@ -7,7 +7,7 @@
 // Every test below is `cfg(unix)` (POSIX path spellings; the resolve tests
 // compare against `canonicalize_for_identity`, whose Windows answer can
 // carry a `\\?\` prefix). Gate the imports the same way so the Windows
-// clippy leg — which compiles this file under `-D warnings` — doesn't see
+// clippy leg, which compiles this file under `-D warnings`: doesn't see
 // them as unused.
 #[cfg(unix)]
 use std::path::PathBuf;

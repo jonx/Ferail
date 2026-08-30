@@ -3,7 +3,7 @@
 //! Subscribes to `NSWorkspace`'s notification center for
 //! `NSWorkspaceDidMountNotification`, `…DidUnmountNotification`, and
 //! `…DidRenameVolumeNotification`. The host registers one callback at
-//! startup; we invoke it (no payload — the host re-lists volumes,
+//! startup; we invoke it (no payload: the host re-lists volumes,
 //! which is O(mounted volumes) of cached NSURL keys) on every change.
 //!
 //! Same shape and lifecycle rules as [`crate::theme_observer`]: the
@@ -77,7 +77,7 @@ impl VolumeObserver {
 
 /// Begin observing volume mount/unmount/rename. Replaces any prior
 /// callback. Must run on the main thread; off-thread calls are a
-/// no-op. Idempotent — re-registering refreshes the callback without
+/// no-op. Idempotent: re-registering refreshes the callback without
 /// stacking observers.
 pub fn start(callback: Box<dyn Fn() + 'static>) {
     let Some(mtm) = MainThreadMarker::new() else {

@@ -55,7 +55,7 @@ impl DupePresentation {
     fn from_str(s: &str) -> Self {
         match s {
             "grouped" => DupePresentation::Grouped,
-            // Panel is the default — the dedicated card view with
+            // Panel is the default: the dedicated card view with
             // group-level cleanup is the one we want people to land in.
             _ => DupePresentation::Panel,
         }
@@ -130,7 +130,7 @@ impl DupeConfig {
     }
 
     /// Build [`DupeOpts`] from these preferences. `min_size` is at least
-    /// 1 byte — 0-byte files are never duplicates worth surfacing.
+    /// 1 byte, 0-byte files are never duplicates worth surfacing.
     pub fn opts(&self) -> DupeOpts {
         let min_size = self.min_size_mb.saturating_mul(1024 * 1024).max(1);
         DupeOpts {

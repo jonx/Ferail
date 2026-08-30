@@ -26,14 +26,14 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
     if buf.len() >= 2 && buf[0] == 0xff && buf[1] == 0xfe {
         // Could be UTF-16 LE plain text. Treat as plain text in v1;
         // the prior single-file detector returned "UTF-16 LE text"
-        // for both — we keep that label.
+        // for both: we keep that label.
         return Some(MagicInfo::new(MagicType::Utf16Le));
     }
     if buf.len() >= 2 && buf[0] == 0xfe && buf[1] == 0xff {
         return Some(MagicInfo::new(MagicType::Utf16Be));
     }
 
-    // UTF-8 BOM (EF BB BF) is a strong hint of text — leave dispatch
+    // UTF-8 BOM (EF BB BF) is a strong hint of text: leave dispatch
     // to printable-ratio check below, but tag it.
     let has_utf8_bom = buf.len() >= 3 && buf[0] == 0xef && buf[1] == 0xbb && buf[2] == 0xbf;
 
@@ -52,7 +52,7 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
 
     if trimmed.starts_with("<?xml") {
         // SVG is XML; the existing flat-table label was "XML / SVG".
-        // We can't cheaply distinguish — if the rest of the buffer
+        // We can't cheaply distinguish: if the rest of the buffer
         // mentions "<svg" inside the prologue, prefer SVG.
         if text.contains("<svg") || text.contains("svg") {
             return Some(MagicInfo::new(MagicType::Svg));

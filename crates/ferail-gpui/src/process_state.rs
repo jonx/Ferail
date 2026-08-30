@@ -1,4 +1,4 @@
-//! Process-scoped shell state — the singleton that backs every
+//! Process-scoped shell state: the singleton that backs every
 //! `WindowShell` in the running app.
 //!
 //! Today there is exactly one `Shell` (renamed to `WindowShell` after
@@ -13,7 +13,7 @@
 //! (cross-window reload fan-out, tear-off, singleton-process intents)
 //! is built on. Pulling these fields into one place ahead of the
 //! multi-window scaffolding means the multi-window PR is purely
-//! additive — it just adds a window registry on top of an already
+//! additive: it just adds a window registry on top of an already
 //! correct singleton.
 //!
 //! All fields are interior-mutable. `ProcessState` is shared via
@@ -138,7 +138,7 @@ pub struct ProcessState {
     pub fs: Arc<NativeFs>,
 
     /// `NodeId ↔ PathBuf` identity store. Cross-window correctness
-    /// hinges on this being a single instance — two windows must
+    /// hinges on this being a single instance, two windows must
     /// agree on what `NodeId(7)` means, so this can't be per-window.
     pub node_store: RefCell<NodeStore>,
 
@@ -147,7 +147,7 @@ pub struct ProcessState {
     /// and on $HOME-absence / open failure (non-fatal).
     pub metadata_db: RefCell<Option<Arc<Mutex<ferail_meta::MetadataDb>>>>,
 
-    /// NSWorkspace-backed icon cache. Already `Rc<RefCell<>>` —
+    /// NSWorkspace-backed icon cache. Already `Rc<RefCell<>>`:
     /// preserves the existing call shape.
     pub icons: Rc<RefCell<IconCache>>,
 
@@ -205,13 +205,13 @@ pub struct ProcessState {
     /// [`ProcessState::release_favorites`] can hand the handle back at quit:
     /// this is the process's only *strong* [`Entity`] outside GPUI's own
     /// entity map (every other handle here is a [`WeakEntity`]), and GPUI's
-    /// `App` drops `entities` before the fields that hold it — the global
+    /// `App` drops `entities` before the fields that hold it: the global
     /// below, subscriptions, queued tasks. A handle still alive at that point
     /// is what its leak detector panics on. See [`install`].
     favorites: RefCell<Option<Entity<Favorites>>>,
 
     /// Process-wide undo stack. A delete/rename in window A is
-    /// reachable from a Cmd+Z in window B by design — the operation
+    /// reachable from a Cmd+Z in window B by design: the operation
     /// is process-owned, not window-owned (spec §1.1).
     pub undo_stack: RefCell<VecDeque<UndoOp>>,
 
@@ -224,7 +224,7 @@ pub struct ProcessState {
 
     /// Recently-visited folders, most-recent-first, capped at
     /// [`RECENTS_CAP`]. A live view over the same `folder_usage` visit
-    /// log the Ant Trail uses (docs/features — Recents): hydrated from
+    /// log the Ant Trail uses (docs/features: Recents): hydrated from
     /// the DB at startup ordered by last-access, front-inserted on
     /// every navigate. In-memory so the sidebar render never touches
     /// SQLite.
@@ -251,7 +251,7 @@ pub struct ProcessState {
     pub volumes: RefCell<Vec<VolumeInfo>>,
 
     /// Well-known Location paths macOS reports as iCloud items, mapped to
-    /// their `CloudState` (downloaded vs not-downloaded placeholder) — e.g.
+    /// their `CloudState` (downloaded vs not-downloaded placeholder), e.g.
     /// Desktop/Documents under "Desktop & Documents Folders". Computed
     /// off-thread at startup and refreshed alongside `volumes`; the sidebar
     /// reads it to draw a trailing solid/outline cloud badge without ever
@@ -300,7 +300,7 @@ pub struct ProcessState {
 
     /// All live viewer windows (docs/features/VIEWER.md). Each Open
     /// Viewer stacks a new window; we keep every one's handle (so it
-    /// isn't dropped mid-open) and weak view for process-wide fan-out —
+    /// isn't dropped mid-open) and weak view for process-wide fan-out,
     /// e.g. pause-every-viewer on sleep (docs/features/POWER.md). Dead
     /// entries are pruned opportunistically, same as `shells`.
     #[allow(clippy::type_complexity)]
@@ -327,7 +327,7 @@ pub struct ProcessState {
 
     /// Latest app-footprint sample (uptime / CPU / RSS / redraws/s) for the
     /// status bar's stats segment. `None` until the sampler publishes
-    /// its first real reading (~2 ticks after boot — the first refresh
+    /// its first real reading (~2 ticks after boot: the first refresh
     /// only primes the CPU-delta baseline). Written by
     /// `system_stats::start_sampler`'s drain, read by render
     /// (docs/features/SYSTEM_STATS.md).
@@ -339,7 +339,7 @@ impl ProcessState {
     ///
     /// Cloning an [`Entity`] is a refcount bump, so callers take one freely.
     /// Panics only after [`Self::release_favorites`] has run, i.e. during
-    /// app teardown — anything reading favorites that late is a bug in the
+    /// app teardown, anything reading favorites that late is a bug in the
     /// shutdown ordering, and a clear panic beats a silent no-op.
     pub fn favorites(&self) -> Entity<Favorites> {
         self.favorites
@@ -417,7 +417,7 @@ impl ProcessState {
             // Seeded EMPTY and filled asynchronously (start_volume_watch's
             // initial pass / fill_volumes_once): list_volumes touches every
             // drive root, and on Windows a dead mapped network drive makes
-            // GetVolumeInformationW block for the SMB timeout — running it
+            // GetVolumeInformationW block for the SMB timeout, running it
             // here delayed the first window by up to ~45s.
             volumes: RefCell::new(Vec::new()),
             cloud_locations: RefCell::new(HashMap::new()),
@@ -505,13 +505,13 @@ impl ProcessState {
 
     /// Release OS file watches for directories no live tab is showing.
     /// The watch set is otherwise add-only: every directory ever
-    /// visited would stay FSEvents/inotify-watched all session — its
+    /// visited would stay FSEvents/inotify-watched all session: its
     /// events fanning reloads forever, and Linux eventually hitting
     /// `max_user_watches`, after which *new* watches silently fail and
     /// live-update stops. Called after navigation and tab close.
     ///
     /// The calling Shell is mid-`update`, so it cannot be `read`
-    /// through `cx` — it passes its own entity id and tab directories
+    /// through `cx`: it passes its own entity id and tab directories
     /// instead, and only *other* live shells are read here.
     pub fn prune_watches(
         &self,
@@ -545,7 +545,7 @@ impl ProcessState {
     /// Register every favorite's parent directory on the filesystem
     /// watcher (idempotent). Called whenever the favorites list changes
     /// so a newly added favorite's parent starts being watched right
-    /// away — deletes/moves of the favorited path then surface as events
+    /// away: deletes/moves of the favorited path then surface as events
     /// that drive `Favorites::refresh_availability`. `prune_watches`
     /// keeps these registered across navigation.
     pub fn watch_favorite_dirs(&self, cx: &gpui::App) {
@@ -656,7 +656,7 @@ pub fn process_state(cx: &App) -> Rc<ProcessState> {
 ///
 /// The release half is what keeps the app from panicking on exit. GPUI's
 /// `App` declares `entities` before `globals_by_type`, `observers` and the
-/// rest, and Rust drops struct fields in declaration order — so the entity
+/// rest, and Rust drops struct fields in declaration order, so the entity
 /// map (which owns the leak detector) is torn down while those later fields
 /// still hold handles. Dropping the *global* is not enough on its own:
 /// `Rc<ProcessState>` clones also live in subscriptions and queued tasks, and
@@ -673,7 +673,7 @@ pub fn process_state(cx: &App) -> Rc<ProcessState> {
 /// Only AROS actually shows it: every other backend's `quit` terminates the
 /// process (macOS hands off to `NSApplication terminate`) and never drops
 /// `App`, so the detector never runs there. The retention was real on all of
-/// them regardless — AROS is simply the one that checks.
+/// them regardless: AROS is simply the one that checks.
 pub fn install(cx: &mut App, process: Rc<ProcessState>) {
     cx.set_global(ProcessStateGlobal(process));
     crate::asset_dispatcher::start(cx);
@@ -710,7 +710,7 @@ pub fn start_volume_watch(cx: &mut App) {
             if rx.recv().await.is_err() {
                 break;
             }
-            // Coalesce bursts — a mount often arrives with a rename
+            // Coalesce bursts: a mount often arrives with a rename
             // right behind it; one re-list covers both.
             while rx.try_recv().is_ok() {}
         }
@@ -736,7 +736,7 @@ async fn refresh_volumes(cx: &mut gpui::AsyncApp) {
             if let Some(shell) = weak.upgrade() {
                 shell.update(cx, |this, cx| {
                     // A mount/unmount/rename may change the volume
-                    // behind any tab's directory — re-query each
+                    // behind any tab's directory: re-query each
                     // tab's cached free-space/name off-thread.
                     this.refresh_volume_info_all_tabs(cx);
                     cx.notify();

@@ -1,11 +1,11 @@
-//! Command catalogue — the stable identity of every user-invokable
+//! Command catalogue: the stable identity of every user-invokable
 //! action in Ferail.
 //!
 //! Menus, keyboard shortcuts, the future command palette, and any
 //! future scripting / plugin surface all reference commands by
 //! [`CommandId`]. Re-binding a shortcut, hiding a menu item, or
 //! exposing an action to a script is then a matter of changing a
-//! binding — not the command itself.
+//! binding, not the command itself.
 //!
 //! This module is platform-neutral. Shortcuts are described in a
 //! neutral DSL (key + modifier flags); shell crates translate.
@@ -17,7 +17,7 @@
 
 use crate::msgid;
 
-/// User-facing label for "show in OS file browser" — Finder on macOS,
+/// User-facing label for "show in OS file browser": Finder on macOS,
 /// Explorer on Windows, "File Manager" elsewhere.
 #[cfg(target_os = "macos")]
 pub const REVEAL_LABEL: &str = msgid!("Reveal in Finder");
@@ -26,7 +26,7 @@ pub const REVEAL_LABEL: &str = msgid!("Reveal in Explorer");
 #[cfg(not(any(target_os = "macos", windows)))]
 pub const REVEAL_LABEL: &str = msgid!("Reveal in File Manager");
 
-/// User-facing label for "send to OS trash" — macOS Trash, Windows
+/// User-facing label for "send to OS trash": macOS Trash, Windows
 /// Recycle Bin.
 #[cfg(target_os = "macos")]
 pub const TRASH_LABEL: &str = msgid!("Move to Trash");
@@ -34,7 +34,7 @@ pub const TRASH_LABEL: &str = msgid!("Move to Trash");
 pub const TRASH_LABEL: &str = msgid!("Move to Recycle Bin");
 
 /// User-facing label for "remove the downloaded-from-the-Internet
-/// mark and its provenance record" — `com.apple.quarantine` +
+/// mark and its provenance record": `com.apple.quarantine` +
 /// `kMDItemWhereFroms` on macOS, the `Zone.Identifier` ADS on
 /// Windows (where the verb of art is "Unblock").
 #[cfg(windows)]
@@ -54,7 +54,7 @@ pub struct CommandId(pub &'static str);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommandPayload {
     /// `file.set_tag`: which Finder tag the user picked. The
-    /// strings are the canonical Finder tag names — macOS resolves
+    /// strings are the canonical Finder tag names: macOS resolves
     /// them via Launch Services so the colour swatch shown in
     /// Finder is the system's, not ours. `None` means "clear all".
     Tag(Option<TagColor>),
@@ -135,14 +135,14 @@ pub enum Category {
     Window,
     Help,
     /// Context-menu-only actions (right-click on a node, background of a
-    /// pane, or treemap rect). Not surfaced in the menu bar — the bar
+    /// pane, or treemap rect). Not surfaced in the menu bar: the bar
     /// builder filters by category and never asks for this one.
     Context,
 }
 
 /// Neutral keyboard shortcut DSL. The shell layer maps `primary` to
 /// Cmd on macOS and Ctrl on Linux/Windows. `key` is the display name
-/// — single-character keys ("T", "[", ",") for normal letters /
+///: single-character keys ("T", "[", ",") for normal letters /
 /// punctuation, named keys ("Up", "Down", "F2") for the rest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shortcut {
@@ -201,7 +201,7 @@ pub struct CommandSpec {
     pub category: Category,
     /// Zero or more shortcuts. The **first** entry is the canonical
     /// binding shown in menus (AppKit menu items only support one key
-    /// equivalent each); every entry — primary or alternate — is
+    /// equivalent each); every entry, primary or alternate, is
     /// accepted by `keystroke_to_command` and listed in the
     /// Keyboard Shortcuts dialog. Empty slice means menu/palette-only.
     pub shortcuts: &'static [Shortcut],
@@ -273,7 +273,7 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::File,
         shortcuts: &[Shortcut::primary("I")],
     },
-    // Built-in lightweight text editor (docs/features/TEXT_EDITOR.md) —
+    // Built-in lightweight text editor (docs/features/TEXT_EDITOR.md):
     // distinct from the context menu's system-editor entry, which shells
     // out to TextEdit / Notepad.
     CommandSpec {
@@ -316,7 +316,7 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     // Copy the whole displayed list (folder contents, duplicate-finder
     // groups, or search results) as newline-joined paths. No default
-    // shortcut — reached via the toolbar menu and command palette.
+    // shortcut: reached via the toolbar menu and command palette.
     // Shift at dispatch time (shift-click on the menu item) widens the
     // copy to include every listed folder's subtree recursively.
     CommandSpec {
@@ -430,7 +430,7 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift("K")],
     },
-    // Toolbar Sort menu. No shortcuts — they live in the sort
+    // Toolbar Sort menu. No shortcuts: they live in the sort
     // dropdown + command palette. Re-selecting the active column
     // flips direction.
     CommandSpec {
@@ -596,7 +596,7 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[],
     },
     // The three theme commands are grouped under a "Theme" sub-submenu
-    // by `app_menu::build_category_submenu` — title is the submenu's
+    // by `app_menu::build_category_submenu`: title is the submenu's
     // own label, so individual items just say "Light" / "Dark" / etc.
     CommandSpec {
         id: CommandId("view.theme_light"),
@@ -645,7 +645,7 @@ const CATALOGUE: &[CommandSpec] = &[
         // Finder's "Go to Folder" on a shorter chord: a modal path box
         // pre-filled with the current folder and fully selected, so a
         // paste replaces it outright and typing edits it. Enter (or the
-        // Go button) opens the path in a new tab of the current window —
+        // Go button) opens the path in a new tab of the current window,
         // or in a new window when none is open. The ellipsis flags the
         // dialog (macOS HIG), same as Clear Recents below.
         id: CommandId("go.go_to_folder"),
@@ -655,7 +655,7 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     CommandSpec {
         // Forget every folder in Recents. The trailing ellipsis flags
-        // the confirmation dialog (it also resets Ant Trail heat — the
+        // the confirmation dialog (it also resets Ant Trail heat: the
         // two share one visit log). No default shortcut: destructive and
         // rarely needed, so it lives in the Go menu / command palette.
         id: CommandId("go.clear_recents"),
@@ -663,7 +663,7 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::Go,
         shortcuts: &[],
     },
-    // Selection — pane-aware. The dispatch handler routes to whichever
+    // Selection: pane-aware. The dispatch handler routes to whichever
     // pane currently owns focus (Tree or List). Bare arrow keys /
     // Home / End / PageUp / PageDown / Enter / F2 / Escape only reach
     // these handlers when no modal text input is active (rename,
@@ -782,7 +782,7 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     // Context-menu-only. Not in the menu bar; reachable via right-click
     // dispatch. `selection.activate` is the keyboard equivalent of
-    // `file.open` — the two stay separate because the right-click and
+    // `file.open`: the two stay separate because the right-click and
     // keyboard paths capture target differently.
     CommandSpec {
         id: CommandId("file.open"),
@@ -808,7 +808,7 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::Context,
         shortcuts: &[],
     },
-    // Stage B — easy actions reachable from the right-click menu.
+    // Stage B: easy actions reachable from the right-click menu.
     // No keyboard shortcuts yet: Finder's bindings (Space, Cmd+D,
     // Cmd+L) collide with existing Ferail bindings or with text-
     // input contexts. A focus-aware dispatcher can layer them on
@@ -859,7 +859,7 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::Context,
         shortcuts: &[],
     },
-    // Stage C — Finder colour tags. `file.set_tag` fires with a
+    // Stage C: Finder colour tags. `file.set_tag` fires with a
     // [`CommandPayload::Tag(Some(color))`] for the seven canonical
     // colours; `file.clear_tags` strips every tag in one shot.
     CommandSpec {
@@ -874,7 +874,7 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::Context,
         shortcuts: &[],
     },
-    // Stage D — Open With submenu. Each pick fires `file.open_with_app`
+    // Stage D: Open With submenu. Each pick fires `file.open_with_app`
     // with a [`CommandPayload::OpenWithApp`] carrying the chosen
     // app's bundle path.
     CommandSpec {

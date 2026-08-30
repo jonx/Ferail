@@ -10,7 +10,7 @@ use super::types::{MagicInfo, MagicType};
 
 pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
     if buf.len() >= 12 && &buf[4..8] == b"ftyp" {
-        // HEIC was already claimed by image.rs — only return MP4/MOV here.
+        // HEIC was already claimed by image.rs, only return MP4/MOV here.
         let brand = &buf[8..12];
         if brand == b"heic" || brand == b"heix" || brand == b"mif1" || brand == b"msf1" {
             return None;
@@ -97,7 +97,7 @@ fn sniff_mp4(buf: &[u8]) -> MagicInfo {
     }
 
     // An audio-only MPEG-4 file is an M4A/AAC/ALAC track (Apple Music, iTunes)
-    // — label it as audio, not "MP4 video", so the Format column is right and
+    //: label it as audio, not "MP4 video", so the Format column is right and
     // it doesn't trip the mismatch alert against a `.m4a`/`.m4b` extension.
     // The `ftyp` brand is the strong signal; the handler-box scan (`soun` but
     // no `vide`) covers files that declare a generic brand.
@@ -160,7 +160,7 @@ fn sniff_mkv(buf: &[u8]) -> MagicInfo {
     }
     let mut info = MagicInfo::new(mt);
     // We don't parse MKV tracks (EBML variable-length encoding is
-    // complex). Assume both — accurate for nearly all real files.
+    // complex). Assume both: accurate for nearly all real files.
     info.has_video = true;
     info.has_audio = true;
     info

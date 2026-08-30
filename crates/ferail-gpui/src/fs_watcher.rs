@@ -1,11 +1,11 @@
 //! Thin wrapper around `notify` that bridges OS file-system events
-//! to GPUI's foreground executor — and keeps every blocking watcher
+//! to GPUI's foreground executor, and keeps every blocking watcher
 //! call off the UI thread.
 //!
 //! Two thread boundaries live here:
 //!
 //! 1. **Events in.** `notify` runs the watcher on its own platform
-//!    thread and calls our handler closure from there — we cannot
+//!    thread and calls our handler closure from there: we cannot
 //!    mutate GPUI state directly from that thread. The handler pushes
 //!    events onto an `std::sync::mpsc` channel, and a
 //!    foreground-executor task polls the receiver on a short timer.
@@ -15,10 +15,10 @@
 //!
 //! 2. **Commands out.** Registering a watch is NOT cheap:
 //!    `notify`'s FSEvents backend calls `path.canonicalize()` and
-//!    `path.exists()` inside `Watcher::watch()` — real filesystem
+//!    `path.exists()` inside `Watcher::watch()`: real filesystem
 //!    syscalls that block until a spun-down external drive or cold
 //!    network mount answers (seconds). Calling that from a navigation
-//!    handler froze the whole UI before enumeration even started —
+//!    handler froze the whole UI before enumeration even started:
 //!    a Prime Directive violation. So the `notify::Watcher` object
 //!    lives on a dedicated `fs-watcher` worker thread; the UI-side
 //!    [`FsWatcher`] handle just sends [`WatchCmd`]s over a channel
@@ -54,7 +54,7 @@ pub struct FsWatcher {
     /// UI-side mirror of the *requested* watch roots. Used only to
     /// match incoming event paths to roots in
     /// [`Self::drain_reload_relevant_paths`]; the worker keeps the
-    /// authoritative set (a requested watch may have failed — then no
+    /// authoritative set (a requested watch may have failed, then no
     /// events arrive for it and the mirror entry is inert).
     watched: HashSet<PathBuf>,
 }
@@ -62,13 +62,13 @@ pub struct FsWatcher {
 impl FsWatcher {
     pub fn new() -> Result<Self> {
         let (tx, rx) = channel();
-        // Constructing the watcher itself does no path I/O — it just
-        // spins up the FSEvents/inotify machinery — so it's safe here;
+        // Constructing the watcher itself does no path I/O: it just
+        // spins up the FSEvents/inotify machinery, so it's safe here;
         // only `watch`/`unwatch` calls must stay on the worker.
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
             match res {
                 Ok(ev) => {
-                    // Drop send errors silently — the receiver side may
+                    // Drop send errors silently: the receiver side may
                     // have been torn down (window closed) before the
                     // watcher thread finished its last batch.
                     let _ = tx.send(ev);
@@ -77,7 +77,7 @@ impl FsWatcher {
                     // A watcher *error* is notify's "events were lost,
                     // rescan" signal (inotify queue overflow, FSEvents
                     // must-rescan). Dropping it would leave listings
-                    // permanently stale — surface it as an empty-paths
+                    // permanently stale: surface it as an empty-paths
                     // event, which the drain treats as everything-dirty.
                     let _ = tx.send(Event::new(EventKind::Other));
                 }
@@ -134,7 +134,7 @@ impl FsWatcher {
     /// Request a watch on `path`. Non-recursive: each visible
     /// tab/window directory registers itself explicitly, and reload
     /// fan-out decides which views need refreshing. Returns
-    /// immediately — the actual (possibly blocking) OS registration
+    /// immediately: the actual (possibly blocking) OS registration
     /// happens on the worker thread; failures there are non-fatal (the
     /// user just loses live updates for that directory) and retried on
     /// the next request.
@@ -144,7 +144,7 @@ impl FsWatcher {
     }
 
     /// Retain only the directories some live tab still shows, releasing
-    /// every other OS watch. Without this the watch set was add-only —
+    /// every other OS watch. Without this the watch set was add-only:
     /// every directory ever visited stayed FSEvents/inotify-watched for
     /// the whole session (Linux walks into `max_user_watches`, after
     /// which *new* watches silently fail and live-update stops).
@@ -195,12 +195,12 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Minimum interval between reloads of the *same* directory. The poll
 /// already coalesces all events within one 250 ms window into a single
-/// reload; this throttles *across* windows, so a burst — a multi-file
-/// paste, a download landing, an editor's create+rename+modify save —
+/// reload; this throttles *across* windows, so a burst: a multi-file
+/// paste, a download landing, an editor's create+rename+modify save:
 /// collapses into far fewer re-enumerate + prefetch passes instead of one
 /// per window. Leading-edge: the first event reloads immediately; only
 /// repeats inside the window are deferred, and a still-changing directory
-/// keeps reloading once per window — so a real change is never dropped,
+/// keeps reloading once per window, so a real change is never dropped,
 /// only rate-limited. This is throttling, not suppression: it does not
 /// compare contents or skip work that would surface a change.
 pub const RELOAD_DEBOUNCE: Duration = Duration::from_millis(750);

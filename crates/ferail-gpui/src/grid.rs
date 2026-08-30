@@ -1,7 +1,7 @@
 //! Icon (grid) view for the file list.
 //!
 //! A second view mode alongside the table. The grid is a *renderer*
-//! over the same per-tab data and selection model the table uses — it
+//! over the same per-tab data and selection model the table uses: it
 //! is not a `TableDelegate`. It reads the live `FileListDelegate`
 //! (`entries`, `selected_set`, `lead`, thumbnail cache) and routes
 //! every gesture through the same `Shell` methods the table's
@@ -62,7 +62,7 @@ impl ViewMode {
 
 /// Smallest / largest grid icon size any control may reach (logical px,
 /// longest edge of the thumbnail slot). The toolbar slider is
-/// continuous across this whole range — these two bound it.
+/// continuous across this whole range: these two bound it.
 pub const MIN_ICON_SIZE: u32 = 32;
 pub const MAX_ICON_SIZE: u32 = 512;
 
@@ -80,7 +80,7 @@ pub const DEFAULT_ICON_SIZE: u32 = 128;
 /// (Finder tag dots + favorite star) are painted. At the 64px stop a
 /// 12px star and a row of dots swamp the thumbnail, so we drop them
 /// there and let the quarantine badge / heat tint (which read clearly
-/// at any size) carry on alone — Finder hides the same chrome on its
+/// at any size) carry on alone: Finder hides the same chrome on its
 /// smallest icons.
 pub const ADORN_MIN_ICON: u32 = 96;
 
@@ -147,8 +147,8 @@ pub fn clamp_icon_size(px: u32) -> u32 {
 /// Full cell width/height for a given icon size and gap: the thumbnail
 /// slot plus label + padding, then `2 * gap` for the selection gutter on
 /// each axis. Adding the gutter to the stride (rather than insetting it
-/// out of a fixed cell) keeps the icon + label area — and so the label's
-/// clearance from the rounded selection border — constant as the gap
+/// out of a fixed cell) keeps the icon + label area, and so the label's
+/// clearance from the rounded selection border: constant as the gap
 /// changes. Used to derive `cols_per_row` from pane width.
 pub fn cell_width(icon_px: u32, gap: f32) -> f32 {
     icon_px as f32 + CELL_PAD + 2.0 * gap
@@ -169,7 +169,7 @@ pub fn cols_per_row(pane_width: f32, icon_px: u32, gap: f32) -> usize {
 
 /// How a thumbnail is laid into the square icon slot in grid view.
 ///
-/// Only *real* thumbnails obey this — photos, video poster frames, PDF
+/// Only *real* thumbnails obey this: photos, video poster frames, PDF
 /// first pages. Folder icons and file-type glyphs are square by
 /// construction, so every mode would look identical on them; they always
 /// draw as [`ThumbFit::Best`].
@@ -186,7 +186,7 @@ pub enum ThumbFit {
     #[default]
     Best,
     /// Scale until the slot is completely covered, cropping the overflow.
-    /// No letterboxing — the image fills the icon.
+    /// No letterboxing: the image fills the icon.
     Fill,
     /// Scale so the image's *width* matches the slot.
     Width,
@@ -221,7 +221,7 @@ impl ThumbFit {
     }
 
     /// Whether this mode can scale an image *beyond* what [`ThumbFit::Best`]
-    /// would — i.e. whether it needs a chunkier source bucket to stay
+    /// would, i.e. whether it needs a chunkier source bucket to stay
     /// crisp. Only Best is purely shrink-to-fit; every other mode
     /// magnifies at least some images past that point.
     pub fn magnifies(self) -> bool {
@@ -235,7 +235,7 @@ impl ThumbFit {
     /// scaling by width is the *smaller* scale factor for a landscape
     /// image (so, `Contain`) and the *larger* one for a portrait image
     /// (so, `Cover`). Letting gpui do the cropping keeps the painted
-    /// element exactly slot-sized — a panorama in `Fill` never lays out a
+    /// element exactly slot-sized: a panorama in `Fill` never lays out a
     /// 20,000-px-wide element that then has to be clipped.
     pub fn object_fit(self, img_w: u32, img_h: u32) -> ObjectFit {
         // Degenerate sizes (a frame that reported 0) have no orientation
@@ -283,7 +283,7 @@ pub fn thumb_fit(cx: &App) -> ThumbFit {
 
 /// The bare fetch-size ladder for a display size, before any fit-mode
 /// adjustment. Snapped to a small bucket set so the size control can't
-/// explode the path-keyed cache — the bucketed image scales to the
+/// explode the path-keyed cache: the bucketed image scales to the
 /// exact display size at paint time. ~2× display for retina crispness.
 fn bucket_ladder(display_px: u32) -> u32 {
     match display_px {
@@ -297,9 +297,9 @@ fn bucket_ladder(display_px: u32) -> u32 {
 /// under a given fit mode.
 ///
 /// [`ThumbFit::Best`] only ever scales a thumbnail *down* into the slot,
-/// so the plain ladder is enough. Every other mode magnifies further —
+/// so the plain ladder is enough. Every other mode magnifies further:
 /// a covering mode scales until the *short* edge fills the slot, so a
-/// 16:9 photo is drawn about 1.8× larger than Best fit draws it — and
+/// 16:9 photo is drawn about 1.8× larger than Best fit draws it, and
 /// at the same bucket that reads as visibly softer. Those modes step up
 /// one rung where there is one.
 ///
@@ -321,7 +321,7 @@ pub fn thumb_bucket(display_px: u32, fit: ThumbFit) -> u32 {
 
 /// Physical fetch size for grid *folder* icons (NSWorkspace bitmaps).
 /// Folder art is square and has little detail, so it ignores the fit
-/// mode and stays capped — at 256 for ordinary sizes, lifted to 512 only
+/// mode and stays capped, at 256 for ordinary sizes, lifted to 512 only
 /// once the slot is genuinely bigger than that, where a 2× upscale of a
 /// 256-px bitmap starts to look mushy. The bitmaps are per-path, so the
 /// cap is what bounds their memory.

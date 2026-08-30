@@ -10,7 +10,7 @@
 //!
 //! Replacing a re-export with a real AROS implementation (workbench.library
 //! reveal, icon.library icons, clipboard.device file URLs, DefIcons
-//! thumbnails) is then a local, incremental change in this crate — the same
+//! thumbnails) is then a local, incremental change in this crate: the same
 //! path linux-port.md describes for the Linux arm.
 
 pub use ferail_shell_linux::*;

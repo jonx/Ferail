@@ -1,7 +1,7 @@
 //! Capture a window's rendered contents to an RGBA buffer via Win32
 //! [`PrintWindow`] with `PW_RENDERFULLCONTENT` (0x2). Used by the
 //! `--screenshot` headless harness as the Windows analog of macOS's
-//! `MetalRenderer::render_to_image` — gpui_windows has no equivalent
+//! `MetalRenderer::render_to_image`: gpui_windows has no equivalent
 //! method, and forking gpui would be heavy for a tool.
 //!
 //! `PW_RENDERFULLCONTENT` was introduced in Windows 8.1 specifically to
@@ -23,7 +23,7 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
-/// `PW_RENDERFULLCONTENT` — capture DirectComposition / DirectX layered
+/// `PW_RENDERFULLCONTENT`: capture DirectComposition / DirectX layered
 /// content as if presented. Not exported as a named constant by the
 /// 0.58 `windows` crate; documented value is 0x2.
 const PW_RENDERFULLCONTENT: PRINT_WINDOW_FLAGS = PRINT_WINDOW_FLAGS(0x2);
@@ -35,7 +35,7 @@ const PW_RENDERFULLCONTENT: PRINT_WINDOW_FLAGS = PRINT_WINDOW_FLAGS(0x2);
 /// `raw_window_handle::Win32WindowHandle::hwnd` carries). Zero is
 /// rejected with `Err`.
 ///
-/// The window must already be in the rendered state caller wants —
+/// The window must already be in the rendered state caller wants:
 /// this helper does not show / activate / wait for paint. Headless
 /// callers typically need to make the window visible first so its
 /// DirectX swap chain actually presents at least one frame before
@@ -152,10 +152,10 @@ pub fn capture_window_rgba(hwnd_raw: isize) -> Result<(u32, u32, Vec<u8>), Strin
 /// `gpui_windows`, which has no `render_to_image` (docs/GPUI-UPSTREAM.md item
 /// 7): the harness creates the window with `show: false`, and a never-shown
 /// window's swap chain never presents, so PrintWindow would capture nothing.
-/// The window IS technically shown here — but at (-32000, -32000), with no
+/// The window IS technically shown here, but at (-32000, -32000), with no
 /// taskbar button and no focus steal, so nothing is visible to the user.
 ///
-/// Best-effort — failures are silent, and the caller reports the eventual
+/// Best-effort: failures are silent, and the caller reports the eventual
 /// capture error instead.
 pub fn present_offscreen_for_capture(hwnd_raw: isize) {
     use windows::Win32::Foundation::HWND;
@@ -192,9 +192,9 @@ const OFFSCREEN_ORIGIN: i32 = -32000;
 /// DirectComposition swap chain still presents a frame for
 /// [`capture_window_rgba`]). Removes its taskbar / Alt-Tab button
 /// (`WS_EX_TOOLWINDOW`, clearing `WS_EX_APPWINDOW`) and marks it no-activate so
-/// it can't steal focus. Positioning is the caller's job — see
+/// it can't steal focus. Positioning is the caller's job: see
 /// [`present_offscreen_for_capture`] for the full sequence.
-/// Best-effort — failures are silent.
+/// Best-effort: failures are silent.
 pub fn hide_window_for_capture(hwnd_raw: isize) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{

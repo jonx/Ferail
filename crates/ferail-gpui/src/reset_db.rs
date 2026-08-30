@@ -78,7 +78,7 @@ fn print_reset_db_usage() {
     if let Some(p) = ferail_meta::default_db_path() {
         eprintln!("  {}", p.display());
     } else {
-        eprintln!("  (no DB — $HOME unset)");
+        eprintln!("  (no DB, $HOME unset)");
     }
     eprintln!();
     eprintln!("Usage:  ferail-gpui --reset-db <scope>");

@@ -41,7 +41,7 @@ pub struct Args {
     /// visit counts.
     pub navigate: Vec<PathBuf>,
     /// After the `--navigate` chain, go up to the parent folder via
-    /// the real `navigate_parent` path — exercises came-from selection.
+    /// the real `navigate_parent` path: exercises came-from selection.
     pub navigate_parent: bool,
     /// Extra tabs to open after the initial one.
     pub new_tabs: Vec<PathBuf>,
@@ -63,7 +63,7 @@ pub struct Args {
     /// other flags apply. Verifies focus/keybinding routing headlessly.
     pub keys: Option<String>,
     /// Paths copied into the current dir via the real transfer worker
-    /// (`spawn_transfer_op`, `TransferMode::Copy`) after navigation —
+    /// (`spawn_transfer_op`, `TransferMode::Copy`) after navigation:
     /// exercises the post-paste reload + select-what-landed path
     /// headlessly, since the harness can't seed the OS pasteboard.
     pub paste_sources: Vec<PathBuf>,
@@ -77,7 +77,7 @@ pub struct Args {
     /// before capture, so the icon grid can be screenshotted without
     /// mutating the user's persisted default.
     pub view: Option<crate::grid::ViewMode>,
-    /// Sidebar splitter position (DIPs). N/A in the GPUI shell —
+    /// Sidebar splitter position (DIPs). N/A in the GPUI shell:
     /// the sidebar width is currently a Settings choice, not a
     /// drag-resizable splitter.
     pub splitter: Option<f32>,
@@ -116,7 +116,7 @@ pub struct Args {
     pub sort: Option<(String, bool)>,
     /// Open Get Info / properties panel. Lands in Stage 8.
     pub properties: bool,
-    /// Simulate macOS traffic-light inset on the tabstrip. N/A —
+    /// Simulate macOS traffic-light inset on the tabstrip. N/A:
     /// the GPUI shell already has native window chrome.
     pub mac_chrome: bool,
     /// Start inline rename for the selected row.
@@ -135,7 +135,7 @@ pub struct Args {
     pub go_to_folder: bool,
     /// Open the Software Update dialog seeded with a named state
     /// (checking / uptodate / elsewhere / available / noasset / downloading /
-    /// done / failed) — pure UI, no network (docs/features/UPDATES.md).
+    /// done / failed): pure UI, no network (docs/features/UPDATES.md).
     pub update_dialog: Option<String>,
     /// Push a fake toast with the given message. Lands in Stage 5.
     pub simulate_toast: Option<String>,
@@ -146,7 +146,7 @@ pub struct Args {
     /// tasks. Lands in Stage 5.
     pub simulate_task_panel: bool,
     /// Render the status-bar stats segment with fixed reference
-    /// values ("up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 redraws/s") — the
+    /// values ("up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 redraws/s"): the
     /// real sampler never runs on the screenshot path, so captures
     /// stay deterministic.
     pub simulate_stats: bool,
@@ -196,7 +196,7 @@ pub struct Args {
     pub viewer_adjust: bool,
     /// Screenshot-only: render the viewer adjustments panel in full mpv-video
     /// mode (all colour/enhance/transparent-colour controls) without opening a
-    /// live stream — for capturing the panel layout.
+    /// live stream, for capturing the panel layout.
     pub viewer_adjust_video: bool,
     /// Screenshot-only: clockwise quarter-turns to rotate the viewer before
     /// capture. Combined with `--viewer-step` it verifies rotation is sticky.
@@ -211,19 +211,19 @@ pub struct Args {
     /// shell, with demo redaction/annotation strokes applied.
     pub image_editor: Option<PathBuf>,
     /// Render the drag ghost ([`crate::file_list::DragBadge`]) for a
-    /// drag of N items, in isolation, against a neutral backdrop —
+    /// drag of N items, in isolation, against a neutral backdrop:
     /// the only way to capture the cursor ghost headlessly (it never
     /// exists outside a live drag). Uses placeholder coloured tiles
     /// for the item images.
     pub drag_ghost: Option<usize>,
-    /// Right-click row N in the active tab's file list — a real
-    /// `MouseDown` through the window's event path — so the row context
+    /// Right-click row N in the active tab's file list: a real
+    /// `MouseDown` through the window's event path, so the row context
     /// menu builds exactly as it does for a user and can be captured.
     /// Nothing else opens it: the menu lives in a mouse-event listener,
     /// not behind an action.
     pub context_menu_row: Option<usize>,
-    /// Right-click the middle of the file-list body — the background, not
-    /// a row — so the empty-space context menu (New Folder / Paste / …)
+    /// Right-click the middle of the file-list body: the background, not
+    /// a row, so the empty-space context menu (New Folder / Paste / …)
     /// builds and can be captured. Point the harness at an empty folder
     /// (or one whose rows stop above the midpoint), or the click lands on
     /// a row and captures the row menu instead.
@@ -232,7 +232,7 @@ pub struct Args {
     /// ([`crate::favorite_icon_picker`]) instead of the shell, so the
     /// Lucide glyph grid can be captured headlessly.
     pub icon_picker: bool,
-    /// Launch the GUI with every optional background subsystem off —
+    /// Launch the GUI with every optional background subsystem off,
     /// no watcher, folder sizes, thumbnails, file-detail scan, metadata
     /// DB, volume-info refresh, or volume/power/stats watchers. The
     /// freeze-bisection switch (docs/features/FREEZE_DIAGNOSTICS.md);
@@ -397,7 +397,7 @@ pub fn parse_args() -> Args {
 
 fn print_help() {
     println!(
-        "ferail-gpui — GPUI-stack file explorer
+        "ferail-gpui: GPUI-stack file explorer
 
 Without --screenshot, opens the GUI. With --screenshot <path>, renders
 one frame off-screen, writes the PNG, and exits.
@@ -458,7 +458,7 @@ OPTIONS
   --settings <page>        Open Settings instead of Shell.
                            appearance / files / layout / about.
   --paste-source <path>    Copy <path> into the current dir via the real
-                           transfer worker (repeatable) — captures the
+                           transfer worker (repeatable): captures the
                            post-paste select-what-landed behavior.
   --viewer <path>          Render the viewer window for <path> (file or
                            folder) instead of the shell.
@@ -473,7 +473,7 @@ OPTIONS
   --safe-mode              Launch the GUI with all optional background work
                            disabled (fs watcher, folder sizes, thumbnails,
                            file-detail scan, metadata DB, volume/power/stats
-                           watchers) — for bisecting freezes. Env spelling:
+                           watchers), for bisecting freezes. Env spelling:
                            FERAIL_SAFE_MODE=1. If the app still freezes,
                            press Ctrl+\\ in the launching terminal to write
                            a hang report and exit.
@@ -527,7 +527,7 @@ pub fn run(args: Args) -> Result<()> {
         // taken in any installed language.
         crate::i18n::init(cx);
         crate::text::install_platform_font_families(cx);
-        // Real HTTP client, as in boot.rs — only exercised by
+        // Real HTTP client, as in boot.rs, only exercised by
         // `--update-dialog live`; every other capture stays offline.
         if let Ok(client) = reqwest_client::ReqwestClient::user_agent(concat!(
             "Ferail/",
@@ -537,7 +537,7 @@ pub fn run(args: Args) -> Result<()> {
             cx.set_http_client(std::sync::Arc::new(client));
         }
         crate::shell::init(cx);
-        // Register the dock icon — see comment in main.rs::run_gui;
+        // Register the dock icon: see comment in main.rs::run_gui;
         // must happen post-NSApplication-init.
         let _ = crate::platform_shell::set_app_icon_from_png_bytes(crate::app_icon::PNG);
         if let Some(mode) = theme_mode {
@@ -563,10 +563,10 @@ pub fn run(args: Args) -> Result<()> {
         let image_editor_target = image_editor_target.clone();
         cx.spawn(async move |cx| {
             // Headless capture: `Window::render_to_image` samples an offscreen
-            // render target with the window hidden — macOS via gpui_macos's
+            // render target with the window hidden: macOS via gpui_macos's
             // MetalRenderer, Windows via gpui_windows's D3D11 staging readback
             // (our render_to_image patch; docs/GPUI-UPSTREAM.md item 7). So the
-            // window stays hidden on every platform — truly headless, no flash.
+            // window stays hidden on every platform: truly headless, no flash.
             let opts = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: gpui::Point::default(),
@@ -574,7 +574,7 @@ pub fn run(args: Args) -> Result<()> {
                 })),
                 // Match the live GUI's title-bar mode (see
                 // main.rs::open_shell_window_sized) so the screenshot
-                // captures the same chrome the user actually sees —
+                // captures the same chrome the user actually sees:
                 // gpui-component's TitleBar widget replaces the OS
                 // default and hosts our brand + filter + nav row.
                 show: false,
@@ -773,7 +773,7 @@ pub fn run(args: Args) -> Result<()> {
             // Slow-device skeleton: force the state the slow-load
             // timer sets when a first batch is overdue (real path:
             // Shell::load_path_for_tab). Exercises the genuine
-            // loading()/render_loading render branch — only the
+            // loading()/render_loading render branch, only the
             // trigger is simulated, since a screenshot run can't spin
             // down a disk. Applied HERE, after the settle window: the
             // tab's real load lands during it, and its first batch
@@ -790,7 +790,7 @@ pub fn run(args: Args) -> Result<()> {
             }
 
             // Get Info opens as its own OS window (entry_info::open), so a
-            // --properties run captures that window — the newest one —
+            // --properties run captures that window: the newest one,
             // instead of the main shell behind it. On Windows that capture
             // must take the PrintWindow path directly: `render_to_image` on
             // a second live window re-renders its element tree outside the
@@ -859,7 +859,7 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Headless capture — unified across platforms.
+// Headless capture: unified across platforms.
 // ---------------------------------------------------------------------------
 //
 // The preferred path on every platform is gpui's `Window::render_to_image`,
@@ -874,8 +874,8 @@ pub fn run(args: Args) -> Result<()> {
 // screenshot for UI changes, that made UI work unverifiable on Windows.
 //
 // So Windows falls back to `PrintWindow` (ferail_shell_win32::capture.rs). That
-// path needs the window genuinely shown — a never-shown DirectComposition swap
-// chain presents no frame — so the fallback parks it at (-32000, -32000) with
+// path needs the window genuinely shown: a never-shown DirectComposition swap
+// chain presents no frame, so the fallback parks it at (-32000, -32000) with
 // no taskbar button and no focus steal before reading it back.
 
 async fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<image::RgbaImage> {
@@ -900,7 +900,7 @@ async fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<i
     // Without the harness feature `Window::render_to_image` does not even
     // compile (it is test-support-gated in gpui); Windows still captures
     // through PrintWindow, other platforms lose --screenshot in packaged
-    // builds — the dev workflow keeps the default feature.
+    // builds: the dev workflow keeps the default feature.
     #[cfg(not(feature = "screenshot-harness"))]
     {
         #[cfg(windows)]
@@ -917,7 +917,7 @@ async fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<i
     }
 }
 
-/// Windows fallback for [`capture_window`] — see the comment above.
+/// Windows fallback for [`capture_window`]: see the comment above.
 #[cfg(windows)]
 async fn capture_window_printwindow(
     handle: &AnyWindowHandle,
@@ -1139,7 +1139,7 @@ impl ShellArgs {
         if let Some(text) = self.filter.clone() {
             // Sync the InputState (visual) AND drive load_path
             // (data). InputState::set_value deliberately suppresses
-            // InputEvent::Change so the subscription doesn't fire —
+            // InputEvent::Change so the subscription doesn't fire:
             // we have to plumb both ends manually from the CLI.
             let text_for_input = text.clone();
             let text_for_data = text.clone();
@@ -1259,7 +1259,7 @@ impl ShellArgs {
         if !self.paste_sources.is_empty() {
             // Let the initial enumeration land so the paste's in-place
             // reload has live rows to swap over, then run the REAL
-            // transfer worker — completion queues the pasted names for
+            // transfer worker: completion queues the pasted names for
             // selection and the reload applies them (FILE_OPS.md
             // "Post-op selection"). The wait after gives plan → engine →
             // completion → reload time to finish before capture.
@@ -1290,7 +1290,7 @@ impl ShellArgs {
             || self.new_archive
         {
             // Selection flags resolve against the loaded entry list,
-            // but `navigate` streams its enumeration — give the
+            // but `navigate` streams its enumeration: give the
             // batches (and the magic/quarantine prefetch they kick
             // off) a beat to apply before resolving rows by index or
             // name. The main settle timer only runs AFTER apply().
@@ -1377,7 +1377,7 @@ impl ShellArgs {
         if let Some(row) = self.context_menu_row {
             // Right-click a row for real: the context menu is built by a
             // MouseDown listener (gpui-component's `ContextMenu` element),
-            // so there is no action to dispatch — only an actual click
+            // so there is no action to dispatch, only an actual click
             // opens it. Wait for the streamed enumeration first, since the
             // click point is derived from the laid-out row geometry.
             cx.background_executor()
@@ -1475,7 +1475,7 @@ impl ShellArgs {
                 shell.update(cx, |s, cx| {
                     // The handler needs a 2+ selection; seed the first
                     // four rows unless --select-rows provided one. (The
-                    // enumeration settle wait above already ran — the
+                    // enumeration settle wait above already ran: the
                     // flag is included in its condition.)
                     if self.select_rows.is_empty() {
                         s.select_row_indices(&[0, 1, 2, 3], cx);
@@ -1501,7 +1501,7 @@ impl ShellArgs {
                 .flatten();
             if view.is_some() && (self.archive_preview_row.is_some() || self.archive_convert) {
                 // The table of contents is read off-thread, so the rows don't
-                // exist yet — selecting now would find nothing. Let the read
+                // exist yet, selecting now would find nothing. Let the read
                 // land, then drive the selection and preview.
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(700))
@@ -1572,7 +1572,7 @@ impl ShellArgs {
             shell.update(cx, |s, cx| {
                 s.task_panel_open = true;
                 let mut reg = s.process.tasks.borrow_mut();
-                // A long-running transfer with full stats — the richest
+                // A long-running transfer with full stats: the richest
                 // row shape (rate, ETA, current file, cancel button) so
                 // the layout is exercised end to end. Backdated past
                 // SURFACE_DELAY or the one-frame capture renders an
@@ -1597,7 +1597,7 @@ impl ShellArgs {
                     },
                 );
                 reg.backdate(transfer, std::time::Duration::from_secs(224));
-                // An indeterminate ambient pass — the minimal row shape.
+                // An indeterminate ambient pass: the minimal row shape.
                 let sizing = reg.begin(
                     crate::tasks::TaskKind::FolderSize,
                     "Sizing 4 folders\u{2026}",

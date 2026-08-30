@@ -45,7 +45,7 @@ mod context_menu;
 #[cfg(windows)]
 pub use context_menu::{context_menu_broker_main, show_windows_context_menu};
 
-// First-page PDF rendering via `Windows.Data.Pdf` — no window, no
+// First-page PDF rendering via `Windows.Data.Pdf`: no window, no
 // third-party code, so it needs neither a pump nor the broker.
 #[cfg(windows)]
 mod pdf_render;
@@ -57,7 +57,7 @@ pub mod broker_proto;
 
 /// `--preview-broker` worker-mode entry point (WIN-002 crash
 /// containment): render one third-party IPreviewHandler preview in this
-/// disposable process and write the frame to stdout. Windows-only —
+/// disposable process and write the frame to stdout. Windows-only:
 /// the single call site in `main.rs` is `#[cfg(windows)]`-gated, so no
 /// non-Windows mirror exists in the other shell crates.
 #[cfg(windows)]
@@ -104,7 +104,7 @@ pub use wsl::{
 ///
 /// `std::fs::canonicalize` returns verbatim paths on Windows, and the
 /// favorites / tabs / persisted paths the host hands us carry that
-/// prefix — but `explorer /select`, `wt.exe -d`, CF_HDROP, `IShellLink::
+/// prefix, but `explorer /select`, `wt.exe -d`, CF_HDROP, `IShellLink::
 /// SetPath`, `SHCreateItemFromParsingName`, `SHGetFileInfoW`, and the
 /// Media Foundation source URL all reject or mis-handle `\\?\`. Every
 /// outward shell boundary in this crate routes through this helper.
@@ -246,7 +246,7 @@ mod strip_verbatim_tests {
 }
 
 // =============================================================
-// Types — defined unconditionally so callers can name them on
+// Types: defined unconditionally so callers can name them on
 // either platform; the shell-mac equivalents have the same shape.
 // =============================================================
 
@@ -261,7 +261,7 @@ pub struct OpenWithCandidate {
 
 /// Result of [`set_app_icon_from_png_bytes`], mirrored from shell-mac.
 /// `NotMacOs` is retained as a variant name purely so the `Debug`
-/// output matches shell-mac one-for-one — a future real Windows impl
+/// output matches shell-mac one-for-one: a future real Windows impl
 /// will return `Ok` / `DecodeFailed` and stop hitting `NotMacOs`.
 #[derive(Debug)]
 pub enum SetIconResult {
@@ -285,17 +285,17 @@ pub enum SetIconResult {
 /// can land later without touching callers.
 #[derive(Clone, Debug, Default)]
 pub struct ShellInfo {
-    /// Uniform type identifier (macOS only) — always `None` on Windows.
+    /// Uniform type identifier (macOS only), always `None` on Windows.
     pub uti: Option<String>,
     /// Localized type description, e.g. "PNG image".
     pub kind: Option<String>,
-    /// When the item was added to its folder (macOS only) — `None` here.
+    /// When the item was added to its folder (macOS only): `None` here.
     pub added_unix: Option<i64>,
-    /// "Hide extension" state (macOS per-file flag) — `None` on Windows.
+    /// "Hide extension" state (macOS per-file flag): `None` on Windows.
     pub hidden_extension: Option<bool>,
-    /// True for package/bundle directories (macOS) — `None` on Windows.
+    /// True for package/bundle directories (macOS): `None` on Windows.
     pub is_package: Option<bool>,
-    /// True for alias files (macOS) — `None` on Windows (`.lnk` is a file).
+    /// True for alias files (macOS): `None` on Windows (`.lnk` is a file).
     pub is_alias: Option<bool>,
 }
 
@@ -310,7 +310,7 @@ pub struct ShellInfo {
 pub fn install_app_menu(_app_name: &str, _tagline: &str, _version: &str, _copyright: &str) {}
 
 /// Register the host-app callback for catalogued menu commands. No-op
-/// stub on Windows — the catalogue dispatcher fires actions directly
+/// stub on Windows: the catalogue dispatcher fires actions directly
 /// through gpui's keymap until a Windows menu surface lands.
 pub fn register_command_callback(
     _cb: Option<Box<dyn Fn(ferail_core::commands::CommandId) + 'static>>,
@@ -323,7 +323,7 @@ pub fn register_command_callback(
 ///
 /// The fields are only READ under cfg(windows) (`show_about_panel`'s
 /// real arm); the unconditional writer keeps the API symmetric, so
-/// non-Windows builds see write-only fields — expected, not dead.
+/// non-Windows builds see write-only fields: expected, not dead.
 #[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Default, Clone)]
 struct AboutInfo {
@@ -413,7 +413,7 @@ pub fn set_command_state(_id: ferail_core::commands::CommandId, _on: bool) {}
 // =============================================================
 
 /// Show a modal alert. macOS uses `NSAlert`; Windows: `MessageBoxW`
-/// with the information icon and a single OK button. Synchronous —
+/// with the information icon and a single OK button. Synchronous:
 /// blocks the calling thread while the dialog is up, matching the
 /// shell-mac contract.
 #[cfg(windows)]
@@ -441,7 +441,7 @@ pub fn show_alert(_title: &str, _body: &str) {}
 /// `None` if cancelled. Mirrors `ferail_shell_mac::pick_folder` so the
 /// Favorites "Locate…" repoint flow (`docs/features/FAVORITES.md` §8.2) is
 /// cross-platform. The modern `IFileOpenDialog` with `FOS_PICKFOLDERS` (the
-/// Vista+ common item dialog) — user-cancel comes back as an error HRESULT,
+/// Vista+ common item dialog): user-cancel comes back as an error HRESULT,
 /// which maps cleanly to `None` (the caller leaves the favorite untouched).
 #[cfg(windows)]
 pub fn pick_folder() -> Option<std::path::PathBuf> {
@@ -573,7 +573,7 @@ fn shell_execute_open(
 /// Place a string on the system clipboard. Windows: open the clipboard
 /// (no owner HWND), empty it, allocate a moveable HGLOBAL holding the
 /// UTF-16 text with terminator, hand it to `SetClipboardData` under
-/// `CF_UNICODETEXT`, then close. Best-effort — failures are silent
+/// `CF_UNICODETEXT`, then close. Best-effort: failures are silent
 /// (matches shell-mac's contract).
 #[cfg(windows)]
 pub fn copy_to_clipboard(text: &str) {
@@ -726,7 +726,7 @@ pub fn launch_update_installer(_path: &std::path::Path) -> std::io::Result<()> {
 }
 
 /// Open Explorer with `path` selected. Uses an absolute PIDL for the parent and
-/// a relative child PIDL—the identity-preserving API Explorer itself exposes.
+/// a relative child PIDL, the identity-preserving API Explorer itself exposes.
 /// This avoids `explorer /select,<path>` command-line parsing, which silently
 /// opened Documents for some valid names containing spaces / `#` / `!`.
 #[cfg(windows)]
@@ -858,7 +858,7 @@ pub fn open_terminal(path: &std::path::Path) {
 /// classic `cmd.exe` console at `path` is the fallback.
 ///
 /// Admin mode launches the same program + params elevated via
-/// `ShellExecuteExW` verb `"runas"` — the UAC prompt. Blocks until UAC
+/// `ShellExecuteExW` verb `"runas"`: the UAC prompt. Blocks until UAC
 /// resolves (`SEE_MASK_NOASYNC`); callers run this on a worker (Prime
 /// Directive). A dismissed prompt is treated like any failed launcher:
 /// fire-and-forget.
@@ -901,7 +901,7 @@ pub fn open_terminal_with(path: &std::path::Path, spec: &ferail_core::terminal::
 pub fn open_terminal_with(_path: &std::path::Path, _spec: &ferail_core::terminal::TerminalSpec) {}
 
 /// Launch `program` elevated (UAC) with `args`, working directory `dir`.
-/// Best-effort: any failure — including the user dismissing the prompt —
+/// Best-effort: any failure, including the user dismissing the prompt:
 /// is swallowed, matching the other launchers here.
 #[cfg(windows)]
 fn shell_execute_runas(program: &str, args: &[String], dir: &std::path::Path) {
@@ -949,7 +949,7 @@ fn shell_execute_runas(program: &str, args: &[String], dir: &std::path::Path) {
 /// Unmount and eject the volume mounted at `path` (a drive root like `E:\`).
 /// Opens the volume device `\\.\E:`, flushes + locks it best-effort, dismounts
 /// it (`FSCTL_DISMOUNT_VOLUME`), re-allows media removal, then ejects
-/// (`IOCTL_STORAGE_EJECT_MEDIA` — opens the tray for optical media, powers down
+/// (`IOCTL_STORAGE_EJECT_MEDIA`: opens the tray for optical media, powers down
 /// removable media). Succeeds if either the dismount or the eject takes; a
 /// hard failure (e.g. files still open) is surfaced to the host as a toast.
 #[cfg(windows)]
@@ -958,7 +958,7 @@ pub fn eject_volume(path: &std::path::Path) -> Result<(), String> {
 }
 
 /// Unmount every volume in `volume_paths` (drive roots on one physical
-/// device), then eject/power down the device — Finder's "Eject All".
+/// device), then eject/power down the device: Finder's "Eject All".
 /// All volumes are dismounted **before** the media eject: ejecting
 /// mid-loop could yank partitions that are still mounted. If any
 /// dismount fails the media eject is skipped and the first error is
@@ -1001,7 +1001,7 @@ fn eject_volume_inner(path: &std::path::Path, eject_media: bool) -> Result<(), S
     let cleaned = strip_verbatim(path);
     let s = cleaned.to_string_lossy();
     // A UNC path (`\\server\share`, incl. the `\\?\UNC\…` verbatim form)
-    // names a network location, not a local volume — refuse it outright.
+    // names a network location, not a local volume: refuse it outright.
     // (Before strip_verbatim, `\\?\UNC\server\…` trimmed to `UNC\…` and its
     // leading `U` parsed as drive `U:`, risking a dismount of an unrelated
     // real volume.)
@@ -1044,7 +1044,7 @@ fn eject_volume_inner(path: &std::path::Path, eject_media: bool) -> Result<(), S
             )
         };
 
-        // Best-effort lock (fails if files are open — dismount still tried).
+        // Best-effort lock (fails if files are open: dismount still tried).
         let _ = ioctl(FSCTL_LOCK_VOLUME, None, 0);
         let dismounted = ioctl(FSCTL_DISMOUNT_VOLUME, None, 0);
 
@@ -1087,11 +1087,11 @@ pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
     Err("eject is not implemented on this OS".into())
 }
 
-/// Names of processes holding files open on the volume at `path` — the
+/// Names of processes holding files open on the volume at `path`: the
 /// "why won't it eject" answer for a failed eject. The honest source is
 /// the Restart Manager, which wants a file list, not a volume, so this
 /// expands the volume by a capped walk first
-/// ([`elevation::processes_using_tree`]) — a huge volume is sampled, not
+/// ([`elevation::processes_using_tree`]): a huge volume is sampled, not
 /// exhausted. Callers must treat empty as "unknown", not "nothing".
 /// Blocks (walk + RM process enumeration): background only.
 #[cfg(windows)]
@@ -1123,7 +1123,7 @@ pub const LOCK_SCAN_MAX_FILES: usize = 4096;
 /// Bring the app owning `pid` to the foreground: EnumWindows for a
 /// visible, unowned top-level window of that process, restore it if
 /// minimized, and `SetForegroundWindow` it. `false` when the process has
-/// no such window (a daemon/console holder) — callers treat that as a
+/// no such window (a daemon/console holder): callers treat that as a
 /// no-op.
 #[cfg(windows)]
 pub fn activate_app(pid: i32) -> bool {
@@ -1155,7 +1155,7 @@ pub fn activate_app(pid: i32) -> bool {
         pid: pid as u32,
         hwnd: HWND::default(),
     };
-    // EnumWindows "fails" when the callback stops it early — that is the
+    // EnumWindows "fails" when the callback stops it early: that is the
     // found case, so the returned Result carries no signal here.
     let _ = unsafe { EnumWindows(Some(on_window), LPARAM(&mut find as *mut Find as isize)) };
     if find.hwnd.is_invalid() {
@@ -1178,7 +1178,7 @@ pub fn activate_app(_pid: i32) -> bool {
 /// destination path on success.
 ///
 /// Collision strategy: try `<stem> - Copy.<ext>` first, then
-/// `<stem> - Copy (2).<ext>`, … up to 99 — matches what Explorer
+/// `<stem> - Copy (2).<ext>`, … up to 99: matches what Explorer
 /// surfaces in its UI. The caller is expected to run this on a
 /// worker thread (large copies block).
 pub fn duplicate_path(src: &std::path::Path) -> Result<std::path::PathBuf, String> {
@@ -1232,7 +1232,7 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        // DirEntry::file_type does NOT follow symlinks — is_symlink
+        // DirEntry::file_type does NOT follow symlinks: is_symlink
         // is reliable here without an extra stat.
         let ft = entry.file_type()?;
         if ft.is_symlink() {
@@ -1285,7 +1285,7 @@ fn write_shell_link(
         return Err("make_alias: exhausted shortcut name slots".into());
     }
 
-    // Store the .lnk target in plain form — a `\\?\` verbatim target baked
+    // Store the .lnk target in plain form: a `\\?\` verbatim target baked
     // into the shortcut leaves Explorer unable to resolve it.
     let target_clean = strip_verbatim(target);
     let target_wide: Vec<u16> = target_clean
@@ -1338,7 +1338,7 @@ pub fn make_alias(_target: &std::path::Path) -> Result<std::path::PathBuf, Strin
     Err("make_alias: not implemented on this OS".into())
 }
 
-/// Make a `.lnk` shortcut to `target` inside `dest_dir` — the Windows form of
+/// Make a `.lnk` shortcut to `target` inside `dest_dir`: the Windows form of
 /// the Cmd+Option alias-drop (drag a file into a folder while making an alias
 /// instead of moving). Drops `<stem>.lnk` into `dest_dir`.
 #[cfg(windows)]
@@ -1364,7 +1364,7 @@ pub fn make_alias_in(
 /// the chosen name is taken (capped at 99).
 ///
 /// Compression: deflate at the `zip` crate's default level. Pure
-/// Rust — no shell-out to `tar.exe`. Caller should invoke this on a
+/// Rust, no shell-out to `tar.exe`. Caller should invoke this on a
 /// worker thread; large archives can take seconds.
 pub fn compress_paths(targets: &[&std::path::Path]) -> Result<std::path::PathBuf, String> {
     use std::io::Write;
@@ -1451,7 +1451,7 @@ fn walk_into_zip(
                 .map_err(|_| format!("compress_paths: invalid filename in {}", dir.display()))?;
             let arc_path = format!("{arc}/{name}");
             let ft = entry.file_type().map_err(|e| format!("file_type: {e}"))?;
-            // Skip symlinks/junctions — same rationale as
+            // Skip symlinks/junctions, same rationale as
             // copy_dir_recursive: a link cycle would otherwise grow
             // the walk stack forever, and archiving link targets
             // through their parent dir double-stores content.
@@ -1476,7 +1476,7 @@ fn walk_into_zip(
 }
 
 // =============================================================
-// Quick Look — N/A on Windows (no system Quick Look)
+// Quick Look: N/A on Windows (no system Quick Look)
 // =============================================================
 
 /// macOS Quick Look has no Windows equivalent. The eventual port will
@@ -1485,7 +1485,7 @@ pub fn show_quick_look(_paths: &[&std::path::Path]) -> Result<(), String> {
     Err("show_quick_look: not available on Windows".into())
 }
 
-/// Which surface is asking for pixels — decides how far down the
+/// Which surface is asking for pixels: decides how far down the
 /// fallback chain [`fetch_shell_image`] may go.
 #[cfg(windows)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1500,7 +1500,7 @@ enum ImageTier {
     /// The large file-type image (`SIIGBF_RESIZETOFIT` with no
     /// `THUMBNAILONLY`): the caller's very last tier, requested only
     /// after its own decoders (bundled raster, cover art, poster) came
-    /// up empty too — an icon returned any earlier would mask them.
+    /// up empty too: an icon returned any earlier would mask them.
     IconOnly,
 }
 
@@ -1511,12 +1511,12 @@ enum ImageTier {
 /// This is the Explorer-parity tier: `IShellItemImageFactory`
 /// thumbnails (`SIIGBF_THUMBNAILONLY`), then a native first-page render
 /// for PDFs (`pdf_render`), then the large file-type icon. It never
-/// screen-grabs an `IPreviewHandler` — that route paints the handler's
+/// screen-grabs an `IPreviewHandler`: that route paints the handler's
 /// viewer chrome (toolbars, scrollbars) into the bitmap, which is fine
 /// live in a preview pane and wrong in a grid cell. The pane uses
 /// [`fetch_preview_image`] instead.
 ///
-/// MUST be called from a worker thread — COM is initialized per-
+/// MUST be called from a worker thread: COM is initialized per-
 /// call with `COINIT_APARTMENTTHREADED`. Calling from the UI thread
 /// blocks paint while the shell extension generates the bitmap;
 /// per the prime directive in `docs/ARCHITECTURE.md`, the caller
@@ -1530,8 +1530,8 @@ pub fn fetch_quick_look_thumbnail(
 }
 
 /// The preview pane's fetch: everything [`fetch_quick_look_thumbnail`]
-/// tries, and — when the shell and the PDF renderer both come up empty
-/// — a brokered `IPreviewHandler` capture (Word/Excel/PowerPoint, RTF,
+/// tries, and: when the shell and the PDF renderer both come up empty
+///: a brokered `IPreviewHandler` capture (Word/Excel/PowerPoint, RTF,
 /// text, …) before settling for the type icon. Same threading contract.
 #[cfg(windows)]
 pub fn fetch_preview_image(path: &std::path::Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
@@ -1551,7 +1551,7 @@ pub fn fetch_preview_image_cancellable(
 }
 
 /// The large file-type image (`SIIGBF_RESIZETOFIT`, no thumbnail
-/// requirement) — the caller's very last tier, asked for only after
+/// requirement): the caller's very last tier, asked for only after
 /// both fetches above *and* the caller's own decoders came up empty.
 /// Separate from the content fetches so an icon can never mask a
 /// decodable image. Same threading contract.
@@ -1585,7 +1585,7 @@ fn fetch_shell_image(
 
     // `SHCreateItemFromParsingName` rejects the `\\?\` verbatim prefix and
     // relative paths (E_INVALIDARG), so parse the plain absolute form (the
-    // PDF and preview-handler tiers below get the same cleaned path — their
+    // PDF and preview-handler tiers below get the same cleaned path: their
     // WinRT / `IInitializeWithFile` inputs share the restriction).
     // `std::path::absolute` is lexical: no disk access.
     let absolute = std::path::absolute(path).ok()?;
@@ -1599,7 +1599,7 @@ fn fetch_shell_image(
     unsafe {
         // COM init for this thread. If COM is already initialized
         // (e.g. by another worker), CoInitializeEx returns
-        // S_FALSE / RPC_E_CHANGED_MODE — both are non-fatal, we
+        // S_FALSE / RPC_E_CHANGED_MODE, both are non-fatal, we
         // still proceed and skip CoUninitialize below.
         let co_hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let we_initialized = co_hr.is_ok();
@@ -1615,7 +1615,7 @@ fn fetch_shell_image(
             }
             // Create IShellItem from the path string (with the
             // simple-parse retry for namespace junctions like
-            // C:\Windows\Fonts — see `shell_item_image_factory`).
+            // C:\Windows\Fonts: see `shell_item_image_factory`).
             let factory: IShellItemImageFactory = shell_item_image_factory(&wide, debug)?;
 
             // Ask for the thumbnail.
@@ -1624,17 +1624,17 @@ fn fetch_shell_image(
                 cy: size_px as i32,
             };
             // Content chain (Thumbnail / Preview tiers):
-            //   1. SIIGBF_THUMBNAILONLY — only real provider-rendered
+            //   1. SIIGBF_THUMBNAILONLY, only real provider-rendered
             //      thumbnails (PNG, PPTX, images with EXIF previews,
             //      etc.). Fails when only an icon would be returned.
             //   2. PDF → `pdf_render` (Windows.Data.Pdf): page 1 drawn
             //      off-screen by the OS renderer. No window, no
             //      third-party code.
-            //   3. Preview tier only: IPreviewHandler — for files with
+            //   3. Preview tier only: IPreviewHandler, for files with
             //      no thumbnail provider but with a registered preview
             //      handler (Word/Excel docs, RTF, …). Renders the
             //      handler's live view into an off-screen window in the
-            //      broker and screen-grabs it — chrome included, which
+            //      broker and screen-grabs it: chrome included, which
             //      is why the thumbnail tier skips it.
             // No icon here: `None` lets the caller run its own decoders
             // (bundled raster, cover art, mpv poster) before it asks for
@@ -1647,12 +1647,12 @@ fn fetch_shell_image(
             //     thumbnails).
             //   - Generic file-type icons returned by RESIZETOFIT
             //     when no thumbnail provider exists arrive bottom-up
-            //     (Win32 ICON resource convention) — those need a
+            //     (Win32 ICON resource convention): those need a
             //     vertical flip.
             let is_icon_fallback = tier == ImageTier::IconOnly;
             // Font files: the font thumbnail provider ("Abg" preview
             // cards for .ttf/.otf) hands its DIB back bottom-up where
-            // image thumbnail providers hand theirs top-down — and both
+            // image thumbnail providers hand theirs top-down, and both
             // report a positive biHeight, so only the provider identity
             // (approximated by the extension) can tell them apart.
             // Without this the font cards render rotated 180°.
@@ -1716,7 +1716,7 @@ fn fetch_shell_image(
                             }
                         }
                         if debug {
-                            eprintln!("no shell content — leaving the icon to the caller");
+                            eprintln!("no shell content, leaving the icon to the caller");
                         }
                         return None;
                     }
@@ -1726,7 +1726,7 @@ fn fetch_shell_image(
             // Pull a DIBSECTION view of the bitmap so we get direct
             // access to its in-memory pixel buffer. `IShellItemImage-
             // Factory::GetImage` always returns 32bpp BGRA DIB sections
-            // — using GetDIBits with BI_RGB was an earlier approach
+            //, using GetDIBits with BI_RGB was an earlier approach
             // but it strips the alpha channel (the 4th byte ends up
             // undefined / zero), which made transparent icon
             // backgrounds render as opaque black. Reading the section
@@ -1770,7 +1770,7 @@ fn fetch_shell_image(
             // Empirically the THUMBNAILONLY thumbnail HBITMAPs come
             // back top-down (so we walk in source order), but the
             // RESIZETOFIT icon-fallback HBITMAPs come back bottom-up
-            // — see is_icon_fallback above.
+            //: see is_icon_fallback above.
             let src = ds.dsBm.bmBits as *const u8;
             let mut pixels: Vec<u8> = vec![0u8; (w as usize) * (h as usize) * 4];
             let row_bytes = (w as usize) * 4;
@@ -1784,7 +1784,7 @@ fn fetch_shell_image(
 
             // The DIB carries pre-multiplied-alpha BGRA. Caller
             // (preview.rs) expects RGBA, then swaps back to BGRA for
-            // gpui rendering — net result the renderer sees BGRA,
+            // gpui rendering: net result the renderer sees BGRA,
             // which is what its `RgbaImage` shim wants. So we swap
             // B<->R here once.
             //
@@ -1801,7 +1801,7 @@ fn fetch_shell_image(
                 }
             }
             if debug && all_alpha_zero {
-                eprintln!("all alpha bytes were 0 — forcing opaque");
+                eprintln!("all alpha bytes were 0, forcing opaque");
             }
 
             Some((pixels, w, h))
@@ -1833,11 +1833,11 @@ pub fn fetch_quick_look_thumbnail(
 }
 
 // =============================================================
-// Get Info — shell facts (the NSURL-resource-values equivalent)
+// Get Info: shell facts (the NSURL-resource-values equivalent)
 // =============================================================
 
 /// Shell-sourced Get Info facts. On Windows the meaningful one is the
-/// localized **type description** (`SHGetFileInfoW` + `SHGFI_TYPENAME`) — the
+/// localized **type description** (`SHGetFileInfoW` + `SHGFI_TYPENAME`): the
 /// "Type" field the Properties dialog shows, e.g. "Markdown Source File" or
 /// "File folder". There is no per-file UTI, "date added", or per-file
 /// hide-extension flag, so those stay `None`; the `.lnk` extension marks a
@@ -1866,7 +1866,7 @@ pub fn read_shell_info(path: &std::path::Path) -> ShellInfo {
     let display = cleaned.to_string_lossy();
 
     // SHGFI_USEFILEATTRIBUTES makes SHGetFileInfoW derive the type name from
-    // the path *string* + the attributes we assert, never touching disk —
+    // the path *string* + the attributes we assert, never touching disk,
     // without it, a dead UNC path blocked this worker for the full SMB
     // timeout. The signature carries no is_dir hint, so pick the attribute
     // from the path shape:
@@ -1937,7 +1937,7 @@ pub fn set_hidden_extension(_path: &std::path::Path, _hide: bool) -> Result<(), 
 }
 
 // =============================================================
-// Finder Tags — no Windows equivalent
+// Finder Tags, no Windows equivalent
 // =============================================================
 
 /// Windows currently has no Ferail tag provider. UI code consumes this
@@ -1965,7 +1965,7 @@ pub fn clear_tags(_path: &std::path::Path) -> Result<(), String> {
 }
 
 // =============================================================
-// Open With — IAssocHandler is the rough Windows equivalent
+// Open With: IAssocHandler is the rough Windows equivalent
 // =============================================================
 
 /// Enumerate apps Windows would offer for "Open With" on `path`.
@@ -2062,7 +2062,7 @@ pub fn open_with_candidates(_path: &std::path::Path) -> Vec<OpenWithCandidate> {
 }
 
 /// Open `target` with the app at `app_path`. Uses `std::process::Command`
-/// rather than `ShellExecuteExW` — sufficient for invoking a normal
+/// rather than `ShellExecuteExW`: sufficient for invoking a normal
 /// .exe with the file as its argument, no UAC elevation, no PATH
 /// resolution magic.
 #[cfg(windows)]
@@ -2080,7 +2080,7 @@ pub fn open_with_app(_target: &std::path::Path, _app_path: &std::path::Path) -> 
 }
 
 /// Open every `target` with the app at `app_path`. One process per
-/// file — the spawns don't wait, so the loop is cheap; the batch form
+/// file: the spawns don't wait, so the loop is cheap; the batch form
 /// exists for parity with shell-mac's single-invocation `open -a`.
 pub fn open_with_app_many(
     targets: &[std::path::PathBuf],
@@ -2105,7 +2105,7 @@ pub fn open_with_app_many(
 /// Set the running process's icon at runtime.
 ///
 /// **Windows v1 is a no-op.** Windows apps conventionally attach an
-/// `.ico` via the resource section / app manifest at build time —
+/// `.ico` via the resource section / app manifest at build time:
 /// that icon is already in place by the time this function would
 /// ever fire. See `ferail-gpui/build.rs`, which uses `winresource`
 /// to embed `resources/ferail.ico` into the .exe so Explorer, the
@@ -2125,7 +2125,7 @@ pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) -> SetIconResult {
 /// Tell the Windows shell that this process is its own application
 /// for taskbar grouping, jump-list, and pin-to-Start purposes. Without
 /// this, Windows groups our window under whatever inherits the parent
-/// console's AUMID — typically "Windows PowerShell" when launched from
+/// console's AUMID, typically "Windows PowerShell" when launched from
 /// a terminal, which is why the taskbar icon and label end up wrong.
 ///
 /// Must be called before any UI is shown (the shell caches the AUMID
@@ -2197,14 +2197,14 @@ pub fn show_desktop_available() -> bool {
 }
 
 /// Perform the "Show Desktop" reveal. No-op on Windows (the button is
-/// hidden — see [`show_desktop_available`]); returns `false` to report it
+/// hidden: see [`show_desktop_available`]); returns `false` to report it
 /// did nothing.
 pub fn show_desktop() -> bool {
     false
 }
 
 /// Raise every app window preserving z-order (macOS `arrangeInFront:`).
-/// No Windows equivalent wired yet — `false` makes the caller fall back
+/// No Windows equivalent wired yet: `false` makes the caller fall back
 /// to raising each window through gpui.
 pub fn bring_all_windows_to_front() -> bool {
     false
@@ -2219,20 +2219,20 @@ pub fn bring_all_windows_to_front() -> bool {
 /// Apps dark/light setting) and on each match re-reads
 /// [`system_is_dark`] and forwards the result via the callback.
 ///
-/// # Thread contract — read before changing the callback
+/// # Thread contract: read before changing the callback
 ///
 /// **The callback is invoked ON THE OBSERVER'S WORKER THREAD**, not
 /// the UI thread (this differs from shell-mac, whose observer fires
 /// on the main thread). It must not touch gpui entities, `Window`s,
 /// or any main-thread-only state. The supported pattern is what
 /// `main.rs` does today: write to a thread-safe cell
-/// (`shell::set_system_theme_pending` — an atomic the Shell polls at
+/// (`shell::set_system_theme_pending`: an atomic the Shell polls at
 /// render). If a future caller needs more, marshal to the main
 /// thread yourself; do not widen this callback's responsibilities.
 ///
 /// The thread, window, and callback live for the lifetime of the
 /// process. Each `start_system_theme_observer` call adds another
-/// observer — callers should avoid invoking it repeatedly.
+/// observer: callers should avoid invoking it repeatedly.
 #[cfg(windows)]
 pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static + Send>) {
     use windows::core::PCWSTR;
@@ -2287,7 +2287,7 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static + Send>)
                 lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
                 ..Default::default()
             };
-            // Idempotent register — ignore "class already exists".
+            // Idempotent register: ignore "class already exists".
             let _ = RegisterClassExW(&wc);
 
             let hwnd = match CreateWindowExW(
@@ -2314,7 +2314,7 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static + Send>)
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, cb_box as isize);
 
             // Standard message pump. Returns when GetMessage gets
-            // WM_QUIT — never, in this thread's lifetime.
+            // WM_QUIT, never, in this thread's lifetime.
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
                 let _ = TranslateMessage(&msg);
@@ -2331,7 +2331,7 @@ pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static + Send>
 /// (and our own paste path) reads for a file copy/cut. Layout is a
 /// `DROPFILES` header immediately followed by a UTF-16 path list where
 /// each path is null-terminated and the whole list ends with a second
-/// null — packed into one moveable `HGLOBAL` and handed to
+/// null: packed into one moveable `HGLOBAL` and handed to
 /// `SetClipboardData(CF_HDROP, ...)`. `GHND` zero-inits the block, so
 /// only `pFiles` (offset to the list) and `fWide` (UTF-16 marker) need
 /// setting. Best-effort and silent on failure, matching the mac
@@ -2395,7 +2395,7 @@ fn clipboard_write_file_urls(
     // Wide path list: each path null-terminated, then a final null to
     // close the double-null-terminated CF_HDROP list. The `is_dir`
     // hint is a mac-pasteboard need; CF_HDROP carries bare paths.
-    // Verbatim-strip each entry — CF_HDROP paths carrying `\\?\` make
+    // Verbatim-strip each entry: CF_HDROP paths carrying `\\?\` make
     // Explorer's paste silently fail.
     let mut list: Vec<u16> = Vec::new();
     for (p, _is_dir) in items {
@@ -2419,7 +2419,7 @@ fn clipboard_write_file_urls(
         };
         let base = GlobalLock(handle) as *mut u8;
         if base.is_null() {
-            // Lock failure: nothing owns the allocation yet — free it
+            // Lock failure: nothing owns the allocation yet: free it
             // or it leaks.
             let _ = windows::Win32::Foundation::GlobalFree(handle);
             return false;
@@ -2594,7 +2594,7 @@ pub fn clipboard_read_file_urls_with_operation() -> (Vec<std::path::PathBuf>, Cl
 ///
 /// Same as [`start_system_theme_observer`]: **the callback fires on
 /// the observer's worker thread** (hence `Send`), not the UI thread.
-/// It must not touch gpui entities — marshal to the main thread (the
+/// It must not touch gpui entities: marshal to the main thread (the
 /// gpui host posts through a channel). The thread, window, and
 /// callback live for the process lifetime.
 #[cfg(windows)]
@@ -2607,7 +2607,7 @@ pub fn start_volume_observer(callback: Box<dyn Fn() + 'static + Send>) {
         WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSEXW,
     };
 
-    // Raw values (winuser.h / dbt.h) — not all are typed constants in
+    // Raw values (winuser.h / dbt.h), not all are typed constants in
     // windows-0.58, and we read the header field by offset to avoid
     // pulling the DEV_BROADCAST_HDR binding.
     const WM_DEVICECHANGE: u32 = 0x0219;
@@ -2653,7 +2653,7 @@ pub fn start_volume_observer(callback: Box<dyn Fn() + 'static + Send>) {
                 lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
                 ..Default::default()
             };
-            // Idempotent register — ignore "class already exists".
+            // Idempotent register: ignore "class already exists".
             let _ = RegisterClassExW(&wc);
 
             // Null parent + WINDOW_STYLE(0) (WS_OVERLAPPED, no
@@ -2721,7 +2721,7 @@ pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static + Send>) {}
 /// be armed with `RegisterPowerSettingNotification(hwnd,
 /// &GUID_CONSOLE_DISPLAY_STATE, DEVICE_NOTIFY_WINDOW_HANDLE)`; the
 /// broadcast then carries a `POWERBROADCAST_SETTING` whose `Data[0]` is
-/// 0=off / 1=on / 2=dimmed. Left as a follow-up — the macOS port
+/// 0=off / 1=on / 2=dimmed. Left as a follow-up: the macOS port
 /// supplies screen events today, and system suspend/resume is the
 /// higher-value signal.
 ///
@@ -2729,7 +2729,7 @@ pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static + Send>) {}
 ///
 /// Same as [`start_volume_observer`]: **the callback fires on the
 /// observer's worker thread** (hence `Send`), not the UI thread. It
-/// must not touch gpui entities — the host marshals to the main thread
+/// must not touch gpui entities: the host marshals to the main thread
 /// through a channel.
 #[cfg(windows)]
 pub fn start_power_observer(
@@ -2744,7 +2744,7 @@ pub fn start_power_observer(
         WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSEXW,
     };
 
-    // Raw values (winuser.h) — windows-0.58 doesn't expose all as
+    // Raw values (winuser.h): windows-0.58 doesn't expose all as
     // typed constants, and the volume observer next door reads raw too.
     const WM_POWERBROADCAST: u32 = 0x0218;
     const PBT_APMSUSPEND: usize = 0x0004;
@@ -2832,7 +2832,7 @@ pub fn start_power_observer(
 ///
 /// Implemented with `SetThreadExecutionState(ES_SYSTEM_REQUIRED |
 /// ES_CONTINUOUS)`, cleared with a plain `ES_CONTINUOUS` on drop. That
-/// flag is **per-thread and sticky** — it stays in effect (no activity
+/// flag is **per-thread and sticky**: it stays in effect (no activity
 /// required) until reset on the *same* thread. The host holds the guard
 /// inside one foreground task for the whole transfer, so set and clear
 /// land on the same thread, which is the constraint this API needs.
@@ -2884,7 +2884,7 @@ pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
     None
 }
 
-// Video — the macOS backend drives a windowless AVPlayer and hands the viewer
+// Video: the macOS backend drives a windowless AVPlayer and hands the viewer
 // BGRA frames (docs/features/VIEWER.md). On Windows these delegate to the Media
 // Foundation `IMFMediaEngine` frame-server in `video_mf` (full A/V + sync); any
 // failure returns handle 0 / None so the viewer falls back to the poster. The
@@ -2971,7 +2971,7 @@ pub fn video_overlay_step(id: u64, frames: i64) {
 #[cfg(not(windows))]
 pub fn video_overlay_step(_id: u64, _frames: i64) {}
 
-/// Keep a window above every other app's, or stop doing so — the twin of
+/// Keep a window above every other app's, or stop doing so: the twin of
 /// macOS's `NSWindow.level = .floating`. Powers the viewer's **Stay on Top**.
 ///
 /// The pointer is whatever the platform's raw window handle carries: an
@@ -3037,10 +3037,10 @@ pub fn set_window_opacity(hwnd_raw: *mut std::ffi::c_void, opacity: f32) {
 #[cfg(not(windows))]
 pub fn set_window_opacity(_hwnd_raw: *mut std::ffi::c_void, _opacity: f32) {}
 
-// Window docking primitives — still macOS-only (docs/features/DOCK.md). These
+// Window docking primitives, still macOS-only (docs/features/DOCK.md). These
 // stay no-op stubs deliberately: `dock.rs` computes frames in macOS *global
 // screen space* (origin bottom-left, y-up), so a Windows port is not "fill in
-// SetWindowPos" — it needs that coordinate space mapped onto Win32's top-left,
+// SetWindowPos": it needs that coordinate space mapped onto Win32's top-left,
 // y-down monitor rects, and a docked drawer cannot be verified headlessly.
 // Implementing them blind is exactly how the `SetMuted` breakage happened
 // (windows-port.md §2.2). `Shell::set_dock` early-returns on Windows because
@@ -3144,11 +3144,11 @@ pub use elevation::{
 /// `C:\Windows\Fonts` is the canonical refusal: it is a namespace
 /// junction, so `SHCreateItemFromParsingName` returns `E_INVALIDARG`
 /// for ordinary file paths under it (the same `.ttf` copied elsewhere
-/// parses fine) — which is what left the Fonts folder with blank
+/// parses fine), which is what left the Fonts folder with blank
 /// icons and no thumbnails (WIN-011). Registering an
 /// `IFileSystemBindData` under `STR_FILE_SYS_BIND_DATA` tells the
 /// parser to treat the string as a plain file-system path without
-/// consulting the folder's namespace extension — the same escape
+/// consulting the folder's namespace extension: the same escape
 /// hatch Explorer itself uses.
 ///
 /// Mirrored for icons in `ferail-fs-native/src/icons.rs` (the crates
@@ -3175,7 +3175,7 @@ unsafe fn shell_item_image_factory(
         }
         Err(e) => {
             if debug {
-                eprintln!("SHCreateItemFromParsingName failed: {e:?} — retrying simple parse");
+                eprintln!("SHCreateItemFromParsingName failed: {e:?}, retrying simple parse");
             }
             let bind_data: IFileSystemBindData = SimpleFsBindData.into();
             let bctx = CreateBindCtx(0).ok()?;

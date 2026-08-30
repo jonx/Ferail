@@ -4,16 +4,16 @@
 //!
 //! Two-stage pipeline:
 //!
-//! 1. **[`sniff`] — header-only fast path.** Reads the first local
+//! 1. **[`sniff`]: header-only fast path.** Reads the first local
 //!    file header (offset 0). If the very first entry is exactly
 //!    `[Content_Types].xml` → Office (OOXML); if it starts with
 //!    `META-INF/` → JAR / APK; otherwise → generic ZIP. **No
-//!    substring walking** — that produces false positives when a
+//!    substring walking**: that produces false positives when a
 //!    ZIP entry uses data-descriptor mode (compressed_size = 0 in the
 //!    local header) and the embedded payload is itself a ZIP. See
 //!    the `DYNA_Datensatz.zip` regression below.
 //!
-//! 2. **[`refine_with_central_directory`] — authoritative pass.**
+//! 2. **[`refine_with_central_directory`]: authoritative pass.**
 //!    The caller reads the last ~4 KB of the file and hands both
 //!    buffers here. We find the End-of-Central-Directory record,
 //!    walk the CD entries, and:
@@ -30,7 +30,7 @@
 
 use super::types::{MagicInfo, MagicType};
 
-/// Header-only classification. Pessimistic — the only positive
+/// Header-only classification. Pessimistic: the only positive
 /// classification it makes from the header is the strong
 /// `[Content_Types].xml` first-entry signal. Everything else returns
 /// generic [`MagicType::Zip`] / [`MagicType::ZipEncrypted`] and lets
@@ -55,7 +55,7 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
 
     // Strong signal: OOXML containers always write `[Content_Types].xml`
     // as the first entry. Any other first-entry name is treated as a
-    // plain ZIP for now — `refine_with_central_directory` upgrades it
+    // plain ZIP for now: `refine_with_central_directory` upgrades it
     // later if the CD says otherwise.
     if first_name == "[Content_Types].xml" {
         let mut info = MagicInfo::new(MagicType::DocWord); // placeholder, CD walk picks the real one
@@ -85,7 +85,7 @@ fn zip_info(is_encrypted: bool) -> MagicInfo {
 /// single-root-folder name where applicable.
 ///
 /// `header_buf` is the first 4 KB of the file; `tail_buf` is the last
-/// 4 KB (or the whole file if smaller). Either may be empty — the
+/// 4 KB (or the whole file if smaller). Either may be empty: the
 /// function is best-effort; the caller's `info` is left unchanged if
 /// the CD can't be parsed. `read_at` performs one bounded read at an
 /// absolute offset when the CD sits outside both windows (see
@@ -105,7 +105,7 @@ pub(super) fn refine_with_central_directory(
         info.zip_root = Some(root);
     }
 
-    // Reclassify from the real entry list. The CD is authoritative —
+    // Reclassify from the real entry list. The CD is authoritative:
     // it doesn't suffer from the data-descriptor walking bug because
     // CD records have fixed sizes and explicit `name_len`.
     let names = &cd.entry_names;
@@ -193,14 +193,14 @@ const MAX_CD_READ_BYTES: u64 = 128 * 1024;
 /// absolute file offset) into the tail buffer so we walk **only the
 /// outer** CD entries. Without this, the walker would also pick up
 /// central-directory records from *nested* ZIP payloads (e.g. an
-/// outer ZIP containing `.xlsx` files — the inner xlsx's CD sits in
+/// outer ZIP containing `.xlsx` files: the inner xlsx's CD sits in
 /// the outer ZIP's compressed-data region and shares the same
 /// `PK\x01\x02` signature). That was the original bfe-explorer bug.
 ///
-/// When the CD lies outside both windows — the common case for real
+/// When the CD lies outside both windows: the common case for real
 /// OOXML files, whose CDs run well past 4 KB (a routine `.pptx` has a
 /// 10–25 KB CD, so it starts *before* the tail window and every entry
-/// name was invisible, leaving the file classified as a plain ZIP) —
+/// name was invisible, leaving the file classified as a plain ZIP):
 /// `read_at(absolute_offset, len)` performs one bounded targeted read
 /// of the CD itself. It may return `None` (e.g. in tests), in which
 /// case classification degrades to the EOCD count alone.
@@ -256,7 +256,7 @@ pub(super) fn parse_central_directory(
         // Tiny archive: CD lives in the header buffer.
         walk_central_directory(&header_buf[cd_offset as usize..cd_end as usize])
     } else {
-        // CD lies outside both windows — one bounded targeted read.
+        // CD lies outside both windows, one bounded targeted read.
         let want = (cd_end - cd_offset).min(MAX_CD_READ_BYTES) as usize;
         match read_at(cd_offset, want) {
             Some(cd_buf) => walk_central_directory(&cd_buf),
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn plain_zip_with_xlsx_inside_is_zip_not_excel() {
         // Outer ZIP whose only entry is `something.xlsx` should be
-        // classified as a plain ZIP — the inner xlsx's CD is *not*
+        // classified as a plain ZIP: the inner xlsx's CD is *not*
         // the outer file's CD. This mirrors the real
         // `DYNA_Datensatz.zip` regression (data-descriptor mode +
         // nested ZIP payload).
@@ -524,7 +524,7 @@ mod tests {
         assert_eq!(info.file_count, Some(123));
 
         // Without the targeted read the same file degrades to a plain
-        // ZIP with only the EOCD count — the pre-fix behaviour.
+        // ZIP with only the EOCD count: the pre-fix behaviour.
         let header = &zip[..4096];
         let tail = &zip[zip.len() - 4096..];
         let mut degraded = sniff(header).expect("zip detected");

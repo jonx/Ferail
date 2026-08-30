@@ -40,7 +40,7 @@ use crate::viewer::window::{
 
 /// Install keybindings for every command in `ferail_core::commands`
 /// whose action has a Rust handler in this crate. Run once at app
-/// startup, before the first window opens. Idempotent — calling it
+/// startup, before the first window opens. Idempotent, calling it
 /// twice rebinds the same keys.
 pub fn install(cx: &mut App) {
     // The non-catalogue ClearFilter is a UI-implementation detail
@@ -57,7 +57,7 @@ pub fn install(cx: &mut App) {
         ShowWindowsContextMenu,
         Some(shell::SHELL_CONTEXT),
     )]);
-    // Undo (Cmd+Z) — not in the catalogue today because the action
+    // Undo (Cmd+Z), not in the catalogue today because the action
     // is a UI-layer Shell helper (replays UndoOp inverse from the
     // Shell::undo_stack), not a catalogued command in ferail-core.
     cx.bind_keys([KeyBinding::new(
@@ -66,7 +66,7 @@ pub fn install(cx: &mut App) {
         Some(shell::SHELL_CONTEXT),
     )]);
 
-    // Disk Usage treemap keys — DiskUsage context only, so they never
+    // Disk Usage treemap keys: DiskUsage context only, so they never
     // shadow the file list. Enter zooms into the selected folder,
     // Backspace zooms out, Escape clears the selection then closes an
     // already-clear surface; Cmd+C / Cmd+I /
@@ -122,7 +122,7 @@ fn translate_shortcut(s: &Shortcut) -> Option<String> {
         // The catalogue's `primary` is Cmd on macOS, Ctrl on Windows/Linux.
         // Use gpui's portable `secondary` token: it resolves to the platform
         // key (Cmd) on macOS and to Control everywhere else. Plain `cmd` does
-        // NOT do this — gpui maps `cmd` to the *platform* modifier, which on
+        // NOT do this: gpui maps `cmd` to the *platform* modifier, which on
         // Windows is the Windows logo key, so `cmd-shift-p` would demand
         // Win+Shift+P instead of Ctrl+Shift+P (and Win+P is OS-reserved).
         parts.push("secondary");
@@ -291,14 +291,14 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
         // (handled below)
 
         // -- Not yet ported. Each is wired in a later stage.  -----
-        // Known-deferred catalogue entries — handlers land in later
+        // Known-deferred catalogue entries: handlers land in later
         // iters. Silent to keep startup logs clean; PORTING.md
         // tracks status authoritatively. New commands fall through
         // to the _ arm below which DOES log so genuinely-unknown
         // IDs still surface.
         // `window.new_window` is bound at App level (Cmd+N opens a new
         // shell window regardless of focus). main.rs installs the
-        // binding directly via `cx.bind_keys` — we leave it out of
+        // binding directly via `cx.bind_keys`: we leave it out of
         // SHELL_CONTEXT here so a missing-focus user can still hit it.
         "window.new_window"
         | "app.about"
@@ -395,8 +395,8 @@ pub(crate) fn install_extras(cx: &mut App) {
             Some(shell::SHELL_CONTEXT),
         ),
         // Arrow-key focus + Enter/Delete within the focused Favorites
-        // section (§11.4). Bound in FAVORITES_CONTEXT — more specific
-        // than SHELL_CONTEXT — so they only fire while the section is
+        // section (§11.4). Bound in FAVORITES_CONTEXT, more specific
+        // than SHELL_CONTEXT, so they only fire while the section is
         // focused, never stealing the file list's arrow navigation.
         KeyBinding::new(
             "up",
@@ -424,8 +424,8 @@ pub(crate) fn install_extras(cx: &mut App) {
             Some(crate::favorites_section::FAVORITES_CONTEXT),
         ),
         // Spec §2.5 multi-select keyboard:
-        //   Cmd+A — select every visible row.
-        //   Shift+Up/Down/Home/End/PgUp/PgDn — Shift-extend the lead
+        //   Cmd+A: select every visible row.
+        //   Shift+Up/Down/Home/End/PgUp/PgDn: Shift-extend the lead
         //   keeping the anchor fixed. The non-Shift variants are
         //   already bound through the command catalogue
         //   (`selection.cursor_up` etc.); these augment them.
@@ -456,7 +456,7 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("shift-pageup", PageUpExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-pagedown", PageDownExtend, Some(shell::SHELL_CONTEXT)),
         // Viewer window (docs/features/VIEWER.md). Not in the
-        // catalogue: these are window-local keys, like a dialog's —
+        // catalogue: these are window-local keys, like a dialog's:
         // the catalogue carries the commands other surfaces (menu
         // bar, palette) must enumerate, and for the viewer that's
         // only `view.open_viewer`. [mac] Cmd-chords + Cmd+Ctrl+F;
@@ -469,7 +469,7 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("right", ViewerRight, Some(VIEWER_CONTEXT)),
         KeyBinding::new("up", ViewerPrev, Some(VIEWER_CONTEXT)),
         KeyBinding::new("down", ViewerNext, Some(VIEWER_CONTEXT)),
-        // Ctrl+Left/Right always navigate entries — the horizontal twin of
+        // Ctrl+Left/Right always navigate entries: the horizontal twin of
         // Up/Down, so on a video (where plain Left/Right frame-step) you can
         // still flip to the previous/next clip without reaching for the
         // arrows' vertical pair. (On macOS these may be claimed by Mission
@@ -584,10 +584,10 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("e", ViewerToggleAdjust, Some(VIEWER_CONTEXT)),
         // Move the current file to the Trash and advance. Cmd+Backspace is
         // the canonical Finder binding. We also bind the bare delete keys so
-        // pressing Delete on its own works (safe here — the viewer has no
+        // pressing Delete on its own works (safe here: the viewer has no
         // text inputs): on macOS the ⌫ key above Return emits `backspace`,
         // while `delete` is forward-delete (⌦ / fn+⌫), so bind both to cover
-        // every keyboard — matching the favorites `DeleteFavorite` binding.
+        // every keyboard, matching the favorites `DeleteFavorite` binding.
         KeyBinding::new("secondary-backspace", ViewerDelete, Some(VIEWER_CONTEXT)),
         KeyBinding::new("backspace", ViewerDelete, Some(VIEWER_CONTEXT)),
         KeyBinding::new("delete", ViewerDelete, Some(VIEWER_CONTEXT)),
@@ -595,8 +595,8 @@ pub(crate) fn install_extras(cx: &mut App) {
         // This build's gpui has no platform key-equivalents mapper, so
         // bindings match the *character* a key produces, with no
         // US-layout remapping (which is what lets ⌘0 work in native apps
-        // on a French keyboard). On AZERTY — and any layout where the
-        // number row needs Shift — pressing ⌘0 / ⌘1 physically emits
+        // on a French keyboard). On AZERTY, and any layout where the
+        // number row needs Shift, pressing ⌘0 / ⌘1 physically emits
         // `cmd-shift-0` / `cmd-shift-1`, so the catalogue's `cmd-0` never
         // fires. Bind the shifted forms as alternates. Harmless on US
         // layouts (no one presses ⌘⇧0); the catalogue keeps the canonical

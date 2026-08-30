@@ -42,7 +42,7 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
   `wsl.exe`, UNC and symlink behavior still requires real-Windows qualification
   (WIN-017/WTEST-130–139).
 
-### 2026-08-29 — final 0.7.5 integration after the Windows return
+### 2026-08-29 - final 0.7.5 integration after the Windows return
 
 The native Windows continuation above returned cleanly to `main`. The final
 cross-platform integration adds four small shared fixes: Enter is contained by
@@ -76,7 +76,7 @@ It is not evidence that every adversarial or measured subcase in
 every third-party Shell extension, and multi-DPI passes remain separately
 tracked until their evidence is recorded.
 
-### 2026-08-29 — native Windows continuation after the GPUI update
+### 2026-08-29 - native Windows continuation after the GPUI update
 
 The Windows checkout was updated to `8daafa3`, then the following reviewable
 qualification/fix commits were added:
@@ -140,7 +140,7 @@ duplicate/folder-size soak, drag/drop modifier matrix or installer/update
 matrix from these checks. Those are still the shortest useful interactive pass
 before the next tag.
 
-### 2026-08-28 — automatic watchdog minidump needs Windows qualification
+### 2026-08-28 - automatic watchdog minidump needs Windows qualification
 
 The freeze watchdog now starts the same `ferail-gpui.exe` in an early hidden
 `--windows-hang-dump-broker <pid> <destination>` mode. The child initializes no
@@ -172,7 +172,7 @@ On the Windows dev box, run this exact acceptance before release:
 Failure must leave the text report intact with an explicit minidump failure
 line; it must never stall the watchdog indefinitely or prompt for elevation.
 
-### 2026-08-28 — installer/update qualification
+### 2026-08-28 - installer/update qualification
 
 The release workflow now builds and publishes both the portable ZIP and Inno
 Setup package. The Inno payload now explicitly installs the sibling
@@ -196,9 +196,9 @@ end-to-end evidence must be collected on Windows before calling this complete:
    hash output covers all three, the installed directory contains a helper
    whose version matches `Ferail.exe`, and uninstall preserves unrelated user
    data;
-6. record SmartScreen behavior honestly—the package remains unsigned.
+6. record SmartScreen behavior honestly, the package remains unsigned.
 
-### 2026-08-27 — Fast NTFS Disk Usage implementation and automated qualification
+### 2026-08-27 - Fast NTFS Disk Usage implementation and automated qualification
 
 Fast NTFS is now implemented as an ephemeral, explicit Disk Usage engine. The
 reviewable series is:
@@ -258,7 +258,7 @@ following acceptance work delegated to an administrator-equipped tester:
 Release evidence:
 
 - `v0.7.0` is the annotated tag on `3eda9ce` and was published on 2026-08-27
-  as **Ferail 0.7.0 — Fast NTFS Disk Usage for Windows**;
+  as **Ferail 0.7.0: Fast NTFS Disk Usage for Windows**;
 - `Ferail-0.7.0-win-x64.zip`: 43,948,741 bytes,
   SHA-256 `d7c525d6cd661c3666d8edf62aa9bada49208513af7d29efce04f29b82c1f094`;
 - `Ferail-0.7.0-x64-symbols.zip`: 84,182,912 bytes,
@@ -271,7 +271,7 @@ Release evidence:
   also reported 12 OK / 0 WARN / 0 FAIL, while normal packaged GUI startup
   did not start the helper or request elevation.
 
-### 2026-08-27 — Fast NTFS live diagnosis and corrective pass
+### 2026-08-27 - Fast NTFS live diagnosis and corrective pass
 
 The first real elevated run exposed three separate defects in the 0.7.0
 preview rather than a disk bottleneck:
@@ -321,7 +321,7 @@ target\release\ferail-ntfs-helper.exe --diagnose "C:\path"
 target\release\ferail-ntfs-client-diag.exe "C:\path" 2
 ```
 
-## 2026-08-28 — GPUI/Zed dependency migration handover
+## 2026-08-28 - GPUI/Zed dependency migration handover
 
 Desktop migration now targets gpui-component `e8f54eb` and Zed/GPUI
 `f66ed399` (Rust 1.97.1). The full macOS workspace check and test suite pass,
@@ -400,7 +400,7 @@ event, so UAC and credential-entry time are deliberately excluded.
 0.7.1 release evidence:
 
 - `v0.7.1` is the annotated tag on `1e8e64e` and was published on 2026-08-27
-  as **Ferail 0.7.1 — Fast NTFS Reliability for Windows**;
+  as **Ferail 0.7.1: Fast NTFS Reliability for Windows**;
 - `Ferail-0.7.1-win-x64.zip`: 44,011,078 bytes,
   SHA-256 `bbc41dd46d4eb6285fdef255f4a86c536f04519af2edecd2ef44a05fa28cdf6d`;
 - `Ferail-0.7.1-x64-symbols.zip`: 84,366,751 bytes,
@@ -408,7 +408,7 @@ event, so UAC and credential-entry time are deliberately excluded.
 - GitHub workflow run `33102929540` built the tagged commit, passed the
   packaging dependency/PDB gates and uploaded both public assets successfully.
 
-### 2026-08-27 — Post-0.7.1 Fast NTFS and macOS enumeration audit
+### 2026-08-27 - Post-0.7.1 Fast NTFS and macOS enumeration audit
 
 The implementation was reread from the privilege boundary through the neutral
 parser and back through the Portable fallback. The current architecture is
@@ -444,10 +444,10 @@ tests/Clippy pass. Raw APFS catalog parsing is intentionally rejected: mounted
 FileVault volumes expose decrypted names and metadata through the filesystem,
 not through a stable MFT-like raw catalog contract.
 
-### 2026-08-28 — 0.7.4 all-platform release evidence
+### 2026-08-28 - 0.7.4 all-platform release evidence
 
 `v0.7.4` is the annotated tag on `65cc442` and is published as **Ferail
-0.7.4 — Private screenshots, flexible navigation and Windows setup**. The
+0.7.4: Private screenshots, flexible navigation and Windows setup**. The
 macOS app and final DMG were accepted independently by Apple's notary service,
 stapled, mounted from the finished image and accepted by Gatekeeper.
 
@@ -477,10 +477,10 @@ directory and its Inno source explicitly installs the sibling helper.
 - `ferail_0.7.4-1_arm64.deb`: 15,613,160 bytes, SHA-256
   `4f53d4d311dbc2411a28b1ba2804f2fe9a747a8b0de579fa2405adf7a7302274`.
 
-### 2026-08-28 — 0.7.3 all-platform release evidence
+### 2026-08-28 - 0.7.3 all-platform release evidence
 
 `v0.7.3` is the annotated tag on `c92a532` and is published as **Ferail
-0.7.3 — Private screenshots and responsive disk maps**. The macOS app and DMG
+0.7.3: Private screenshots and responsive disk maps**. The macOS app and DMG
 were accepted independently by Apple's notary service, stapled, mounted again
 from the final image and accepted by Gatekeeper. The packaged `doctor`
 reported version 0.7.3, release mode, compiled-in mpv support and 0 failures.
@@ -507,10 +507,10 @@ binaries.
 - `ferail_0.7.3-1_arm64.deb`: 15,618,304 bytes, SHA-256
   `ea636394189af4c579107767887c9b763d53cea72e1e9d86c21776f33ebddcd8`.
 
-### 2026-08-28 — 0.7.2 all-platform release evidence
+### 2026-08-28 - 0.7.2 all-platform release evidence
 
 `v0.7.2` is the annotated tag on `6a8d50b` and is published as **Ferail
-0.7.2 — Millions of files, on every platform**. The macOS app and DMG were
+0.7.2: Millions of files, on every platform**. The macOS app and DMG were
 accepted independently by Apple's notary service, stapled, mounted again from
 the final image and accepted by Gatekeeper. The packaged `doctor` reported
 version 0.7.2, release mode, compiled-in mpv support and 0 failures.
@@ -535,7 +535,7 @@ PDBs.
 - `ferail_0.7.2-1_arm64.deb`: 15,588,900 bytes, SHA-256
   `be91d9275120c05148f30986d51d5fb9be0a25c9bf64e77701c1dd3819f3ff5b`.
 
-### 2026-08-26 — NFO/SFV sidecar qualification to resume on Windows
+### 2026-08-26 - NFO/SFV sidecar qualification to resume on Windows
 
 The shared implementation is included in the sidecar feature commit and was
 first qualified on macOS. It adds
@@ -597,7 +597,7 @@ git rev-parse HEAD
 git log -8 --oneline
 ```
 
-### 2026-08-26 — Windows continuation from the Mac-first series
+### 2026-08-26 - Windows continuation from the Mac-first series
 
 ```text
 Date / machine: 2026-08-26, real Windows development machine
@@ -665,7 +665,7 @@ Formatting note:
     mechanical rewrite into the scheduler behavior change without review.
 ```
 
-### 2026-08-25 — macOS preparation for WIN-013 Shell namespace
+### 2026-08-25 - macOS preparation for WIN-013 Shell namespace
 
 ```text
 Date / machine: 2026-08-25, macOS development machine
@@ -753,7 +753,7 @@ Working-tree files intentionally excluded from this slice:
   They contain concurrent formatting/work and must not be staged with WIN-013.
 ```
 
-### 2026-08-26 — WIN-013 namespace enumeration on Windows
+### 2026-08-26 - WIN-013 namespace enumeration on Windows
 
 ```text
 Implemented:
@@ -796,7 +796,7 @@ Qualification boundary:
     device/disconnect evidence are complete.
 ```
 
-### 2026-08-25 — macOS preparation for WIN-010 shortcuts
+### 2026-08-25 - macOS preparation for WIN-010 shortcuts
 
 ```text
 Shared contract prepared:
@@ -835,7 +835,7 @@ Windows implementation still required:
 Windows cases claimed from macOS: none.
 ```
 
-### 2026-08-26 — WIN-008/009/010 path interoperability
+### 2026-08-26 - WIN-008/009/010 path interoperability
 
 ```text
 Implemented on Windows:
@@ -860,7 +860,7 @@ Still required for WIN-010:
   - the manual WTEST-060–065 and WTEST-080–087 matrices.
 ```
 
-### 2026-08-25 — macOS preparation for WIN-012/013 provider actions
+### 2026-08-25 - macOS preparation for WIN-012/013 provider actions
 
 ```text
 Shared contract prepared:
@@ -904,7 +904,7 @@ Windows implementation still required:
 Windows cases claimed from macOS: none.
 ```
 
-### 2026-08-26 — WIN-012 path-backed clipboard and drag formats
+### 2026-08-26 - WIN-012 path-backed clipboard and drag formats
 
 ```text
 Implemented:
@@ -924,7 +924,7 @@ Still required:
   - verify hydrated/placeholder OneDrive behavior with real accounts.
 ```
 
-### 2026-08-25 — macOS preparation for WIN-014 property data
+### 2026-08-25 - macOS preparation for WIN-014 property data
 
 ```text
 Shared contract prepared:
@@ -968,7 +968,7 @@ Windows implementation still required:
 Windows cases claimed from macOS: none.
 ```
 
-### 2026-08-26 — WIN-014 approved Windows property data
+### 2026-08-26 - WIN-014 approved Windows property data
 
 ```text
 Implemented:
@@ -992,7 +992,7 @@ Still required:
   - manual WTEST-110–115 canary/rewrite/privacy verification.
 ```
 
-### 2026-08-25 — macOS preparation for WIN-016 command consistency
+### 2026-08-25 - macOS preparation for WIN-016 command consistency
 
 ```text
 Shared/startup guard prepared:
@@ -1027,7 +1027,7 @@ Windows implementation/qualification still required:
 Windows cases claimed from macOS: none.
 ```
 
-### 2026-08-25 — macOS preparation for WIN-011 asset scheduling
+### 2026-08-25 - macOS preparation for WIN-011 asset scheduling
 
 ```text
 Shared scheduling primitive prepared:
@@ -1068,7 +1068,7 @@ Windows/shared integration still required:
 Windows cases claimed from macOS: none.
 ```
 
-### 2026-08-25 — native Properties lifetime correction
+### 2026-08-25 - native Properties lifetime correction
 
 ```text
 Reported symptom:
@@ -1186,7 +1186,7 @@ implemented elsewhere but still awaiting the real-machine matrix.
 
 ## Windows-only implementation queue
 
-### A. Crash containment first — WIN-001 through WIN-004
+### A. Crash containment first - WIN-001 through WIN-004
 
 1. Reproduce the PDF preview access violation and multi-selection crashes with
    the diagnostic build and matching PDBs.
@@ -1201,7 +1201,7 @@ implemented elsewhere but still awaiting the real-machine matrix.
 Do not paper over access violations with Rust panic handling: an in-process
 COM provider can corrupt native state before Rust observes anything.
 
-### B. Packaging — WIN-015
+### B. Packaging - WIN-015
 
 1. Inspect the exact Release dependency set (`dumpbin /dependents` or
    equivalent).
@@ -1210,7 +1210,7 @@ COM provider can corrupt native state before Rust observes anything.
    runtime or developer tools are installed.
 4. Publish PDBs/symbol identity in a form that makes tester dumps actionable.
 
-### C. Native compatibility on explicit demand — WIN-007
+### C. Native compatibility on explicit demand - WIN-007
 
 Keep ordinary right-click entirely inside Ferail. Implement the native Shell
 menu only through **More options from Windows…**, Shift+right-click, and
@@ -1242,7 +1242,7 @@ client; invoke one mutating verb and confirm Ferail remains responsive. Mixed
 parents and namespace-only items must fail clearly rather than flattening or
 silently changing the target set.
 
-### D. Shell namespace and Windows metadata — WIN-010 onward
+### D. Shell namespace and Windows metadata - WIN-010 onward
 
 Add platform capability interfaces behind the shared application, not a
 Windows fork. Ordinary filesystem folders continue through `NativeFs` with no
@@ -1252,7 +1252,7 @@ path exists.
 
 ## Current remaining work
 
-### 2026-08-26 — Windows continuation checkpoint after source completion
+### 2026-08-26 - Windows continuation checkpoint after source completion
 
 ```text
 Commits in this uninterrupted Windows pass:
@@ -1380,7 +1380,7 @@ Working-tree files intentionally left unstaged:
 
 ## Session log
 
-### 2026-08-24 — first real-Windows session (diagnostic gate + WIN-015)
+### 2026-08-24 - first real-Windows session (diagnostic gate + WIN-015)
 
 ```text
 Date / machine: 2026-08-24, Windows 11 Enterprise dev machine, C:\Source\Ferail
@@ -1400,10 +1400,10 @@ Cases passed:
     --screenshot and exits 0; packaged CLI launches.
 Cases failed + evidence paths: none run beyond the above. The interactive
   acceptance slice (startup profiles, Ctrl+Shift+L, CPU/redraw comparison,
-  open/reveal matrix, WCORPUS runs) has NOT been run — needs a human at the
+  open/reveal matrix, WCORPUS runs) has NOT been run: needs a human at the
   GUI. Logs: target/test-reports/windows/580d193/2026-08-24-session1/.
 New dumps/PDB identity: no dumps. Packaged identities in
-  target/package/Ferail-symbols/manifest.json — GUI ferail_gpui.pdb
+  target/package/Ferail-symbols/manifest.json: GUI ferail_gpui.pdb
   {41A17A9E-F1AB-48B1-8C64-D6F6F397A23A} age 1, CLI ferail.pdb
   {7702FEF6-A1DB-4224-96E0-CAAC216E6E28} age 1, commit 580d193. Note these
   ZIPs predate the three commits above; rebuild before distributing.
@@ -1416,7 +1416,7 @@ Next exact command or code location:
   3. Then WIN-001..004 crash containment (docs/features/
      WINDOWS_COMPATIBILITY_PLAN.md § A) with the diagnostic build.
   4. Consider CARGO_PROFILE_RELEASE_DEBUG=limited in package-win.ps1 before
-     the dump work — current PDBs carry publics only, no line tables.
+     the dump work: current PDBs carry publics only, no line tables.
 Working-tree files intentionally left unstaged: none.
 ```
 
@@ -1424,7 +1424,7 @@ Historical note: before this session, macOS preparation through `5f1a8fd`
 passed all 281 `ferail-gpui` library tests and strict all-target Clippy; that
 was preparation, not Windows acceptance.
 
-### 2026-08-24 (continued) — user-driven fixes, WIN-002 broker, WIN-001 dumps
+### 2026-08-24 (continued) - user-driven fixes, WIN-002 broker, WIN-001 dumps
 
 ```text
 Date / machine: 2026-08-24, same Windows 11 dev machine
@@ -1440,7 +1440,7 @@ Cases passed:
   - WIN-001 leaked-handle assertion: reproduced with a scripted right-click +
     Esc + close (exit 101, PopupMenu 52v3); after the cycle fixes the same
     script plus click-into-filter + typing exits 0. The user's interactive
-    session had also leaked InputState 8v1 twice — same bug class in the
+    session had also leaked InputState 8v1 twice, same bug class in the
     filter/breadcrumb/shortcuts-help subscriptions, fixed; needs the user's
     own flow re-run to confirm.
   - WIN-001 minidumps: FERAIL_PREVIEW_BROKER_TEST=av → real 0xC0000005 →
@@ -1452,7 +1452,7 @@ Cases passed:
     forced CON.txt/NUL.png/trailing-dot names); JPEG/PNG/WAV/PDF/ZIP fixtures
     validated to decode.
 Cases failed + evidence paths: none failed. Not run: interactive acceptance
-  slice; WTEST-004 (Windows Sandbox is not installed on this machine —
+  slice; WTEST-004 (Windows Sandbox is not installed on this machine,
   enabling it needs elevation + reboot); the real pdfprevhndlr.dll repro.
 New dumps/PDB identity: test dump ferail-preview-broker-1448.dmp under
   %APPDATA%\Ferail\reports (debug build, no packaged PDB pairing).
@@ -1462,7 +1462,7 @@ New dumps/PDB identity: test dump ferail-preview-broker-1448.dmp under
 Measurements before/after: none.
 Known regressions: none observed. Note: Edge's PDF preview handler captures
   as an all-white frame through the broker (its async paint outlasts the
-  3.5 s probe budget) — same as the old in-process path; capture quality is
+  3.5 s probe budget), same as the old in-process path; capture quality is
   WTEST-045 territory, containment is unaffected.
 Incident: during the user's manual testing, Cargo.toml was moved into
   target/ by a Ferail drag/move; restored from the index (content identical).
@@ -1479,7 +1479,7 @@ Next exact command or code location:
 Working-tree files intentionally left unstaged: none.
 ```
 
-### 2026-08-24 (continued) — bounded assets, deterministic teardown, packaging guard
+### 2026-08-24 (continued) - bounded assets, deterministic teardown, packaging guard
 
 ```text
 Date / machine: 2026-08-24, same Windows 11 dev machine
@@ -1542,7 +1542,7 @@ Working-tree files intentionally left unstaged: all changes listed by git
   status; the tree is shared with another active session.
 ```
 
-### 2026-08-25 — v0.6.6–0.6.8 consolidation and user acceptance
+### 2026-08-25 - v0.6.6–0.6.8 consolidation and user acceptance
 
 ```text
 Date / machine: 2026-08-25, real Windows machine; user-reported interactive
@@ -1588,7 +1588,7 @@ Next exact work:
 Working-tree files intentionally left unstaged: none at 3cc8b7e.
 ```
 
-### 2026-08-25 — macOS preparation for WIN-017 WSL locations
+### 2026-08-25 - macOS preparation for WIN-017 WSL locations
 
 ```text
 Date / machine: 2026-08-25, macOS development machine
@@ -1668,7 +1668,7 @@ Working-tree files intentionally left unstaged: all WIN-017 implementation,
   concurrent user work when isolating the commit.
 ```
 
-### 2026-08-26 — WIN-017 implicit-start and cancellation audit
+### 2026-08-26 - WIN-017 implicit-start and cancellation audit
 
 ```text
 Implemented on the real Windows development machine:
@@ -1694,7 +1694,7 @@ Qualification boundary:
     source audit into a claimed end-to-end pass.
 ```
 
-### 2026-08-26 — fast recursive enumeration / Disk Usage handover
+### 2026-08-26 - fast recursive enumeration / Disk Usage handover
 
 ```text
 Date / machine: 2026-08-26, macOS development machine
@@ -1784,7 +1784,7 @@ Real-Windows acceptance gates (none claimed from macOS):
     MFT names, pipe nonce and raw records: none may persist.
 ```
 
-### 2026-08-26 — Open result location in a new tab
+### 2026-08-26 - Open result location in a new tab
 
 ```text
 Date / machine: 2026-08-26, macOS development machine
@@ -1824,7 +1824,7 @@ Required real-Windows checks (not claimed from macOS):
      Ctrl/right-click native-shell path.
 ```
 
-### 2026-08-26 — editable filesystem dates in Get Info
+### 2026-08-26 - editable filesystem dates in Get Info
 
 ```text
 Date / machine: 2026-08-26, Windows development machine
@@ -1871,7 +1871,7 @@ Deferred by scope: embedded GPS removal, audio-tag writes, and writable
 document properties are recorded in TODO.md; none are implied by this change.
 ```
 
-### 2026-08-26 — WSL activation crash and namespace scope correction
+### 2026-08-26 - WSL activation crash and namespace scope correction
 
 ```text
 Date / machine: 2026-08-26, Windows development machine
@@ -1916,7 +1916,7 @@ Required manual retest:
      produce an error rather than silent success.
 ```
 
-### 2026-08-26 — opt-in WSL sidebar and GPUI exit cleanup
+### 2026-08-26 - opt-in WSL sidebar and GPUI exit cleanup
 
 ```text
 Date / machine: 2026-08-26, Windows development machine
@@ -1954,7 +1954,7 @@ Manual acceptance:
      focused-filter close from the window X and the app Quit command.
 ```
 
-### 2026-08-26 — v0.6.9 Windows release
+### 2026-08-26 - v0.6.9 Windows release
 
 ```text
 Release decision: owner accepted the current real-Windows behavior after the
@@ -2001,7 +2001,7 @@ hardware/adversarial acceptance cases listed above. Retain those as post-
 release qualification rather than rewriting them as passed.
 ```
 
-### 2026-08-26 — post-0.6.9 scale and broker hardening
+### 2026-08-26 - post-0.6.9 scale and broker hardening
 
 ```text
 Date / implementation host: 2026-08-26, macOS
@@ -2104,7 +2104,7 @@ section supersedes this pre-implementation audit. Keep Fast DU out of
 Flat/Search until the separate read-only adapter and million-entry memory
 gates are designed and qualified; do not share the elevated helper lifetime.
 
-## 2026-08-29 — inline rename, editable paths and list marquee
+## 2026-08-29 - inline rename, editable paths and list marquee
 
 Implemented in shared UI code on macOS (not yet qualified interactively on
 Windows):
@@ -2153,7 +2153,7 @@ Required real-Windows checks:
    the swept visible range, with no model-sized allocation or pause on release.
 ```
 
-## 2026-08-29 — bounded background-stream qualification
+## 2026-08-29 - bounded background-stream qualification
 
 The shared scheduler audit after the inline-edit fixes found that Flat and the
 Windows namespace already had finite worker/UI backpressure, but ordinary
@@ -2211,7 +2211,7 @@ artifacts are built by GitHub Actions from the reviewed tag; macOS is built,
 signed, notarised and Gatekeeper-checked on the Mac. Do not publish a Windows
 artifact built ad hoc from the qualification checkout.
 
-## 2026-08-29 — 0.7.5 publication evidence
+## 2026-08-29 - 0.7.5 publication evidence
 
 Release `v0.7.5` is public from application commit `e86ed42`. The initial
 Windows tag job compiled successfully but the strict PE-import gate stopped

@@ -12,19 +12,19 @@ Shipped.
 
 Implemented:
 
-- `crates/ferail-gpui/src/system_stats.rs` — sampler, snapshot type,
+- `crates/ferail-gpui/src/system_stats.rs`: sampler, snapshot type,
   formatting.
-- `ProcessState::system_stats` — the cached snapshot render reads.
+- `ProcessState::system_stats`: the cached snapshot render reads.
 - Muted segment in `status_bar.rs`, between the free-space label and the
   hidden-content summary. Each figure sits in a fixed-min-width,
   right-aligned, rem-based box so live updates never change the segment's
-  layout — the separators stay put instead of jittering on every tick.
+  layout: the separators stay put instead of jittering on every tick.
 - `--screenshot … --simulate-stats` renders the segment with fixed reference
   values for deterministic captures.
 
 ## What it measures
 
-Everything is **app-centric** — what Ferail itself costs, not the machine:
+Everything is **app-centric**: what Ferail itself costs, not the machine:
 
 | Figure | Source | Notes |
 |---|---|---|
@@ -35,7 +35,7 @@ Everything is **app-centric** — what Ferail itself costs, not the machine:
 
 A machine-wide variant (system CPU/GPU/memory) was considered and rejected
 for v1: system GPU utilization has no portable API (IOKit / D3DKMT / sysfs
-per platform), and the app-centric framing answers a sharper question —
+per platform), and the app-centric framing answers a sharper question:
 "what is this file manager costing me?"
 
 ## Why `rps`, not "fps"
@@ -46,20 +46,20 @@ inside a mostly-idle window as low smoothness ("12 fps" for a perfectly
 smooth flick). This shipped first and caused exactly that confusion. A
 burst-windowed fps was tried next, but that bends the *measurement* to fit
 the *label*. The resolution is the reverse: keep the honest, simple
-measurement — a plain redraw count over the window — and **name it what it
+measurement, a plain redraw count over the window, and **name it what it
 is**: `rps`, redraws per second.
 
 Read that way every value is simply true: idle reads `0 rps`; a brief
 scroll reads a middling number ("the window redrew 12×/s on average");
 sustained scrolling approaches the display rate; and a nonzero value while
-the app should be idle is the repaint-leak tripwire — the number is the
+the app should be idle is the repaint-leak tripwire: the number is the
 leak's actual loop rate. The display floors (rather than rounds) so the
 sampler's own 0.5 Hz notify ticks (~0.5 rps) read 0 instead of flickering
 to 1.
 
 Frame data comes from `gpui::profiler` (`set_frame_trace_enabled` +
 `FrameTimingCollector`), which records every `Window::draw` into a global
-ring. Each sample tick drains the ring and then flips tracing off/on — off
+ring. Each sample tick drains the ring and then flips tracing off/on: off
 clears and shrinks the ring, so it holds at most one tick's worth of frames
 instead of creeping toward its 16 MiB cap over a long session. This measures
 CPU-side draw cost/count only; gpui exposes no GPU-side execution timing.
@@ -81,7 +81,7 @@ shape (see [Architecture § Prime Directive](../ARCHITECTURE.md#prime-directive)
   not `boot::run_gui`), and `--simulate-stats` pins fixed values instead.
 
 The refresh asks for exactly `ProcessesToUpdate::Some(&[our pid])` with
-CPU + memory only — never `refresh_all()`, which would enumerate every
+CPU + memory only, never `refresh_all()`, which would enumerate every
 process on the box.
 
 ## Known gaps / follow-ups
@@ -90,7 +90,7 @@ process on the box.
   nothing else changed; the draw is cheap but it is why an "idle" Ferail
   still draws ~1 frame every 2 s (~0.5 rps, which the floor keeps reading
   as 0).
-- No settings toggle yet — the segment is always on. If status-bar space
+- No settings toggle yet: the segment is always on. If status-bar space
   gets tight on narrow windows, a Feature Settings switch is the natural
   next step.
 - Machine-wide GPU % (IOKit `IOAccelerator` on macOS first) remains a

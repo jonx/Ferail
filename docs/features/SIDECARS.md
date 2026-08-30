@@ -97,7 +97,7 @@ opens files, reads the clipboard or emits terminal/device queries.
 is an optional 128-byte record appended to the end of ANSI/ASCII art files. It
 can declare metadata such as title, author/group, date, canvas dimensions and
 the intended font/code page, which lets a viewer render old artwork without
-guessing. It is data only—not executable content—and Ferail's planned support
+guessing. It is data only (not executable content) and Ferail's planned support
 will remain local and read-only. Files without SAUCE continue through the
 content/encoding heuristics already implemented.
 
@@ -174,7 +174,7 @@ with a precise diagnostic; they are never partially verified in silence.
    English extraction, French/German packs, CHANGELOG and affected feature
    notes are updated in each user-visible phase.
 
-## Phase 0 — pure recognition
+## Phase 0 - pure recognition
 
 Add sidecar recognition to the native magic text path before generic XML/plain
 text outcomes. Candidate structured types are:
@@ -205,7 +205,7 @@ Also teach extension compatibility that `nfo`, `diz`, `sfv`, `md5`, `sha1`,
 `sha224`, `sha256`, `sha384`, `sha512` and checksum-list names are textual containers, so honest files do not
 raise a disguise alert. Content classification remains decisive.
 
-## Phase 1 — shared decoding and faithful preview
+## Phase 1 - shared decoding and faithful preview
 
 Create one byte-to-text decision path shared by magic detection and preview.
 Its order is:
@@ -227,7 +227,7 @@ cursor placement, accented prose, and a synthetic coloured Ferail release NFO.
 Scene art uses a platform terminal font selected for connected box/block glyphs
 (Monaco on macOS, Consolas on Windows, DejaVu Sans Mono on Linux).
 
-## Phase 2 — manifest parser and verification engine
+## Phase 2 - manifest parser and verification engine
 
 Place the pure parser/verifier in `ferail-fs-native`; the GUI only schedules it
 and renders reports. Reuse/refactor the bounded byte loop behind the existing
@@ -280,7 +280,7 @@ Finding extras requires a separate directory enumeration and can cost more than
 checking the manifest. Make it opt-in (or a clearly separate second pass), and
 state its recursion/symlink/package policy.
 
-## Phase 3 — Verify result surface
+## Phase 3 - Verify result surface
 
 Use the existing tab-local tool-result architecture. The header shows manifest,
 root, algorithm/security label, aggregate outcomes and coalesced progress. The
@@ -304,7 +304,7 @@ Entry points: File menu, command palette and context menu when the selected file
 is a recognized manifest. No default shortcut is necessary initially. The
 feature gets its own icon and `ICONS.md` entry.
 
-## Phase 4 — generation
+## Phase 4 - generation
 
 Offer **Create checksum file…** with format, selection/directory scope,
 recursive policy and output name. Initial outputs:
@@ -323,7 +323,7 @@ implicit platform difference. Report unrepresentable SFV names before starting
 or as explicit skipped rows. Round-trip fixtures (generate then verify) cover
 spaces, Unicode, backslashes, CR/LF restrictions and platform line endings.
 
-## Phase 5 — release-folder awareness
+## Phase 5 - release-folder awareness
 
 Sidecar hints can be collected opportunistically while folder-size enumeration
 already visits a directory. They are not literally free when that worker is
@@ -368,12 +368,12 @@ both are evicted in memory and are never written to the metadata database.
 
 | Phase | Depends on | Visible result | Principal gate |
 | --- | --- | --- | --- |
-| 0 — recognition | — | Shipped | False-positive corpus and magic-cache revision |
-| 1 — decoding/preview | 0 | Shipped, including safe styled colour | Screenshot + bounded inert ANSI tests |
-| 2 — verifier engine | 0 | Shipped | Path containment, races, cancellation, format fixtures |
-| 3 — result surface | 2 | Shipped with scale/action follow-ups | Million-entry scale and responsive UI |
-| 4 — generation | 2 | Shipped | Atomicity and cross-tool round trips |
-| 5 — folder awareness | 0, 1, 3 | Initial preview card shipped | No listing/render regression |
+| 0, recognition |, | Shipped | False-positive corpus and magic-cache revision |
+| 1, decoding/preview | 0 | Shipped, including safe styled colour | Screenshot + bounded inert ANSI tests |
+| 2: verifier engine | 0 | Shipped | Path containment, races, cancellation, format fixtures |
+| 3: result surface | 2 | Shipped with scale/action follow-ups | Million-entry scale and responsive UI |
+| 4: generation | 2 | Shipped | Atomicity and cross-tool round trips |
+| 5: folder awareness | 0, 1, 3 | Initial preview card shipped | No listing/render regression |
 
 The preferred sequence is 0 → 1 → 2 → 3 → 4 → 5. Phases 1 and 2 may proceed
 independently after Phase 0. Each phase is a coherent commit with focused tests;

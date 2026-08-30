@@ -6,8 +6,8 @@
 //! Two consequences:
 //!
 //! 1. **Resize jiggle.** The frame that carries a new window size still
-//!    lays out with last frame's basis values — flex distributes the
-//!    width delta evenly across panels — then the proportional rescale
+//!    lays out with last frame's basis values: flex distributes the
+//!    width delta evenly across panels, then the proportional rescale
 //!    lands one frame later and snaps them elsewhere. During a live
 //!    resize, right-anchored content visibly jumps left↔right and
 //!    wrapping text reflows every frame (most obvious in the settings
@@ -22,7 +22,7 @@
 //!   `flex_none` + `flex_basis(size)`. A window resize never moves
 //!   them (Finder-style sidebars).
 //! - **Flex** panels (no `.size(...)`) absorb the container delta via
-//!   `flex_grow`/`flex_shrink` — in the *same* frame, handled by the
+//!   `flex_grow`/`flex_shrink`: in the *same* frame, handled by the
 //!   layout engine, with no correction pass and no notify loop.
 //!
 //! Drag-resize still works: a handle drag resizes the nearest fixed
@@ -136,7 +136,7 @@ impl ResizableState {
     }
 
     /// Record a panel's laid-out bounds and constraints. Pure
-    /// bookkeeping — deliberately no `cx.notify()`: this runs on every
+    /// bookkeeping: deliberately no `cx.notify()`: this runs on every
     /// prepaint, and notifying from here is what kept upstream's
     /// windows repainting forever.
     pub(crate) fn update_panel_size(
@@ -167,7 +167,7 @@ impl ResizableState {
         // No correction pass on container resize: fixed panels hold
         // their basis and flex panels absorb the delta natively in the
         // same frame. (Upstream rescaled everything proportionally
-        // here, one frame late — the source of the resize jiggle.)
+        // here, one frame late: the source of the resize jiggle.)
         self.bounds = bounds;
     }
 
@@ -221,7 +221,7 @@ impl ResizableState {
             return;
         }
         // Dragging the trailing edge of a flex panel: the flex panel
-        // has no basis to set — translate into resizing the nearest
+        // has no basis to set: translate into resizing the nearest
         // fixed panel to the right (e.g. the handle between the center
         // pane and the preview moves the preview's left edge).
         let Some(right_ix) = (ix + 1..self.panels.len()).find(|&i| self.panels[i].fixed) else {

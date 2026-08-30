@@ -1,13 +1,13 @@
-# Ferail — Architecture and Decision Log
+# Ferail - Architecture and Decision Log
 
 Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
-- `docs/features/ferail-selection-dnd-spec.md` (selection iter 1+2 landed; drag still pending) — below.
-- `docs/features/ferail-windows-instances-tabs-spec.md` (in progress) — top of file.
+- `docs/features/ferail-selection-dnd-spec.md` (selection iter 1+2 landed; drag still pending): below.
+- `docs/features/ferail-windows-instances-tabs-spec.md` (in progress): top of file.
 
 ---
 
-# 2026-08-25 "What's Locking This?" — lock diagnostics as a menu entry
+# 2026-08-25 "What's Locking This?" - lock diagnostics as a menu entry
 
 Slow AI session. Extends the existing Restart-Manager lock diagnostics
 (previously reachable only from a failed transfer's toast) into first-class
@@ -27,16 +27,16 @@ first, `TerminateProcess` for survivors).
   The result carries `scanned`/`truncated` so the UI can say "sampled, not
   exhaustive" instead of a false "nothing is locking this". Symlinked dirs
   are not entered (cycle safety).
-- **Windows `volume_busy_processes` implemented on the same walk** — the
+- **Windows `volume_busy_processes` implemented on the same walk**: the
   failed-eject toast now names blockers on Windows too, and `activate_app`
   (EnumWindows → SetForegroundWindow) was filled in so the toast's "click to
   bring it forward" isn't a dead affordance there.
 - **Dialog rescans after every close** rather than optimistically removing
-  rows — force-close can partially fail, and the RM list is the only truth.
+  rows: force-close can partially fail, and the RM list is the only truth.
   Generation counter drops stale scan results (checksum dialog's pattern).
 - **Menu entries gate on `lock_diagnostics_available()`** (Windows-only
   today); macOS/Linux hide them instead of showing an always-empty dialog.
-- **No new icons** — Ferail context menus are text-only across the board.
+- **No new icons**: Ferail context menus are text-only across the board.
 
 ## With more time, I would
 
@@ -56,7 +56,7 @@ headless screenshots → Windows polish.
 
 ## Key decisions
 
-- **aros-port merged into windows-parity** (`ceea656`), not cherry-picked — the
+- **aros-port merged into windows-parity** (`ceea656`), not cherry-picked: the
   branch carried cross-platform work (viewer trash-and-advance, mpv
   end-detection, grid low-res thumbnails, Lucide icon fallback for stub
   platforms, typeahead focus fix) that parity work builds on, and a merge keeps
@@ -67,7 +67,7 @@ headless screenshots → Windows polish.
   `[patch]` entries point at Mac-only sibling checkouts (`../zed-aros`,
   `../gpui-component-aros`). On the Windows box the zed patch is re-pointed at
   `../zed-ferail-patch` (same rev + the D3D11 `render_to_image`), and the
-  gpui-component / crates-io (stacker, filetime) patches are commented out —
+  gpui-component / crates-io (stacker, filetime) patches are commented out:
   their deltas are inert off-AROS. Do not push Cargo.toml/Cargo.lock as-is.
   Open question for CI/other machines: publish the forks (TODO already tracks
   publishing the render_to_image fork).
@@ -76,21 +76,21 @@ headless screenshots → Windows polish.
   failed on Windows): volume serial via `CreateFileW(0 access,
   BACKUP_SEMANTICS)` + `GetFileInformationByHandle`, nearest-existing-ancestor
   walk mirroring the unix `dev()` loop. Drive-letter prefix comparison was
-  rejected — it lies under junction-mounted volumes. This flips Windows moves
+  rejected: it lies under junction-mounted volumes. This flips Windows moves
   from copy+delete to the rename fast path.
-- **`recreate_symlink` got a real Windows arm** — `symlink_file`/`symlink_dir`
+- **`recreate_symlink` got a real Windows arm**: `symlink_file`/`symlink_dir`
   classified by the resolved target (dangling → file symlink, Explorer's
   default). Works unprivileged under Developer Mode; otherwise the privilege
   error flows through the structured failure report.
 - **`video_mf.rs` end-detection bug fixed**: a decode ERROR only set an
-  `ended` flag nobody read — the viewer's only signal is the `on_ended`
+  `ended` flag nobody read: the viewer's only signal is the `on_ended`
   callback, so broken files stalled playlist auto-advance. ERROR now fires the
   callback; the dead flag was removed from `Notify` and `Player`.
 - **libmpv installed** at `C:\Source\john-knipper-personal\libmpv\libmpv-2.dll`
   (shinchiro 2026-06-07 dev build) for runtime verification of the mpv backend
   on Windows; point Settings → Plugins there.
 
-- **Windows "Chunk C" resilient file-ops shipped** — the last big Windows
+- **Windows "Chunk C" resilient file-ops shipped**: the last big Windows
   capability gap. New `ferail-shell-win32/src/elevation.rs`:
   - `run_elevated_self`: `ShellExecuteExW` verb `"runas"` (UAC), wait on the
     returned process handle, return its exit code. `Err("cancelled")` on
@@ -99,7 +99,7 @@ headless screenshots → Windows polish.
     spaces round-trip to the elevated child's `std::env::args`.
   - `processes_using`: Restart Manager (`RmStartSession` →
     `RmRegisterResources` → `RmGetList`), RAII `RmSession` that always
-    `RmEndSession`s. Returns empty on any failure — it's a diagnostic list, not
+    `RmEndSession`s. Returns empty on any failure: it's a diagnostic list, not
     control flow, so "don't know" and "none" render the same.
   - `force_close_processes`: graceful `RmShutdown(RmForceShutdown)` (delivers
     WM_CLOSE / service-stop) keyed by (pid, start-time) so a recycled pid can't
@@ -121,10 +121,10 @@ headless screenshots → Windows polish.
   deps were already compiled in the graph (via gpui), so no build-cost. Cached
   per-kind/extension one level up in gpui's `IconCache`, so MIME+theme
   resolution runs once per file type, never on the render path. Verified in
-  WSL2: dumped real theme glyphs to PNG (`examples/icon_dump.rs`) — correct
+  WSL2: dumped real theme glyphs to PNG (`examples/icon_dump.rs`): correct
   document + folder glyphs. Note: WSL2's Adwaita is stripped of per-type MIME
   icons, so every file type falls to the generic there (correct freedesktop
-  behaviour — Nautilus does the same on that box); a full desktop theme gives
+  behaviour: Nautilus does the same on that box); a full desktop theme gives
   distinct glyphs.
 
 - **Icon-drawing tests added** (answering the AROS "chrome icons don't draw"
@@ -139,7 +139,7 @@ headless screenshots → Windows polish.
   - **Diagnostic finding for AROS:** both gpui asset tests PASS, so every drawn
     icon is a valid, non-empty SVG that usvg/resvg rasterizes fine. The AROS
     "chrome icons not drawn" symptom is therefore NOT a bad/missing/empty asset
-    — it's in the `gpui_aros` renderer's monochrome-SVG-sprite path (zed-aros
+   : it's in the `gpui_aros` renderer's monochrome-SVG-sprite path (zed-aros
     fork), which ferail tests can't cover and I can't repro from this box.
     Next step for AROS lives in zed-aros/crates/gpui_aros, not here.
 
@@ -151,7 +151,7 @@ headless screenshots → Windows polish.
   `gdk-pixbuf-thumbnailer` (writes the spec `Thumb::*` tEXt chunks) → decode PNG
   (`image`) → straight RGBA8 (same contract as `fetch_icon_rgba`). MD5 keying
   locked to the freedesktop spec vector by a unit test (my first guess at the
-  vector was wrong — `md5sum` gave the ground truth `d40775e…`). v1 = images
+  vector was wrong: `md5sum` gave the ground truth `d40775e…`). v1 = images
   (gdk-pixbuf); video/PDF need totem/evince or the Tumbler D-Bus dispatcher.
   New Linux deps `md-5` + `image` were tiny / already compiled. Verified in
   WSL2: generated a real 256×256 thumbnail that populated the shared cache
@@ -162,7 +162,7 @@ headless screenshots → Windows polish.
     user-facing whole-path string (breadcrumb root, window title, disk-usage
     header + titlebar, Get Info "Where"). `std::fs::canonicalize` returns
     verbatim paths and the file list navigates with them, so a raw
-    `to_string_lossy` was leaking `\\?\C:\…` — verified fixed by screenshot.
+    `to_string_lossy` was leaking `\\?\C:\…`: verified fixed by screenshot.
   - `paths::validate_leaf` blocks reserved Windows names on New Folder / rename
     (device names, reserved chars, trailing dot/space) via the shared
     `open_named_prompt` modal, which stays open on rejection. Favorite-label
@@ -175,7 +175,7 @@ headless screenshots → Windows polish.
 
 - Add a Windows `file_id` arm to dupes.rs (`GetFileInformationByHandle`
   nFileIndex) so NTFS hard links collapse to one occupant like unix.
-- Drive the "What's using it?" toast through the screenshot harness — it needs
+- Drive the "What's using it?" toast through the screenshot harness: it needs
   a real locked-file transfer failure, which isn't headlessly simulable today;
   the primitives underneath are verified via the example instead.
 - Linux resilient-ops: `pkexec` re-exec for `run_elevated_self` + a
@@ -194,26 +194,26 @@ window compositing landed on macOS. Windows parity is tracked in the
 ## The decision (mpv over VLC and over raw FFmpeg)
 
 The pain that started this: I wanted the Adjustments popup's denoise/sharpen/
-deband/grain to apply **live** on video. They can't with VLC — libvlc only takes
+deband/grain to apply **live** on video. They can't with VLC: libvlc only takes
 those as instance args to `libvlc_new`, so a slider release re-opens the whole
 stream (that's what all the `video_pending_seek` / `video_repause` / kept-frame
 machinery in `window.rs` is for). Only the colour grade is live there.
 
 Weighed three providers behind the existing `VideoBackend` seam:
 
-- **VLC** — player for free, but filters are structurally not live. Status quo.
-- **raw FFmpeg (libav\*)** — filters live, but FFmpeg is a *library, not a
+- **VLC**: player for free, but filters are structurally not live. Status quo.
+- **raw FFmpeg (libav\*)**: filters live, but FFmpeg is a *library, not a
   player*: I'd have to build demux/decode/audio/A-V sync/clock/seek myself. Big
   lift for a file-manager viewer. Rejected.
-- **libmpv** — FFmpeg *with a player attached*. Plays the same broad set, owns
+- **libmpv**: FFmpeg *with a player attached*. Plays the same broad set, owns
   audio/sync/seek, **and** exposes the libavfilter graph at runtime
-  (`vf set`/`vf command`) — the same `hqdn3d`/`unsharp`/`gradfun`/`noise`
+  (`vf set`/`vf command`): the same `hqdn3d`/`unsharp`/`gradfun`/`noise`
   filters VLC wraps, but live. Loads via `dlopen` like libvlc (stock build
   links nothing), and its **software render API writes frames straight into a
   caller buffer**, which is almost exactly our BGRA pull seam. **Chosen.**
 
 mpv is a functional superset of the VLC backend for local files, so the plan is
-to **add mpv, prove it on the mac, then retire VLC** (iteration 5) — which also
+to **add mpv, prove it on the mac, then retire VLC** (iteration 5), which also
 lets me delete the re-open machinery. Not deleting VLC atomically with landing
 mpv: don't remove a shipping/tested backend before its replacement is verified.
 
@@ -223,16 +223,16 @@ mpv: don't remove a shipping/tested backend before its replacement is verified.
   -> bool`, default `false`. VLC/native/MF inherit `false` (existing re-open
   path); only mpv overrides it to `true` via live `vf set`. `commit_video_enhance`
   tries it first, re-opens only on `false`.
-- **Hand-written FFI, no `libmpv`/`mpv` Rust crate** — mirrors the deliberate
+- **Hand-written FFI, no `libmpv`/`mpv` Rust crate**: mirrors the deliberate
   no-`vlc-rs` decision and the runtime-`dlopen` posture of the VLC crate.
 - **Grade via mpv's equalizer properties** (live), with lavfi `eq`/`hue` as the
   fallback if the equalizer turns out not to apply under SW render (the one open
-  uncertainty — verify on the mac).
+  uncertainty: verify on the mac).
 - **SW format `bgr0` → must fill alpha to `0xFF`.** `build_video_frame` reads the
   4th byte as alpha verbatim, and `bgr0` leaves it `0` (fully transparent). That
   forced alpha pass is also what makes the **color-key transparency** idea nearly
   free: key per pixel instead of blind-filling. Logged as a follow-on feature in
-  the plan doc (with its own gates), with one open product fork — see-through to
+  the plan doc (with its own gates), with one open product fork: see-through to
   an in-app backdrop (cheap) vs. to the desktop via a transparent window (the
   "wow" version, ~3× the work).
 
@@ -259,7 +259,7 @@ never match the grid no matter what.
   `thumbnails::ShowThumbnails`), seeded from `app_state` at startup. `accent(cx)`
   returns the user override or falls back to `theme.blue`. Derived helpers
   (`fill` 0.14, `member_fill` 0.14, `border` 0.55, `strong` full, `text` white)
-  are the **exact opacities the grid already used** — so the grid is visually
+  are the **exact opacities the grid already used**: so the grid is visually
   unchanged and the list now matches it.
 - Grid (`shell::render`), list members (`file_list::render_tr`), and the list
   lead overlay (`multi_table::state::render_table_row`) all read these helpers
@@ -283,10 +283,10 @@ never match the grid no matter what.
   mostly from the hue + the full-blue lead border (the old lead border was the
   faint `table_active_border`).
 - **Edited the vendored `multi_table` directly** rather than keeping it
-  pristine — it's already app-customized (drag-delay behavior) and
+  pristine: it's already app-customized (drag-delay behavior) and
   `FileListDelegate` is its only delegate, so the change can't leak to another
   table.
-- **Persist as hex**, not raw HSLA floats — matches the flat key=value
+- **Persist as hex**, not raw HSLA floats: matches the flat key=value
   `app_state` format and what `ColorPicker` already speaks (`to_hex` /
   `parse_hex`).
 
@@ -295,7 +295,7 @@ never match the grid no matter what.
 - Separate accents for selection-fill vs. lead/highlight (a louder focus ring).
 - "Reset to theme default" on the picker row.
 - Heavier list-lead fill than the grid (no label pill carries color on a flat
-  row); kept parity per the user's choice — the most likely follow-up tweak.
+  row); kept parity per the user's choice: the most likely follow-up tweak.
 
 # 2026-06-20 Tool Result Surfaces (landed)
 
@@ -330,7 +330,7 @@ surface model instead of each owning a separate "results mode" concept.
 
 # 2026-06-19 plugin seam + VLC video backend (planning)
 
-User wants a plugin system where plugins can override internal features —
+User wants a plugin system where plugins can override internal features:
 first target the video player, with **VLC** as the replacement to get
 any-format support and the adjustment features (colour + denoise + sharpen)
 for free, **including on video**.
@@ -351,7 +351,7 @@ for free, **including on video**.
 - Denoise/sharpen ride VLC's video-filter chain (`sharpen` + `sharpen-sigma`;
   `hqdn3d` for denoise), enabled via media options (`:video-filter=…`) or the
   instance filter list. Live param changes are less ergonomic than the adjust
-  API — **the spike must confirm whether sigma can change mid-playback** or
+  API: **the spike must confirm whether sigma can change mid-playback** or
   whether it needs a re-open. Either way enhancement reaches video, which the
   CPU pipeline can't do.
 - `/Applications/VLC.app` ships `libvlc.5.dylib` + `libvlccore` + plugins
@@ -367,7 +367,7 @@ for free, **including on video**.
   loading could be added later.
 - **Spike the binding first.** Throwaway probe of the installed libvlc
   (dlopen, vmem callbacks, BGRA layout, `set_adjust` changes pixels, and a
-  sharpen/denoise filter — including whether its params change live) decides
+  sharpen/denoise filter, including whether its params change live) decides
   raw-FFI vs `vlc-rs` before committing.
 - **Seam first, then VLC.** Phase 1: `VideoBackend`/`VideoStream` trait in
   `ferail-core`; move the existing AVFoundation player behind it with no
@@ -377,13 +377,13 @@ for free, **including on video**.
   to video, not just stills.
 - **Use installed VLC.app for now.** Load libvlc at runtime; VLC feature off
   by default. Bundling into the `.app` (rpath/plugin-path) deferred to Phase 3.
-- **No environment variables — config lives in a Settings "Plugins" section**
+- **No environment variables: config lives in a Settings "Plugins" section**
   (user directive 2026-06-19). So the VLC backend gets its plugin dir via a
   `libvlc_new("--plugin-path=…")` arg (NOT `setenv VLC_PLUGIN_PATH`), and the
   VLC.app / libvlc / plugins paths + backend selection are user-set in
   Settings → Plugins. The spike's `setenv` is a spike-only shortcut.
 
-## Spike outcome (2026-06-19) — binding resolved to raw FFI
+## Spike outcome (2026-06-19) - binding resolved to raw FFI
 Throwaway probe `spikes/vlc-probe/` (dependency-free; dlopen/dlsym) ran the
 full path against a generated `testsrc` clip and **passed**:
 - `libvlc_new` ok; **18 frames pulled** through vmem; length read back 3000 ms.
@@ -394,24 +394,24 @@ full path against a generated `testsrc` clip and **passed**:
   video works live, no re-open.**
 - **Gotchas captured for Phase 2:** must `setenv("VLC_PLUGIN_PATH", …)` before
   `libvlc_new`; must pre-load `libvlccore.dylib` by full path (libvlc
-  references it via `@rpath`, which our process lacks) — or set an `@rpath` at
+  references it via `@rpath`, which our process lacks), or set an `@rpath` at
   link time. Symbols are libvlc 3.x shapes (`media_new_path(inst,path)`,
   `media_player_new_from_media(media)`, `media_player_stop` void).
-- **Decision:** thin **hand-written FFI** is confirmed sufficient — no
+- **Decision:** thin **hand-written FFI** is confirmed sufficient, no
   `vlc-rs` dependency. Denoise/sharpen *filter* live-param change is still
   unverified (out of this minimal probe); Phase 2 will either set sigma live
   or re-open the stream as a fallback.
 
-## Phase 1 outcome (2026-06-19) — provider seam landed, no behaviour change
-- `ferail_core::video` — `VideoBackend` (`open(path, on_ended) →
+## Phase 1 outcome (2026-06-19) - provider seam landed, no behaviour change
+- `ferail_core::video`: `VideoBackend` (`open(path, on_ended) →
   Box<dyn VideoStream>`) + `VideoStream` (copy_frame / set_paused / seek /
   step / time / natural_size). Platform-neutral, std-only. `set_adjust` is
-  deliberately **not** here yet — it lands in Phase 2 with VLC so Phase 1
+  deliberately **not** here yet: it lands in Phase 2 with VLC so Phase 1
   carries no unused type.
-- `viewer/backend_native.rs` — `NativeBackend`/`NativeStream` forward to the
+- `viewer/backend_native.rs`: `NativeBackend`/`NativeStream` forward to the
   existing `platform_shell::video_overlay_*`; `Drop` does the remove. A
   `video_backend()` selector returns Native today (Phase 2 reads settings).
-- `viewer/window.rs` — the viewer holds `Box<dyn VideoStream>` + a
+- `viewer/window.rs`: the viewer holds `Box<dyn VideoStream>` + a
   `video_epoch` (the boxed handle isn't `Copy`, so the frame-pull loop keys
   on the epoch instead of the old `u64` id). All 11 call sites route through
   the stream; teardown is a `drop`.
@@ -419,31 +419,31 @@ full path against a generated `testsrc` clip and **passed**:
   and the headless harness decoded + drew a real frame through the seam
   (`screenshots/viewer-video-seam.png`). Native video unchanged.
 
-## Phase 2 outcome (2026-06-19) — VLC provider + Plugins settings landed
-- New crate `ferail-video-vlc` — hand-written libvlc FFI (no `vlc-rs`).
+## Phase 2 outcome (2026-06-19) - VLC provider + Plugins settings landed
+- New crate `ferail-video-vlc`: hand-written libvlc FFI (no `vlc-rs`).
   `dlopen`s libvlccore then libvlc from the VLC.app; **format callbacks**
   decode at native resolution into a vmem `RV32`/BGRA buffer; end-of-clip via
   `libvlc_event_attach(EndReached)`; **live `set_adjust`** maps the bipolar
   grade to libvlc's 1.0-neutral ranges. `VLC_PLUGIN_PATH` is set internally
   from the settings path (the only mechanism libvlc accepts). One process-
   wide instance, cached in a thread_local (changing the path needs restart).
-- `ferail_core::video` — added `VideoAdjust` + `VideoStream::set_adjust`
+- `ferail_core::video`: added `VideoAdjust` + `VideoStream::set_adjust`
   (default `false`); `on_ended` is now `Send` (libvlc fires it off-thread).
-- `ferail-gpui` — `vlc` cargo feature (off by default; macOS-only optional
+- `ferail-gpui`: `vlc` cargo feature (off by default; macOS-only optional
   dep). AppState gained `video_backend` + `vlc_app_path`. Settings → **Plugins**
   page: a Player dropdown (Built-in / VLC) + an editable VLC.app path. The
   viewer resolves the choice once at open (`resolve_vlc_pref`, no settings I/O
   on the render path), `video_backend(vlc_pref)` selects with native fallback,
-  and the popup colour grade routes to `stream.set_adjust` for video — the
+  and the popup colour grade routes to `stream.set_adjust` for video: the
   per-frame CPU grade is skipped when the backend grades natively (VLC).
 - Verified: default build and `--features vlc` both compile warning-free;
   49 core + 67 gpui tests green; a **real libvlc integration test**
   (`ferail-video-vlc`, decodes /tmp/vlc_probe.mp4, 2.3 s) passes; Plugins
   settings render (`screenshots/settings-plugins.png`). Interactive VLC-in-
-  viewer playback (select VLC, play any-format clip) is on the user — it needs
+  viewer playback (select VLC, play any-format clip) is on the user: it needs
   a `--features vlc` build and writes to the live settings file.
 
-## Phase 2b outcome (2026-06-19) — video enhance filters, all formats, quiet logs
+## Phase 2b outcome (2026-06-19) - video enhance filters, all formats, quiet logs
 - **All VLC formats.** Video eligibility is now backend-aware: built-in set
   (mp4/m4v/mov) always, plus a broad `VLC_VIDEO_EXTS` (mkv/avi/webm/flv/wmv/
   mpg/3gp/3g2/ts/vob/ogv/divx/rm/… ) when VLC is selected. Fixes a 3GP (and
@@ -451,7 +451,7 @@ full path against a generated `testsrc` clip and **passed**:
 - **Denoise/sharpen on video.** `VideoBackend::open` gained a `VideoEnhance`
   (denoise/sharpen, 0..1). **Important:** video filters only take effect as
   `libvlc_new` *instance* args (`--video-filter=sharpen:hqdn3d` +
-  `--sharpen-sigma` / `--hqdn3d-luma-spat` / `--hqdn3d-chroma-spat`) — media
+  `--sharpen-sigma` / `--hqdn3d-luma-spat` / `--hqdn3d-chroma-spat`): media
   options (`:video-filter=…`) are silently ignored with vmem output (verified
   with `invert`), and a *wrong* option name makes `libvlc_new` fail outright.
   So each VLC stream owns its own libvlc instance built with its filter args;
@@ -463,32 +463,32 @@ full path against a generated `testsrc` clip and **passed**:
 - **Quiet libvlc.** `libvlc_new("--quiet", "--no-osd", "--no-video-title-
   show")` silences the decoder/transform/ci_filters/main-filter chatter the
   user saw. One residual `[swscaler] … yuv420p to bgra` line per open comes
-  straight from libav (not VLC's logger, so `--quiet` can't catch it) — the
+  straight from libav (not VLC's logger, so `--quiet` can't catch it): the
   cost of converting decoded YUV to our BGRA pull buffer; harmless.
 - Verified: default + `--features vlc` compile warning-free; 49 core + 67
   gpui + VLC integration test (now opens *with* a sharpen+denoise chain)
   green. Interactive check (play a 3GP/MKV, drag Denoise/Sharpen → release
   re-applies) is on the user.
 
-## Phase 2d outcome (2026-06-20) — sharpen behaviour + truly-seamless paused refresh (landed)
+## Phase 2d outcome (2026-06-20) - sharpen behaviour + truly-seamless paused refresh (landed)
 Follow-up to 2c from live use ("sharpen looks like noise"; "the brief play on a
-filter change is a bad experience — VLC doesn't need it").
+filter change is a bad experience: VLC doesn't need it").
 
-**Sharpen "adds noise" — diagnosed, not a bug.** Throwaway probe (`spikes/`,
+**Sharpen "adds noise": diagnosed, not a bug.** Throwaway probe (`spikes/`,
 gitignored) dumped one frame of a *static* clip at sigma 0/0.05/0.3/0.6/2.0 and
-diffed them: mean|Δ| 0.7→3.3→5.1→7.3 — sharpen IS applied and scales with sigma.
+diffed them: mean|Δ| 0.7→3.3→5.1→7.3: sharpen IS applied and scales with sigma.
 VLC's `sharpen` is a Laplacian high-pass with **no edge threshold**, so on flat,
 grainy footage (skin) it has no real edges to enhance and only amplifies grain.
-Fixes: (a) **chain order** was backwards — was `sharpen:hqdn3d…`, now
+Fixes: (a) **chain order** was backwards: was `sharpen:hqdn3d…`, now
 **denoise → deband → sharpen → grain**, so the source is cleaned before
 sharpening; (b) `sigma` mapped to `strength*0.5` (gentle end). Sharpen on grainy
-flat content still amplifies grain (inherent) — pair it with denoise.
+flat content still amplifies grain (inherent): pair it with denoise.
 
 **Live filter change: confirmed impossible via public libvlc.** Read `lib/video.c`
 on master: only deinterlace/adjust/logo/marquee have live setters (they reach
 the vout via private `GetVouts()` + `var_SetChecked`). Arbitrary `video-filter`
 is set with `var_SetString(vout,"video-filter",…)` on the **internal vout**,
-which libvlc doesn't export. So a filter change MUST re-open — no way around it
+which libvlc doesn't export. So a filter change MUST re-open, no way around it
 without dlsym'ing libvlccore internals (rejected: unstable ABI).
 
 **Truly-seamless paused refresh.** Probe found the old approach's flaw:
@@ -501,19 +501,19 @@ pre-seek frame**, keeping the previous frame on screen until the correctly-
 positioned, freshly-filtered frame lands. No flash, no jump to start, no visible
 playback even when paused. (`video_repause` retained for the re-pause step.)
 
-## Phase 2c outcome (2026-06-20) — filter polish + full VLC effect set (landed)
+## Phase 2c outcome (2026-06-20) - filter polish + full VLC effect set (landed)
 All three tasks below shipped.
-1. **Sharpen artifacts** fixed — `enhance_args` now maps `sigma = sharpen*0.6`
+1. **Sharpen artifacts** fixed: `enhance_args` now maps `sigma = sharpen*0.6`
    (was `*2.0`); the gentle end of libvlc's 0..2 range, past which real footage
    rings/halos.
-2. **Seamless re-open** — `commit_video_enhance` now drops only the old stream
+2. **Seamless re-open**: `commit_video_enhance` now drops only the old stream
    (keeps `video_frame_image`, `video_rotated`, `video_dims` so nothing
    flashes). `open_video_stream`'s restore branch opens the new instance
    *playing* and sets `video_repause = video_paused`; `video_poll_tick`
    re-pauses on the first new frame. So a paused video shows the freshly
    filtered frame and there's no black flash. `teardown_video` clears
    `video_repause`.
-3. **Full VLC Basic set** — `VideoAdjust` gained `hue`/`gamma` (live, mapped
+3. **Full VLC Basic set**: `VideoAdjust` gained `hue`/`gamma` (live, mapped
    hue→±180°, gamma→`2^v`); `VideoEnhance` gained `banding` (gradfun:
    `--gradfun-radius` 4..16 + `--gradfun-strength` 0..1.2) and `grain`
    (`--grain-variance` 0..2). `SliderId` → 9 (Hue/Gamma/Banding/Grain),
@@ -521,7 +521,7 @@ All three tasks below shipped.
    (both ignored by the still CPU pipeline). The adjust popup shows the four
    new rows **VLC-video-only** (gated on `vlc_video`).
 
-Design note (user asked: should the plugin ship its own popup?): **No — one
+Design note (user asked: should the plugin ship its own popup?): **No, one
 shared popup, capability-gated.** The seam (`ferail-core`/`ferail-video-vlc`)
 is deliberately gpui-free (architecture invariant) and plugin code must stay
 off the paint path (prime directive); a plugin-owned popup would break both and
@@ -536,13 +536,13 @@ appear only during a live VLC decode (`video_adjust_native` true), which the
 static screenshot harness doesn't drive (it builds a ViewerWindow but never
 opens a playing VLC stream or the adjust panel).
 
-GPU compositing path explored (gpui has a `surface(CVPixelBuffer)` element —
+GPU compositing path explored (gpui has a `surface(CVPixelBuffer)` element:
 real zero-copy path) but **deferred** by user ("leave for later"). Decode is
 already GPU (VideoToolbox); the CPU cost is the YUV→BGRA conversion + per-frame
 upload that vmem forces.
 
 ## With more time / deferred
-- GPU compositing via `gpui::surface(CVPixelBuffer)` — zero-copy (native
+- GPU compositing via `gpui::surface(CVPixelBuffer)`: zero-copy (native
   AVFoundation gives real CVPixelBuffers; VLC could wrap YUV so Metal does
   the conversion). Trades away CPU rotation + native colour-grade. User said
   leave for later.
@@ -556,7 +556,7 @@ upload that vmem forces.
 
 ---
 
-# 2026-06-16 Get Info inspector — editable popup (in progress)
+# 2026-06-16 Get Info inspector - editable popup (in progress)
 
 Path Finder-style Get Info, modeled on the screenshot the user shared.
 Working the Slow AI loop: verify → plan → approve → layer → test → note.
@@ -573,7 +573,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   (UTI, localized Kind, dates, package/alias/custom-icon/hidden-extension
   flags). Windows/Linux return a subset in this pass.
 - **Popup, not a pane tab (user call).** Hosted by the gpui-component
-  `Dialog` layer — the same `window.open_dialog` primitive About + the
+  `Dialog` layer: the same `window.open_dialog` primitive About + the
   copy-collision dialog use, so ESC / overlay-click / focus-trap come free.
   Child is a stateful `Entity<EntryInfoView>` so it can background-gather and
   re-gather after edits. A detached per-item window stays a follow-up.
@@ -585,23 +585,23 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   moves into the popup; preview keeps thumbnail + text only.
 - **Editable from the start (user call), landed field-group by field-group**
   on top of a read-only base: tags/label, rename, Locked/Invisible,
-  permissions — each with write-back + watcher refresh + undo/notification.
+  permissions, each with write-back + watcher refresh + undo/notification.
 
 ## Verify-step findings
 
 - objc2 batched-read pattern confirmed at `fs-native/src/lib.rs:534`
   (`resourceValuesForKeys_error` + `arrayWithObjects:count:` + per-type
-  `lookup_*` closures) — mirror it for per-file keys.
+  `lookup_*` closures): mirror it for per-file keys.
 - Tags already round-trip: `shell_mac::tags::{read_tags,write_tags,
-  toggle_tag}`. Color labels reuse the 7 canonical `TagColor` — no new
+  toggle_tag}`. Color labels reuse the 7 canonical `TagColor`: no new
   color-picker widget.
 - Rename already exists: `Shell::on_rename_selected`.
 - Locked/Invisible are BSD flags via `chflags` (UF_IMMUTABLE / UF_HIDDEN);
   the `UF_HIDDEN` test at `fs-native/src/lib.rs:780` shows the pattern.
-- `libc = "0.2"` + `objc2`/`objc2-foundation` already deps of fs-native — no
+- `libc = "0.2"` + `objc2`/`objc2-foundation` already deps of fs-native, no
   new crates for stat/statfs/chmod/getpwuid/getgrgid or NSURL reads.
 - Volume format + BSD device come from `statfs(2)` (`f_fstypename`,
-  `f_mntfromname`) — no NSURL key exposes them.
+  `f_mntfromname`), no NSURL key exposes them.
 
 ## Trade-offs
 
@@ -612,7 +612,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
 
 ## Outcome (landed 2026-06-16)
 
-- **Model** `ferail_core::entry_info` — neutral `EntryInfo`/sections/rows
+- **Model** `ferail_core::entry_info`: neutral `EntryInfo`/sections/rows
   + `PermMatrix`/`PermBits` (mode round-trip, octal, symbolic) + `Attr` +
   `EntryInfoEdit`. 4 unit tests.
 - **Reads** `fsn::stat_info` (lstat: owner/group via getpw/getgr, mode, dates,
@@ -631,7 +631,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   `Dialog` via `window.open_dialog`. Editable: Locked/Invisible/Hide-extension
   checkboxes, 7 color-label swatches, a 3×3 rwx permission grid, and an
   on-demand "Calculate" folder/volume size (reuses `recursive_size`). Each
-  edit writes inline (single syscall/Cocoa hop — the same pattern the
+  edit writes inline (single syscall/Cocoa hop: the same pattern the
   context-menu `toggle_tag` already uses), reloads the affected directory
   (`reload_tabs_matching_paths`), and re-gathers so the panel shows truth.
 - **Wiring** the dead `GetInfo` command (Cmd+I / context menu / toolbar) now
@@ -641,7 +641,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   tests green. `screenshots/get-info-file.png` legibly shows the gathered
   record. **Headless caveat:** the `Dialog` enter-animation needs multiple
   paints; `render_to_image` captures one, so the popup is faint in
-  screenshots (same limitation as every dialog in this app — it renders solid
+  screenshots (same limitation as every dialog in this app: it renders solid
   live). Confirm interactively with Cmd+I.
 
 ## Follow-up iteration (2026-06-16, from live use)
@@ -653,12 +653,12 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   an `embedded` mode (section rows only, no name header / no own scroll) and
   the preview hosts one reused entity (`Shell::preview_info`), retargeted as the
   lead selection changes via `sync_preview_info`. The "Get Info" button is
-  gone — the preview shows the live, editable panel; Cmd+I opens the same
+  gone: the preview shows the live, editable panel; Cmd+I opens the same
   content as the popup.
 - **Filename hazard surfacing.** New `ferail_core::name_hazards` splits a name
   into segments and flags leading/trailing/unusual whitespace, zero-width,
   control, bidi overrides, combining marks, and Cyrillic/Greek/fullwidth
-  homoglyphs (curated confusable table — covers the "раypal"/RLO "gpj.exe"
+  homoglyphs (curated confusable table: covers the "раypal"/RLO "gpj.exe"
   attacks). The Get Info + preview name render each flagged char highlighted
   (amber = whitespace, red = reordering/invisible/look-alike) with a tooltip
   naming it and a visible stand-in for invisibles (`⟨U+00A0⟩`, `␣`, `⇥`). 8
@@ -666,7 +666,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   (amber NBSP), `get-info-preview-homoglyph.png` (red Cyrillic in "paypal").
 - **Test fixtures.** `test-data/filename-hazards/` ships a `generate.py` +
   README producing 15 sample names (one per trick) into a git-ignored
-  `samples/` folder — the names carry control/bidi chars that git and editors
+  `samples/` folder: the names carry control/bidi chars that git and editors
   mangle, so the reviewable generator is what's committed.
 
 ## Follow-up iteration 2 (2026-06-16, from live use)
@@ -682,7 +682,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   re-entrancy, no scroll) and call it when lead is `None`, so the primitive's
   overlay always tracks the one selection model.
 - **Preview pane default widened** 280 → 380 (range 260–640) so the embedded
-  Get Info panel — permission grid + swatches + label column — fits without a
+  Get Info panel, permission grid + swatches + label column, fits without a
   drag.
 - **Folder size reused, not rescanned.** Get Info now takes a `known_size`
   (the file list's recursive folder total) and shows it with a recalculate
@@ -698,7 +698,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
 ## Follow-up iteration 3 (2026-06-16, from live use)
 
 - **Preview width now persists on resize (real bug).** `maybe_persist_splitter`
-  throttled writes to once / 500 ms and was only called from `on_resize` —
+  throttled writes to once / 500 ms and was only called from `on_resize`,
   nothing flushed after the drag stopped, so the final width (if its event
   landed inside the throttle window) was silently dropped. The doc comment
   claiming "renders re-check and flush" was false (render never called it).
@@ -709,9 +709,9 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
 - **Preview keeps the bounded text/code box (scroll-chaining deferred).**
   First tried collapsing the inline text/code box into the one pane scroll
   (drop `max_h`, `overflow_x_scroll` only) so a vertical wheel flows from the
-  file into the details — but then a big file buries the Get Info details far
+  file into the details, but then a big file buries the Get Info details far
   down the pane, so we reverted to the bounded `max_h(280) + overflow_scroll`
-  box (both axes — vertical keeps details reachable, horizontal keeps no-wrap
+  box (both axes: vertical keeps details reachable, horizontal keeps no-wrap
   code readable). The nested box does trap the vertical wheel until the cursor
   leaves it; the proper fix is scroll-chaining via a custom `on_scroll_wheel`,
   written up as a TODO (gpui's `overflow_scroll` auto-captures the wheel and
@@ -723,7 +723,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
 - **Get Info is now a standalone window, not a modal.** Was a centered
   gpui-component `Dialog` tied to the host window; converted to a real OS
   window via `cx.open_window` (same pattern as Settings / Disk Usage), so it's
-  resizable, movable, and **multi-instance** — every Cmd+I opens another
+  resizable, movable, and **multi-instance**: every Cmd+I opens another
   window, no singleton guard, so you can compare several files side by side.
   The window title carries the file name; the in-content header keeps the
   hazard-highlighted name (the native title bar can't color hazards). The
@@ -733,7 +733,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   `Root::render_notification_layer` (the embedded-in-preview path still routes
   toasts to the shell window). The same `EntryInfoView` serves both the window
   and the embedded preview via the `embedded` flag.
-- **Removed the redundant Get Info (i) icon** from the preview action row — the
+- **Removed the redundant Get Info (i) icon** from the preview action row: the
   preview already shows the full panel, so it only duplicated what's on screen
   (Cmd+I / context menu / toolbar still open the window).
 - Not headlessly screenshottable (it's a separate window the single-window
@@ -748,7 +748,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
 - **Undo for attribute/permission/tag edits** (toggling again reverts; rename
   would reuse `UndoOp::Rename`). Today only the native write + reload happen.
 - **Stationery pad** + **custom icon** reads (Finder-info getattrlist, not an
-  NSURL key) — shown only when supported; omitted now.
+  NSURL key): shown only when supported; omitted now.
 - **Combined multi-item Get Info** and a detachable per-item window.
 - **Windows/Linux gather**: the unix arm of `stat_info` already yields
   perms/dates; `resource_values`/volume-format return empty off macOS. Real
@@ -758,13 +758,13 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
 
 gpui-component highlights a language only when its `LanguageConfig`
 carries a non-empty query. Several grammars it ships have an empty
-query (C#, C, C++, Bash, Swift, CMake, plus GraphQL/Proto/CMake) — the
+query (C#, C, C++, Bash, Swift, CMake, plus GraphQL/Proto/CMake): the
 grammar compiles but nothing colors. User hit this with Kotlin
-(actually fine — has a query) then C# (empty query).
+(actually fine: has a query) then C# (empty query).
 
 - **`crate::syntax_extra`** reuses the `tree_sitter::Language` already
   in the highlighter registry and registers a vendored query for each
-  gap language — so **no grammar-crate deps and no tree-sitter version
+  gap language, so **no grammar-crate deps and no tree-sitter version
   coupling** (the grammar is whatever gpui-component built). The
   queries are each grammar crate's own `queries/highlights.scm`,
   copied under `src/syntax_queries/` with attribution; capture names
@@ -788,7 +788,7 @@ Follow-up tweaks from using the preview pane.
   work; the text read just fails) and showing a broken/empty media
   box. `request_preview_for_row` now skips directories (the 3
   selection sites route through it), and the render shows folder
-  metadata only — no media box.
+  metadata only, no media box.
 - **Smaller, no-wrap code.** Code blocks render at 11px (via
   `TextViewStyle::code_block` text_size, which overrides the theme's
   mono size) and `whitespace_nowrap`; the block scrolls both axes so
@@ -811,13 +811,13 @@ highlighted code viewer).
 
 - **Why TextView over CodeEditor:** `text::TextView` is a stateless
   `IntoElement` that parses *off the UI thread* (`background_spawn`)
-  and caches the result keyed by element id — so a stable id means
+  and caches the result keyed by element id, so a stable id means
   one cached parse that re-runs only when the selected file's content
   changes (`set_text` short-circuits on equal content). The
-  `CodeEditor` (InputState) path is a full editor entity — wrong shape
+  `CodeEditor` (InputState) path is a full editor entity: wrong shape
   for a read-only pane.
 - **One helper, `to_markdown_source`:** `.md`/`.markdown`/`.mdx` pass
-  through (TextView renders them *formatted* — headings, lists,
+  through (TextView renders them *formatted*: headings, lists,
   links); every other text file is wrapped in a fenced code block
   tagged with its extension. The highlighter accepts extensions as
   language aliases (`rs`/`py`/`ts`/…), so no big mapping table. The
@@ -825,7 +825,7 @@ highlighted code viewer).
   so a file containing ``` can't break out (unit-tested).
 - **Grammars:** enabled the full `tree-sitter-languages` feature on
   the gpui-component dep (user chose "everything ~35" over a curated
-  subset). Each grammar is a C-compiled crate — a real one-time build
+  subset). Each grammar is a C-compiled crate: a real one-time build
   cost, sanctioned.
 - Verified: Cargo.toml renders TOML-highlighted (section/keys/strings
   in distinct colors), CLAUDE.md renders as formatted markdown
@@ -845,13 +845,13 @@ render their actual content.
   text-vs-binary itself (NUL byte or invalid UTF-8 mid-buffer ⇒ not
   text; a multibyte char split at the read boundary is tolerated), and
   returns the content capped at 500 lines. No dependency on magic
-  being sniffed — detection is self-contained in the read.
+  being sniffed: detection is self-contained in the read.
 - **One selection event, two providers.** Folded the text request into
   `preview::request`, so the existing 3 selection call sites are
   untouched; the worker sorts text from binary and the render shows
   inline monospaced text when it's text, the QL thumbnail otherwise.
 - **Render**: a wrapped, vertically-scrolling monospaced block (max
-  280 px) above the metadata. Wrap rather than no-wrap — the pane is
+  280 px) above the metadata. Wrap rather than no-wrap: the pane is
   narrow and `overflow_y_scroll` can't reveal horizontally-clipped
   long lines (caught in the first screenshot). Empty files show
   "(empty file)" rather than a blank box.
@@ -863,7 +863,7 @@ render their actual content.
 # 2026-06-13 command palette: Enter-runs-top-match over the catalogue (landed)
 
 The Cmd+K shortcuts overlay was already a searchable, grouped,
-click-to-dispatch list — this finishes the palette half.
+click-to-dispatch list: this finishes the palette half.
 
 - **Completed the action map.** `action_for_command` gained the
   commands this session's features added (sort ×4, Open Viewer,
@@ -878,7 +878,7 @@ click-to-dispatch list — this finishes the palette half.
   is visible.
 - **Harness fix that made this testable.** `--keys` was applied
   *before* `--shortcuts-help` opened the overlay, so keystrokes hit
-  nothing — reordered so the overlay opens first, then keys drive it.
+  nothing: reordered so the overlay opens first, then keys drive it.
   Verified end-to-end: filter "Show Hidden" + Enter toggles hidden
   files and closes the palette (`screenshots/command-palette.png`).
 - **Deferred:** arrow-key selection between matches (InputState
@@ -891,7 +891,7 @@ A recently-visited-folders section between Favorites and Browse.
 
 - **No new data, no schema change.** Recents is a recency-ordered
   *view* over the existing `folder_usage` visit log (the Ant Trail
-  already stamps `last_access_unix` on every navigate — we'd just been
+  already stamps `last_access_unix` on every navigate: we'd just been
   discarding the timestamp at hydration). `ProcessState.recents` is an
   in-memory `Vec<PathBuf>` (cap 12, most-recent-first) so the sidebar
   render never touches SQLite: front-inserted on each navigate
@@ -902,7 +902,7 @@ A recently-visited-folders section between Favorites and Browse.
   "adopt only if empty" guard silently dropped the hydrated list (the
   screenshot caught it). Fixed to merge: session-live entries stay at
   front, DB history fills in behind, deduped + capped.
-- **RecentsSection** mirrors FavoritesSection but simpler — no drag,
+- **RecentsSection** mirrors FavoritesSection but simpler, no drag,
   no availability state, no rename. Click navigates (Cmd-click → new
   tab); row context menu = Reveal / Remove from Recents / Clear
   Recents; header context menu = Clear. Hidden entirely when empty
@@ -911,8 +911,8 @@ A recently-visited-folders section between Favorites and Browse.
 - **Remove/Clear are honest about the coupling.** Recents and the
   Ant Trail heat tint are the same `folder_usage` signal, so "Remove
   from Recents" forgets that folder's visit row (`forget_folder_visit`
-  — also clears its heat) and "Clear Recents" wipes the log
-  (`ResetScope::AntTrail` — resets all heat). Documented as
+ , also clears its heat) and "Clear Recents" wipes the log
+  (`ResetScope::AntTrail`: resets all heat). Documented as
   intentional; a decoupled store is a TODO if it ever bites.
 - Verified end-to-end via harness: multi-`--navigate` populates the
   section in the right order (`screenshots/recents-sidebar.png`); a
@@ -927,18 +927,18 @@ The discoverable-controls half of the toolbar-density TODO.
 - **Sort dropdown** (gpui-component's `Button::dropdown_menu`, first
   use in the app): Name / Size / Kind / Date Modified, the active
   column checkmarked, the button glyph showing direction
-  (`sort-ascending` / `sort-descending` from the upstream icon pack —
+  (`sort-ascending` / `sort-descending` from the upstream icon pack:
   the merged FeraAssets serves both packs at `icons/...`). Each item
   dispatches a real action (`SortByName` etc.), so it's catalogue-
   and palette-discoverable, not a one-off closure.
 - **`Shell::set_sort_column`**: re-selecting the active column flips
   direction; first pick of a column uses a Finder-like default
   (Name/Kind ascending, Size/Modified descending). Pure in-memory
-  re-sort via the new `apply_sort_column` enum helper —
+  re-sort via the new `apply_sort_column` enum helper:
   `apply_sort` (the `--sort` CLI path) now delegates to it, verified
   unchanged via `--sort modified-desc`.
 - **Overflow "⋯" menu**: Show Hidden (check), Get Info, Open Viewer,
-  Disk Usage, Empty Trash — all dispatching existing actions, so they
+  Disk Usage, Empty Trash, all dispatching existing actions, so they
   hit the current selection/folder exactly like their keyboard /
   right-click twins.
 - Win32 title-bar drag gotcha: `DropdownMenuPopover` can't take an
@@ -961,11 +961,11 @@ The Trash slice of the file-ops arc.
   discarded [mac]; Windows `SHFileOperationW` reports nothing →
   `Ok(None)`, Recycle-Bin restore stays a parity TODO). The handler
   collects `(original, trashed)` pairs in the worker and registers
-  `UndoOp::TrashRestore` — Cmd+Z renames items back, refusing to
+  `UndoOp::TrashRestore`: Cmd+Z renames items back, refusing to
   overwrite if the original path exists again. The premature "Moved
   to Trash" toast also moved to completion (it used to fire before
   the op ran).
-- **Empty Trash** (`file.empty_trash`, Cmd+Shift+Delete — bound as
+- **Empty Trash** (`file.empty_trash`, Cmd+Shift+Delete: bound as
   `cmd-shift-backspace` in extras since the Shortcut DSL lacks a
   Delete key): background count → counted confirmation dialog with a
   danger button (the one op with no undo, hence the only one that
@@ -983,7 +983,7 @@ The Trash slice of the file-ops arc.
   round-trips files back into the folder; a trash-only run leaves the
   folder empty (items genuinely in Trash); the confirmation dialog
   screenshot is `screenshots/empty-trash-dialog.png` (never
-  confirmed — the user's real Trash was not emptied during testing;
+  confirmed: the user's real Trash was not emptied during testing;
   three tiny fera-trash test files were left in it).
 
 # 2026-06-13 drag-into-app: drop targets feeding the transfer worker (landed)
@@ -991,13 +991,13 @@ The Trash slice of the file-ops arc.
 Same-day follow-on to the file-ops arc; dnd-spec §3.5/§3.6.
 
 - **Three drop surfaces**, one handler: folder rows in the file table
-  (fork addition `TableEvent::ExternalDrop` — the delegate can't
+  (fork addition `TableEvent::ExternalDrop`: the delegate can't
   reach the Shell, so the drop rides the existing event channel,
   with `stop_propagation` so the pane target underneath doesn't
   double-fire), the file-pane background (→ current directory), and
   Browse/Volumes tree rows (they hold a weak Shell handle already).
   All converge on `Shell::handle_external_drop`.
-- **`TransferMode::Auto`** — the spec's modifier table: same volume →
+- **`TransferMode::Auto`**: the spec's modifier table: same volume →
   Move, cross-volume → Copy, Option forces Copy, Cmd forces Move.
   Resolution happens *in the worker* next to the existing
   same-volume probe (stat is banned on the UI thread); the task label
@@ -1006,24 +1006,24 @@ Same-day follow-on to the file-ops arc; dnd-spec §3.5/§3.6.
   duplicates (Finder parity).
 - Internal row drags and external Finder drags arrive as the same
   `ExternalPaths` payload, so one path covers both.
-- gpui can't synthesize OS drag sessions headlessly — compile/tests/
+- gpui can't synthesize OS drag sessions headlessly: compile/tests/
   clippy green and the handler logic reuses the verified
   spawn_transfer_op; the drag gesture itself needs interactive
   verification (drop from Finder, drop row-onto-folder, Option-drop).
 
 # 2026-06-13 file ops: copy/paste/move with progress + collisions (landed)
 
-Spec: `docs/features/FILE_OPS.md`. The biggest TODO gap — Ferail
+Spec: `docs/features/FILE_OPS.md`. The biggest TODO gap: Ferail
 can now actually manage files, not just browse them.
 
-- **Engine in `ferail-fs-native/src/file_ops.rs`** — pure,
+- **Engine in `ferail-fs-native/src/file_ops.rs`**: pure,
   synchronous, worker-thread: `plan_transfer` (walk + byte totals +
   top-level conflict scan, rejects copy-into-own-subtree),
   `run_copy`/`run_move` under one `CollisionPolicy`
   (Replace/KeepBoth/Skip). 8 MiB chunked copies so progress ticks and
   cancel lands mid-file; a cancelled partial file is deleted, files
   whose last byte landed survive (the cancel check sits *after* the
-  read, before the write — first version deleted complete files).
+  read, before the write: first version deleted complete files).
   Symlinks recreated, never followed. Same-volume detection via
   `MetadataExt::dev()` gives move its rename fast path. 8 tempdir
   unit tests.
@@ -1040,13 +1040,13 @@ can now actually manage files, not just browse them.
   dialog (auto Keep Both, like pasting next to the original should).
 - **Clipboard verbs**: Cmd+C writes real file URLs to the general
   pasteboard [mac] (Finder interop both directions), Cmd+V copies,
-  Cmd+Option+V moves — Finder semantics, no Cut in v1. Pasteboard
+  Cmd+Option+V moves: Finder semantics, no Cut in v1. Pasteboard
   *reading* (`clipboard_read_file_urls`) is new; win32 stubs document
   the CF_HDROP parity path.
 - **Undo**: `MoveBack` (same-volume moves only) and `RemoveCreated`
-  (copies that replaced nothing) — both deliberately conservative;
+  (copies that replaced nothing), both deliberately conservative;
   undoing a replace would delete the only surviving version.
-- **`spawn_file_op` failures now notify** instead of log-only —
+- **`spawn_file_op` failures now notify** instead of log-only:
   duplicate/compress/trash/rename/new-folder all surface errors.
 - Verified end-to-end by driving real keystrokes through the
   screenshot harness: Cmd+C in one process, Cmd+V in another
@@ -1063,7 +1063,7 @@ Browse/Volumes tree affordances stopped lying:
   enumeration time (`dir_has_subdir`: early-exit read_dir, worker
   thread on the async path; the documented-sync `ensure_tree_children`
   reveal path carries it too). Leaf folders render no caret instead of
-  a chevron that expands to nothing. Hidden subdirs count — the caret
+  a chevron that expands to nothing. Hidden subdirs count: the caret
   may reveal nothing while Show Hidden is off, which beats scanning
   twice.
 - **Ancestry guide lines.** `TreeGuide` (Blank/Vertical/Tee/Corner)
@@ -1105,20 +1105,20 @@ verification (plug/unplug a disk) is on the user.
 # 2026-06-12 video playback in the viewer/slideshow (landed)
 
 AVPlayerView overlay
-[mac] over the stage rect — native aspect-fit, hardware decode,
+[mac] over the stage rect: native aspect-fit, hardware decode,
 audio, inline hover controls. Key wrinkle: the objc2 0.2-generation
 framework crates we pin predate AVFoundation bindings (start at objc2
 0.6), so `video_overlay.rs` reaches AVPlayer/AVPlayerView through
 runtime `AnyClass::get` + `msg_send`, with two `#[link]` blocks to
 load the frameworks. Eligible: mp4/m4v/mov; auto-play on becoming
-current; slideshow does NOT arm the interval timer on video entries —
+current; slideshow does NOT arm the interval timer on video entries:
 `AVPlayerItemDidPlayToEndTimeNotification` advances instead, path-
 tagged through a channel so an end queued behind a manual nav is
 dropped. Overlay lifecycle is render-time change-detected sync (same
 trick as title sync); `Drop` is the teardown backstop. Known v1
 limits in VIEWER.md (no zoom on video, fullscreen hover chrome sits
 under the overlay, screenshots can't capture it). Smoke-tested
-through the headless harness with an ffmpeg test clip — full AVKit
+through the headless harness with an ffmpeg test clip: full AVKit
 path runs clean; interactive playback check is on the user.
 
 # 2026-06-12 viewer window: big preview, slideshow, sticky zoom (landed)
@@ -1137,7 +1137,7 @@ Spec: `docs/features/VIEWER.md`. Six iterations, all green
   Quick Look thumbnail [mac]. Cache budget 384 MB, LRU by bytes,
   Pending markers dedup in-flight decodes and are never evicted.
 - **Sticky zoom is window state, not image state.** `StageState
-  {mode, center-as-image-fraction}` survives navigation verbatim —
+  {mode, center-as-image-fraction}` survives navigation verbatim:
   zoom 2.5× into the top-right corner and every next image shows its
   top-right corner at 2.5×. Pan center being *relative* is what makes
   it transfer between differently-sized images (unit-tested).
@@ -1147,10 +1147,10 @@ Spec: `docs/features/VIEWER.md`. Six iterations, all green
   builds fresh. No Drop bookkeeping needed.
 - **Slideshow with epoch staleness.** Timer ticks carry an epoch;
   play/pause/manual-nav/interval-change bumps it, so a stale tick is
-  inert — same idiom as enumeration cancel flags. Manual nav while
+  inert, same idiom as enumeration cancel flags. Manual nav while
   playing re-arms; zoom/pan *pauses* (inspecting beats advancing).
   Interval cycles 2/3/5/10 s via toolbar button (deviation from the
-  spec's dropdown — fewer moving parts, same reach) and persists as
+  spec's dropdown: fewer moving parts, same reach) and persists as
   `viewer_slideshow_interval` in gpui-state.txt.
 - **Fullscreen** via `window.toggle_fullscreen()`; chrome hides, the
   top 56 px strip reveals the toolbar on hover (pure mouse-position
@@ -1158,7 +1158,7 @@ Spec: `docs/features/VIEWER.md`. Six iterations, all green
 - **Keys**: `Cmd+Y` opens (catalogue command `view.open_viewer`, so
   menu/palette pick it up); viewer-local keys (arrows, Space
   play/pause, Cmd+=/−/0/1, Cmd+Ctrl+F, Esc) bind in the new
-  `"Viewer"` key context in `keymap::install_extras` — first
+  `"Viewer"` key context in `keymap::install_extras`: first
   secondary window with its own context. [mac] chords; win-parity
   remaps tagged in the spec.
 - **Preview-pane thumbnail is now a button** that opens the viewer.
@@ -1188,14 +1188,14 @@ cached in the metadata DB, revalidated against the folder's mtime.
   and `::Caches`.
 - **Worker (`folder_sizes.rs`) mirrors `prefetch.rs`** but *streams*:
   one instant batch of cache hits first, then each computed folder as
-  its walk finishes — a deep folder doesn't hold up the shallow ones.
+  its walk finishes: a deep folder doesn't hold up the shallow ones.
   Results are keyed by `NodeId`, not row index, because rows can
   re-sort mid-flight. Cancel flag lives on the Tab next to
   `load_cancel` and is flipped by the same navigation paths.
 - **DB-attach re-kick.** The metadata DB opens asynchronously, so the
   startup load's size pass runs cache-blind and can't persist.
   `start_metadata_load` completion calls
-  `restart_folder_size_passes` — one redundant walk of the startup
+  `restart_folder_size_passes`: one redundant walk of the startup
   dir on a cold start buys a durable cache for everything after.
 - **Sort honesty.** `FileListDelegate.current_sort` records the
   active header sort; when sizes land while sorted by Size, the
@@ -1216,14 +1216,14 @@ Closed the items the correctness sweep below deliberately parked:
 
 - `1ee08e6` tab drag-reorder actually works: the chips themselves are
   now drop targets (the natural release-over-a-tab gesture previously
-  landed on a chip with no `on_drop` — the only targets were the 6-DIP
+  landed on a chip with no `on_drop`: the only targets were the 6-DIP
   gaps). Drop on chip = take its slot; accent edge previews the side.
   Pure `chip_drop_gap_index` + tests. Needs one interactive drag to
   confirm visually.
 - `8b6e03c` boundary canonicalization: the ARCHITECTURE.md identity
-  contract is now true at every external edge — typed breadcrumb
+  contract is now true at every external edge: typed breadcrumb
   (background canonicalize via `navigate_external`), persisted
-  last_dir, favorites DB hydrate, watcher root — and the two UI-thread
+  last_dir, favorites DB hydrate, watcher root, and the two UI-thread
   `canonicalize` stats in the favorite-toggle handlers moved to
   workers (`spawn_in` + `apply_toggle_favorite_canonical`). Shared
   helper `shell::path::canonicalize_for_identity` + symlink test.
@@ -1245,7 +1245,7 @@ precision) followed by a fix sweep, one commit per finding:
 - `cfa561e` hidden-file semantics: `FileEntry::hidden` resolved at
   enumerate time (UF_HIDDEN / FILE_ATTRIBUTE_HIDDEN), all filters off
   name heuristics. macOS gains Finder-correct `~/Library` hiding.
-- `51379fa` metadata DB path per platform — Windows persisted nothing
+- `51379fa` metadata DB path per platform: Windows persisted nothing
   before (%APPDATA% arm added; XDG fallback for other unix).
 - `2548358` context menu builds with zero shell queries: Open With
   warm cache + dispatch resolves slots against the same cache
@@ -1253,7 +1253,7 @@ precision) followed by a fix sweep, one commit per finding:
 - `586b04b` favorites "+"/drop validate on workers, not the UI thread.
 - `74774cf` shell-win32: clipboard HGLOBAL freed on SetClipboardData
   failure; symlink/junction skip in both recursive walkers; DC checks.
-- `29ff68b` streaming pipeline addresses tabs by index — active-swap
+- `29ff68b` streaming pipeline addresses tabs by index: active-swap
   hack retired (see the struck-through Phase A+B trade-off below).
 - `4f73bde` tabstrip select resolves by TabId (uniform with close);
   theme-observer thread contract documented in both shell crates.
@@ -1262,7 +1262,7 @@ precision) followed by a fix sweep, one commit per finding:
 - `05af43a` clippy gate unblocked (deny-level approx_constant) +
   mechanical sweep; multi_table fork left untouched by policy.
 - `9e40fca` path-identity contract: lexical `normalize_path_key` in
-  both NodeId maps; case/symlink/`..` deliberately not folded —
+  both NodeId maps; case/symlink/`..` deliberately not folded:
   contract + rationale in ARCHITECTURE.md Data Model.
 
 Verification per item: cargo check (mac + windows-msvc cross where
@@ -1273,14 +1273,14 @@ screenshots for UI-touching changes.
 
 # Windows / Instances / Tabs (in progress)
 
-## Phase A+B-iter3 — filter on Tab (landed)
+## Phase A+B-iter3 - filter on Tab (landed)
 
 Audit flagged filter as window-level vs. spec §3.1's "each tab owns
 its filter." Flipped per user direction.
 
 ### Decisions
 
-- **`filter_text` and `filter_input: Entity<InputState>` moved onto Tab.** Each tab has its own filter Input entity. Title-bar render reads `self.active_tab().filter_input`, so cursor / focus / typed value are naturally per-tab — switching tabs shows the new tab's filter without imperative `set_value` calls.
+- **`filter_text` and `filter_input: Entity<InputState>` moved onto Tab.** Each tab has its own filter Input entity. Title-bar render reads `self.active_tab().filter_input`, so cursor / focus / typed value are naturally per-tab, switching tabs shows the new tab's filter without imperative `set_value` calls.
 - **Filter Input + subscription are constructed in `Shell::build_tab`** alongside the table Input + subscription. Each is stored as a non-Clone field on Tab and drops when the tab closes.
 - **Filter subscription closure captures `tab_id`** and writes to `self.tabs[idx].filter_text`, then calls `load_path_for_tab(tab_id, ...)`. So typing in one tab never reloads another.
 - **`load_path_for_tab` reads `tab.filter_text` directly** (was `self.filter_text` at the window level).
@@ -1300,7 +1300,7 @@ its filter." Flipped per user direction.
 
 ---
 
-## Phase D — closed-tab reopen + tab drag-reorder (landed)
+## Phase D - closed-tab reopen + tab drag-reorder (landed)
 
 Goal: cover the spec §3.3 operations that the multi-window plumbing
 made meaningful. Cmd+Shift+T undoes a Cmd+W; tabs reorder by drag
@@ -1308,14 +1308,14 @@ within the strip.
 
 ### Decisions
 
-- **Closed-tab stack lives on `ProcessState`**, not per-window. Matches the spec §3.3 / §1.1 process-scope rule and the Phase A+B "Closed-tab stack is process-scoped" pre-decision. Cmd+Shift+T in window B can resurrect a tab closed in window A. Capped at 16 (`CLOSED_TABS_CAP`); older entries fall off the front. In-memory only — not persisted across launches in v1 (session restore lands in Phase J).
-- **`ClosedTab` is plain data, no GPUI entities.** Lives in `shell::tab` next to `Tab`. Captures: `current_dir`, `history`, `history_index`, `filter_text`, `selection`, `anchor`, `lead`. Drops the per-tab `Entity<TableState>` and `Entity<InputState>` — those are remade fresh on reopen via the normal `Shell::make_tab` path. The closed-tab stack can therefore sit in a `VecDeque<ClosedTab>` indefinitely without pinning view-tree resources.
+- **Closed-tab stack lives on `ProcessState`**, not per-window. Matches the spec §3.3 / §1.1 process-scope rule and the Phase A+B "Closed-tab stack is process-scoped" pre-decision. Cmd+Shift+T in window B can resurrect a tab closed in window A. Capped at 16 (`CLOSED_TABS_CAP`); older entries fall off the front. In-memory only, not persisted across launches in v1 (session restore lands in Phase J).
+- **`ClosedTab` is plain data, no GPUI entities.** Lives in `shell::tab` next to `Tab`. Captures: `current_dir`, `history`, `history_index`, `filter_text`, `selection`, `anchor`, `lead`. Drops the per-tab `Entity<TableState>` and `Entity<InputState>`: those are remade fresh on reopen via the normal `Shell::make_tab` path. The closed-tab stack can therefore sit in a `VecDeque<ClosedTab>` indefinitely without pinning view-tree resources.
 - **Sort restore deferred.** Spec acceptance lists sort under "restore on reopen", but `TableState`'s current sort column / direction isn't on its public surface today. The reopened tab gets the default name-asc; restoring sort is a follow-on polish piece. Filter and selection *do* restore.
 - **Selection restore is best-effort by spec design.** `NodeId`s captured at close are still valid (singleton `NodeStore`), so when the streaming reload's `Done` fires, the existing reconcile-against-model path filters the stale `NodeId`s out without ceremony. No new reconciliation code needed.
-- **Push happens at every close site**, not just `Cmd+W`. The tabstrip's `×` button, `Cmd+W` (both the multi-tab and last-tab→remove-window paths), and `Cmd+Shift+W` (all tabs in left-to-right order) push snapshots. The OS-red-button window close does *not* push — there's no hook for "this window is about to close" with the Phase C process-stays-resident model. Acceptable: closing the window via the title bar is a deliberate "I'm done with this window" gesture; user feedback can promote this if it bites.
+- **Push happens at every close site**, not just `Cmd+W`. The tabstrip's `×` button, `Cmd+W` (both the multi-tab and last-tab→remove-window paths), and `Cmd+Shift+W` (all tabs in left-to-right order) push snapshots. The OS-red-button window close does *not* push: there's no hook for "this window is about to close" with the Phase C process-stays-resident model. Acceptable: closing the window via the title bar is a deliberate "I'm done with this window" gesture; user feedback can promote this if it bites.
 - **`ReopenClosedTab` action goes through the catalogue** (`file.reopen_closed_tab` in `ferail-core::commands`), not the keymap-extras list. The extras list is for shortcuts the catalogue can't yet express (modifier chords on Esc, etc.); a vanilla Cmd+Shift+T is exactly what the catalogue is for. Knock-on: the new entry surfaces automatically in the shortcuts/command palette + future menu-bar wiring.
 - **Cmd+Shift+T binds in `SHELL_CONTEXT`, not at the App level.** Requires an active window. With Phase C stay-resident-at-zero-windows, a user with no windows open hits Cmd+N first, then Cmd+Shift+T. Safari binds it App-level; we can promote later if zero-window reopen turns out to be a common path. Keeping it shell-scoped now avoids the action-shape complexity Cmd+N has (App `actions!` block, separate `cx.on_action` wiring).
-- **Tab drag-reorder uses `TabDragPayload { id: TabId, label }`** following the `FavoriteDragPayload` shape — the payload `impl Render` so it doubles as its own follow-the-cursor drag preview. Source is `TabId` (not index) so a drop arriving after a concurrent close still resolves correctly.
+- **Tab drag-reorder uses `TabDragPayload { id: TabId, label }`** following the `FavoriteDragPayload` shape: the payload `impl Render` so it doubles as its own follow-the-cursor drag preview. Source is `TabId` (not index) so a drop arriving after a concurrent close still resolves correctly.
 - **Drop targets are 6-DIP-wide gaps interleaved with the chips**, mirroring `favorites_section::render_drop_gap` rotated 90°. Idle: invisible. `drag_over::<TabDragPayload>`: a 2-DIP vertical accent rule shows where the drop will land. Insertion-point pattern over chip-half-zones: more discoverable, hits cleanly, no edge-of-element math.
 - **Index math runs on the `Shell::reorder_tab` helper.** Gap positions number `0..=tabs.len()`; the helper resolves the source by `TabId`, rejects no-op drops (`to_pos == from_idx || to_pos == from_idx + 1`), and tracks the active tab by id across the move so `self.active` follows correctly whether the moved tab is the active one or not.
 - **Close-button listener now resolves by `TabId`, not by the captured `idx`.** A drag-reorder may have shifted `idx` since the listener closure was constructed; looking up the tab by id at click time keeps the right tab closing.
@@ -1324,34 +1324,34 @@ within the strip.
 
 - `cargo check --workspace --all-targets` clean (1.7s).
 - `cargo test --workspace` all green (173+ tests across the workspace).
-- `screenshots/phase-d-baseline.png` renders three tabs with the second active — visually identical to Phase A+B's multi-tab screenshot, which is the goal: drag-reorder gaps are invisible at idle.
+- `screenshots/phase-d-baseline.png` renders three tabs with the second active: visually identical to Phase A+B's multi-tab screenshot, which is the goal: drag-reorder gaps are invisible at idle.
 - Manually verified end-to-end:
   - Cmd+W → Cmd+Shift+T restores the closed tab at the same directory, with its filter text and history intact.
   - Cmd+Shift+W → multiple Cmd+Shift+T's pop the window's tabs in reverse order (rightmost first).
   - Drag-reorder of any tab updates `self.active` correctly whether the moved tab is the active one or another.
-  - Stack cap respected — closing 20 tabs leaves the 16 most recent reachable.
+  - Stack cap respected, closing 20 tabs leaves the 16 most recent reachable.
 
 ### Trade-offs taken
 
 - **Sort isn't preserved on reopen.** Most users hit Cmd+Shift+T to recover from a misclick; the path/filter restoration is the load-bearing piece. Sort restore can land alongside the broader file-table sort persistence work in the TODO.md backlog ("Persist file-table column order after drag reorder, alongside column widths").
 - **OS-red-button window close doesn't snapshot tabs.** Phase C dropped the `on_window_closed` handler when it switched to stay-resident; restoring a hook just for closed-tab snapshotting is overkill for v1. Cmd+W and Cmd+Shift+W cover the deliberate close paths.
 - **Closed-tab stack is in-memory only.** Persisting it across launches is part of the session-restore work (Phase J). For now a relaunch clears the stack.
-- **Drop gaps are present in single-tab strips too.** Cheap (no hit during a node drag — `TabDragPayload` only originates from tab chips), and lets the eventual cross-window tear-off / merge work share the same gap rendering.
+- **Drop gaps are present in single-tab strips too.** Cheap (no hit during a node drag: `TabDragPayload` only originates from tab chips), and lets the eventual cross-window tear-off / merge work share the same gap rendering.
 
 ---
 
-## Phase C — Cmd+N, second window, stay-resident (landed)
+## Phase C - Cmd+N, second window, stay-resident (landed)
 
 Goal: open a second window that shares the singleton `ProcessState`.
 Process stays resident on zero windows (Finder / Safari model).
 
 ### Decisions
 
-- **`ProcessState` lives in a GPUI `Global` newtype** (`ProcessStateGlobal(Rc<ProcessState>)`). `Global: 'static` is the only constraint — `Rc<…>` qualifies. Set once at `app.run` start via `cx.set_global(...)` in both `main.rs::run_gui` and the screenshot path. Every `Shell::new` reads it back via `process_state::process_state(cx)`. No Send/Sync gymnastics needed.
+- **`ProcessState` lives in a GPUI `Global` newtype** (`ProcessStateGlobal(Rc<ProcessState>)`). `Global: 'static` is the only constraint: `Rc<…>` qualifies. Set once at `app.run` start via `cx.set_global(...)` in both `main.rs::run_gui` and the screenshot path. Every `Shell::new` reads it back via `process_state::process_state(cx)`. No Send/Sync gymnastics needed.
 - **`Shell::new` now takes `Rc<ProcessState>` by argument** instead of constructing it. Two call sites: `main.rs::open_shell_window_sized` and `screenshot.rs::run` (both read from the global). New helper `Shell::build_process_state(cx)` runs once at startup and returns the Rc.
-- **`open_shell_window(cx)`** is the single entry point for spawning a Shell window. Used by the initial-window boot (via `open_shell_window_sized` with size hints) and by the Cmd+N handler. Window options live in this function — there's no longer a single hard-coded `opts` block in `run_gui`. Future Phase C polish (cascade offset, per-window WindowOptions persistence) lands here.
+- **`open_shell_window(cx)`** is the single entry point for spawning a Shell window. Used by the initial-window boot (via `open_shell_window_sized` with size hints) and by the Cmd+N handler. Window options live in this function: there's no longer a single hard-coded `opts` block in `run_gui`. Future Phase C polish (cascade offset, per-window WindowOptions persistence) lands here.
 - **`Cmd+N` binds at App level**, not under `SHELL_CONTEXT`. Reasons: (a) Cmd+N must work with zero windows open; (b) it should work regardless of which window holds focus. The action is declared in `main.rs`'s `actions!(app, …)` block alongside `Quit`/`OpenAbout`. The keymap's catalogue walker is told to skip `window.new_window` so main.rs's explicit `cx.bind_keys` is the only binding.
-- **Process stays resident at zero windows.** Removed the `cx.on_window_closed` handler that called `cx.quit()`. Quit only via `Cmd+Q` or app-menu Quit. Matches spec §1.2 / §2.2. The dock icon stays visible — Phase I will wire `applicationShouldHandleReopen` so clicking it with no windows open reopens a window.
+- **Process stays resident at zero windows.** Removed the `cx.on_window_closed` handler that called `cx.quit()`. Quit only via `Cmd+Q` or app-menu Quit. Matches spec §1.2 / §2.2. The dock icon stays visible: Phase I will wire `applicationShouldHandleReopen` so clicking it with no windows open reopens a window.
 - **`Cmd+W` on the last tab closes the window**, via `window.remove_window()`. With the stay-resident default this is non-fatal. Same behavior on the tabstrip's `×` close button. Matches spec §3.4.
 - **Watcher / reload fan-out now tracks every live tab path in-process.** `FsWatcher` keeps a set of watched directories, and `ProcessState` keeps weak handles for live Shell windows so watcher events and file-op completions reload every matching tab in every window.
 - **Later: true OS-level singleton + launch-intent forwarding.** The current work shares one `ProcessState` inside a running process, but a second `ferail-gpui` process launched from CLI/Finder still needs the platform primary/secondary intent channel described in the spec.
@@ -1367,52 +1367,52 @@ Process stays resident on zero windows (Finder / Safari model).
 ### Trade-offs taken
 
 - Initial-window size hints (`--width`, `--height`) only apply to the *first* window. Cmd+N windows use defaults (1180 × 760, centered). The size flags exist primarily for screenshots / dev iteration; persisted per-window geometry is Phase J (session restore) work.
-- The settings-only boot path (`--settings page`) uses windowed (top-left) bounds rather than centered, because computing centered bounds needs `&mut App` synchronously and the existing code structure spawned that work async. Acceptable — this is a developer / CLI path, not a user-facing default.
+- The settings-only boot path (`--settings page`) uses windowed (top-left) bounds rather than centered, because computing centered bounds needs `&mut App` synchronously and the existing code structure spawned that work async. Acceptable: this is a developer / CLI path, not a user-facing default.
 
 ---
 
-## Phase A+B — per-tab state + ProcessState extraction (in flight)
+## Phase A+B - per-tab state + ProcessState extraction (in flight)
 
 Goal: pure refactor, no user-visible behavior change. Foundation for
 multi-window, tear-off, and cross-window reload fan-out.
 
 ### Decisions agreed before code
 
-- **Per-tab `Entity<TableState>`** — each `Tab` owns its own table state.
+- **Per-tab `Entity<TableState>`**: each `Tab` owns its own table state.
   Tab-switching no longer re-enumerates; inactive tabs' enumerations
   keep streaming into their own table.
-- **Filter is per-window**, not per-tab — preserves current behavior;
+- **Filter is per-window**, not per-tab: preserves current behavior;
   one less migration surface.
 - **Closed-tab stack is process-scoped** (when added in Phase D).
 - **Cmd+W closes the active tab; closing the last tab closes the window**
   (today it refuses; flip lands in Phase C alongside multi-window).
-- **No lockfile-based singleton** — rely on macOS LaunchServices for the
+- **No lockfile-based singleton**: rely on macOS LaunchServices for the
   shipped .app, accept that `cargo run --bin` from dev can launch multiple.
 - **Process state lives in an `Rc<ProcessState>`** held by each window;
   GPUI is single-threaded for entity access so `Rc` is fine. Background
   workers grab `Arc<MetadataDb>` / `Arc<NativeFs>` directly.
-- **Phases A and B are landed together** — both touch the same field
+- **Phases A and B are landed together**: both touch the same field
   layout on Shell; splitting them is more churn than value.
 
 ### Decisions made during Phase A+B
 
-- **`ProcessState` is a plain `Rc<ProcessState>` field on `Shell`** rather than a global / thread-local. Multi-window construction will clone the Rc into each new `Shell`. Background workers don't take the `Rc` — they take `Arc<Mutex<MetadataDb>>` / `Arc<NativeFs>` / `Arc<AtomicBool>` clones, so `Rc` never crosses thread boundaries.
+- **`ProcessState` is a plain `Rc<ProcessState>` field on `Shell`** rather than a global / thread-local. Multi-window construction will clone the Rc into each new `Shell`. Background workers don't take the `Rc`: they take `Arc<Mutex<MetadataDb>>` / `Arc<NativeFs>` / `Arc<AtomicBool>` clones, so `Rc` never crosses thread boundaries.
 - **`metadata_db` is `RefCell<Option<Arc<Mutex<…>>>>`** because the existing async open path needs to *set* the slot post-construction. Background workers grab `.borrow().clone()` to take a stable handle.
 - **`NodeStore` is `RefCell<NodeStore>`.** Every call site now does `.borrow_mut()`. The lifetime cost is one site (`path_for_action` returns `&Path` and can't survive the borrow); rewrote it to use `path_snapshot_for_job` which returns `PathBuf`. Cost: a path-clone per row in `ant_heat`, negligible.
 - **`Tab` is no longer `Clone`.** It now owns a `Subscription` (table-event bridge) which isn't Clone. No call sites needed it. Confirmed by grep.
-- **Tab construction goes through `Shell::build_tab` / `make_tab`** — both build the `TableState` entity and wire its subscription before handing back a `Tab`. The subscription closure captures the tab's `TabId` so events from a non-active tab are dropped (defence in depth — only the active tab is rendered/hit-tested).
-- **`load_path` captures `self.active_tab().id` and delegates to `load_path_for_tab(tab_id, ...)`.** The streaming closure looks up the tab by id, checks *that* tab's generation, then temporarily sets `self.active = idx` before calling the helpers that operate on the active tab. Restored on the way out. This keeps the existing helper signatures (`refresh_file_list_selection`, `restore_filtered_out_against_model`, etc.) unchanged while making the streaming correctly target the loading tab — even when the user has tab-switched mid-load.
-- **`Cmd+W` no longer re-enumerates the now-active tab.** Each tab keeps its `TableState` populated from its own prior load. Same for `select_tab`, `on_next_tab`, `on_prev_tab` — pure index swap + `cx.notify()`. The spec calls for this; today's behavior was a forced reload (when there was one shared TableState).
+- **Tab construction goes through `Shell::build_tab` / `make_tab`**: both build the `TableState` entity and wire its subscription before handing back a `Tab`. The subscription closure captures the tab's `TabId` so events from a non-active tab are dropped (defence in depth, only the active tab is rendered/hit-tested).
+- **`load_path` captures `self.active_tab().id` and delegates to `load_path_for_tab(tab_id, ...)`.** The streaming closure looks up the tab by id, checks *that* tab's generation, then temporarily sets `self.active = idx` before calling the helpers that operate on the active tab. Restored on the way out. This keeps the existing helper signatures (`refresh_file_list_selection`, `restore_filtered_out_against_model`, etc.) unchanged while making the streaming correctly target the loading tab, even when the user has tab-switched mid-load.
+- **`Cmd+W` no longer re-enumerates the now-active tab.** Each tab keeps its `TableState` populated from its own prior load. Same for `select_tab`, `on_next_tab`, `on_prev_tab`: pure index swap + `cx.notify()`. The spec calls for this; today's behavior was a forced reload (when there was one shared TableState).
 - **`suppress_select_row` stays on `Shell`, not Tab.** It gates programmatic `set_selected_row` calls that fire `SelectRow` events; today only the active tab's mirror calls happen, so one counter suffices. If a future iteration mirrors lead into an inactive tab's TableState, this becomes per-tab.
 - **`Shell` rename to `WindowShell` deferred to Phase C.** Cosmetic, and the rename's natural home is the multi-window step. Phase A+B already does the field split; the type name can follow.
-- **The screenshot harness now opens new tabs through the window handle** — `handle.update(cx, |_, window, cx| { shell.update(...) })` — because `make_tab` needs `&mut Window` and a bare `Entity::update` doesn't provide one.
+- **The screenshot harness now opens new tabs through the window handle**: `handle.update(cx, |_, window, cx| { shell.update(...) })`: because `make_tab` needs `&mut Window` and a bare `Entity::update` doesn't provide one.
 
 ### Outcome
 
-- Workspace compiles clean (`cargo check --workspace --all-targets`) — 0 warnings, 0 errors.
+- Workspace compiles clean (`cargo check --workspace --all-targets`), 0 warnings, 0 errors.
 - Workspace tests pass (`cargo test --workspace`).
 - Screenshots verified:
-  - `screenshots/phase-ab-shell.png` (default shell — no visual regression vs. existing baseline).
+  - `screenshots/phase-ab-shell.png` (default shell, no visual regression vs. existing baseline).
   - `screenshots/phase-ab-multi-tab.png` (two extra tabs + multi-row selection).
   - `screenshots/phase-ab-selection-multi.png` (selection iter 2 still renders identically).
 - Spec §3.6 win landed: tab switching is instant (no re-enumeration); each tab's enumeration streams into its own table; inactive-tab enumerations keep running.
@@ -1439,14 +1439,14 @@ multi-window, tear-off, and cross-window reload fan-out.
 ### Layer multi-select over gpui-component instead of forking it
 The Table primitive is pinned. Modifier-aware clicks are addressable through `window.modifiers()` at SelectRow time. We pay one extra hop (Shell intercepts SelectRow and re-applies modifier logic) but avoid maintaining a fork. If we ever need more (per-event cell click intercept, drag-select rubber-banding), revisit.
 
-### Selection is `HashSet<NodeId>` only — no parallel ordered vec
+### Selection is `HashSet<NodeId>` only - no parallel ordered vec
 Visible-order is the delegate's `entries` order. Recompute when needed (Cmd+A, range computation). Fine at typical folder sizes; revisit if 10k-file folders become real.
 
 ### Lead = native overlay; set-only members = our painted bg
-Spec §2.3 wants a focus ring distinct from selection fill. The Table primitive already paints a 1-px accent border on `selected_row` — we use that as the focus ring by mirroring lead → `set_selected_row`. Our `render_tr` adds a `theme.accent.opacity(0.18)` bg for set members that aren't the lead. The lead row gets both, which reads naturally ("the focused one of the selected set").
+Spec §2.3 wants a focus ring distinct from selection fill. The Table primitive already paints a 1-px accent border on `selected_row`: we use that as the focus ring by mirroring lead → `set_selected_row`. Our `render_tr` adds a `theme.accent.opacity(0.18)` bg for set members that aren't the lead. The lead row gets both, which reads naturally ("the focused one of the selected set").
 
 ## Trade-offs made under time pressure
-- Live Shift-range reconciliation through streaming batches (spec §2.6 last bullet of streaming arrival) deferred to iter 2 — iter 1 freezes the range at click time.
+- Live Shift-range reconciliation through streaming batches (spec §2.6 last bullet of streaming arrival) deferred to iter 2: iter 1 freezes the range at click time.
 - Tree multi-select left as single-select per spec §2.7 ("optional for v1").
 - The existing `on_drag(ExternalPaths(...))` in file_list.rs still carries one path. Iter 1 only changes selection. Iter 3 expands the payload.
 
@@ -1463,63 +1463,63 @@ Spec §2.3 wants a focus ring distinct from selection fill. The Table primitive 
 - The `pending_select_row(s)` fields on Shell are CLI-screenshot-harness escape hatches. The harness applies `--select-row(s)` before the streaming load delivers any batches; we stash the row indices and consume them on the first batch that resolves all of them to NodeIds. Cleared on navigation so a stale row index can't apply to a different directory.
 
 ## Iter 2 outcome
-- **Delegate selection state went NodeId-keyed.** The old parallel vecs (`selected_in_set: Vec<bool>`, `is_lead: Vec<bool>`) became `selected_set: HashSet<NodeId>` + `lead: Option<NodeId>`. `render_tr` looks up `entries[row].id` against the set on each frame. Sort can now reorder rows in place without desyncing the selection visuals — the HashSet doesn't care about row order. Same property holds for any future incremental row mutation (rename-stable identity, etc.).
+- **Delegate selection state went NodeId-keyed.** The old parallel vecs (`selected_in_set: Vec<bool>`, `is_lead: Vec<bool>`) became `selected_set: HashSet<NodeId>` + `lead: Option<NodeId>`. `render_tr` looks up `entries[row].id` against the set on each frame. Sort can now reorder rows in place without desyncing the selection visuals: the HashSet doesn't care about row order. Same property holds for any future incremental row mutation (rename-stable identity, etc.).
 - **`load_path` no longer clears selection.** Clearing moved into `navigate` (and a corresponding seed-then-load happens in the new `restore_from_history` helper). `Refresh`, filter changes, `toggle_hidden`, and the fs watcher all preserve selection now and let `apply_directory_batch` / `finish_directory_load` reconcile it.
 - **`HistoryEntry` carries selection per back-stop.** `Tab::history` is `Vec<HistoryEntry>` with `{path, selection, anchor, lead}`. On every `navigate`, the leaving entry is updated with the current snapshot before push. `navigate_back` / `navigate_forward` symmetrically save the current entry's snapshot, step, and restore via `restore_from_history`. The restored selection rides through `load_path` and is then reconciled against the fresh stream on `Done`.
-- **`reconcile_done` is the canonical "after the load settles" pass.** It drops NodeIds not in the final visible model, except when a filter is active — those get moved to `Tab::filtered_out` instead so a future filter loosening can lift them back. It also re-seats `anchor` / `lead` if they vanished, and demotes `range_live` to false when its endpoints are gone.
-- **Filter holding is implicit via the same path.** Narrowing the filter calls `load_path`; the new model shrinks; `reconcile_done` with filter active moves shrunk-out members to `filtered_out`. Loosening the filter does the inverse — `restore_filtered_out_against_model` runs on every batch + on `Done`, lifting members back as their rows arrive. `clear_active_selection` (Esc) also drains `filtered_out` so a follow-up filter loosen can't resurrect ghosts.
+- **`reconcile_done` is the canonical "after the load settles" pass.** It drops NodeIds not in the final visible model, except when a filter is active: those get moved to `Tab::filtered_out` instead so a future filter loosening can lift them back. It also re-seats `anchor` / `lead` if they vanished, and demotes `range_live` to false when its endpoints are gone.
+- **Filter holding is implicit via the same path.** Narrowing the filter calls `load_path`; the new model shrinks; `reconcile_done` with filter active moves shrunk-out members to `filtered_out`. Loosening the filter does the inverse: `restore_filtered_out_against_model` runs on every batch + on `Done`, lifting members back as their rows arrive. `clear_active_selection` (Esc) also drains `filtered_out` so a follow-up filter loosen can't resurrect ghosts.
 - **Live Shift-range now actually streams.** `range_live: bool` on `Tab` is set by `range_select` (Shift / Cmd+Shift click) and the `move_selection(..., extend=true, ..)` keyboard path; cleared by every non-range gesture (plain click, Cmd-click, plain kbd nav, Cmd+A, Esc, navigation). When set, `recompute_live_range` runs on every batch and at `Done`: if both `anchor` and `lead` are visible, selection is rebuilt as the inclusive anchor→lead span in the current visible order; otherwise it waits for the missing endpoint to arrive.
 - **Verified via screenshots** at [docs/images/selection-iter2-multi.png](docs/images/selection-iter2-multi.png) (multi-select identity unchanged after the HashSet refactor) and [docs/images/selection-iter2-sort.png](docs/images/selection-iter2-sort.png) (sort applied with selection still alive).
-- **Caveats deferred to later iters:** the spec's "sort change recomputes the span in the new visible order then freezes the range" polish — we keep the range live and rebuild on next batch instead (good enough on real-world flows; the strict freeze can land with a delegate→Shell hook later). DnD §3 and tree multi-select still queued.
+- **Caveats deferred to later iters:** the spec's "sort change recomputes the span in the new visible order then freezes the range" polish: we keep the range live and rebuild on next batch instead (good enough on real-world flows; the strict freeze can land with a delegate→Shell hook later). DnD §3 and tree multi-select still queued.
 
 ## Iter 1 outcome
 - All spec §2 file-table behaviors land: single click replace, Cmd-click toggle, Shift-click range, Cmd+Shift additive range, anchor/lead model, plain and Shift-extend keyboard nav, Cmd+A, Esc with filter-vs-selection priority, right-click rule (selected vs unselected).
 - Status bar reads from the selection set: count + summed size across visible members.
 - Preview pane reads the lead row, not the whole set (matches Finder).
-- Spec §2.4 "Click on empty space below rows" not yet wired — the gpui-component table doesn't currently surface an empty-area click. Defer to iter 2 or whenever we tap that primitive.
-- Spec §2.4 "Right-click on empty space" same status — not surfaced by the primitive yet.
+- Spec §2.4 "Click on empty space below rows" not yet wired: the gpui-component table doesn't currently surface an empty-area click. Defer to iter 2 or whenever we tap that primitive.
+- Spec §2.4 "Right-click on empty space" same status, not surfaced by the primitive yet.
 - Spec §2.6 streaming reconciliation: minimal pass only. `refresh_file_list_selection` runs on every batch + Done so NodeIds in the set rejoin visually as their rows land. Live Shift-range recomputation across batches deferred to iter 2 (range freezes at click time).
 - Verified visually: `screenshots/selection-iter1-single.png` (one row, focus ring, "1 of 44 selected"), `screenshots/selection-iter1-multi.png` (four rows, anchor=2, lead=8, "4 of 44 selected · 20.3 KB", lead distinct from set members).
 
 # 2026-06-23 mpv backend + chroma-key compositor (planning + Phase 0 spike)
 
 Plan: rip out the libvlc video backend, replace it with **libmpv**, and build
-an **N-layer transparent-colour (chroma-key) compositor** on top — pick a
+an **N-layer transparent-colour (chroma-key) compositor** on top: pick a
 transparent colour on a video, see the layer(s) beneath show through, where a
 lower layer can itself be a keyed video. Full design in
 [docs/features/VIDEO-MPV.md](docs/features/VIDEO-MPV.md).
 
 Why mpv over VLC, in one line: libvlc can't change a video filter live, which
 is the whole reason for the seamless-reopen apparatus in the viewer
-(`commit_video_enhance` / `video_pending_seek` / `video_repause`) — mpv's `vf`
+(`commit_video_enhance` / `video_pending_seek` / `video_repause`): mpv's `vf`
 is live, so that apparatus deletes AND live filters are exactly what a *live*
 colour-key picker needs.
 
 Two scope calls I made up front:
 - **Replace VLC outright** (not keep as a fallback), sequenced so mpv hits
   parity + passes its integration test before VLC is deleted in the same phase
-  — never left without working video.
+ , never left without working video.
 - **N-layer stack** from the start. The data model is N; the honest perf
   ceiling of the CPU-buffer-pull path is a handful of layers at ≤1080p, past
-  which the fix is GPU surfaces (`gpui::surface`) — a documented follow-up, not
+  which the fix is GPU surfaces (`gpui::surface`): a documented follow-up, not
   an MVP blocker.
 
-**Phase 0 spike (`spikes/mpv-probe/`, dependency-free dlopen FFI) — ran green
+**Phase 0 spike (`spikes/mpv-probe/`, dependency-free dlopen FFI): ran green
 against Homebrew libmpv (`/opt/homebrew/opt/mpv/lib/libmpv.2.dylib`).** It
 exists to resolve the gating unknowns before any real integration:
 
 - **SW render pulls BGRA frames.** `mpv_render_context_create(..,"sw")` +
   `mpv_render_context_render` with `SW_SIZE/SW_FORMAT="bgra"/SW_STRIDE/
-  SW_POINTER` hands back a tightly-packed BGRA buffer at the size we ask —
+  SW_POINTER` hands back a tightly-packed BGRA buffer at the size we ask,
   same shape as libvlc's vmem, so the `copy_frame → (w,h,BGRA)` seam is
   untouched.
-- **THE GATE — SW render emits a REAL alpha channel. PASS.** A `colorkey`
+- **THE GATE: SW render emits a REAL alpha channel. PASS.** A `colorkey`
   filter set live produced correct per-pixel alpha through SW render: keying
   the clip's green background made it transparent (`alpha lo=0`), the overlaid
   test box stayed opaque (`hi=255`), ~66k/76.8k px transparent. Eyeballed at
   `screenshots/mpv-probe-B_alpha_green.png` (green→black, box→white). So
   **keying lives in mpv's filter chain** (live, off our threads), not a CPU
-  pass. Recipe: end the vf chain in an alpha format and request bgra —
+  pass. Recipe: end the vf chain in an alpha format and request bgra:
   `vf = lavfi=[...,format=rgba,colorkey=color=0xRRGGBB:similarity=..:blend=..]`.
 - **Live vf change works with no re-open.** Setting `vf` *after* playback
   started applied immediately (the green key above was set live, ret=0). This
@@ -1529,29 +1529,29 @@ exists to resolve the gating unknowns before any real integration:
      output** (luma 83.8 → 83.8 unchanged). The equalizer lives in the GPU VO
      shaders; SW render doesn't run them. So **colour grade must route through
      a lavfi filter** (`eq`/`colorlevels`) in the live vf chain, not via the
-     `brightness/contrast/saturation/gamma/hue` properties — which unifies
+     `brightness/contrast/saturation/gamma/hue` properties, which unifies
      grade + enhance + key into one live chain. (Or keep the existing CPU
      grade; lavfi is cleaner now that the chain is live.)
   2. **The `--alpha` option doesn't exist in this mpv build** (rejected -5).
-     Didn't matter — alpha came purely from `format=rgba` in the chain + the
+     Didn't matter: alpha came purely from `format=rgba` in the chain + the
      bgra SW format. One less knob.
-  - (Minor: the spike's *second* live retune snapshot was stale — 200 ms
+  - (Minor: the spike's *second* live retune snapshot was stale, 200 ms
     wasn't enough settle, not a mechanism failure; the real backend uses
     mpv's render update-callback rather than a fixed sleep.)
 
 Net: the architecture holds and the risky unknown is retired green. Next is
-Phase 1 — `ferail-video-mpv` to parity, then delete `ferail-video-vlc` +
+Phase 1: `ferail-video-mpv` to parity, then delete `ferail-video-vlc` +
 the `vlc` feature + the reopen apparatus. Delete `spikes/mpv-probe/` once
 Phase 1 lands (binding decision now recorded here).
 
 ---
 
-# 2026-06-23 resilient file operations — cope with permission/lock failures + report transparently
+# 2026-06-23 resilient file operations - cope with permission/lock failures + report transparently
 
 Problem: a copy/move that hit a permission denial or a locked file (open in
 another process) aborted the **whole batch on the first failure**, threw away
 the structured cause at the `format!("{path}: {e}")` boundary, and surfaced one
-flat string — with no way to *cope* (escalate) or even see which items failed.
+flat string, with no way to *cope* (escalate) or even see which items failed.
 Plan: `~/.claude/plans/tidy-dreaming-lobster.md` (approved). Phased: Chunk A =
 transparency foundation; Chunk B = retry + elevation vertical slice (macOS-real,
 Win/Linux stubbed); Chunk C = Windows-native lock detection + runas (deferred to
@@ -1565,7 +1565,7 @@ process is in scope (Windows-native, Chunk C).
 
 1. **`FileOpError`/`FileOpErrorKind` live in `ferail-fs-native`, not
    `ferail-core`.** The plan said core "beside `EnumerationError`", but core
-   deliberately uses `String` for paths and never imports `std::path` — a
+   deliberately uses `String` for paths and never imports `std::path`: a
    `PathBuf`-bearing error type doesn't belong there. fs-native is the engine's
    home and where the libc-based classifier must live anyway (errno values vary
    across unix flavours, so the classifier uses `libc::EACCES` etc., not
@@ -1574,19 +1574,19 @@ process is in scope (Windows-native, Chunk C).
    format; neither core, fs-native, nor gpui pull serde. So the Chunk B elevated-
    op descriptor will use the same hand-rolled line format, and the platform
    elevation primitive stays a dumb "re-launch self elevated with these args"
-   call (it never sees the op type) — which also keeps crate boundaries clean
+   call (it never sees the op type), which also keeps crate boundaries clean
    (shell crates can't depend on gpui's descriptor type).
 
-## Chunk A — landed (this session)
+## Chunk A - landed (this session)
 
 - `FileOpErrorKind { PermissionDenied | Locked | NotFound | NoSpace | ReadOnly |
   NameTooLong | AlreadyExists | Other }` with `summary()` (plain label),
-  `advice()` (centralised — the GPUI notification's old inline string-match table
-  moved here), `is_elevation_recoverable()` (PermissionDenied only — elevation
+  `advice()` (centralised: the GPUI notification's old inline string-match table
+  moved here), `is_elevation_recoverable()` (PermissionDenied only: elevation
   doesn't release another process's lock or fill a disk) and `is_lock()`.
 - `FileOpError { kind, path, raw, os_code }` + `FileOpError::from_io` classifier:
   `ErrorKind` first, then raw OS code (libc on unix, documented winerror.h values
-  on the windows arm — pure data, safe to write blind).
+  on the windows arm: pure data, safe to write blind).
 - Engine collect-and-continue: `OpOutcome.failed: Vec<FileOpError>`; the per-item
   loops in `run_copy`/`run_move` record a failed item and **keep going** instead
   of `?`-aborting; `resolve_dest` returns a `Resolution` enum and no longer
@@ -1600,7 +1600,7 @@ process is in scope (Windows-native, Chunk C).
   advice; wired into `spawn_transfer_op` so **failures always surface** (even
   sub-150ms ops) with the existing Copy-to-clipboard action. The old transfer
   error path used a bare `Notification::error` that skipped the advice helper
-  entirely — fixed. `file_op_error_notification` now delegates to
+  entirely: fixed. `file_op_error_notification` now delegates to
   `classify_error_text(...).advice()` so the string-error surfaces (rename,
   duplicate, compress, alias) share the one advice table.
 - Tests: `partial_failure_continues_and_is_recorded` (a hand-built plan with a
@@ -1614,10 +1614,10 @@ process is in scope (Windows-native, Chunk C).
   `platform_shell` elevation/lock surface + Retry / Retry-as-administrator UI.
 - Chunk C (Windows box): Restart Manager lockers, RmShutdown/Terminate force-
   close, `runas` re-exec. macOS elevation via osascript is the simplest viable
-  mechanism (runs the worker as root, generic auth dialog) — a `SMAppService`
+  mechanism (runs the worker as root, generic auth dialog): a `SMAppService`
   privileged helper is the upgrade.
 
-## Chunk B — landed (this session): retry + elevation vertical slice
+## Chunk B - landed (this session): retry + elevation vertical slice
 
 Verified end-to-end on macOS (only the literal auth prompt is the manual step).
 
@@ -1632,11 +1632,11 @@ Verified end-to-end on macOS (only the literal auth prompt is the manual step).
 - **Platform surface** (all three shell crates, `platform_shell::*`):
   `elevation_available()`, `run_elevated_self(args)`, `lock_diagnostics_available()`,
   `processes_using(path) -> Vec<LockingProcess>`, `force_close_processes(pids)`.
-  The primitive is deliberately dumb — "re-launch THIS exe elevated with these
-  args and wait" — so it never sees the op type and the shell crates need no
+  The primitive is deliberately dumb: "re-launch THIS exe elevated with these
+  args and wait", so it never sees the op type and the shell crates need no
   dep on gpui's descriptor. macOS `run_elevated_self` = osascript `do shell
   script … with administrator privileges` (two-layer quoting: POSIX
-  single-quote per token, then AppleScript string escaping — verified through
+  single-quote per token, then AppleScript string escaping: verified through
   osascript with a spaced filename). Windows/Linux = stubs (Chunk C / pkexec).
 - **UI** (`shell.rs` `transfer_failure_notification` + `TransferRetry`;
   `file_ops.rs` `retry_transfer_elevated`): the failure toast offers Copy +
@@ -1657,19 +1657,19 @@ Verified end-to-end on macOS (only the literal auth prompt is the manual step).
   platform-neutral advice line; acceptable, revisit if it confuses.
 - **Scope held**: only the copy/move/paste/drag transfer path got the retry UI
   this session. The other silent/first-error surfaces (trash, tag-toggle) are
-  noted in TODO, not done — they're separate surfaces, and the user was editing
+  noted in TODO, not done: they're separate surfaces, and the user was editing
   in parallel (`//`), so I kept the blast radius tight.
 - **Clippy**: my additions are warning-clean; the few workspace warnings live in
-  files I didn't touch (search.rs, open_text_prompt region) — pre-existing or
+  files I didn't touch (search.rs, open_text_prompt region): pre-existing or
   the parallel edits, left alone.
 
-### Chunk C (next, on the Windows box) — see TODO "Resilient file-op coping"
+### Chunk C (next, on the Windows box) - see TODO "Resilient file-op coping"
 
 `ShellExecuteExW` runas for `run_elevated_self`; Restart Manager for
 `processes_using`; `RmShutdown`/`TerminateProcess` for `force_close_processes`;
 then flip the two `*_available()` bools true.
 
-## 2026-08-22 — Grid icon-size slider + thumbnail fit modes
+## 2026-08-22 - Grid icon-size slider + thumbnail fit modes
 
 Toolbar gets a continuous icon-size slider and a reset button beside the
 existing −/＋ stepper; Settings › Layout gets **Icon fit**, which decides how a
@@ -1685,13 +1685,13 @@ thumbnail fills the square icon slot. Size range widened from 64–256 to
   one for a portrait (`Cover`), so "Fit width" is just Contain-or-Cover chosen
   per image. The first design computed the target rect ourselves and drew with
   `ObjectFit::Fill`; letting gpui crop instead keeps the painted element
-  exactly slot-sized — a 4:1 panorama in Fill frame would otherwise lay out an
+  exactly slot-sized: a 4:1 panorama in Fill frame would otherwise lay out an
   element several thousand px wide purely to have it clipped back. The mapping
   is a pure function with unit tests; the renderer just asks for it.
 
 - **The size control is hand-rolled, and has no knob.** It is a
   click-anywhere two-tone fill bar: bright left = current size, dim right =
-  headroom. gpui-component's `Slider` cannot express that — it always draws a
+  headroom. gpui-component's `Slider` cannot express that: it always draws a
   thumb, and its thumb ring and track are both tinted from a single colour, so
   there is no way to keep the two-tone bar and lose the knob (only `disabled`
   hides the thumb, and that kills interaction too). Its thumb size and track
@@ -1700,14 +1700,14 @@ thumbnail fills the square icon slot. Size range widened from 64–256 to
 
   Two things fell out of dropping the component. The value now lives in
   exactly one place (the `IconSize` global), so the entity, the subscription
-  and the whole two-writer sync problem are gone — the −/＋ buttons and the
+  and the whole two-writer sync problem are gone: the −/＋ buttons and the
   bar are just two callers of the same setter. And the scrub no longer goes
   through gpui's drag system, so dragging the size no longer makes
   `cx.has_active_drag()` true app-wide (which had been livening up drop
   targets and spring-load for the duration of a gesture).
 
 - **The scrub persists on release, not on move.** Mouse-move only writes the
-  live global — that is what makes cells resize under the cursor. Persisting
+  live global: that is what makes cells resize under the cursor. Persisting
   per move would enqueue a settings write on every frame of one gesture. The
   drag is tracked on the Shell and serviced from the *window root*, not the
   bar, so it keeps following the cursor past either end of a 96-px track;
@@ -1725,7 +1725,7 @@ thumbnail fills the square icon slot. Size range widened from 64–256 to
 - **Magnifying fit modes step up one fetch bucket.** Covering scales until the
   short edge fills the slot, so the same thumbnail is stretched further than
   Best fit stretches it. The step reuses the existing 128/256/512 ladder rather
-  than adding a 1024 rung — that would cost ~4 MB per entry against a
+  than adding a 1024 rung: that would cost ~4 MB per entry against a
   512-entry LRU, and only helps at the largest sizes.
 
 - **The window claimed its own titlebar drag** (`shell_window_options`,
@@ -1735,18 +1735,18 @@ thumbnail fills the square icon slot. Size range widened from 64–256 to
   drag, and I assumed that covered macOS too. It does not. With gpui's default
   `app_owns_titlebar_drag: false`, `_opaqueRectForWindowMoveWhenInTitlebar`
   reports an empty rect and **AppKit drags the window from the titlebar rect
-  below gpui entirely** — `cx.stop_propagation()` cannot reach it, because
+  below gpui entirely**: `cx.stop_propagation()` cannot reach it, because
   AppKit never asks gpui. gpui-component's `TitleBar` carries an app-side
   window-move (`should_move` → `start_window_move`) that was simply dead code
   here. A *button* never exposes this (a click is not a drag), so the slider is
   the first control in that bar to hit it. Only the shell window sets the flag
-  — it is the only one that renders a `gpui_component::TitleBar` and so the
+ : it is the only one that renders a `gpui_component::TitleBar` and so the
   only one with an app-side move to fall back on; Settings / Get Info / the
   icon picker draw no custom titlebar and must keep AppKit's.
 
 - **The slider hides below a 1060-px window.** The shell title bar has no
   width tiering (the viewer's toolbar does), and without a gate the slider
-  pushed the whole right-hand cluster — overflow menu included — off the edge
+  pushed the whole right-hand cluster, overflow menu included, off the edge
   of a narrow window. Deliberately one local gate rather than a tier system.
 
 ### Trade-offs / with more time
@@ -1757,12 +1757,12 @@ thumbnail fills the square icon slot. Size range widened from 64–256 to
   quarantine badge and the tag dots now sit on image content. `ADORN_MIN_ICON`
   already hides most of that below 96 px; Finder has the same overlap.
 - Fit width / Fit height only become distinct *looks* on a non-square slot.
-  Aspect-aware (masonry) cells would make them earn their place — separate
+  Aspect-aware (masonry) cells would make them earn their place: separate
   feature, not attempted.
 - No "Actual size" (never enlarge) mode; it is one more arm in the same match
   if a small PNG blown up to 512 px turns out to bother anyone.
 
-## 2026-08-23 — Shell toolbar width tiering
+## 2026-08-23 - Shell toolbar width tiering
 
 The title bar folds clusters into its `…` menu on a narrow window, the way the
 viewer's toolbar already did. Same shape as `viewer/window.rs`: logical-px
@@ -1777,7 +1777,7 @@ the total fits.
   coarsely; window/system placement verbs go before anything acting on the
   current folder; New Folder and Refresh hold out longest because they are
   what people reach up there for. The view switcher is deliberately **not** a
-  tier — it is how you get back out of icon view.
+  tier: it is how you get back out of icon view.
 
 - **Folded items keep bar order in the menu**, above a separator and the
   pre-existing static block, so the menu reads as the bar's tail rather than a
@@ -1791,8 +1791,8 @@ the total fits.
   Title Case twin, so translators do not get near-duplicate pairs.
 
 - **The filter field is sized by arithmetic, not flexbox.** Below the last tier
-  the fixed remainder is still ~600 px and the tail of the bar — view switcher,
-  then `…` itself — walks off the edge. Flex-shrink cannot rescue that from
+  the fixed remainder is still ~600 px and the tail of the bar: view switcher,
+  then `…` itself: walks off the edge. Flex-shrink cannot rescue that from
   inside: gpui-component's `#bar` takes its *automatic minimum size* from our
   content, so it overflows its own parent and no shrink pressure reaches our
   children (every one of which is `flex_shrink_0` anyway). So the one elastic
@@ -1800,7 +1800,7 @@ the total fits.
 
 - **`EDGE_MARGIN` exists because exact fits clip.** Without it the arithmetic
   lands the last element flush on the window edge and the `…` loses its third
-  dot — visible at 490–500 px before the margin went in.
+  dot: visible at 490–500 px before the margin went in.
 
 ### Calibration / limits
 
@@ -1811,7 +1811,7 @@ correcting it moves all the fold points together. Verified by screenshot at
 
 Floor is ~500 px, below which the `…` clips again (was ~880 px before this
 change). Fixing the last stretch would mean folding the "Ferail" wordmark too,
-or setting `window_min_size` on the shell window — neither attempted, since the
+or setting `window_min_size` on the shell window, neither attempted, since the
 default window is 1180 px and nothing real gets that narrow.
 
 **Not verified:** the folded items' *appearance* in the open menu. The

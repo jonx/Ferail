@@ -16,12 +16,12 @@ publish = false
 crate-type = ["staticlib"]
 
 [dependencies]
-# Not in [workspace.dependencies] — ferail-gpui is the leaf app crate;
+# Not in [workspace.dependencies] - ferail-gpui is the leaf app crate;
 # this wrapper is its only dependent.
 ferail-gpui = { path = "../ferail-gpui" }
 # getrandom's custom-backend hook type (the .cargo/config selects
 # `getrandom_backend="custom"` for the AROS target; the final binary must
-# provide __getrandom_v03_custom — ours rides posixc arc4random_buf).
+# provide __getrandom_v03_custom - ours rides posixc arc4random_buf).
 getrandom = "0.3"
 
 [lints.rust.unexpected_cfgs]

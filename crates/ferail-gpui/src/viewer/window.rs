@@ -58,7 +58,7 @@ actions!(
 );
 
 /// One playlist item, snapshotted from the file list at open time.
-/// The viewer never re-reads the directory (prime directive — the
+/// The viewer never re-reads the directory (prime directive: the
 /// snapshot is the contract; live sync is deferred to watcher work).
 #[derive(Clone)]
 pub struct PlaylistEntry {
@@ -86,7 +86,7 @@ const ZOOM_STEP: f32 = 1.25;
 /// status/seek bar.
 const CHROME_REVEAL_STRIP: f32 = 56.0;
 /// Fullscreen: once revealed, the toolbar / status bar auto-hide this
-/// long after the pointer was last near them — unless the pointer is
+/// long after the pointer was last near them, unless the pointer is
 /// hovering the bar itself (or a seek drag is live).
 const CHROME_AUTOHIDE: Duration = Duration::from_millis(2500);
 /// Keep enough of a translucent viewer visible that its controls can still be
@@ -105,30 +105,30 @@ const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov"];
 /// How long an open video stream gets to deliver its first frame before
 /// the stage declares the file undecodable. Corrupt files (recovery
 /// debris, foreign bytes under a video extension) open a stream that
-/// never produces a frame — without a deadline they'd show a blank stage
+/// never produces a frame, without a deadline they'd show a blank stage
 /// with no explanation. Healthy files measure well under this even on
 /// removable media; a frame arriving later self-heals (the message is
 /// computed from live state, not latched).
 const VIDEO_DECODE_DEADLINE: Duration = Duration::from_secs(5);
 
-/// Containers mpv plays that the built-in player can't — only treated as
+/// Containers mpv plays that the built-in player can't, only treated as
 /// video when the mpv backend is selected (otherwise they'd open as a
 /// Quick Look poster image, e.g. a 3GP showing as a still). Not exhaustive
-/// — libmpv handles more — but covers the common cases.
+///, libmpv handles more, but covers the common cases.
 const MPV_VIDEO_EXTS: &[&str] = &[
     "mkv", "webm", "avi", "flv", "wmv", "asf", "mpg", "mpeg", "mpe", "m2v", "mpv", "3gp", "3g2",
     "ts", "mts", "m2ts", "vob", "ogv", "ogm", "divx", "rm", "rmvb", "f4v", "mxf", "dv", "qt",
     "amv", "nsv", "y4m", "h264", "hevc", "av1",
 ];
 
-/// Audio the built-in (AVFoundation / Media Foundation) player decodes —
+/// Audio the built-in (AVFoundation / Media Foundation) player decodes:
 /// routed to the playback path for *any* backend, like [`VIDEO_EXTS`]. These
 /// are the mainstream, natively-supported containers/codecs.
 const AUDIO_EXTS: &[&str] = &[
     "mp3", "m4a", "m4b", "aac", "aiff", "aif", "aifc", "wav", "caf", "flac", "alac",
 ];
 
-/// Audio only the mpv backend can decode — treated as playable only when the
+/// Audio only the mpv backend can decode: treated as playable only when the
 /// mpv provider is selected (the native players lack these codecs: WMA is
 /// proprietary, and Vorbis/Opus/FLAC/APE/… aren't in AVFoundation). Mirrors
 /// [`MPV_VIDEO_EXTS`]: without mpv these stay a static cover/poster.
@@ -148,10 +148,10 @@ fn fmt_time(secs: f64) -> String {
 }
 
 /// CPU-rotate a decoded bitmap by `quarter_turns` clockwise (1/2/3).
-/// gpui's `img` element has no rotation transform (only `svg` does —
+/// gpui's `img` element has no rotation transform (only `svg` does:
 /// docs/GPUI-UPSTREAM.md #5), so view-only rotation re-lays-out the
-/// pixels. Channel order is irrelevant here — rotation just moves whole
-/// 4-byte pixels — so the loader's BGRA buffer round-trips correctly.
+/// pixels. Channel order is irrelevant here: rotation just moves whole
+/// 4-byte pixels, so the loader's BGRA buffer round-trips correctly.
 /// Returns `None` for a no-op turn or if the bitmap can't be read.
 fn rotate_render_image(img: &RenderImage, quarter_turns: u8) -> Option<Arc<RenderImage>> {
     let qt = quarter_turns % 4;
@@ -171,7 +171,7 @@ fn rotate_render_image(img: &RenderImage, quarter_turns: u8) -> Option<Arc<Rende
 
 /// Wrap tightly-packed BGRA bytes (pulled from the native video player)
 /// into a single-frame `RenderImage`. gpui's `RenderImage` stores BGRA
-/// directly, so — unlike the still loader's `build_frame` — there is no
+/// directly, so: unlike the still loader's `build_frame`: there is no
 /// channel swap. `None` if `bgra` isn't exactly `w * h * 4` bytes.
 fn build_video_frame(bgra: Vec<u8>, w: u32, h: u32) -> Option<Arc<RenderImage>> {
     let buf = image::RgbaImage::from_raw(w, h, bgra)?;
@@ -195,21 +195,21 @@ const UPSCALE_MAX_EDGE: u32 = 8192;
 enum SliderId {
     Brightness,
     Contrast,
-    /// "Color" in the UI — chroma intensity.
+    /// "Color" in the UI: chroma intensity.
     Saturation,
-    /// Hue rotation — mpv video only.
+    /// Hue rotation: mpv video only.
     Hue,
-    /// Gamma — mpv video only.
+    /// Gamma: mpv video only.
     Gamma,
     Denoise,
     Sharpen,
-    /// Gradient debanding (`gradfun`) — mpv video only.
+    /// Gradient debanding (`gradfun`): mpv video only.
     Banding,
-    /// Film grain (`grain`) — mpv video only.
+    /// Film grain (`grain`): mpv video only.
     Grain,
-    /// Chroma-key range width (`colorkey` similarity) — mpv video only.
+    /// Chroma-key range width (`colorkey` similarity): mpv video only.
     Similarity,
-    /// Chroma-key edge feather (`colorkey` blend) — mpv video only.
+    /// Chroma-key edge feather (`colorkey` blend): mpv video only.
     Blend,
 }
 
@@ -272,7 +272,7 @@ impl SliderId {
 
 /// View-only colour grade applied to the displayed bitmap. Each field is
 /// a signed strength in `[-1, 1]`; all-zero is the neutral identity. Like
-/// rotation this is purely in-memory (gpui's `img` has no colour filter —
+/// rotation this is purely in-memory (gpui's `img` has no colour filter:
 /// docs/GPUI-UPSTREAM.md), so the pixels are transformed on the CPU and
 /// re-uploaded. Window-level: not saved anywhere, but it does carry across
 /// navigation so a grade set once applies to every item you flip through.
@@ -344,7 +344,7 @@ impl EnhanceParams {
 /// only channel-aware step is the alpha premultiply, which keys off the 4th
 /// byte (`A`) and so is correct for BGRA too. `None` on a degenerate size.
 /// This is the hot path that used to be a single-threaded `imageops::resize`
-/// — the `fast_image_resize` crate does it with SSE4.1/AVX2/NEON instead.
+///: the `fast_image_resize` crate does it with SSE4.1/AVX2/NEON instead.
 fn resize_lanczos3(buf: Vec<u8>, w: u32, h: u32, nw: u32, nh: u32) -> Option<Vec<u8>> {
     use fast_image_resize::images::Image;
     use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
@@ -359,10 +359,10 @@ fn resize_lanczos3(buf: Vec<u8>, w: u32, h: u32, nw: u32, nh: u32) -> Option<Vec
 /// The full off-thread still pipeline: colour grade → denoise → upscale →
 /// sharpen → rotate, over a packed BGRA buffer. Returns the final
 /// `(width, height, BGRA bytes)`. Heavy (convolutions + resampling), so it
-/// only ever runs on the background executor — never the render path.
+/// only ever runs on the background executor, never the render path.
 ///
-/// `preview` skips the one genuinely expensive step — the multi-megapixel
-/// upscale resample — so a live slider drag previews the colour/denoise/
+/// `preview` skips the one genuinely expensive step: the multi-megapixel
+/// upscale resample, so a live slider drag previews the colour/denoise/
 /// sharpen change instantly; the enlargement (invisible at fit-to-window)
 /// is filled in by a single full-quality pass once the drag releases.
 ///
@@ -400,7 +400,7 @@ fn process_still_pixels(
             nw = ((nw as f64 * s).round() as u32).max(1);
             nh = ((nh as f64 * s).round() as u32).max(1);
         }
-        // Only ever enlarge — never let the cap shrink an already-huge
+        // Only ever enlarge, never let the cap shrink an already-huge
         // original below its native size.
         if nw > cw || nh > ch {
             let out = resize_lanczos3(img.into_raw(), cw, ch, nw, nh)?;
@@ -504,7 +504,7 @@ fn apply_color_adjust(img: &RenderImage, adj: ColorAdjust) -> Option<Arc<RenderI
 /// In-place colour grade over a packed BGRA byte buffer (the storage
 /// order of `RenderImage`). Brightness + contrast fold into one 256-entry
 /// LUT; saturation, which mixes channels, runs per pixel only when it's
-/// off-neutral. Alpha (`px[3]`) is left untouched. Pure — no gpui types —
+/// off-neutral. Alpha (`px[3]`) is left untouched. Pure, no gpui types,
 /// so the maths is unit-testable on a plain `Vec<u8>`.
 fn grade_bgra(buf: &mut [u8], adj: ColorAdjust) {
     // Classic contrast factor (GIMP/ImageMagick), with the param mapped
@@ -543,7 +543,7 @@ enum SeekTarget {
     CueOut,
 }
 
-/// Read the persisted video-provider choice once at viewer construction —
+/// Read the persisted video-provider choice once at viewer construction:
 /// settings I/O must never touch the render path. `Some(path)` selects the
 /// mpv provider (effective only in an `mpv`-feature build); `None` keeps the
 /// built-in player. Shared with the thumbnail poster fallback, which gates
@@ -553,7 +553,7 @@ fn resolve_mpv_pref() -> Option<PathBuf> {
 }
 
 /// The zoom mode a viewer window opens with (and returns to on zoom
-/// reset), from Settings → Layout → Viewer. Resolved once per window —
+/// reset), from Settings → Layout → Viewer. Resolved once per window:
 /// `app_state::load` is cache-backed, and a change takes effect on the
 /// next viewer window like the video-backend pref.
 fn resolve_default_zoom() -> ZoomMode {
@@ -568,7 +568,7 @@ pub struct ViewerWindow {
     playlist: Vec<PlaylistEntry>,
     index: usize,
     cache: loader::ViewerCache,
-    /// Sticky zoom/pan — survives navigation by design.
+    /// Sticky zoom/pan: survives navigation by design.
     stage: StageState,
     /// The mode `stage` opens with and resets to, per the
     /// `viewer_default_zoom` setting (resolved once at window open).
@@ -580,7 +580,7 @@ pub struct ViewerWindow {
     /// Window backing scale factor (1 on standard displays, 2 on
     /// Retina), captured at render time. Content dimensions arrive in
     /// device pixels; the stage math runs in logical points (so does the
-    /// viewport), so dims are divided by this before layout — that's what
+    /// viewport), so dims are divided by this before layout: that's what
     /// makes 1:1 one image pixel per *physical* pixel and keeps "fit"
     /// from upscaling sub-viewport content on HiDPI.
     scale_factor: f32,
@@ -599,7 +599,7 @@ pub struct ViewerWindow {
     /// As `chrome_hover`, for the bottom status/seek bar revealed by the
     /// bottom strip.
     status_hover: bool,
-    /// Pointer is currently over the revealed toolbar — pins it open so
+    /// Pointer is currently over the revealed toolbar: pins it open so
     /// the auto-hide tick leaves it alone.
     over_chrome: bool,
     /// Pointer is currently over the revealed status/seek bar.
@@ -632,17 +632,17 @@ pub struct ViewerWindow {
     mpv_pref: Option<PathBuf>,
     /// Whether the active video backend applied the colour grade itself
     /// (mpv does, natively on the GPU/decoder). When true the viewer skips
-    /// its per-frame CPU grade for video — the frames already carry it.
+    /// its per-frame CPU grade for video: the frames already carry it.
     /// Doubles as "the current video stream grades natively" (mpv does).
     video_adjust_native: bool,
     /// The denoise/sharpen/deband/grain filters last pushed to the current
     /// stream. Compared against the live popup values so a slider release only
     /// re-pushes the filter chain when it actually changed (mpv applies it
-    /// live — no re-open).
+    /// live, no re-open).
     video_enhance_applied: VideoEnhance,
     /// The latest decoded video frame (unrotated), uploaded as a
     /// `RenderImage` and drawn like any image. `None` until the first
-    /// frame lands — the Quick Look poster stands in until then.
+    /// frame lands: the Quick Look poster stands in until then.
     video_frame_image: Option<Arc<RenderImage>>,
     /// When the current video stream was opened. A stream that has
     /// produced no frame [`VIDEO_DECODE_DEADLINE`] after this is treated
@@ -653,7 +653,7 @@ pub struct ViewerWindow {
     /// rotated-frame cache so a rotation re-uses the last rotate.
     video_frame_seq: u64,
     /// One-slot cache of the rotated current frame, keyed by
-    /// (frame seq, quarter-turns) — mirrors [`Self::rotated`] for stills
+    /// (frame seq, quarter-turns): mirrors [`Self::rotated`] for stills
     /// so a rotated video rotates once per frame, not once per render,
     /// and rotates live even while paused. [mac]
     video_rotated: Option<(u64, u8, Arc<RenderImage>)>,
@@ -691,7 +691,7 @@ pub struct ViewerWindow {
     window_opacity_track: Bounds<Pixels>,
     window_opacity_dragging: bool,
     /// Whether video audio is muted (the transport's mute toggle). Starts
-    /// muted so opening a video — or several stacked viewer windows — never
+    /// muted so opening a video, or several stacked viewer windows, never
     /// blasts audio unasked; the user opts in per window. `set_muted` no-ops
     /// on the built-in player.
     video_muted: bool,
@@ -712,7 +712,7 @@ pub struct ViewerWindow {
     /// Video-ended events, keyed by entry path so a stale end (user
     /// already navigated away) is dropped instead of advancing.
     video_ended_tx: async_channel::Sender<PathBuf>,
-    /// Process singleton — the shared 512 px preview cache doubles as
+    /// Process singleton: the shared 512 px preview cache doubles as
     /// an instant placeholder while the full-res decode is in flight.
     process: Rc<ProcessState>,
     /// Ephemeral view rotation in clockwise quarter-turns (1 = 90°,
@@ -729,15 +729,15 @@ pub struct ViewerWindow {
     /// Live colour grade (brightness / contrast / "color") applied to the
     /// displayed image or video frame. Neutral by default; window-level.
     /// gpui's `img` has no colour filter so the pixels are transformed on
-    /// the CPU (see [`grade_bgra`]) — same approach as rotation.
+    /// the CPU (see [`grade_bgra`]), same approach as rotation.
     adjust: ColorAdjust,
     /// Live enhancement (denoise / sharpen / upscale) applied to *stills*
-    /// only — too heavy for live video frames. Neutral by default.
+    /// only, too heavy for live video frames. Neutral by default.
     enhance: EnhanceParams,
     /// Whether the adjustments popup is open (toggled by `E`, a right-click
     /// on the stage, or the toolbar button).
     adjust_panel_open: bool,
-    /// Transparent-colour (chroma-key) state for mpv video — keyed pixels go
+    /// Transparent-colour (chroma-key) state for mpv video: keyed pixels go
     /// transparent so the stage background (or, later, a lower layer) shows
     /// through. Window-level and view-only, carried across navigation like
     /// the grade. `chroma_color` is RGB.
@@ -766,7 +766,7 @@ pub struct ViewerWindow {
     /// since enhancement is far too heavy for the render path. While a
     /// non-matching result is pending the plain rotated original stands in.
     /// The `bool` is `preview`: a fast drag-time pass that skipped the heavy
-    /// upscale — it satisfies further drag frames but is recomputed at full
+    /// upscale: it satisfies further drag frames but is recomputed at full
     /// size once the drag releases.
     processed: Option<(
         usize,
@@ -783,7 +783,7 @@ pub struct ViewerWindow {
     /// Single-flight guard: at most one process task runs at a time. A
     /// slider drag fires many param changes; without this each would spawn
     /// a fresh full-res (and possibly upscaled) job and they'd pile up into
-    /// an out-of-memory crash. New requests during a run are coalesced —
+    /// an out-of-memory crash. New requests during a run are coalesced:
     /// the in-flight task re-checks the latest params when it finishes.
     process_inflight: bool,
     /// One-slot cache of the colour-graded video frame for the current
@@ -938,7 +938,7 @@ impl ViewerWindow {
 
     /// Whether any playlist entry lives under one of `roots`. The eject
     /// release pass (docs/features/FILE_OPS.md) closes such viewers so
-    /// mpv lets go of the open media file — the whole playlist counts,
+    /// mpv lets go of the open media file: the whole playlist counts,
     /// not just the current entry, since Next would land on the gone
     /// volume anyway.
     pub fn touches_any(&self, roots: &[std::path::PathBuf]) -> bool {
@@ -952,7 +952,7 @@ impl ViewerWindow {
     fn sync_title(&mut self, window: &mut Window) {
         let title = match self.current() {
             Some(e) => tr!(
-                "{name} \u{2014} {index} of {total}",
+                "{name} - {index} of {total}",
                 name = crate::private_mode::present_leaf_str(&e.name, false),
                 index = self.index + 1,
                 total = self.playlist.len()
@@ -1067,7 +1067,7 @@ impl ViewerWindow {
     }
 
     /// Kick the background decode for the current entry unless the
-    /// cache already has it (in any state — Pending dedups in-flight
+    /// cache already has it (in any state, Pending dedups in-flight
     /// work, Failed prevents retry storms). Same shape as
     /// `preview::request`.
     fn request_current(&mut self, cx: &mut Context<Self>) {
@@ -1108,7 +1108,7 @@ impl ViewerWindow {
     }
 
     /// Move through the playlist with wrap-around. The stage state is
-    /// deliberately NOT touched — sticky zoom is the feature. Any
+    /// deliberately NOT touched: sticky zoom is the feature. Any
     /// navigation (manual or timer-driven) re-arms the slideshow
     /// timer when playing, so manual skips don't stop the show.
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -1120,11 +1120,11 @@ impl ViewerWindow {
         self.request_current(cx);
         self.prefetch_neighbors(cx);
         // Re-process for the new item (no-op if neutral, or if its frame is
-        // still decoding — the request completion re-triggers it).
+        // still decoding: the request completion re-triggers it).
         self.schedule_process(cx);
         let epoch = self.playback.bump();
         // Video entries advance on their own end-of-playback event,
-        // not the interval timer — a 4-minute clip plays through.
+        // not the interval timer: a 4-minute clip plays through.
         if self.playback.playing && !self.current_is_playable() {
             self.arm_timer(epoch, cx);
         }
@@ -1152,7 +1152,7 @@ impl ViewerWindow {
     /// Whether `path` should play as audio for the *active* backend: the
     /// natively-decodable formats always, plus the mpv-only set when the mpv
     /// backend is selected. An audio file opens a real playback stream (same
-    /// backend seam as video) but has no picture frames — the stage shows its
+    /// backend seam as video) but has no picture frames: the stage shows its
     /// cover art while the transport drives sound.
     fn is_audio_path(&self, path: &std::path::Path) -> bool {
         let Some(ext) = path
@@ -1167,13 +1167,13 @@ impl ViewerWindow {
     }
 
     /// True when the current video stream has been open past
-    /// [`VIDEO_DECODE_DEADLINE`] without ever delivering a frame — the
+    /// [`VIDEO_DECODE_DEADLINE`] without ever delivering a frame: the
     /// signature of an undecodable file (a corrupt recovery artifact, or
     /// foreign bytes under a video extension). Computed from live state,
     /// never latched: a late first frame simply makes this false again.
     ///
     /// Audio streams legitimately never deliver a frame, so they are excluded
-    /// — a playing song must not be branded "undecodable".
+    ///: a playing song must not be branded "undecodable".
     fn video_undecodable(&self) -> bool {
         self.current_is_video()
             && self.video_overlay.is_some()
@@ -1192,14 +1192,14 @@ impl ViewerWindow {
     }
 
     /// True when the current entry plays as audio (a stream + transport, but
-    /// no video frames — the stage shows cover art).
+    /// no video frames: the stage shows cover art).
     fn current_is_audio(&self) -> bool {
         self.current()
             .map(|e| self.is_audio_path(&e.path))
             .unwrap_or(false)
     }
 
-    /// True when the current entry opens a playback stream at all — video or
+    /// True when the current entry opens a playback stream at all: video or
     /// audio. Gates the shared machinery: stream open/teardown, the transport
     /// (play/pause, mute, seek), and self-driven slideshow advance. Frame
     /// *rendering* stays on [`current_is_video`](Self::current_is_video); this
@@ -1215,14 +1215,14 @@ impl ViewerWindow {
     /// steady-state frames compare two tuples and do nothing.
     /// Reconcile the live video player with the current entry: open one
     /// for a freshly-selected video, tear it down when leaving a video.
-    /// No geometry/rotation is pushed across the boundary anymore — the
+    /// No geometry/rotation is pushed across the boundary anymore: the
     /// frames are drawn as a gpui image in `stage_area`, so zoom / pan /
     /// fit / rotation are all the shared still-image path.
     fn sync_video(&mut self, cx: &mut Context<Self>) {
         if self.sim_video_panel {
             return; // screenshot fixture: no live stream
         }
-        // Open a stream for anything playable — video or audio. Audio rides
+        // Open a stream for anything playable: video or audio. Audio rides
         // the same backend seam; it just yields sound and no frames.
         let want = self
             .current()
@@ -1259,7 +1259,7 @@ impl ViewerWindow {
     /// Open a video stream for `path` via the active backend and start the
     /// frame-pull loop. A fresh open auto-plays; the current enhancement
     /// filters are baked in at open and then changed live as the user drags
-    /// the sliders (mpv swaps its filter chain at runtime — no re-open).
+    /// the sliders (mpv swaps its filter chain at runtime, no re-open).
     fn open_video_stream(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let tx = self.video_ended_tx.clone();
         let ended_path = path.clone();
@@ -1279,7 +1279,7 @@ impl ViewerWindow {
             self.video_dims = (0.0, 0.0);
             self.video_opened_at = Some(std::time::Instant::now());
             // Opening an audio file is an explicit ask to *hear* it, so it
-            // autoplays unmuted — unlike video, which stays muted-by-default
+            // autoplays unmuted: unlike video, which stays muted-by-default
             // so stacked viewers never all blare at once. Once audio unmutes
             // the window, the mute button drives it from there.
             if self.is_audio_path(&path) {
@@ -1302,7 +1302,7 @@ impl ViewerWindow {
 
     /// Push a changed denoise/sharpen/deband/grain filter set to the live
     /// stream. mpv swaps its filter chain at runtime, so this is a cheap live
-    /// update — no re-open, no playhead/pause dance. No-op unless a
+    /// update, no re-open, no playhead/pause dance. No-op unless a
     /// native-grading video (mpv) is current and its filters actually changed.
     fn commit_video_enhance(&mut self, cx: &mut Context<Self>) {
         if !self.video_adjust_native || !self.current_is_video() {
@@ -1399,7 +1399,7 @@ impl ViewerWindow {
 
     /// Quiesce playback when the machine or its displays go to sleep
     /// (docs/features/POWER.md): pause a playing video and stop the
-    /// slideshow timer. We deliberately do **not** auto-resume on wake —
+    /// slideshow timer. We deliberately do **not** auto-resume on wake:
     /// a clip springing back to life as the screen relights is jarring;
     /// the user hits space. No-op if nothing is playing.
     pub fn suspend_for_power(&mut self, cx: &mut Context<Self>) {
@@ -1473,7 +1473,7 @@ impl ViewerWindow {
     /// Eyedropper: sample the key colour from the live frame at a stage-local
     /// cursor, turn keying on, and disarm. Reads the kept raw BGRA frame
     /// (`video_frame_raw`) through the same stage layout the frame is drawn
-    /// with. Rotation isn't accounted for (keying a rotated video is rare —
+    /// with. Rotation isn't accounted for (keying a rotated video is rare:
     /// a follow-up).
     fn pick_chroma_at(&mut self, cursor: (f32, f32), cx: &mut Context<Self>) {
         self.eyedrop_armed = false;
@@ -1502,7 +1502,7 @@ impl ViewerWindow {
     /// size. Each new frame supersedes the last, which queues for atlas
     /// eviction. Self-terminates when the player changes or goes away.
     ///
-    /// The pull runs inside the entity update, i.e. on the main thread —
+    /// The pull runs inside the entity update, i.e. on the main thread:
     /// required, since the native player registry is main-thread-only.
     /// A bounded in-memory frame copy is not a prime-directive blocker
     /// (no I/O / Finder / SQLite); if 4K60 shows main-thread cost, the
@@ -1545,7 +1545,7 @@ impl ViewerWindow {
         self.video_position = pos;
         if let Some((w, h, bytes)) = frame {
             // Keep the raw BGRA for the eyedropper while the adjustments popup
-            // is open on an mpv video (or while keying/arming) — so the last
+            // is open on an mpv video (or while keying/arming), so the last
             // frame is held even after a pause (videos auto-play on open, so a
             // frame is captured during playback before the user pauses to
             // pick). Cheap no-op otherwise.
@@ -1562,7 +1562,7 @@ impl ViewerWindow {
             }
         }
         // Enforce the Out cue. A full-length Out (1.0) is the clip's
-        // natural end — left to the end-of-play notification
+        // natural end: left to the end-of-play notification
         // (`on_video_ended`) so we don't race it; only a real trim
         // (`cue_out < 1.0`) is enforced here.
         let (cur, dur) = self.video_position;
@@ -1592,7 +1592,7 @@ impl ViewerWindow {
     }
 
     /// A video played to its end. Only advances when the show is
-    /// playing AND the event belongs to the entry still on screen —
+    /// playing AND the event belongs to the entry still on screen:
     /// ends queued behind a manual navigation are dropped.
     fn on_video_ended(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
         let current = self.current().map(|e| e.path.clone());
@@ -1615,7 +1615,7 @@ impl ViewerWindow {
             self.step(1, cx);
         } else {
             // Neither looping nor a slideshow: both backends hold the last
-            // frame paused (AVPlayer's action-at-end, mpv's keep-open) —
+            // frame paused (AVPlayer's action-at-end, mpv's keep-open):
             // mirror that so the transport shows ▶, and resuming restarts
             // from the In cue via `toggle_video_paused`.
             self.video_paused = true;
@@ -1637,7 +1637,7 @@ impl ViewerWindow {
         cx.notify();
     }
 
-    /// One-shot timer tick. The epoch check makes stale ticks inert —
+    /// One-shot timer tick. The epoch check makes stale ticks inert:
     /// the same staleness idiom enumeration cancel flags use.
     fn arm_timer(&mut self, epoch: u64, cx: &mut Context<Self>) {
         let interval = Duration::from_secs(self.playback.interval_secs);
@@ -1666,7 +1666,7 @@ impl ViewerWindow {
     }
 
     /// Warm the cache for the entries on either side of the current
-    /// one so the next arrow press is usually instant. Silent — no
+    /// one so the next arrow press is usually instant. Silent, no
     /// task registry entries for speculative work.
     fn prefetch_neighbors(&mut self, cx: &mut Context<Self>) {
         let len = self.playlist.len();
@@ -1703,7 +1703,7 @@ impl ViewerWindow {
     fn content_dims(&mut self) -> Option<(f32, f32)> {
         // Video first: an eligible video usually also has a Quick Look
         // *poster* in the loader cache (a different, smaller size), so we
-        // must NOT let `current_frame()` below answer for it — zoom / pan
+        // must NOT let `current_frame()` below answer for it: zoom / pan
         // / the % readout have to track the frame `video_stage` actually
         // renders. Prefer the pulled frame's size, then the intrinsic
         // player size; only fall through to the poster before either is
@@ -1732,7 +1732,7 @@ impl ViewerWindow {
         None
     }
 
-    /// Convert content pixel dimensions (device pixels — as decoded or
+    /// Convert content pixel dimensions (device pixels, as decoded or
     /// pulled from the video) into logical points by the window scale
     /// factor, the unit the stage math and viewport use. This is what
     /// makes 1:1 = one image pixel per physical pixel, and keeps "fit"
@@ -1782,7 +1782,7 @@ impl ViewerWindow {
         let factor = 2.0_f32.powf(dy / 240.0);
         let cursor = self.stage_local(e.position);
         self.stage = stage::zoom_at(self.stage, cursor, img, self.last_stage_size, factor);
-        // Zooming means the user is inspecting — auto-advancing under
+        // Zooming means the user is inspecting: auto-advancing under
         // them is exactly the "intrusive" behavior we're avoiding.
         self.set_playing(false, cx);
         cx.notify();
@@ -1872,7 +1872,7 @@ impl ViewerWindow {
     /// Fullscreen: (re)start the countdown that hides the revealed
     /// toolbar / status bar. Epoch-guarded like the slideshow timer
     /// (`arm_timer`), so an earlier countdown goes inert when a newer one
-    /// is armed — no task handles to track.
+    /// is armed, no task handles to track.
     fn arm_autohide(&mut self, cx: &mut Context<Self>) {
         let epoch = self.autohide_epoch.wrapping_add(1);
         self.autohide_epoch = epoch;
@@ -1886,7 +1886,7 @@ impl ViewerWindow {
 
     /// One-shot auto-hide tick: hide whichever revealed bar the pointer
     /// isn't over (a live seek drag also keeps the status bar up). Stale
-    /// ticks — a newer countdown armed since — are inert.
+    /// ticks, a newer countdown armed since, are inert.
     fn autohide_fire(&mut self, epoch: u64, cx: &mut Context<Self>) {
         if self.autohide_epoch != epoch {
             return;
@@ -1952,7 +1952,7 @@ impl ViewerWindow {
         }
     }
 
-    /// Right arrow — mirror of `on_left`: one frame forward on a video,
+    /// Right arrow: mirror of `on_left`: one frame forward on a video,
     /// next-entry on a still.
     fn on_right(&mut self, _: &ViewerRight, _window: &mut Window, cx: &mut Context<Self>) {
         if self.current_is_video() {
@@ -1992,7 +1992,7 @@ impl ViewerWindow {
     }
 
     /// The fit mode the 1:1 toggles fall back to: the user's default
-    /// zoom, unless that default *is* 1:1 — then plain fit, so the
+    /// zoom, unless that default *is* 1:1, then plain fit, so the
     /// toggle still has two distinct states.
     fn fit_fallback(&self) -> ZoomMode {
         match self.default_zoom {
@@ -2042,7 +2042,7 @@ impl ViewerWindow {
     /// window-level: the rotation sticks across next/prev so it applies to
     /// every item until the viewer closes. Works for images (CPU bitmap
     /// rotate) and videos (native layer transform, applied in `sync_video`);
-    /// both are in-memory/GPU only — nothing is written to disk.
+    /// both are in-memory/GPU only, nothing is written to disk.
     fn rotate_by(&mut self, delta: i8, cx: &mut Context<Self>) {
         if self.current().is_none() {
             return;
@@ -2056,7 +2056,7 @@ impl ViewerWindow {
         cx.notify();
     }
 
-    /// Esc — close the adjustments popup first, then leave fullscreen,
+    /// Esc: close the adjustments popup first, then leave fullscreen,
     /// then close the window.
     fn on_dismiss(&mut self, _: &ViewerDismiss, window: &mut Window, cx: &mut Context<Self>) {
         if self.adjust_panel_open {
@@ -2069,13 +2069,13 @@ impl ViewerWindow {
         }
     }
 
-    /// Delete / Cmd+Backspace / toolbar trash — move the current file to
+    /// Delete / Cmd+Backspace / toolbar trash: move the current file to
     /// the Trash and advance to the next slide, so a media browse can
     /// cull files without leaving the viewer. The trash call is
     /// filesystem I/O, so it runs on the background executor (prime
     /// directive); the playlist entry is only dropped once the OS
     /// reports success. Always the recoverable move-to-Trash, never a
-    /// permanent delete — though this window has no Cmd+Z stack, so
+    /// permanent delete, though this window has no Cmd+Z stack, so
     /// restoring means the OS Trash.
     fn on_delete(&mut self, _: &ViewerDelete, window: &mut Window, cx: &mut Context<Self>) {
         use gpui_component::notification::Notification;
@@ -2101,7 +2101,7 @@ impl ViewerWindow {
                         });
                     }
                     // Any browser tab showing the parent folder reloads,
-                    // and stale ancestor folder sizes are invalidated —
+                    // and stale ancestor folder sizes are invalidated:
                     // the same broadcast the Shell's own trash worker uses.
                     if let Some(parent) = entry.path.parent() {
                         crate::shell::Shell::broadcast_reload_for_process(
@@ -2143,7 +2143,7 @@ impl ViewerWindow {
     /// Drop `path` from the playlist after a successful trash and keep
     /// the show going: the item that followed becomes current (the last
     /// item falls back to the new tail), the index-keyed bitmap caches
-    /// are invalidated, and the slideshow timer re-arms — the same
+    /// are invalidated, and the slideshow timer re-arms: the same
     /// post-navigation steps as [`Self::step`]. If the playlist just
     /// emptied, the caller closes the window instead.
     fn remove_playlist_entry(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
@@ -2176,7 +2176,7 @@ impl ViewerWindow {
         cx.notify();
     }
 
-    /// `E` / toolbar button / right-click — toggle the colour-adjust popup.
+    /// `E` / toolbar button / right-click: toggle the colour-adjust popup.
     fn on_toggle_adjust(
         &mut self,
         _: &ViewerToggleAdjust,
@@ -2287,8 +2287,8 @@ impl ViewerWindow {
 
     /// "Magic" auto-enhance: analyse the current item's pixels off-thread and
     /// set brightness/contrast/saturation to an auto-levelled grade (see
-    /// [`compute_auto_grade`]). Works on the decoded still bytes, or — for a
-    /// video — the last raw frame pulled from the player, in which case the
+    /// [`compute_auto_grade`]). Works on the decoded still bytes, or, for a
+    /// video: the last raw frame pulled from the player, in which case the
     /// computed grade is pushed live through [`Self::after_adjust_change`].
     /// Leaves enhancement (denoise/sharpen/upscale) untouched. No-op if no
     /// source pixels are available yet.
@@ -2366,7 +2366,7 @@ impl ViewerWindow {
         }
         let neutral = self.adjust.is_neutral() && self.enhance.is_neutral();
         if neutral {
-            // Nothing to apply — release any cached result so the plain
+            // Nothing to apply: release any cached result so the plain
             // image shows immediately.
             if let Some((.., old)) = self.processed.take() {
                 self.video_frames_to_drop.push(old);
@@ -2403,7 +2403,7 @@ impl ViewerWindow {
             return;
         }
         // Hand the worker the frame's Arc'd RenderImage and read the
-        // pixels THERE — copying `as_bytes` into a Vec here put an
+        // pixels THERE, copying `as_bytes` into a Vec here put an
         // up-to-268 MB memcpy on the UI thread every process kick
         // (~10 Hz during a slider drag).
         let image = frame.image.clone();
@@ -2425,7 +2425,7 @@ impl ViewerWindow {
             this.update(cx, |this, cx| {
                 this.process_inflight = false;
                 // `out` is None only on a genuine pipeline failure (bad
-                // dims). Bail without rescheduling — re-running the same
+                // dims). Bail without rescheduling: re-running the same
                 // failing job would be a tight crash loop.
                 let Some((rw, rh, buf)) = out else { return };
                 if this.process_gen == token {
@@ -2501,7 +2501,7 @@ impl ViewerWindow {
                 let s = stage::effective_scale(self.stage.mode, img, self.last_stage_size);
                 format!("{:.0}%", s * 100.0)
             })
-            .unwrap_or_else(|| "\u{2014}".to_string());
+            .unwrap_or_else(|| "--".to_string());
         let actual = self.stage.mode == ZoomMode::Actual;
         // Custom video/audio transport + window state (native controls
         // hidden). `is_playable` shows the play/pause + mute + loop + seek for
@@ -2525,7 +2525,7 @@ impl ViewerWindow {
         // whole clusters into a trailing "…" dropdown instead of wrapping.
         // Widths are logical-px estimates at `ui_scale == 1` with the flex
         // gap folded in, scaled by the window rem size so UI zoom counts.
-        // They only steer *when* a cluster folds — a few px of error merely
+        // They only steer *when* a cluster folds: a few px of error merely
         // changes the point at which the overflow menu appears.
         const W_BASE: f32 = 200.0; // padding + prev/counter/next + fullscreen
         const W_AV_BASIC: f32 = 68.0; // media play/pause + mute (always inline)
@@ -2822,7 +2822,7 @@ impl ViewerWindow {
                     )
             })
             // Rotate the current item (image or video). View-only,
-            // per-item — R / Shift-R do the same from the keyboard.
+            // per-item: R / Shift-R do the same from the keyboard.
             .when(has_item && !hide_actions, |bar| {
                 bar.child(
                     Button::new("viewer-rotate")
@@ -2832,7 +2832,7 @@ impl ViewerWindow {
                             this.on_rotate_cw(&ViewerRotateCw, window, cx)
                         })),
                 )
-                // Colour adjustments popup — also `E` / right-click.
+                // Colour adjustments popup, also `E` / right-click.
                 .child(
                     Button::new("viewer-adjust")
                         .icon(gpui_component::Icon::empty().path("icons/palette.svg"))
@@ -2842,7 +2842,7 @@ impl ViewerWindow {
                             this.on_toggle_adjust(&ViewerToggleAdjust, window, cx)
                         })),
                 )
-                // Move the current file to the Trash and advance —
+                // Move the current file to the Trash and advance:
                 // cull while browsing. Also Delete / Cmd+Backspace.
                 .child(
                     Button::new("viewer-trash")
@@ -2981,7 +2981,7 @@ impl ViewerWindow {
     /// through the shared `StageState` (zoom / pan / fit match stills),
     /// or `None` while no frame has been pulled yet. Rotation reuses the
     /// one-slot `video_rotated` cache and the superseded rotate queues
-    /// for atlas eviction — mirroring stills.
+    /// for atlas eviction, mirroring stills.
     fn video_stage(&mut self, stage_w: f32, stage_h: f32) -> Option<gpui::Img> {
         let base = self.video_frame_image.clone()?;
         let rot = self.current_rotation();
@@ -3015,7 +3015,7 @@ impl ViewerWindow {
             self.graded_video(image, rot)
         };
         // The frame (rotated or not) already carries its displayed dims,
-        // so layout uses them directly — no manual aspect swap.
+        // so layout uses them directly, no manual aspect swap.
         let sz = image.size(0);
         let dims = self.to_logical((sz.width.0 as f32, sz.height.0 as f32));
         let r = stage::layout(dims, (stage_w, stage_h), self.stage);
@@ -3045,7 +3045,7 @@ impl ViewerWindow {
             .on_scroll_wheel(cx.listener(Self::on_stage_scroll))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_stage_mouse_down))
             // Right-click anywhere on the stage opens (toggles) the
-            // colour-adjustments popup — same as `E`.
+            // colour-adjustments popup, same as `E`.
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, _, _, cx| {
@@ -3072,7 +3072,7 @@ impl ViewerWindow {
             // The stream opened but has produced no frame past the
             // deadline: the file's video is undecodable (corrupt bytes
             // under a video extension, or an audio-only impostor). Say so
-            // — the poster below is blank for exactly these files, and a
+            //: the poster below is blank for exactly these files, and a
             // silently empty stage reads as "the viewer is broken". A
             // frame that still arrives clears this on its own (the poll
             // tick notifies and `video_stage` wins above).
@@ -3097,8 +3097,8 @@ impl ViewerWindow {
                 };
                 // Prefer the off-thread processed bitmap (grade + denoise +
                 // upscale + sharpen + rotate) when its cached result matches
-                // the live params. Otherwise fall back to the plain frame —
-                // upright, or the one-slot CPU-rotated cache — so something
+                // the live params. Otherwise fall back to the plain frame
+                // (upright, or the one-slot CPU-rotated cache) so something
                 // always shows while a fresh process is still computing.
                 let image = if let Some(p) = self.processed_still(rot) {
                     p
@@ -3204,7 +3204,7 @@ impl ViewerWindow {
         let is_video = self.current_is_video() || self.sim_video_panel;
         // Denoise/sharpen apply to stills (CPU) and to mpv video (filter
         // chain); upscale stays stills-only. `video_adjust_native` marks an
-        // mpv stream — the native player has no filter chain.
+        // mpv stream: the native player has no filter chain.
         let mpv_video = self.sim_video_panel || (is_video && self.video_adjust_native);
         let show_enhance = !is_video || mpv_video;
         // Chroma-key state read up front so the section's builder closure
@@ -3267,7 +3267,7 @@ impl ViewerWindow {
                     this.slider_drag = None;
                     // Denoise/sharpen for a mpv video are baked in at open,
                     // so a changed value re-opens the stream on release
-                    // (kept off the live drag — re-opening per move thrashes).
+                    // (kept off the live drag: re-opening per move thrashes).
                     this.commit_video_enhance(cx);
                     // Upgrade the still's drag preview (upscale skipped) to a
                     // full-quality pass now the drag is over.
@@ -3288,7 +3288,7 @@ impl ViewerWindow {
             .child(self.slider_row(SliderId::Brightness, cx))
             .child(self.slider_row(SliderId::Contrast, cx))
             .child(self.slider_row(SliderId::Saturation, cx))
-            // Hue + gamma are live libmpv colour-adjust controls — only the
+            // Hue + gamma are live libmpv colour-adjust controls, only the
             // mpv backend applies them, so they're hidden for stills and the
             // built-in player.
             .when(mpv_video, |d| {
@@ -3314,7 +3314,7 @@ impl ViewerWindow {
                     d.child(self.upscale_row(cx))
                 }
             })
-            // Transparent colour (chroma key) — mpv video only. Keyed pixels
+            // Transparent colour (chroma key): mpv video only. Keyed pixels
             // go transparent so the stage background (later: a lower layer)
             // shows through. Pick the colour with the eyedropper swatch.
             .when(mpv_video, |d| {
@@ -3563,7 +3563,7 @@ impl ViewerWindow {
 
     fn status_strip(&mut self, cx: &mut Context<Self>) -> Div {
         // Native pixel resolution. For a video, report the decoded frame
-        // (or intrinsic player size) — NOT `current_frame()`, which is the
+        // (or intrinsic player size), NOT `current_frame()`, which is the
         // smaller Quick Look poster.
         let raw_dims = if self.current_is_video() {
             self.video_frame_image
@@ -3783,7 +3783,7 @@ impl ViewerWindow {
 }
 
 /// The window's native handle, as `platform_shell` window calls (today:
-/// **Stay on Top**) expect it — an `NSView*` on macOS, an `HWND` on Windows.
+/// **Stay on Top**) expect it: an `NSView*` on macOS, an `HWND` on Windows.
 /// Both are pointers, so one signature serves both.
 ///
 /// `None` on any other backend, where the shell stubs no-op anyway.
@@ -3805,7 +3805,7 @@ impl Focusable for ViewerWindow {
 }
 
 impl Drop for ViewerWindow {
-    /// Window close must stop playback — the overlay is an AppKit
+    /// Window close must stop playback: the overlay is an AppKit
     /// child of the (dying) window, but the AVPlayer would keep the
     /// audio session alive without an explicit pause.
     fn drop(&mut self) {
@@ -3965,7 +3965,7 @@ impl Render for ViewerWindow {
                 .when_some(status, Div::child)
                 .when_some(panel, Div::child)
                 // This window's own Root holds the notification state but
-                // doesn't render the layer — do it here so the trash
+                // doesn't render the layer: do it here so the trash
                 // success/failure toasts appear (same as the Get Info
                 // window).
                 .when(!private, |this| {
@@ -4003,7 +4003,7 @@ mod grade_tests {
 
     /// A 90°/270° turn swaps width and height; the pixel buffer length
     /// is preserved. (Verifies the CPU rotate path that stands in for
-    /// gpui's missing `img` rotation — docs/GPUI-UPSTREAM.md #5.)
+    /// gpui's missing `img` rotation: docs/GPUI-UPSTREAM.md #5.)
     #[test]
     fn rotate_swaps_dimensions_for_quarter_turns() {
         // 3×2 opaque image (RGBA), distinct rows so a real rotation is
@@ -4083,7 +4083,7 @@ mod grade_tests {
 
     #[test]
     fn preview_skips_the_upscale() {
-        // A drag-time preview keeps native size — the heavy resample is the
+        // A drag-time preview keeps native size: the heavy resample is the
         // step we defer to the full-quality pass on release.
         let bgra = vec![128u8; 4 * 3 * 4];
         let enh = EnhanceParams {
@@ -4125,7 +4125,7 @@ mod grade_tests {
 
     #[test]
     fn auto_grade_leaves_full_range_neutral() {
-        // A full 0..255 luma ramp is already auto-levelled — barely touched.
+        // A full 0..255 luma ramp is already auto-levelled: barely touched.
         let mut bgra = Vec::new();
         for v in 0..=255u8 {
             for _ in 0..16 {

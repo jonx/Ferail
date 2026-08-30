@@ -3,12 +3,12 @@
 //! Two surfaces:
 //!
 //! - [`show`] pops a standalone Quick Look window via
-//!   `/usr/bin/qlmanage -p` — same renderer as Finder's inline panel,
+//!   `/usr/bin/qlmanage -p`: same renderer as Finder's inline panel,
 //!   in its own process so we don't have to thread `QLPreviewPanel`
 //!   through our responder chain.
 //! - [`fetch_thumbnail`] generates an RGBA thumbnail for the in-app
 //!   preview pane, viewer fallback, and the file-list thumbnail cache
-//!   via `QLThumbnailGenerator` — the same Quick Look pipeline Finder
+//!   via `QLThumbnailGenerator`: the same Quick Look pipeline Finder
 //!   uses, backed by the system-wide on-disk thumbnail cache. Because
 //!   the framework call is asynchronous (completion block), we bridge
 //!   it to a synchronous return so callers keep running it off the UI
@@ -35,7 +35,7 @@ const QL_TIMEOUT: Duration = Duration::from_secs(8);
 // deliberately OMIT the icon tier (`1 << 0`): when Quick Look can't
 // render actual content it would otherwise return the file's generic
 // type glyph, which `generateBestRepresentationForRequest:` then hands
-// back as the "best" representation — indistinguishable from a real
+// back as the "best" representation: indistinguishable from a real
 // thumbnail to the caller. Excluding it means a file Quick Look can't
 // thumbnail returns `None`, so each caller shows its own, better
 // fallback (the list its tinted type icon, the viewer / preview pane a
@@ -57,7 +57,7 @@ pub fn show(paths: &[&Path]) -> Result<(), String> {
         cmd.arg(p);
     }
     // spawn_and_reap nulls stdio (qlmanage prints chatty status to
-    // stderr — muting it keeps the launching terminal clean) and reaps
+    // stderr, muting it keeps the launching terminal clean) and reaps
     // the child so it never lingers as a zombie.
     crate::spawn_and_reap(&mut cmd).map_err(|e| format!("failed to spawn qlmanage: {e}"))?;
     Ok(())
@@ -65,7 +65,7 @@ pub fn show(paths: &[&Path]) -> Result<(), String> {
 
 /// RGBA8888 thumbnail for `path` fitting a `size_px` square (longest
 /// edge), aspect ratio preserved. Returns `(rgba, width, height)` on
-/// success. Synchronous — the underlying Quick Look call is async, but
+/// success. Synchronous: the underlying Quick Look call is async, but
 /// we block on its completion so callers can keep running this on a
 /// worker thread.
 ///
@@ -155,14 +155,14 @@ unsafe impl objc2::Encode for CGImageRef {
 }
 
 // kCGImageAlphaPremultipliedLast: RGBA byte order, alpha last,
-// premultiplied — the only alpha layout `CGBitmapContextCreate`
+// premultiplied: the only alpha layout `CGBitmapContextCreate`
 // accepts for RGB. We undo the premultiply on read for straight RGBA.
 #[cfg(target_os = "macos")]
 const CG_ALPHA_PREMULTIPLIED_LAST: u32 = 1;
 
 /// Draw a `CGImageRef` into an offscreen straight-RGBA8 buffer at its
 /// natural pixel size (aspect already baked in by Quick Look). Pure
-/// Core Graphics — thread-safe, so it runs fine on the Quick Look
+/// Core Graphics: thread-safe, so it runs fine on the Quick Look
 /// completion queue.
 #[cfg(target_os = "macos")]
 unsafe fn rasterize_cgimage(cg: *mut std::ffi::c_void) -> Option<(Vec<u8>, u32, u32)> {

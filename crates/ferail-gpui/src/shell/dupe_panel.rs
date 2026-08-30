@@ -8,7 +8,7 @@
 //! and selection rides the tab's existing `selection` set, so the trash
 //! flow and node store are shared rather than duplicated.
 //!
-//! Prime directive: the render path reads the retained model only — no
+//! Prime directive: the render path reads the retained model only, no
 //! I/O, no settings reads (presentation is cached on the tab's tool result
 //! surface at scan launch). The destructive action runs the same off-thread
 //! trash worker as `on_move_to_trash`, then prunes the model and rebuilds the
@@ -395,7 +395,7 @@ impl Shell {
         let reclaimable = group.reclaimable_bytes();
 
         // macOS/APFS zero-copy remediation: replace the redundant copies
-        // with clones of the keeper — frees the bytes without deleting any
+        // with clones of the keeper: frees the bytes without deleting any
         // file. Hidden off macOS; surfaces a toast if the volume isn't
         // APFS (clonefile errors there).
         let dedup_btn = if group.mode == DupeMode::Exact
@@ -447,7 +447,7 @@ impl Shell {
             .hover(|this| this.bg(theme.secondary))
             .on_click(cx.listener(move |this, _, _, cx| this.dupe_toggle_group(group_no, cx)))
             // SVG disclosure (same asset as the sidebar tree), not the
-            // ▾/▸ text glyphs — the AROS-bundled font lacks them and
+            // ▾/▸ text glyphs: the AROS-bundled font lacks them and
             // drew tofu boxes.
             .child(
                 div().w(px(14.0)).flex().items_center().child(
@@ -1306,7 +1306,7 @@ impl Shell {
     }
 
     /// Flag freshly-created clones in the retained model and recompute the
-    /// reclaim summary. The panel re-renders straight from the model — no
+    /// reclaim summary. The panel re-renders straight from the model, no
     /// table rebuild, no I/O. macOS-only (the dedup path that calls it is
     /// gated).
     #[cfg(target_os = "macos")]

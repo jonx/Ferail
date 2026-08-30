@@ -2,7 +2,7 @@
 //! tar). These hold exactly one logical file, so the TOC is always a single
 //! entry. The uncompressed size is not recorded in a form we can trust cheaply
 //! (gzip's footer size is mod 2^32; bz2/xz store nothing up front), so it is
-//! left unknown rather than guessed — decompressing to measure would violate
+//! left unknown rather than guessed, decompressing to measure would violate
 //! the bounded-read contract.
 
 use std::fs::File;
@@ -114,7 +114,7 @@ pub(super) fn create(
     progress: &TransferProgress,
     cancel: &AtomicBool,
 ) -> Result<(), ArchiveError> {
-    // A single-member compressor holds exactly one file — no directories, no
+    // A single-member compressor holds exactly one file, no directories, no
     // second input.
     let files: Vec<&PlannedItem> = items.iter().filter(|i| !i.is_dir).collect();
     if files.len() != 1 {

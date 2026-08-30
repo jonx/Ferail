@@ -1,20 +1,20 @@
 //! Window-docking geometry (docs/features/DOCK.md).
 //!
 //! Pure model: no GPUI, no AppKit, no wall-clock. The shell drives an
-//! auto-hiding drawer — dock the whole window to the **left or right** screen
+//! auto-hiding drawer: dock the whole window to the **left or right** screen
 //! edge, where it floats over everything and slides off-screen leaving only a
 //! thin handle; pushing the cursor into that screen edge slides it back in.
 //! Everything position-related bottoms out in the functions here so it can be
 //! reasoned about and unit-tested without a running window.
 //!
-//! Docking is left/right only by design (top/bottom were dropped — the top
+//! Docking is left/right only by design (top/bottom were dropped: the top
 //! edge fights the menu bar and the horizontal drawer is the useful one).
 //!
 //! All coordinates are macOS **global screen space**: origin at the
 //! bottom-left of the main display, `y` growing upward. That is the one space
 //! `NSEvent.mouseLocation`, `NSScreen.visibleFrame`, and `NSWindow.frame`
 //! already share, so the host hands these functions raw values and applies the
-//! results verbatim — no flipping. (Overlay *rendering* uses GPUI's top-left
+//! results verbatim, no flipping. (Overlay *rendering* uses GPUI's top-left
 //! window space instead and is handled in `render.rs`.)
 
 /// Visible thickness of the handle strip left on-screen when a docked drawer
@@ -27,8 +27,8 @@ pub const STRIP_PX: f64 = 6.0;
 pub const REVEAL_PX: f64 = 4.0;
 
 // (No size floor/clamp: docking NEVER resizes the window. gpui's
-// drawable does not follow an out-of-band AppKit `setFrame:` resize —
-// forcing the drawer to full screen height left the extra area black —
+// drawable does not follow an out-of-band AppKit `setFrame:` resize
+// (forcing the drawer to full screen height left the extra area black)
 // so the drawer is the window at its own size, purely translated.)
 
 /// Fraction of the hidden→revealed travel the slide advances per poll tick.
@@ -83,7 +83,7 @@ impl DockEdge {
 }
 
 /// The window frame when the drawer is fully revealed: flush against the dock
-/// edge at the window's OWN size — docking never resizes (see module docs).
+/// edge at the window's OWN size, docking never resizes (see module docs).
 /// `win` supplies the size and the preferred `y`; the `y` is clamped so the
 /// window stays on the screen vertically (a window taller than the screen
 /// pins to the screen's bottom edge).
@@ -106,7 +106,7 @@ pub fn hidden_frame(edge: DockEdge, s: ScreenFrame, win: ScreenFrame, strip: f64
     }
 }
 
-/// Is the cursor in the reveal trigger zone — within `REVEAL_PX` of the docked
+/// Is the cursor in the reveal trigger zone, within `REVEAL_PX` of the docked
 /// screen edge, and within the screen's height (so an adjacent display's edge
 /// can't trigger it)?
 pub fn cursor_in_trigger_zone(edge: DockEdge, s: ScreenFrame, mouse: (f64, f64)) -> bool {

@@ -10,7 +10,7 @@
 //! [`SleepBlocker`]; dropping it releases the assertion. We assert
 //! `kIOPMAssertPreventUserIdleSystemSleep`, which holds off *idle*
 //! system sleep but still allows the display to sleep and still honours
-//! a deliberate Apple-menu → Sleep — exactly the scope a background
+//! a deliberate Apple-menu → Sleep, exactly the scope a background
 //! copy wants.
 //!
 //! The assertion is process-wide and thread-safe (no main-thread
@@ -62,7 +62,7 @@ impl Drop for SleepBlocker {
 
 /// Assert `PreventUserIdleSystemSleep` under the given human-readable
 /// reason (shown in `pmset -g assertions`). Returns `None` if IOKit
-/// declines — the caller proceeds without the guard; the worst case is
+/// declines: the caller proceeds without the guard; the worst case is
 /// the OS may idle-sleep mid-copy, which is survivable, just not ideal.
 pub fn prevent_idle_sleep(reason: &str) -> Option<SleepBlocker> {
     let assertion_type = NSString::from_str("PreventUserIdleSystemSleep");

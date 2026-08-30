@@ -4,7 +4,7 @@
 //! resource keys (hidden extension, package/bundle, alias file).
 //!
 //! One batched `resourceValuesForKeys:` hop, mirroring the volume lookup in
-//! `ferail-fs-native`. Synchronous Cocoa — callers dispatch it from a
+//! `ferail-fs-native`. Synchronous Cocoa: callers dispatch it from a
 //! worker per the nonblocking contract. All fields are `None` off macOS or
 //! when a key is unavailable for the path.
 
@@ -52,7 +52,7 @@ pub fn read_shell_info(path: &Path) -> ShellInfo {
         let ns_path = NSString::from_str(path_str);
         let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&ns_path, path.is_dir());
 
-        // Same `arrayWithObjects:count:` construction the volume lookup uses —
+        // Same `arrayWithObjects:count:` construction the volume lookup uses:
         // the typed `from_slice` ctor wants `IsRetainable`, which NSString's
         // mutable subclass breaks; Apple's key constants are immortal statics
         // so passing raw pointers is sound.
@@ -153,7 +153,7 @@ mod tests {
     fn reads_kind_for_home() {
         // /Applications is a real folder on every macOS box; Finder calls it
         // a "Folder" and its UTI is public.folder. Don't hard-assert the
-        // localized string (locale-dependent) — just that we got *something*.
+        // localized string (locale-dependent), just that we got *something*.
         let info = read_shell_info(Path::new("/Applications"));
         assert_eq!(info.uti.as_deref(), Some("public.folder"));
         assert!(info.kind.is_some(), "localized kind present");

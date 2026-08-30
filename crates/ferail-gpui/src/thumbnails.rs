@@ -1,22 +1,22 @@
 //! Real content thumbnails for the file list.
 //!
 //! Where [`crate::icons::IconCache`] vends generic, type-keyed glyphs,
-//! this cache vends the *actual* rendered thumbnail of a file —
-//! photo, video poster frame, PDF first page — keyed by full path.
+//! this cache vends the *actual* rendered thumbnail of a file
+//! (photo, video poster frame, PDF first page) keyed by full path.
 //!
 //! Pixels come from [`crate::video_poster::fetch_content_thumbnail`]:
 //! `QLThumbnailGenerator` first (see
 //! `ferail_shell_mac::fetch_quick_look_thumbnail`), which reads the
 //! system-wide Quick Look thumbnail cache, so most hits return
-//! instantly from disk rather than re-rendering — the same path Finder
-//! rides — then embedded cover art for audio files, then, for videos
+//! instantly from disk rather than re-rendering: the same path Finder
+//! rides, then embedded cover art for audio files, then, for videos
 //! Quick Look refuses (AVI/WMV/MKV…), an mpv poster frame when the mpv
 //! provider is selected.
 //!
 //! ## Prime-directive shape
 //!
 //! - **Render** only ever calls [`ThumbnailCache::get`] /
-//!   [`ThumbnailCache::get_best`] — a HashMap read, no I/O, no
+//!   [`ThumbnailCache::get_best`]: a HashMap read, no I/O, no
 //!   allocation beyond an `Arc` clone.
 //! - **Fetching** is driven from the viewport (the list's
 //!   `visible_rows_changed` hook / the grid's deferred
@@ -60,7 +60,7 @@ pub fn show_thumbnails(cx: &gpui::App) -> bool {
 }
 
 /// Physical-pixel longest edge we ask Quick Look for. Sized for a
-/// retina list row (~2× the logical slot) — crisp without paying for
+/// retina list row (~2× the logical slot): crisp without paying for
 /// preview-grade resolution per row. The icon view (later) will keep
 /// its own larger cache.
 pub const THUMB_PX: u32 = 96;
@@ -76,7 +76,7 @@ pub const THUMB_PREVIEW_PX: u32 = 128;
 /// grid buckets). A big photo folder scrolls past far more than fit on
 /// screen; the LRU keeps the recently-seen ones. At the list size this
 /// is ~18 MB; the larger grid buckets cost more per entry, so the cap
-/// is entry-count, not bytes — the working set is bounded by what fits
+/// is entry-count, not bytes: the working set is bounded by what fits
 /// in a couple of viewport-heights, well under this.
 const CACHE_CAP: usize = 512;
 
@@ -121,7 +121,7 @@ pub struct ThumbnailCache {
     /// Insertion order for LRU eviction (oldest at the front). Every key
     /// in `ready` appears here exactly once.
     order: VecDeque<Key>,
-    /// Keys with a fetch currently in flight — gates re-requests while
+    /// Keys with a fetch currently in flight: gates re-requests while
     /// the background Quick Look call is pending.
     in_flight: HashMap<PathBuf, HashSet<u32>>,
 }
@@ -145,8 +145,8 @@ impl ThumbnailCache {
     /// Render-path lookup that prefers the exact `size_px` but, when it
     /// is not yet ready, falls back to the largest *smaller* thumbnail
     /// already cached for the same file. That lets a low-res tier (or a
-    /// size warmed at another zoom stop / by the list view) stand in —
-    /// scaled up, so slightly soft — while the crisp fetch is still in
+    /// size warmed at another zoom stop / by the list view) stand in
+    /// (scaled up, so slightly soft) while the crisp fetch is still in
     /// flight, then upgrade seamlessly when the exact size lands.
     /// Non-mutating and allocation-free beyond the `Arc` clone.
     pub fn get_best(&self, path: &Path, size_px: u32) -> Option<Arc<RenderImage>> {
@@ -163,7 +163,7 @@ impl ThumbnailCache {
             .find_map(|s| self.get(path, s))
     }
 
-    /// Whether `(path, size_px)` still needs a background fetch — i.e.
+    /// Whether `(path, size_px)` still needs a background fetch, i.e.
     /// it is neither resolved (positively or negatively) nor in flight.
     pub fn needs_fetch(&self, path: &Path, size_px: u32) -> bool {
         let ready = self
@@ -299,7 +299,7 @@ mod tests {
         let mut c = ThumbnailCache::new();
         let p = Path::new("/x/doc.pdf");
         c.insert(p.to_path_buf(), 128, pixel());
-        // Quick Look produced nothing at 256 (negative cache) — still
+        // Quick Look produced nothing at 256 (negative cache), still
         // surface the smaller ready preview rather than the SVG.
         c.insert(p.to_path_buf(), 256, None);
         assert!(c.get(p, 256).is_none());

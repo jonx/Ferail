@@ -3,15 +3,15 @@
 
 Two independent fixture sets, both deterministic and stdlib-only:
 
-1. `samples/` (next to this script) — deceptive filenames that exercise
+1. `samples/` (next to this script): deceptive filenames that exercise
    Ferail's filename hazard detection (see
-   crates/ferail-core/src/name_hazards.rs). Each entry pairs a filename —
+   crates/ferail-core/src/name_hazards.rs). Each entry pairs a filename,
    often containing invisible or deceptive characters written here as
-   explicit \\u escapes — with a short note on the trick it demonstrates.
+   explicit \\u escapes, with a short note on the trick it demonstrates.
    Open the folder in Ferail and select each file to see what Get Info
    flags.
 
-2. `../open-reveal/` — the `WCORPUS-OPEN` corpus from
+2. `../open-reveal/`: the `WCORPUS-OPEN` corpus from
    docs/testing/WINDOWS_RELIABILITY_TEST_PLAN.md: small, genuinely
    openable files of the associated types (JPEG, PNG, PDF, TXT, WAV,
    archive, script, no-association), plus copies under difficult names
@@ -44,19 +44,19 @@ OUT = os.path.join(HERE, "samples")
 OPEN_ROOT = os.path.join(os.path.dirname(HERE), "open-reveal")
 
 # ---------------------------------------------------------------------------
-# Set 1 — filename hazard samples
+# Set 1 - filename hazard samples
 # ---------------------------------------------------------------------------
 
 # (filename, what it demonstrates)
 SAMPLES = [
-    ("clean_invoice.pdf", "Clean ASCII name — should NOT be flagged."),
-    ("quarterly report v2.txt", "Interior spaces are normal — should NOT be flagged."),
+    ("clean_invoice.pdf", "Clean ASCII name: should NOT be flagged."),
+    ("quarterly report v2.txt", "Interior spaces are normal: should NOT be flagged."),
     (" leading-space.txt", "Leading whitespace (amber)."),
     ("trailing-space.txt ", "Trailing whitespace (amber)."),
     ("tab\tinside.txt", "A literal TAB masquerading as a space (amber)."),
     ("no break space.txt", "Non-breaking spaces instead of real ones (amber)."),
     ("zero​width​split.exe", "Zero-width spaces hiding the real token (red)."),
-    ("word⁠joiner.dll", "A word-joiner — invisible, splits a token (red)."),
+    ("word⁠joiner.dll", "A word-joiner: invisible, splits a token (red)."),
     ("statement‮gpj.exe", "RLO bidi override: displays as 'statementexe.jpg' (red)."),
     ("раypal-login.exe", "Cyrillic 'р' and 'а' impersonating 'paypal' (red)."),
     ("gοοgle-update.exe", "Greek omicrons impersonating 'google' (red)."),
@@ -85,7 +85,7 @@ def write_hazard_samples() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Set 2 — WCORPUS-OPEN: open / Reveal difficult-path corpus
+# Set 2 - WCORPUS-OPEN: open / Reveal difficult-path corpus
 # ---------------------------------------------------------------------------
 
 # 1×1 blue-grey baseline JPEG (633 bytes, GDI+-produced and verified to
@@ -131,7 +131,7 @@ def png_1px() -> bytes:
 
 
 def pdf_minimal() -> bytes:
-    """One A6 page with visible text and a correct xref table — preview
+    """One A6 page with visible text and a correct xref table: preview
     handlers render something recognizably non-blank."""
     content = (
         b"BT /F1 24 Tf 30 370 Td (WCORPUS-OPEN) Tj "
@@ -163,7 +163,7 @@ def pdf_minimal() -> bytes:
 
 
 def wav_beep() -> bytes:
-    """0.25 s of a 440 Hz square wave — small, valid, audibly openable."""
+    """0.25 s of a 440 Hz square wave: small, valid, audibly openable."""
     rate, secs, freq, amp = 8000, 0.25, 440, 12000
     n = int(rate * secs)
     frames = bytearray()
@@ -179,7 +179,7 @@ def wav_beep() -> bytes:
 
 
 # `ftyp isom` box only. Enough for association/open-verb tests; players
-# will report an unplayable file, which is fine — the *path handling* is
+# will report an unplayable file, which is fine - the *path handling* is
 # what WCORPUS-OPEN exercises, not the codec.
 MP4_STUB = bytes.fromhex(
     "0000002066747970" "69736f6d" "00000200" "69736f6d69736f3261766331" "6d703431"
@@ -211,7 +211,7 @@ def zip_fixture() -> bytes:
 
 def exif_jpeg() -> bytes:
     """JPEG_1PX with a hand-assembled EXIF APP1: camera make/model,
-    DateTimeOriginal, orientation 6, exposure triplet, and a GPS latitude —
+    DateTimeOriginal, orientation 6, exposure triplet, and a GPS latitude:
     the Get Info Image-section fixture (WIN-014). GPS is present precisely
     so tests can verify the app shows *presence only*, never coordinates."""
 
@@ -291,7 +291,7 @@ def base_files() -> "dict[str, bytes]":
 HAZARD_FILE_NAMES = [
     ("espaces  doubles  intérieurs.jpg", "photo.jpg"),
     ("dièse#numéro#1.pdf", "document.pdf"),
-    ("pourcent%20piège.txt", "notes.txt"),  # literal %20 — URL-decode trap
+    ("pourcent%20piège.txt", "notes.txt"),  # literal %20: URL-decode trap
     ("pourcent 100%.png", "image.png"),
     ("exclamation!fort!.mp4", "clip.mp4"),
     ("esperluette & co.txt", "notes.txt"),
@@ -324,7 +324,7 @@ FORCED_FILE_NAMES = [
     ("NUL.png", "image.png"),  # reserved device name
 ]
 
-# Difficult *directory* names — open (navigate) and Reveal targets.
+# Difficult *directory* names - open (navigate) and Reveal targets.
 HAZARD_DIR_NAMES = [
     "dossier avec espaces",
     "dossier#dièse",
@@ -373,7 +373,7 @@ def write_open_corpus() -> None:
     base = base_files()
     created = 0
 
-    # files/ — the plain-name association set, plus one plain folder.
+    # files/ - the plain-name association set, plus one plain folder.
     files_dir = os.path.join(OPEN_ROOT, "files")
     os.makedirs(_w(os.path.join(files_dir, "plain-folder")), exist_ok=True)
     for name, data in base.items():
@@ -383,7 +383,7 @@ def write_open_corpus() -> None:
         NOTE_TXT.encode("utf-8"),
     )
 
-    # names/ — the same bytes under difficult names.
+    # names/ - the same bytes under difficult names.
     names_dir = os.path.join(OPEN_ROOT, "names")
     os.makedirs(_w(names_dir), exist_ok=True)
     for name, src in HAZARD_FILE_NAMES:
@@ -391,7 +391,7 @@ def write_open_corpus() -> None:
     for name, src in FORCED_FILE_NAMES:
         created += _write(os.path.join(names_dir, name), base[src])
 
-    # dirs/ — difficult directory names, each with two openable files.
+    # dirs/ - difficult directory names, each with two openable files.
     dirs_dir = os.path.join(OPEN_ROOT, "dirs")
     for dname in HAZARD_DIR_NAMES:
         d = os.path.join(dirs_dir, dname)
@@ -399,7 +399,7 @@ def write_open_corpus() -> None:
         created += _write(os.path.join(d, "notes.txt"), base["notes.txt"])
         created += _write(os.path.join(d, "photo.jpg"), base["photo.jpg"])
 
-    # long/ — depth chain; absolute paths at the bottom exceed 260 chars.
+    # long/ - depth chain; absolute paths at the bottom exceed 260 chars.
     long_dir = os.path.join(OPEN_ROOT, "long")
     for i in range(LONG_DEPTH):
         long_dir = os.path.join(long_dir, LONG_COMPONENT % i)
@@ -412,7 +412,7 @@ def write_open_corpus() -> None:
     )
     depth_note = len(os.path.abspath(os.path.join(long_dir, "notes.txt")))
 
-    # manifest.txt — sorted relative paths; checksum goes into evidence.
+    # manifest.txt - sorted relative paths; checksum goes into evidence.
     rels = []
     for walk_root, _dirs, files in os.walk(_w(OPEN_ROOT)):
         for f in files:

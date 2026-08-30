@@ -68,7 +68,7 @@
     },
     "Archive": "Archive",
     "Archive entry names can't contain slashes or be “.” or “..”.": "Archive entry names can't contain slashes or be “.” or “..”.",
-    "Archive — {name}": "Archive — {name}",
+    "Archive: {name}": "Archive: {name}",
     "Arguments": "Arguments",
     "Armenian": "Armenian",
     "Artist": "Artist",
@@ -77,7 +77,7 @@
     "Audio": "Audio",
     "Author": "Author",
     "Automatic (recommended)": "Automatic (recommended)",
-    "Automatic uses Spotlight's live index when available — instant, content-aware, near-zero CPU — and falls back to the built-in recursive walker where Spotlight is disabled or blind (some external / network volumes). Force one if you prefer.": "Automatic uses Spotlight's live index when available — instant, content-aware, near-zero CPU — and falls back to the built-in recursive walker where Spotlight is disabled or blind (some external / network volumes). Force one if you prefer.",
+    "Automatic uses Spotlight's live index when available (instant, content-aware, near-zero CPU) and falls back to the built-in recursive walker where Spotlight is disabled or blind (some external / network volumes). Force one if you prefer.": "Automatic uses Spotlight's live index when available (instant, content-aware, near-zero CPU) and falls back to the built-in recursive walker where Spotlight is disabled or blind (some external / network volumes). Force one if you prefer.",
     "Available": "Available",
     "Back": "Back",
     "Back One Frame": "Back One Frame",
@@ -113,13 +113,13 @@
     "Cancel": "Cancel",
     "Cancel scan": "Cancel scan",
     "Cancelled": "Cancelled",
-    "Cancelled — {n} item copied": {
-      "one": "Cancelled — {n} item copied",
-      "other": "Cancelled — {n} items copied"
+    "Cancelled: {n} item copied": {
+      "one": "Cancelled: {n} item copied",
+      "other": "Cancelled: {n} items copied"
     },
-    "Cancelled — {n} item moved": {
-      "one": "Cancelled — {n} item moved",
-      "other": "Cancelled — {n} items moved"
+    "Cancelled: {n} item moved": {
+      "one": "Cancelled: {n} item moved",
+      "other": "Cancelled: {n} items moved"
     },
     "Capacity": "Capacity",
     "Case": "Case",
@@ -225,9 +225,9 @@
     "Copy report": "Copy report",
     "Copying failed: {detail}": "Copying failed: {detail}",
     "Copying {what} to “{dest}”…": "Copying {what} to “{dest}”…",
-    "Copying — preparing ({n} item)…": {
-      "one": "Copying — preparing ({n} item)…",
-      "other": "Copying — preparing ({n} items)…"
+    "Copying: preparing ({n} item)…": {
+      "one": "Copying: preparing ({n} item)…",
+      "other": "Copying: preparing ({n} items)…"
     },
     "Could not calculate SHA-256: {detail}": "Could not calculate SHA-256: {detail}",
     "Could not create checksum file: {detail}": "Could not create checksum file: {detail}",
@@ -258,7 +258,7 @@
     "Couldn't prepare these items for the archive: {message}": "Couldn't prepare these items for the archive: {message}",
     "Couldn't reach GitHub. Check your internet connection and try again.": "Couldn't reach GitHub. Check your internet connection and try again.",
     "Couldn't read the Trash (permission denied). Grant Ferail Files & Folders access and try again.": "Couldn't read the Trash (permission denied). Grant Ferail Files & Folders access and try again.",
-    "Couldn’t eject {what} — these apps have files open on it. Click one to bring it forward, close the files, and try again.": "Couldn’t eject {what} — these apps have files open on it. Click one to bring it forward, close the files, and try again.",
+    "Couldn’t eject {what}: these apps have files open on it. Click one to bring it forward, close the files, and try again.": "Couldn’t eject {what}: these apps have files open on it. Click one to bring it forward, close the files, and try again.",
     "Couldn’t eject {what}: {detail}": "Couldn’t eject {what}: {detail}",
     "Crash reports folder": "Crash reports folder",
     "Crash reports, freeze reports, native minidumps, and saved report bundles are written here. A crash in a terminal prints a short summary and puts the full detail in this folder. Attach the newest files when reporting a bug.": "Crash reports, freeze reports, native minidumps, and saved report bundles are written here. A crash in a terminal prints a short summary and puts the full detail in this folder. Attach the newest files when reporting a bug.",
@@ -294,11 +294,11 @@
     "Cut “{name}”": "Cut “{name}”",
     "Cycle Focus": "Cycle Focus",
     "Cyrillic": "Cyrillic",
-    "DOES NOT MATCH — the checksums are different.": "DOES NOT MATCH — the checksums are different.",
+    "DOES NOT MATCH: the checksums are different.": "DOES NOT MATCH: the checksums are different.",
     "Dark": "Dark",
     "Date Modified": "Date Modified",
     "Date taken": "Date taken",
-    "Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b — or today, yesterday, week, month, year.": "Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b — or today, yesterday, week, month, year.",
+    "Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b, or today, yesterday, week, month, year.": "Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b, or today, yesterday, week, month, year.",
     "Debanding": "Debanding",
     "Deceptive name: {kinds}": "Deceptive name: {kinds}",
     "Dedicated panel": "Dedicated panel",
@@ -350,8 +350,8 @@
     "Disk Usage": "Disk Usage",
     "Disk Usage access": "Disk Usage access",
     "Disk Usage engine": "Disk Usage engine",
-    "Disk Usage — {path}": "Disk Usage — {path}",
     "Disk Usage: Zoom Out": "Disk Usage: Zoom Out",
+    "Disk Usage: {path}": "Disk Usage: {path}",
     "Disk Usage…": "Disk Usage…",
     "Dismiss / Exit": "Dismiss / Exit",
     "Dock Left": "Dock Left",
@@ -373,7 +373,7 @@
     "Downloading… {percent}%": "Downloading… {percent}%",
     "Downloads": "Downloads",
     "Drag folders here for quick access.": "Drag folders here for quick access.",
-    "Draw photos, videos, and PDFs as their actual content in the file list and grid. Off uses generic type icons — lighter, since Quick Look never runs.": "Draw photos, videos, and PDFs as their actual content in the file list and grid. Off uses generic type icons — lighter, since Quick Look never runs.",
+    "Draw photos, videos, and PDFs as their actual content in the file list and grid. Off uses generic type icons, lighter, since Quick Look never runs.": "Draw photos, videos, and PDFs as their actual content in the file list and grid. Off uses generic type icons, lighter, since Quick Look never runs.",
     "Drop outside the archive to extract": "Drop outside the archive to extract",
     "Drop to add {n} item to the archive": {
       "one": "Drop to add {n} item to the archive",
@@ -418,9 +418,9 @@
     "Ejected “{name}”": "Ejected “{name}”",
     "Elevated action failed: {detail}": "Elevated action failed: {detail}",
     "Embedded in photo": "Embedded in photo",
-    "Emptied Trash — {n} item deleted": {
-      "one": "Emptied Trash — {n} item deleted",
-      "other": "Emptied Trash — {n} items deleted"
+    "Emptied Trash: {n} item deleted": {
+      "one": "Emptied Trash: {n} item deleted",
+      "other": "Emptied Trash: {n} items deleted"
     },
     "Empty": "Empty",
     "Empty Trash": "Empty Trash",
@@ -445,7 +445,7 @@
     "Export as HTML": "Export as HTML",
     "Export…": "Export…",
     "Exposure": "Exposure",
-    "Extension says “{kind}” but the content is “{magic}” — possible disguised file.": "Extension says “{kind}” but the content is “{magic}” — possible disguised file.",
+    "Extension says “{kind}” but the content is “{magic}”: possible disguised file.": "Extension says “{kind}” but the content is “{magic}”: possible disguised file.",
     "Extension says “{kind}” but the content looks like “{magic}”.": "Extension says “{kind}” but the content looks like “{magic}”.",
     "Extra launch arguments. {dir} expands to the folder; double quotes group a value with spaces (e.g. --working-directory \"{dir}\"). Without {dir} the terminal starts in the folder via its working directory. Blank uses the terminal's defaults.": "Extra launch arguments. {dir} expands to the folder; double quotes group a value with spaces (e.g. --working-directory \"{dir}\"). Without {dir} the terminal starts in the folder via its working directory. Blank uses the terminal's defaults.",
     "Extract": "Extract",
@@ -456,18 +456,18 @@
     "Extract to": "Extract to",
     "Extract to a folder you choose (selection, or all)": "Extract to a folder you choose (selection, or all)",
     "Extract {selected} Selected": "Extract {selected} Selected",
-    "Extracted to {dest} — click to show": "Extracted to {dest} — click to show",
-    "Extracted {n} archive to {dest} — click to show": {
-      "one": "Extracted {n} archive to {dest} — click to show",
-      "other": "Extracted {n} archives to {dest} — click to show"
+    "Extracted to {dest}, click to show": "Extracted to {dest}, click to show",
+    "Extracted {n} archive to {dest}, click to show": {
+      "one": "Extracted {n} archive to {dest}, click to show",
+      "other": "Extracted {n} archives to {dest}, click to show"
     },
-    "Extracted {n} item to {dest} — click to show": {
-      "one": "Extracted {n} item to {dest} — click to show",
-      "other": "Extracted {n} items to {dest} — click to show"
+    "Extracted {n} item to {dest}, click to show": {
+      "one": "Extracted {n} item to {dest}, click to show",
+      "other": "Extracted {n} items to {dest}, click to show"
     },
-    "Extracted {n} item — click to show": {
-      "one": "Extracted {n} item — click to show",
-      "other": "Extracted {n} items — click to show"
+    "Extracted {n} item, click to show": {
+      "one": "Extracted {n} item, click to show",
+      "other": "Extracted {n} items, click to show"
     },
     "Extracting {name}": "Extracting {name}",
     "Extracting {n} archive": {
@@ -483,7 +483,7 @@
     "Fast NTFS (administrator)": "Fast NTFS (administrator)",
     "Fast NTFS engine": "Fast NTFS engine",
     "Fast NTFS requires a local fixed NTFS volume": "Fast NTFS requires a local fixed NTFS volume",
-    "Fast NTFS — best effort because files changed during the scan": "Fast NTFS — best effort because files changed during the scan",
+    "Fast NTFS: best effort because files changed during the scan": "Fast NTFS: best effort because files changed during the scan",
     "Fast, focused file operations at any scale.": "Fast, focused file operations at any scale.",
     "Favorite can’t be found": "Favorite can’t be found",
     "Favorites": "Favorites",
@@ -528,7 +528,7 @@
     "Folders are scanned recursively without following links, entering packages, or downloading cloud placeholders.": "Folders are scanned recursively without following links, entering packages, or downloading cloud placeholders.",
     "Follow Tab Navigation": "Follow Tab Navigation",
     "Follow the system language, or pick an installed language pack. Strings a pack doesn't cover stay in English.": "Follow the system language, or pick an installed language pack. Strings a pack doesn't cover stay in English.",
-    "Forget every folder in Recents? Your Ant Trail heat is kept — only the recent list is emptied. This can't be undone.": "Forget every folder in Recents? Your Ant Trail heat is kept — only the recent list is emptied. This can't be undone.",
+    "Forget every folder in Recents? Your Ant Trail heat is kept, only the recent list is emptied. This can't be undone.": "Forget every folder in Recents? Your Ant Trail heat is kept, only the recent list is emptied. This can't be undone.",
     "Format": "Format",
     "Forward": "Forward",
     "Forward One Frame": "Forward One Frame",
@@ -543,7 +543,7 @@
     "Generated SHA-256": "Generated SHA-256",
     "Genre": "Genre",
     "Get Info": "Get Info",
-    "Get Info — {name}": "Get Info — {name}",
+    "Get Info: {name}": "Get Info: {name}",
     "Get Info?": "Get Info?",
     "GitHub returned update information that Ferail couldn't understand.": "GitHub returned update information that Ferail couldn't understand.",
     "GitHub's update service is temporarily unavailable. Try again later.": "GitHub's update service is temporarily unavailable. Try again later.",
@@ -585,7 +585,7 @@
     "Include Subfolders": "Include Subfolders",
     "Include folders protected by macOS in future scans": "Include folders protected by macOS in future scans",
     "Include hidden files": "Include hidden files",
-    "Incorrect password — try again.": "Incorrect password — try again.",
+    "Incorrect password: try again.": "Incorrect password: try again.",
     "Indexing {n} entry…": {
       "one": "Indexing {n} entry…",
       "other": "Indexing {n} entries…"
@@ -616,7 +616,7 @@
     "Lens": "Lens",
     "Light": "Light",
     "Linux": "Linux",
-    "List the folders you've opened recently in the sidebar, most recent first. Off hides the section and stops adding to it — your Ant Trail heat is unaffected.": "List the folders you've opened recently in the sidebar, most recent first. Off hides the section and stops adding to it — your Ant Trail heat is unaffected.",
+    "List the folders you've opened recently in the sidebar, most recent first. Off hides the section and stops adding to it your Ant Trail heat is unaffected.": "List the folders you've opened recently in the sidebar, most recent first. Off hides the section and stops adding to it your Ant Trail heat is unaffected.",
     "List view": "List view",
     "Loading preview…": "Loading preview…",
     "Loading…": "Loading…",
@@ -629,7 +629,7 @@
     "Looking for sidecar files…": "Looking for sidecar files…",
     "Loop": "Loop",
     "Lower values require a closer visual match.": "Lower values require a closer visual match.",
-    "MATCH — the file checksum is identical.": "MATCH — the file checksum is identical.",
+    "MATCH: the file checksum is identical.": "MATCH: the file checksum is identical.",
     "MEM {bytes}": "MEM {bytes}",
     "Make Alias": "Make Alias",
     "Make alias": "Make alias",
@@ -693,9 +693,9 @@
       "other": "Moving {n} items to Trash"
     },
     "Moving {what} to “{dest}”…": "Moving {what} to “{dest}”…",
-    "Moving — preparing ({n} item)…": {
-      "one": "Moving — preparing ({n} item)…",
-      "other": "Moving — preparing ({n} items)…"
+    "Moving: preparing ({n} item)…": {
+      "one": "Moving: preparing ({n} item)…",
+      "other": "Moving: preparing ({n} items)…"
     },
     "Music": "Music",
     "Name": "Name",
@@ -734,20 +734,20 @@
     "None": "None",
     "Normal": "Normal",
     "Not downloaded": "Not downloaded",
-    "Not enough space on “{dest}” — needs {needed}, only {free} free": "Not enough space on “{dest}” — needs {needed}, only {free} free",
+    "Not enough space on “{dest}”: needs {needed}, only {free} free": "Not enough space on “{dest}”: needs {needed}, only {free} free",
     "Not supported by {format} archives.": "Not supported by {format} archives.",
     "Nothing could be read from the archive": "Nothing could be read from the archive",
     "Nothing to undo": "Nothing to undo",
     "OK": "OK",
     "Off": "Off",
     "On": "On",
-    "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default — when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.": "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default — when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.",
+    "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default: when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.": "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default: when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.",
     "OneDrive": "OneDrive",
     "Only folders can be added to Favorites.": "Only folders can be added to Favorites.",
     "Only needed for an encrypted source": "Only needed for an encrypted source",
-    "Only {n} file was checked — a lock outside that sample would not show.": {
-      "one": "Only {n} file was checked — a lock outside that sample would not show.",
-      "other": "Only the first {n} files were checked — a lock outside that sample would not show."
+    "Only {n} file was checked: a lock outside that sample would not show.": {
+      "one": "Only {n} file was checked: a lock outside that sample would not show.",
+      "other": "Only the first {n} files were checked: a lock outside that sample would not show."
     },
     "Opacity": "Opacity",
     "Open": "Open",
@@ -829,11 +829,11 @@
     "Plugins": "Plugins",
     "Portable": "Portable",
     "Portable engine": "Portable engine",
-    "Portable fallback — Fast NTFS could not finish safely": "Portable fallback — Fast NTFS could not finish safely",
-    "Portable fallback — Fast NTFS is unavailable here": "Portable fallback — Fast NTFS is unavailable here",
-    "Portable fallback — administrator access was declined": "Portable fallback — administrator access was declined",
-    "Portable fallback — the Fast NTFS helper does not match this build": "Portable fallback — the Fast NTFS helper does not match this build",
-    "Portable fallback — the Fast NTFS helper is missing": "Portable fallback — the Fast NTFS helper is missing",
+    "Portable fallback: Fast NTFS could not finish safely": "Portable fallback: Fast NTFS could not finish safely",
+    "Portable fallback: Fast NTFS is unavailable here": "Portable fallback: Fast NTFS is unavailable here",
+    "Portable fallback: administrator access was declined": "Portable fallback: administrator access was declined",
+    "Portable fallback: the Fast NTFS helper does not match this build": "Portable fallback: the Fast NTFS helper does not match this build",
+    "Portable fallback: the Fast NTFS helper is missing": "Portable fallback: the Fast NTFS helper is missing",
     "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through an administrator helper started on first use and reused until Ferail exits; if it cannot finish safely, Ferail discards its partial result and retries with Portable.": "Portable works everywhere without elevation. Fast NTFS reads local NTFS metadata through an administrator helper started on first use and reused until Ferail exits; if it cannot finish safely, Ferail discards its partial result and retries with Portable.",
     "Predictable, private, and built for real-world directories.": "Predictable, private, and built for real-world directories.",
     "Preparing NTFS metadata…": "Preparing NTFS metadata…",
@@ -847,8 +847,8 @@
     "Privacy protection is off: a shared report would include the paths shown here.": "Privacy protection is off: a shared report would include the paths shown here.",
     "Privacy protection is on: paths and file names are replaced before this activity is attached to a report.": "Privacy protection is on: paths and file names are replaced before this activity is attached to a report.",
     "Private": "Private",
+    "Private - Ferail": "Private - Ferail",
     "Private Mode": "Private Mode",
-    "Private — Ferail": "Private — Ferail",
     "Problems only": "Problems only",
     "Purple": "Purple",
     "Quarantined · Mark of the Web": "Quarantined · Mark of the Web",
@@ -873,7 +873,7 @@
     "Recent": "Recent",
     "Recents": "Recents",
     "Rectangle": "Rectangle",
-    "Recursively total each folder so the Size column shows how big it is. This walks the whole subtree in the background — the biggest disk cost on large folders. Off shows a dash for folder sizes.": "Recursively total each folder so the Size column shows how big it is. This walks the whole subtree in the background — the biggest disk cost on large folders. Off shows a dash for folder sizes.",
+    "Recursively total each folder so the Size column shows how big it is. This walks the whole subtree in the background: the biggest disk cost on large folders. Off shows a dash for folder sizes.": "Recursively total each folder so the Size column shows how big it is. This walks the whole subtree in the background: the biggest disk cost on large folders. Off shows a dash for folder sizes.",
     "Recycle Bin": "Recycle Bin",
     "Red": "Red",
     "Redact": "Redact",
@@ -911,7 +911,7 @@
       "one": "Renamed {n} item",
       "other": "Renamed {n} items"
     },
-    "Renamed {renamed} items, {failed} failed — {detail}": "Renamed {renamed} items, {failed} failed — {detail}",
+    "Renamed {renamed} items, {failed} failed: {detail}": "Renamed {renamed} items, {failed} failed: {detail}",
     "Rename…": "Rename…",
     "Renaming {n} item…": {
       "one": "Renaming {n} item…",
@@ -948,11 +948,11 @@
     "Reveal in File Manager": "Reveal in File Manager",
     "Reveal in Finder": "Reveal in Finder",
     "Reveal in {app}?": "Reveal in {app}?",
-    "Reveal items that start with a dot — {n} in your home folder. Takes effect on next launch.": {
-      "one": "Reveal items that start with a dot — {n} in your home folder. Takes effect on next launch.",
-      "other": "Reveal items that start with a dot — {n} in your home folder. Takes effect on next launch."
-    },
     "Reveal items that start with a dot, like .config and .ssh. Takes effect on next launch.": "Reveal items that start with a dot, like .config and .ssh. Takes effect on next launch.",
+    "Reveal items that start with a dot: {n} in your home folder. Takes effect on next launch.": {
+      "one": "Reveal items that start with a dot: {n} in your home folder. Takes effect on next launch.",
+      "other": "Reveal items that start with a dot: {n} in your home folder. Takes effect on next launch."
+    },
     "Reveal {n} item in {app}?": {
       "one": "Reveal {n} item in {app}?",
       "other": "Reveal {n} items in {app}?"
@@ -991,7 +991,7 @@
     "Saving {archive}": "Saving {archive}",
     "Scan Again": "Scan Again",
     "Scan completed in {elapsed}": "Scan completed in {elapsed}",
-    "Scan failed — {detail}": "Scan failed — {detail}",
+    "Scan failed: {detail}": "Scan failed: {detail}",
     "Scan package folders as containers": "Scan package folders as containers",
     "Scanning for duplicates…": "Scanning for duplicates…",
     "Scanning for similar images…": "Scanning for similar images…",
@@ -1070,7 +1070,7 @@
     },
     "Skip": "Skip",
     "Skip cloud placeholders": "Skip cloud placeholders",
-    "Skip files below this size — the big wins are large files.": "Skip files below this size — the big wins are large files.",
+    "Skip files below this size: the big wins are large files.": "Skip files below this size: the big wins are large files.",
     "Skip under 1 MB": "Skip under 1 MB",
     "Skip under 10 MB": "Skip under 10 MB",
     "Skip under 100 MB": "Skip under 100 MB",
@@ -1098,7 +1098,7 @@
     "Special folders": "Special folders",
     "Spotlight": "Spotlight",
     "Standard": "Standard",
-    "Standard opens the terminal normally. Administrator opens it with elevated rights — a UAC prompt on Windows; on macOS and Linux the window opens into a root shell, with sudo asking for your password inside the terminal.": "Standard opens the terminal normally. Administrator opens it with elevated rights — a UAC prompt on Windows; on macOS and Linux the window opens into a root shell, with sudo asking for your password inside the terminal.",
+    "Standard opens the terminal normally. Administrator opens it with elevated rights: a UAC prompt on Windows; on macOS and Linux the window opens into a root shell, with sudo asking for your password inside the terminal.": "Standard opens the terminal normally. Administrator opens it with elevated rights: a UAC prompt on Windows; on macOS and Linux the window opens into a root shell, with sudo asking for your password inside the terminal.",
     "Start": "Start",
     "Start in": "Start in",
     "Starting the Linux distribution timed out.": "Starting the Linux distribution timed out.",
@@ -1133,7 +1133,7 @@
     "The app's configuration lives here: the settings file, the metadata database (tags, visit history), and your language packs.": "The app's configuration lives here: the settings file, the metadata database (tags, visit history), and your language packs.",
     "The archive has no parent folder": "The archive has no parent folder",
     "The built-in player uses the platform's native media frameworks (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually any container/codec and applies colour adjustments and a transparent-colour key to the video itself. libmpv must be installed; a change takes effect on the next viewer window.": "The built-in player uses the platform's native media frameworks (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually any container/codec and applies colour adjustments and a transparent-colour key to the video itself. libmpv must be installed; a change takes effect on the next viewer window.",
-    "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable — rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.": "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable — rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.",
+    "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable: rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.": "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable: rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.",
     "The comparison is unavailable because calculation did not finish.": "The comparison is unavailable because calculation did not finish.",
     "The comparison will appear when calculation finishes.": "The comparison will appear when calculation finishes.",
     "The converted archive name must be a single non-empty filename.": "The converted archive name must be a single non-empty filename.",
@@ -1172,9 +1172,9 @@
     "This shortcut is broken": "This shortcut is broken",
     "This shortcut is not supported": "This shortcut is not supported",
     "Tight": "Tight",
-    "Tint your most-visited folders so the ones you open most stand out. Off hides the tint entirely — your visit history still feeds Recents.": "Tint your most-visited folders so the ones you open most stand out. Off hides the tint entirely — your visit history still feeds Recents.",
+    "Tint your most-visited folders so the ones you open most stand out. Off hides the tint entirely, your visit history still feeds Recents.": "Tint your most-visited folders so the ones you open most stand out. Off hides the tint entirely, your visit history still feeds Recents.",
     "Title": "Title",
-    "To add a language: New language… writes a template into {folder}. Give that file to a translator or an AI assistant (Claude, ChatGPT, …) — the instructions are inside it — then Import… the result. Export… saves the current language the same way, for translating the missing strings or sharing it. {summary}": "To add a language: New language… writes a template into {folder}. Give that file to a translator or an AI assistant (Claude, ChatGPT, …) — the instructions are inside it — then Import… the result. Export… saves the current language the same way, for translating the missing strings or sharing it. {summary}",
+    "To add a language: New language… writes a template into {folder}. Give that file to a translator or an AI assistant (Claude, ChatGPT, …) (the instructions are inside it), then Import… the result. Export… saves the current language the same way, for translating the missing strings or sharing it. {summary}": "To add a language: New language… writes a template into {folder}. Give that file to a translator or an AI assistant (Claude, ChatGPT, …) (the instructions are inside it), then Import… the result. Export… saves the current language the same way, for translating the missing strings or sharing it. {summary}",
     "Toggle Performance HUD": "Toggle Performance HUD",
     "Toggle Sidebar": "Toggle Sidebar",
     "Too many edited copies of this image already exist here.": "Too many edited copies of this image already exist here.",
@@ -1183,9 +1183,9 @@
     "Trailing whitespace": "Trailing whitespace",
     "Transferring failed: {detail}": "Transferring failed: {detail}",
     "Transferring {what} to “{dest}”…": "Transferring {what} to “{dest}”…",
-    "Transferring — preparing ({n} item)…": {
-      "one": "Transferring — preparing ({n} item)…",
-      "other": "Transferring — preparing ({n} items)…"
+    "Transferring: preparing ({n} item)…": {
+      "one": "Transferring: preparing ({n} item)…",
+      "other": "Transferring: preparing ({n} items)…"
     },
     "Transparent": "Transparent",
     "Transparent colour": "Transparent colour",
@@ -1194,12 +1194,12 @@
     "Trash is already empty": "Trash is already empty",
     "Trash marked": "Trash marked",
     "Trash {n} marked": "Trash {n} marked",
-    "Trashed {ok}, {failed} failed — {detail}": "Trashed {ok}, {failed} failed — {detail}",
+    "Trashed {ok}, {failed} failed: {detail}": "Trashed {ok}, {failed} failed: {detail}",
     "Trashing {n} duplicate": {
       "one": "Trashing {n} duplicate",
       "other": "Trashing {n} duplicates"
     },
-    "Treemap HTML copied — paste into any page or document.": "Treemap HTML copied — paste into any page or document.",
+    "Treemap HTML copied, paste into any page or document.": "Treemap HTML copied, paste into any page or document.",
     "Type": "Type",
     "Type words to match names and formats. Add tokens to filter by value. Everything you type must match (AND).": "Type words to match names and formats. Add tokens to filter by value. Everything you type must match (AND).",
     "UI scale": "UI scale",
@@ -1255,12 +1255,12 @@
     "What's using it?": "What's using it?",
     "What’s Blocking Eject?": "What’s Blocking Eject?",
     "What’s Locking This?": "What’s Locking This?",
-    "When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often leaves a local copy behind, so “where is my Documents?” has two answers. Automatic follows Windows (cloud where it moved them, local otherwise). Local prefers your %USERPROFILE% copy; OneDrive prefers the OneDrive copy — each falls back to the other when its copy doesn’t exist, so a shortcut never opens to nothing.": "When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often leaves a local copy behind, so “where is my Documents?” has two answers. Automatic follows Windows (cloud where it moved them, local otherwise). Local prefers your %USERPROFILE% copy; OneDrive prefers the OneDrive copy — each falls back to the other when its copy doesn’t exist, so a shortcut never opens to nothing.",
-    "When on (the default), the report below, the bundle you can save, and the activity trail all replace every file and folder name with “…”. We see only the shape of what you did — how deep a folder was, what file type — never the names. So you can share a report with us and we learn nothing about your files. Turn it off only if a maintainer asks for real paths to reproduce a bug.": "When on (the default), the report below, the bundle you can save, and the activity trail all replace every file and folder name with “…”. We see only the shape of what you did — how deep a folder was, what file type — never the names. So you can share a report with us and we learn nothing about your files. Turn it off only if a maintainer asks for real paths to reproduce a bug.",
-    "When on, opening a folder from your Favorites doesn't count toward its Ant Trail heat or add it to Recents — so deliberate shortcuts don't crowd out folders you actually browse to. Reaching the same folder any other way still counts.": "When on, opening a folder from your Favorites doesn't count toward its Ant Trail heat or add it to Recents — so deliberate shortcuts don't crowd out folders you actually browse to. Reaching the same folder any other way still counts.",
+    "When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often leaves a local copy behind, so “where is my Documents?” has two answers. Automatic follows Windows (cloud where it moved them, local otherwise). Local prefers your %USERPROFILE% copy; OneDrive prefers the OneDrive copy, each falls back to the other when its copy doesn’t exist, so a shortcut never opens to nothing.": "When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often leaves a local copy behind, so “where is my Documents?” has two answers. Automatic follows Windows (cloud where it moved them, local otherwise). Local prefers your %USERPROFILE% copy; OneDrive prefers the OneDrive copy, each falls back to the other when its copy doesn’t exist, so a shortcut never opens to nothing.",
+    "When on (the default), the report below, the bundle you can save, and the activity trail all replace every file and folder name with “…”. We see only the shape of what you did (how deep a folder was, what file type), never the names. So you can share a report with us and we learn nothing about your files. Turn it off only if a maintainer asks for real paths to reproduce a bug.": "When on (the default), the report below, the bundle you can save, and the activity trail all replace every file and folder name with “…”. We see only the shape of what you did (how deep a folder was, what file type), never the names. So you can share a report with us and we learn nothing about your files. Turn it off only if a maintainer asks for real paths to reproduce a bug.",
+    "When on, opening a folder from your Favorites doesn't count toward its Ant Trail heat or add it to Recents, so deliberate shortcuts don't crowd out folders you actually browse to. Reaching the same folder any other way still counts.": "When on, opening a folder from your Favorites doesn't count toward its Ant Trail heat or add it to Recents, so deliberate shortcuts don't crowd out folders you actually browse to. Reaching the same folder any other way still counts.",
     "Where": "Where",
-    "Where libmpv is loaded from — the dylib, a directory containing it, or mpv.app on macOS. Blank uses the platform default (Homebrew).": "Where libmpv is loaded from — the dylib, a directory containing it, or mpv.app on macOS. Blank uses the platform default (Homebrew).",
-    "Which terminal “Open Terminal Here” launches — an app name or .app bundle on macOS, a program path, or a command on PATH. Blank uses the platform default: Terminal.app on macOS, Windows Terminal on Windows, and auto-detection ($TERMINAL, then common emulators) on Linux.": "Which terminal “Open Terminal Here” launches — an app name or .app bundle on macOS, a program path, or a command on PATH. Blank uses the platform default: Terminal.app on macOS, Windows Terminal on Windows, and auto-detection ($TERMINAL, then common emulators) on Linux.",
+    "Where libmpv is loaded from: the dylib, a directory containing it, or mpv.app on macOS. Blank uses the platform default (Homebrew).": "Where libmpv is loaded from: the dylib, a directory containing it, or mpv.app on macOS. Blank uses the platform default (Homebrew).",
+    "Which terminal “Open Terminal Here” launches: an app name or .app bundle on macOS, a program path, or a command on PATH. Blank uses the platform default: Terminal.app on macOS, Windows Terminal on Windows, and auto-detection ($TERMINAL, then common emulators) on Linux.": "Which terminal “Open Terminal Here” launches: an app name or .app bundle on macOS, a program path, or a command on PATH. Blank uses the platform default: Terminal.app on macOS, Windows Terminal on Windows, and auto-detection ($TERMINAL, then common emulators) on Linux.",
     "Window": "Window",
     "Window opacity": "Window opacity",
     "Window opacity: {percent}%": "Window opacity: {percent}%",
@@ -1271,7 +1271,7 @@
     "Windows location unavailable": "Windows location unavailable",
     "Year": "Year",
     "Yellow": "Yellow",
-    "You're up to date for {platform} — {latest} is the latest release.": "You're up to date for {platform} — {latest} is the latest release.",
+    "You're up to date for {platform}, {latest} is the latest release.": "You're up to date for {platform}, {latest} is the latest release.",
     "Your edits to “{name}” haven't been saved.": "Your edits to “{name}” haven't been saved.",
     "Your {n} unsaved change will be lost if you discard it.": {
       "one": "Your {n} unsaved change will be lost if you discard it.",
@@ -1326,7 +1326,7 @@
     "permission denied": "permission denied",
     "pop directional formatting": "pop directional formatting",
     "pop directional isolate": "pop directional isolate",
-    "quoted phrase — match the words together, spaces included": "quoted phrase — match the words together, spaces included",
+    "quoted phrase: match the words together, spaces included": "quoted phrase: match the words together, spaces included",
     "right-to-left embedding": "right-to-left embedding",
     "right-to-left isolate": "right-to-left isolate",
     "right-to-left mark": "right-to-left mark",
@@ -1370,14 +1370,14 @@
     "{format} is not a supported conversion target.": "{format} is not a supported conversion target.",
     "{index} of {total}": "{index} of {total}",
     "{label} · encrypted": "{label} · encrypted",
-    "{label} — {detail}": "{label} — {detail}",
-    "{location} · clone — no extra space": "{location} · clone — no extra space",
+    "{label}: {detail}": "{label}: {detail}",
+    "{location} · clone, no extra space": "{location} · clone, no extra space",
     "{location} · hard link": "{location} · hard link",
     "{name} (default)": "{name} (default)",
+    "{name} - {index} of {total}": "{name} - {index} of {total}",
+    "{name} - {translated} of {total} strings, {origin}": "{name} - {translated} of {total} strings, {origin}",
     "{name} is read-only": "{name} is read-only",
-    "{name} {n}.{ext} — leave empty to skip": "{name} {n}.{ext} — leave empty to skip",
-    "{name} — {index} of {total}": "{name} — {index} of {total}",
-    "{name} — {translated} of {total} strings, {origin}": "{name} — {translated} of {total} strings, {origin}",
+    "{name} {n}.{ext}, leave empty to skip": "{name} {n}.{ext}, leave empty to skip",
     "{name}: rename cycle could not be resolved": "{name}: rename cycle could not be resolved",
     "{n} OK": "{n} OK",
     "{n} background task": {
@@ -1497,7 +1497,7 @@
     "{path}: no parent folder to restore into": "{path}: no parent folder to restore into",
     "{percent}% saved": "{percent}% saved",
     "{renamed} of {total} will be renamed": "{renamed} of {total} will be renamed",
-    "{script} '{c}' (U+{code}) — looks like '{ascii}'": "{script} '{c}' (U+{code}) — looks like '{ascii}'",
+    "{script} '{c}' (U+{code}): looks like '{ascii}'": "{script} '{c}' (U+{code}): looks like '{ascii}'",
     "{secs} s": "{secs} s",
     "{shown} of {total}": "{shown} of {total}",
     "{size} free": "{size} free",
@@ -1522,14 +1522,14 @@
     "“{name}” is {human}. Previewing it writes a temporary copy out of the archive first.": "“{name}” is {human}. Previewing it writes a temporary copy out of the archive first.",
     "“{path}” isn’t currently mounted. Locate it on a mounted volume, or remove the shortcut.": "“{path}” isn’t currently mounted. Locate it on a mounted volume, or remove the shortcut.",
     "“{path}” may have been moved or deleted. Locate it to repoint this shortcut, or remove it from Favorites.": "“{path}” may have been moved or deleted. Locate it to repoint this shortcut, or remove it from Favorites.",
-    "• {item} — {reason}": "• {item} — {reason}",
+    "• {item}: {reason}": "• {item}: {reason}",
     "• …and {n} more": {
       "one": "• …and {n} more",
       "other": "• …and {n} more"
     },
-    "…and {n} earlier release — see GitHub.": {
-      "one": "…and {n} earlier release — see GitHub.",
-      "other": "…and {n} earlier releases — see GitHub."
+    "…and {n} earlier release: see GitHub.": {
+      "one": "…and {n} earlier release: see GitHub.",
+      "other": "…and {n} earlier releases: see GitHub."
     },
     "…and {overflow} more": "…and {overflow} more",
     "−1f": "−1f",

@@ -3,8 +3,8 @@
 ← [Feature index](README.md) · [Architecture](../ARCHITECTURE.md) ·
 [TODO](../../TODO.md)
 
-How Ferail keeps **derived values that summarize a whole subtree** — today
-the file list's folder sizes and Get Info's "Calculate" — honest when the
+How Ferail keeps **derived values that summarize a whole subtree**: today
+the file list's folder sizes and Get Info's "Calculate": honest when the
 underlying tree changes, whether the change came from inside the app or from a
 3rd-party tool.
 
@@ -17,7 +17,7 @@ such cache.
 
 A recursive folder size is cached in the `folder_sizes` table
 ([ferail-meta/src/db.rs](../../crates/ferail-meta/src/db.rs)) keyed by path.
-The obvious validity signal — *has the folder's own `mtime` changed?* — has a
+The obvious validity signal, *has the folder's own `mtime` changed?*, has a
 hard blind spot on POSIX and Windows alike:
 
 > A directory's `mtime` only moves when its **direct** children change. A write
@@ -32,12 +32,12 @@ We deliberately do **not** solve this with a recursive FSEvents/`ReadDirectory­
 ChangesW` watch. The existing watcher
 ([fs_watcher.rs](../../crates/ferail-gpui/src/fs_watcher.rs)) stays
 non-recursive and only drives **listing** reloads (the set of rows in the
-current directory) — that is the cheap, correct signal for direct-child changes.
+current directory): that is the cheap, correct signal for direct-child changes.
 Recursive watching of large trees trades a real event-volume / lifecycle cost
 for liveness we can get more cheaply. Instead, freshness rests on three
 augmentations layered onto machinery that already exists.
 
-## The model — three mechanisms
+## The model - three mechanisms
 
 ### 1. mtime fast-path (unchanged)
 
@@ -51,9 +51,9 @@ fill every size in a single frame. The two mechanisms below close only the
 
 When **Ferail itself** mutates the filesystem, it knows precisely what
 changed, so it invalidates precisely. Every mutation already funnels its reload
-through one choke point —
+through one choke point:
 `Shell::broadcast_reload_for_process`
-([shell.rs](../../crates/ferail-gpui/src/shell.rs)) — and that now also calls
+([shell.rs](../../crates/ferail-gpui/src/shell.rs)), and that now also calls
 `Shell::invalidate_folder_size_ancestors`, which deletes the cached size for the
 changed path **and every ancestor up to the root** (`delete_folder_size`).
 
@@ -63,7 +63,7 @@ ancestors are exactly the rows the mtime fast-path can't catch, so they are
 exactly the rows we drop. The deletes run off the UI thread and are single-row
 primary-key hits.
 
-This makes the headline case — *enter a subfolder, do work, navigate back* —
+This makes the headline case: *enter a subfolder, do work, navigate back*:
 correct **immediately**, with no walking until the parent is actually viewed
 again. The same path also covers external **shallow** changes the non-recursive
 watcher reports (the watched dir's content changed → its ancestors' sizes are
@@ -78,7 +78,7 @@ how long that can hide a stale size:
 - **TTL.** A cached row counts as a hit only while it is younger than
   `FOLDER_SIZE_TTL_SECS`
   ([folder_sizes.rs](../../crates/ferail-gpui/src/folder_sizes.rs), 10 min
-  today — one tunable const). Past that, the next *visit* recomputes. A
+  today, one tunable const). Past that, the next *visit* recomputes. A
   recompute only happens when the folder is actually loaded, off the UI thread,
   so a longer TTL trades a little staleness for fewer re-walks of big trees.
 - **Explicit Refresh.** The one gesture that means "measure this again" is the
@@ -106,13 +106,13 @@ how long that can hide a stale size:
 > **This used to force.** Until 2026-08-04 the activation path passed
 > `force = true`, re-walking every visible tree on every return to the app.
 > Switching apps is something a user does dozens of times an hour, so in
-> practice the Size column could never settle — a folder measured a moment ago
+> practice the Size column could never settle: a folder measured a moment ago
 > was measured again the next time the window came forward, and a big tree that
 > lost the race to the next navigation was never cached at all. The liveness it
 > bought is already covered from both sides: watcher-driven ancestor
 > invalidation catches what the app and 3rd-party tools do to a *watched*
 > directory, and the TTL bounds how long a *deep* external change can hide.
-> What was left was cost without a matching guarantee. Don't reintroduce it —
+> What was left was cost without a matching guarantee. Don't reintroduce it:
 > if deep external liveness ever needs to be better than the TTL, the seam is a
 > recursive watcher feeding `invalidate_folder_size_ancestors`, not a periodic
 > re-walk.
@@ -146,7 +146,7 @@ disagree.
   endpoints' ancestor chains should be invalidated.
 - **Upgrade path to live deep updates.** If liveness ever outweighs the cost,
   the ancestor-invalidation service is the seam a recursive watcher would plug
-  into — it would feed the same `invalidate_folder_size_ancestors`, and nothing
+  into: it would feed the same `invalidate_folder_size_ancestors`, and nothing
   downstream would change.
 - **Generalization.** Recursive **item counts** now ride this exact model: the
   same walk that sums a folder's size also counts its files and sub-folders, both

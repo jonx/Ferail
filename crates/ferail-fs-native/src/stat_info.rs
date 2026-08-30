@@ -1,7 +1,7 @@
 //! POSIX stat-based facts for the Get Info panel: ownership, permission
 //! mode, the created/modified/accessed timestamps, the size, and the BSD
 //! flags Finder surfaces as "Locked" (`UF_IMMUTABLE`) and "Invisible"
-//! (`UF_HIDDEN`). Plus volume facts that no NSURL key exposes — the
+//! (`UF_HIDDEN`). Plus volume facts that no NSURL key exposes: the
 //! filesystem format (`f_fstypename`) and BSD device (`f_mntfromname`).
 //!
 //! All of this is a single `lstat(2)` / `statfs(2)` hop with no allocation
@@ -35,9 +35,9 @@ pub struct StatInfo {
     pub created_unix: Option<i64>,
     pub modified_unix: i64,
     pub accessed_unix: Option<i64>,
-    /// `UF_IMMUTABLE` — Finder "Locked".
+    /// `UF_IMMUTABLE`: Finder "Locked".
     pub is_locked: bool,
-    /// `UF_HIDDEN` — Finder "Invisible".
+    /// `UF_HIDDEN`: Finder "Invisible".
     pub is_invisible: bool,
 }
 
@@ -109,8 +109,8 @@ pub fn read_stat_info(path: &Path) -> Option<StatInfo> {
 
 /// Windows facts for the Get Info panel, the rough analogue of the unix
 /// `lstat` read. `std`'s `MetadataExt` exposes everything the Properties
-/// dialog's General tab shows — size, the created/modified/accessed
-/// timestamps, and the read-only / hidden attribute bits — with no `windows`
+/// dialog's General tab shows: size, the created/modified/accessed
+/// timestamps, and the read-only / hidden attribute bits, with no `windows`
 /// crate needed. There is no POSIX uid/gid/mode, so a permission mode is
 /// synthesised from the read-only attribute (write bits cleared when set) and
 /// the owner shows the current account (best-effort).
@@ -289,7 +289,7 @@ pub fn set_timestamp(_path: &Path, _kind: TimestampKind, _unix: i64) -> Result<(
 fn owner_name(uid: u32) -> String {
     unsafe {
         let mut pwd: libc::passwd = std::mem::zeroed();
-        // `c_char` is i8 on x86/macOS but u8 on aarch64 Linux — never
+        // `c_char` is i8 on x86/macOS but u8 on aarch64 Linux, never
         // spell the buffer element type out.
         let mut buf = [0 as libc::c_char; 1024];
         let mut result: *mut libc::passwd = std::ptr::null_mut();
@@ -452,7 +452,7 @@ fn io_err(op: &str) -> String {
 
 /// Filesystem type name (e.g. "apfs", "hfs", "exfat"), BSD device node
 /// (e.g. "/dev/disk3s1s1"), and whether the volume is mounted read-only
-/// (`MNT_RDONLY`, except the root mount — see below) for the volume
+/// (`MNT_RDONLY`, except the root mount: see below) for the volume
 /// containing `path`. Strings `None` and read-only `false` off macOS or
 /// on `statfs` failure.
 #[cfg(target_os = "macos")]
@@ -481,7 +481,7 @@ pub fn volume_fs_info(path: &Path) -> (Option<String>, Option<String>, bool) {
     };
     // Boot-volume special case: the sealed system snapshot statfs's as
     // MNT_RDONLY on every modern macOS, but the "Macintosh HD" the user
-    // sees is writable — their files live on the firmlinked Data
+    // sees is writable: their files live on the firmlinked Data
     // volume. A "read-only" badge on the boot volume is technically
     // true of the snapshot and nonsense as a user message, so the root
     // mount never reports it. Real read-only media (CDs, locked cards,
@@ -859,7 +859,7 @@ mod tests {
             "device node looks like /dev/...: {dev:?}"
         );
         // The sealed snapshot statfs's as MNT_RDONLY, but the boot
-        // volume is deliberately exempt — the user-visible Macintosh HD
+        // volume is deliberately exempt: the user-visible Macintosh HD
         // is writable via the firmlinked Data volume, so a read-only
         // badge there would be nonsense.
         assert!(!read_only, "the boot volume never reports read-only");

@@ -1,7 +1,7 @@
 //! Privacy redaction for the diagnostics & issue-report surfaces.
 //!
 //! Ferail's diagnostics bundle, the "Copy report" action, and the in-app
-//! activity-trail view all describe *what the user did* — including the folders
+//! activity-trail view all describe *what the user did*, including the folders
 //! they browsed and the files they opened. Those paths are the one genuinely
 //! sensitive thing a bug report could leak, so the app must be able to promise,
 //! truthfully, that a shared report contains **no file or folder names**.
@@ -9,9 +9,9 @@
 //! Two layers compose:
 //! - **Account scrub** ([`crate::report::redact_username`]) is always applied
 //!   and removes the home-directory prefix, i.e. the account name.
-//! - **Path redaction** (this module — a user toggle that defaults to *on*)
-//!   goes further: every filesystem path is reduced to its *shape* — the root
-//!   anchor, the depth, and the final file extension — with each name replaced
+//! - **Path redaction** (this module: a user toggle that defaults to *on*)
+//!   goes further: every filesystem path is reduced to its *shape*: the root
+//!   anchor, the depth, and the final file extension, with each name replaced
 //!   by `…`. `/Users/ada/Taxes/2025/return.pdf` becomes `/…/…/…/…/….pdf`: still
 //!   useful for reproducing a bug ("five levels deep, opening a PDF") but
 //!   revealing nothing about the user.
@@ -40,7 +40,7 @@ pub fn set_enabled(on: bool) {
 
 /// Reduce a filesystem path to a name-free shape: the root anchor, one `…` per
 /// path segment, and the final file extension. This *always* redacts,
-/// regardless of [`enabled`] — callers decide whether to invoke it.
+/// regardless of [`enabled`]: callers decide whether to invoke it.
 ///
 /// Examples (POSIX): `/a/b/c.pdf` → `/…/…/….pdf`, `/Volumes/Disk` → `/…/…`,
 /// `/` → `/`. Windows drive and UNC anchors are preserved with `\` separators.
@@ -68,7 +68,7 @@ pub fn redact_path(path: &Path) -> String {
         }
     }
     let sep = if windows_style { '\\' } else { '/' };
-    // Preserve the final extension — the file *type* is useful for a bug
+    // Preserve the final extension: the file *type* is useful for a bug
     // report; the name is not.
     let ext = path
         .extension()
@@ -108,7 +108,7 @@ pub fn redact_path(path: &Path) -> String {
 ///
 /// Only recognises whole-path *tokens* (a token that starts with `/`, `~/`, a
 /// Windows drive, or a UNC prefix); it does not hunt for paths with embedded
-/// spaces inside prose. The structured surfaces — the activity trail — redact
+/// spaces inside prose. The structured surfaces, the activity trail, redact
 /// those exactly via [`redact_path`], so this is a backstop for note text.
 pub fn scrub_text(text: &str) -> String {
     if !enabled() {
@@ -191,7 +191,7 @@ mod tests {
         for name in ["ada", "Private", "very-secret-merger"] {
             assert!(!shape.contains(name), "leaked {name:?} in {shape:?}");
         }
-        // The file type survives — useful, not sensitive.
+        // The file type survives: useful, not sensitive.
         assert!(shape.ends_with(".docx"));
     }
 

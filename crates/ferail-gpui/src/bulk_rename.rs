@@ -2,23 +2,23 @@
 //!
 //! Two layers in one file:
 //!
-//! 1. **A pure transform engine** — [`RenameRule`] → [`build_plan`] →
+//! 1. **A pure transform engine**: [`RenameRule`] → [`build_plan`] →
 //!    [`RenamePlan`]. Plain string work over *display names*: no gpui
 //!    types, no filesystem, unit-tested below. The caller maps display
 //!    names back to on-disk leaves at apply time.
-//! 2. **The modal UI + apply pipeline** — [`open`] shows a dialog over a
+//! 2. **The modal UI + apply pipeline**: [`open`] shows a dialog over a
 //!    selection snapshot with a live before→after preview;
 //!    [`apply`] runs the renames chain/cycle-aware on the background
 //!    executor and records a [`UndoOp::RenameBatch`].
 //!
 //! Re-render model: gpui-component rebuilds every active dialog's
 //! builder closure each `Root` render, so the closure stays a cheap
-//! frame around one [`BulkRenameView`] entity child — the whole body
+//! frame around one [`BulkRenameView`] entity child: the whole body
 //! renders from the entity's *cached* plan and re-renders when the
 //! entity notifies. Plan recomputation happens on semantic events only
 //! (input Change, toggle clicks): synchronously for typical selections,
 //! and on the background executor past [`BACKGROUND_PLAN_THRESHOLD`]
-//! items (generation-tagged so a stale result is dropped) — no debounce
+//! items (generation-tagged so a stale result is dropped), no debounce
 //! needed since the plan is pure string work and the `regex` crate is
 //! linear-time.
 
@@ -100,7 +100,7 @@ impl Default for RenameRule {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RowStatus {
-    /// `after == before` — skipped at apply, not a conflict.
+    /// `after == before`: skipped at apply, not a conflict.
     Unchanged,
     Renamed,
     /// Static reason, rendered next to the row in the preview.
@@ -119,23 +119,23 @@ pub struct RenamePlan {
     pub rows: Vec<RenameRow>,
     pub renamed: usize,
     pub conflicts: usize,
-    /// Plan-level error (an invalid regex pattern) — one line for the
+    /// Plan-level error (an invalid regex pattern), one line for the
     /// whole plan, never repeated per row. All rows read Unchanged.
     pub error: Option<String>,
 }
 
 /// Build the before→after plan for `items` (`(display name, mtime unix)`
-/// pairs, in batch order — `{n}` numbers by that order).
+/// pairs, in batch order, `{n}` numbers by that order).
 ///
 /// Conflicts detected here, all case-insensitive (APFS/NTFS default to
 /// case-insensitive):
 /// (a) duplicate targets *within* the batch;
 /// (b) an empty result;
-/// (c) a target that equals another batch member's *unchanged* name —
+/// (c) a target that equals another batch member's *unchanged* name,
 ///     i.e. it collides with an item that isn't being renamed away.
 /// A changed row's target may equal another *changed* row's old name
 /// (chains/renumbering); the apply step orders those correctly.
-/// On-disk collisions with non-batch siblings can't be seen here — the
+/// On-disk collisions with non-batch siblings can't be seen here: the
 /// apply step's guarded rename reports those per item.
 pub fn build_plan(rule: &RenameRule, items: &[(String, i64)]) -> RenamePlan {
     // Stage-1 pattern compiles once; a bad pattern is one plan-level
@@ -302,7 +302,7 @@ fn apply_case(stem: &str, case: CaseTransform) -> String {
 }
 
 /// `{date}` token: mtime as `YYYY-MM-DD` (UTC), from plain proleptic-
-/// Gregorian math — same approach as `crate::prefetch`'s ISO formatter
+/// Gregorian math, same approach as `crate::prefetch`'s ISO formatter
 /// (deliberately *copied*, not imported: this layer stays free of the
 /// UI crate's other modules so it tests standalone).
 fn format_date(mtime_unix: i64) -> String {
@@ -363,7 +363,7 @@ fn is_leap(y: i32) -> bool {
 
 /// Apply `(old, new)` renames, continuing past failures. Returns the
 /// successfully renamed `(original, new)` pairs (in the order they
-/// applied — the undo record) plus per-item error strings.
+/// applied: the undo record) plus per-item error strings.
 ///
 /// Renumbering batches routinely rename *through* each other's names
 /// (`3.jpg → 4.jpg` next to `2.jpg → 3.jpg`), so pairs apply in
@@ -374,7 +374,7 @@ fn is_leap(y: i32) -> bool {
 /// exception: a case-only rename of the same file on a case-insensitive
 /// filesystem).
 ///
-/// Runs real filesystem I/O — background executor only.
+/// Runs real filesystem I/O: background executor only.
 pub(crate) fn run_renames(
     pairs: Vec<(PathBuf, PathBuf)>,
 ) -> (Vec<(PathBuf, PathBuf)>, Vec<String>) {
@@ -420,7 +420,7 @@ pub(crate) fn run_renames(
             continue;
         }
         // Nothing is free to move: every remaining pair's destination is
-        // another remaining pair's source — a rename cycle (e.g. a swap
+        // another remaining pair's source: a rename cycle (e.g. a swap
         // from counter renumbering). Park one file under a temp name to
         // vacate its source; it finishes when its own blocker completes.
         let Some(i) = (0..n).find(|&i| !done[i] && !parked[i]) else {
@@ -463,7 +463,7 @@ pub(crate) fn run_renames(
     (renamed, errors)
 }
 
-/// `std::fs::rename` clobbers an existing destination on Unix — guard
+/// `std::fs::rename` clobbers an existing destination on Unix: guard
 /// against it, except when the "existing" destination *is* the source
 /// (case-only rename on a case-insensitive filesystem). Same
 /// don't-overwrite contract as `UndoOp::MoveBack`.
@@ -534,10 +534,10 @@ const BACKGROUND_PLAN_THRESHOLD: usize = 5_000;
 const PREVIEW_ROWS: usize = 12;
 
 /// Dialog body entity. Holds the selection snapshot (captured once at
-/// open — the dialog never re-reads the list), the rule inputs, and the
+/// open: the dialog never re-reads the list), the rule inputs, and the
 /// cached [`RenamePlan`] the render reads.
 pub struct BulkRenameView {
-    /// `(path, display name, mtime unix)` — resolved selection at open.
+    /// `(path, display name, mtime unix)`: resolved selection at open.
     items: Vec<(PathBuf, String, i64)>,
     /// The engine-facing projection of `items`, shared with background
     /// plan builds.
@@ -571,11 +571,11 @@ impl BulkRenameView {
         let replace_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Replacement ($1\u{2026}$9)")));
         // `{name}` / `{n}` / `{ext}` here are the user's template tokens, not
-        // `tr!` placeholders — there are no arguments, so nothing is filled
+        // `tr!` placeholders, there are no arguments, so nothing is filled
         // and the braces render as typed.
         let template_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder(tr!("{name} {n}.{ext} \u{2014} leave empty to skip"))
+                .placeholder(tr!("{name} {n}.{ext}, leave empty to skip"))
         });
         let start_input = cx.new(|cx| InputState::new(window, cx).default_value("1"));
         let pad_input = cx.new(|cx| InputState::new(window, cx).default_value("3"));
@@ -632,7 +632,7 @@ impl BulkRenameView {
         }
     }
 
-    /// Recompute the cached plan from the current inputs — synchronously
+    /// Recompute the cached plan from the current inputs: synchronously
     /// for typical selections, on the background executor past
     /// [`BACKGROUND_PLAN_THRESHOLD`] items.
     fn recompute(&mut self, cx: &mut Context<Self>) {
@@ -650,7 +650,7 @@ impl BulkRenameView {
                 .spawn(async move { build_plan(&rule, &names) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                // A newer edit superseded this build — drop it.
+                // A newer edit superseded this build: drop it.
                 if this.plan_generation == generation {
                     this.plan = plan;
                     cx.notify();
@@ -865,7 +865,7 @@ impl Render for BulkRenameView {
     }
 }
 
-/// Open the bulk-rename dialog over `items` — the caller's resolved
+/// Open the bulk-rename dialog over `items`: the caller's resolved
 /// selection snapshot (`(path, display name, mtime unix)`), captured
 /// once. OK applies; conflicts or a bad pattern keep the dialog open.
 ///
@@ -899,7 +899,7 @@ pub fn open(
             // (same path as the Escape / Enter keys).
             .footer(
                 DialogFooter::new()
-                    // DialogClose/DialogAction render size_full — bound
+                    // DialogClose/DialogAction render size_full: bound
                     // them so the footer is a right-aligned button pair,
                     // not a half/half split.
                     .child(
@@ -941,7 +941,7 @@ pub fn open(
                 true
             })
     });
-    // Focus the Find field once the dialog has mounted — same next-frame
+    // Focus the Find field once the dialog has mounted, same next-frame
     // trick as `Shell::open_text_prompt`.
     window.on_next_frame(move |window, cx| {
         let input = state.read(cx).find_input.clone();
@@ -1021,7 +1021,7 @@ fn apply(
                 window.push_notification(
                     crate::shell::error_notification(
                         tr!(
-                            "Renamed {renamed} items, {failed} failed \u{2014} {detail}",
+                            "Renamed {renamed} items, {failed} failed: {detail}",
                             renamed = ferail_core::counts::format_count(renamed_count as u64),
                             failed = ferail_core::counts::format_count(failed as u64),
                             detail = first_error.unwrap_or_default()
@@ -1137,7 +1137,7 @@ mod tests {
             ..Default::default()
         };
         let plan = build_plan(&rule, &items(&[".gitignore"]));
-        // No "extension" to protect — the whole name transforms.
+        // No "extension" to protect: the whole name transforms.
         assert_eq!(afters(&plan), [".GITIGNORE"]);
     }
 
@@ -1159,7 +1159,7 @@ mod tests {
 
     #[test]
     fn upper_case_handles_multi_char_expansions() {
-        // ß uppercases to SS — char::to_uppercase yields multiple chars.
+        // ß uppercases to SS: char::to_uppercase yields multiple chars.
         let rule = RenameRule {
             case: CaseTransform::Upper,
             ..Default::default()
@@ -1218,7 +1218,7 @@ mod tests {
 
     #[test]
     fn duplicate_targets_conflict_case_insensitive() {
-        // Both rows collapse onto "SAME.txt"/"same.txt" — a duplicate
+        // Both rows collapse onto "SAME.txt"/"same.txt": a duplicate
         // pair on the case-insensitive filesystems we target.
         let rule = RenameRule {
             find: "1".into(),
@@ -1234,7 +1234,7 @@ mod tests {
 
     #[test]
     fn collision_with_unchanged_member_conflicts() {
-        // "a.txt" → "B.txt" while "b.txt" sits in the batch unchanged —
+        // "a.txt" → "B.txt" while "b.txt" sits in the batch unchanged:
         // its name is still taken (case-insensitively).
         let rule = RenameRule {
             find: "a".into(),
@@ -1253,7 +1253,7 @@ mod tests {
     #[test]
     fn renumber_chain_is_not_a_conflict() {
         // 1.jpg → 2.jpg while 2.jpg → 3.jpg: the target is another
-        // *changed* row's old name — a chain the apply step orders, not
+        // *changed* row's old name: a chain the apply step orders, not
         // a conflict.
         let rule = RenameRule {
             template: "{n}".into(),

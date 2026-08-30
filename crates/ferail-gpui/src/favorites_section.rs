@@ -58,7 +58,7 @@ enum RowAnim {
 }
 
 /// Payload carried by a favorite-row drag (§4.2). Implements `Render`
-/// so it doubles as its own drag preview — a faint chip showing the
+/// so it doubles as its own drag preview: a faint chip showing the
 /// row's label following the cursor.
 #[derive(Clone)]
 pub struct FavoriteDragPayload {
@@ -101,7 +101,7 @@ pub struct FavoritesSection {
     /// the Shell entity from `SidebarItem::render` double-leases the entity
     /// when the compact strip renders items directly.
     active_path: PathBuf,
-    /// Keyboard-focused favorite (§11.4) — drives the focus ring.
+    /// Keyboard-focused favorite (§11.4): drives the focus ring.
     focused: Option<FavoriteId>,
     /// Focus handle the section tracks so `FAVORITES_CONTEXT` bindings
     /// fire only while the section is focused.
@@ -172,7 +172,7 @@ impl SidebarItem for FavoritesSection {
         let shell_for_header_menu = self.shell.clone();
         let section_collapsed = self.section_collapsed;
 
-        // Trailing `+` button — adds the active tab's current folder.
+        // Trailing `+` button: adds the active tab's current folder.
         // Stop-propagation on click so the same gesture doesn't also
         // flip the section's disclosure-triangle collapse.
         let plus_button = div()
@@ -200,7 +200,7 @@ impl SidebarItem for FavoritesSection {
                     return;
                 };
                 // Prime directive: `canonicalize` stats the filesystem
-                // (unbounded on network volumes) — run it on a worker
+                // (unbounded on network volumes): run it on a worker
                 // and apply the favorite on completion. The click
                 // itself stays I/O-free.
                 let path = shell.read(cx).active_tab().current_dir.clone();
@@ -324,7 +324,7 @@ impl SidebarItem for FavoritesSection {
                 .id("favorites-empty-drop")
                 .flex()
                 .items_center()
-                // A comfortable drop zone, not just the text's line box —
+                // A comfortable drop zone, not just the text's line box:
                 // the empty section is the only place to drop the first
                 // favorite, so the target should be easy to hit. The
                 // resting dashed outline + faint fill mark it as a drop
@@ -352,7 +352,7 @@ impl SidebarItem for FavoritesSection {
             let shell = self.shell.clone();
             let active_path = self.active_path.clone();
             // Snapshot per-row availability state. Reads from the
-            // cached map on the entity — render never touches the
+            // cached map on the entity: render never touches the
             // filesystem (Prime Directive).
             let states: Vec<FavoriteState> = favorites
                 .iter()
@@ -452,7 +452,7 @@ fn render_favorite_row(
     cx: &App,
 ) -> AnyElement {
     // Row builders can run during layout/prepaint, outside the scope of
-    // `Shell::render`'s own guard — re-enter it so a favorites icon
+    // `Shell::render`'s own guard: re-enter it so a favorites icon
     // cache miss returns the blank placeholder instead of a synchronous
     // NSWorkspace fetch (same parity as tree.rs / file_list.rs row
     // builders; the sidebar's background icon warm fills the cache).
@@ -555,7 +555,7 @@ fn render_favorite_row(
             }
         });
     }
-    // §11.4 keyboard focus ring — distinct from the §5 favorited
+    // §11.4 keyboard focus ring: distinct from the §5 favorited
     // indicator, hover, and the active/selected background. A 1-DIP
     // inset ring keeps the row from shifting (the border replaces a
     // transparent default rather than adding width).
@@ -577,7 +577,7 @@ fn render_favorite_row(
         // Unmounted, plain star for Available.
         let trailing_icon = match state {
             FavoriteState::Available => "icons/nav/star.svg",
-            // Missing (file-not-found) keeps the warning triangle — it's a
+            // Missing (file-not-found) keeps the warning triangle: it's a
             // genuine error. Unmounted (volume offline) uses circle-x so it
             // reads as "disconnected/unavailable" rather than "broken"; a
             // dedicated eject glyph can replace circle-x in a later pass.
@@ -725,7 +725,7 @@ fn render_favorite_row(
     let path_for_click = p;
     let fav_id = fav.id;
     // Single-click navigates (§11.2). Cmd-click opens a new tab, and
-    // Cmd+Option-click a new window (§11.3) — mirroring the file list's
+    // Cmd+Option-click a new window (§11.3), mirroring the file list's
     // modifier vocabulary. The click also focuses the section (so the
     // arrow/Delete keys take over, §11.4) and marks this favorite as the
     // keyboard target for reorder / delete / activate. §8 click guard:
@@ -926,7 +926,7 @@ fn render_drop_gap(
 /// between `before` and `after` (`-INF` / `+INF` for the ends, so an
 /// empty section drops at a valid mid-slot).
 ///
-/// Prime directive: `canonicalize` + `is_dir` are stat calls — a
+/// Prime directive: `canonicalize` + `is_dir` are stat calls: a
 /// 50-item drop from a network volume could block the UI for seconds.
 /// The whole batch is validated on a worker, then the survivors are
 /// applied on completion. Shared by the inter-row gaps and the

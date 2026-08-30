@@ -75,7 +75,7 @@ pub fn enter(cx: &mut App) {
     // acknowledged; each view restores its ordinary caption after exit.
     for handle in cx.windows() {
         let _ = handle.update(cx, |_root, window, _cx| {
-            window.set_window_title(&tr!("Private — Ferail"));
+            window.set_window_title(&tr!("Private - Ferail"));
         });
     }
     cx.refresh_windows();
@@ -122,7 +122,7 @@ fn on_private_key(event: &KeyDownEvent, _window: &mut Window, cx: &mut App) {
 
 /// Present a filesystem leaf through the shared semantic interface. The off
 /// path is a cheap `SharedString` clone; entering Private Mode therefore never
-/// walks or rewrites a million-row model — only visible controls ask for an
+/// walks or rewrites a million-row model, only visible controls ask for an
 /// alias as they render.
 pub fn present_leaf(raw: &SharedString, is_dir: bool) -> SharedString {
     if enabled() {

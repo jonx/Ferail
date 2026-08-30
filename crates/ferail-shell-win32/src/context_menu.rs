@@ -1,8 +1,8 @@
 //! Isolated Windows Shell context-menu broker (WIN-007).
 //!
 //! The GUI only launches this role after an explicit user gesture. All
-//! `IContextMenu` implementations — including third-party Explorer extensions
-//! — live in this disposable process, never in Ferail's GPUI process.
+//! `IContextMenu` implementations, including third-party Explorer extensions
+//!: live in this disposable process, never in Ferail's GPUI process.
 
 use std::{
     cell::RefCell,

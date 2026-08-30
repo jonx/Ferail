@@ -1,4 +1,4 @@
-//! Settings — Phase 3 of the next-level plan adopts gpui-component's
+//! Settings: Phase 3 of the next-level plan adopts gpui-component's
 //! setting primitive. The library ships
 //! a hierarchical Settings (pages → groups → items → fields) with
 //! a sidebar, **built-in search**, optional reset, and the same field
@@ -39,7 +39,7 @@ const SETTINGS_CONTROL_GAP: f32 = 12.0;
 const SETTINGS_TOP_ROW_HEIGHT: f32 = 28.0;
 
 // =============================================================================
-// Categories — external API
+// Categories: external API
 // =============================================================================
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -68,7 +68,7 @@ impl SettingsCategory {
         SettingsCategory::About,
     ];
 
-    /// The page's English title as a `msgid!` literal — translate it for
+    /// The page's English title as a `msgid!` literal: translate it for
     /// display with `crate::i18n::tr_static`.
     pub fn title(self) -> &'static str {
         match self {
@@ -114,7 +114,7 @@ pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
 }
 
 // =============================================================================
-// Theme preference — external API
+// Theme preference: external API
 // =============================================================================
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -341,7 +341,7 @@ fn persist_redact_diagnostics(value: bool) {
 }
 
 // =============================================================================
-// SettingsView entity — external API
+// SettingsView entity: external API
 // =============================================================================
 
 pub struct SettingsView {
@@ -349,7 +349,7 @@ pub struct SettingsView {
     /// Cached count of dotfiles in `$HOME`, used by the Files page
     /// description. Captured once at construction so the
     /// `build_pages()` call inside `Render::render` doesn't keep
-    /// re-reading the home directory on every paint — re-renders
+    /// re-reading the home directory on every paint: re-renders
     /// happen on every search-input keystroke and every page-nav
     /// click, which would otherwise pile up sync I/O on the UI
     /// thread. `None` when `$HOME` is unset (sandbox / CI).
@@ -368,7 +368,7 @@ pub struct SettingsView {
     /// The Diagnostics page's health report. `None` while the checks run
     /// on the background executor (kicked off by `new`; the page shows
     /// "Running health checks…" meanwhile). The checks open the metadata
-    /// DB and write a disk probe — real I/O that must not run on the UI
+    /// DB and write a disk probe: real I/O that must not run on the UI
     /// thread when Cmd+, opens the window (Prime Directive). Reopening
     /// Settings re-runs them. `Rc` so the per-frame page-render closures
     /// can share the report cheaply.
@@ -400,7 +400,7 @@ impl SettingsView {
         )
         .detach();
 
-        // Ant Trail picker — same shape. Seed from the persisted hex,
+        // Ant Trail picker, same shape. Seed from the persisted hex,
         // falling back to the original warm orange so an untouched
         // profile shows the stock tint in the swatch.
         let initial_trail = app_state::load()
@@ -422,7 +422,7 @@ impl SettingsView {
 
         // Diagnostics checks (metadata-DB open, config reads, a
         // Full-Disk-Access probe write) and the home hidden-item count
-        // (a full `read_dir($HOME)` + per-entry stat) are real I/O —
+        // (a full `read_dir($HOME)` + per-entry stat) are real I/O:
         // computed off-thread and applied when they land, so opening
         // Settings never blocks on them. The pages render placeholders
         // until then.
@@ -514,14 +514,14 @@ impl Render for SettingsView {
 }
 
 /// Open a second native window hosting the SettingsView. Same shape
-/// as the prior implementation — Cmd+, in Shell calls this; the menu-
+/// as the prior implementation: Cmd+, in Shell calls this; the menu-
 /// bar `Settings…` item routes through the app-level OpenSettings
 /// handler in main.rs which also calls this.
 pub fn open_settings_window(cx: &mut App) {
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(820.0), px(580.0)), cx)),
         // Give the window a proper "Settings" title (it had none). A plain OS
-        // titlebar suits this dialog — the brand/custom titlebar is for the
+        // titlebar suits this dialog: the brand/custom titlebar is for the
         // main browser window.
         titlebar: Some(gpui::TitlebarOptions {
             title: Some(tr!("Settings")),
@@ -531,7 +531,7 @@ pub fn open_settings_window(cx: &mut App) {
     };
     cx.spawn(async move |cx| {
         // A failed `open_window` (display reconfiguration, resource pressure)
-        // must not take the app down — log and leave the existing windows be.
+        // must not take the app down: log and leave the existing windows be.
         match cx.open_window(opts, |window, cx| {
             crate::boot::install_dev_window_callback_cleanup(window, cx);
             let view = cx.new(|cx| SettingsView::new(SettingsCategory::Appearance, window, cx));
@@ -556,7 +556,7 @@ pub fn open_settings_window(cx: &mut App) {
 
 /// A dropdown setting laid out the way the stock `SettingItem` can't: the
 /// label and the control share one line (label left, dropdown right) while
-/// the description spans the **full width** below them — instead of being
+/// the description spans the **full width** below them, instead of being
 /// squeezed into the narrow left column the horizontal layout gives it.
 ///
 /// The control is a `small`, width-capped dropdown so its text matches our
@@ -566,7 +566,7 @@ pub fn open_settings_window(cx: &mut App) {
 ///
 /// `get` returns the current stored value; `persist` writes the picked
 /// value. Both are plain `fn` pointers (the getters/setters capture
-/// nothing — they read/write `app_state`). Most dropdowns only persist;
+/// nothing: they read/write `app_state`). Most dropdowns only persist;
 /// when a pick also has to apply live (recompute a global), use
 /// [`dropdown_setting_with`], which hands the setter `&mut App`.
 fn dropdown_setting(
@@ -596,7 +596,7 @@ fn dropdown_setting(
 
 /// The shared dropdown rendering behind [`dropdown_setting`], parameterised by
 /// what a pick does. `on_pick` runs with `&mut App`, so a live setting can
-/// recompute a global and repaint — not just persist. `Copy` so every menu
+/// recompute a global and repaint, not just persist. `Copy` so every menu
 /// item can capture its own copy.
 ///
 /// `options` is a static `(value, label)` table whose labels are `msgid!`
@@ -640,7 +640,7 @@ struct DropdownOption {
 /// left, the current value as a small outline button with a caret on the
 /// right, and the description spanning the full width below. `options` and
 /// `get` run on every render, so the menu can reflect live state (installed
-/// language packs, for instance) — keep them cheap and I/O-free.
+/// language packs, for instance): keep them cheap and I/O-free.
 fn dropdown_setting_dyn(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
@@ -745,7 +745,7 @@ fn dropdown_setting_dyn(
 
 /// A boolean setting laid out like [`dropdown_setting`]: the title and the
 /// switch share the top line, and the **description spans the full width**
-/// below them — rather than being squeezed into the stock `SettingItem`'s
+/// below them, rather than being squeezed into the stock `SettingItem`'s
 /// narrow left column next to the control. `value` reads the current state;
 /// `set_value` persists a toggle.
 fn switch_setting(
@@ -893,7 +893,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
         );
     }
 
-    // Privacy — the redaction toggle that makes "share your logs with us" safe.
+    // Privacy: the redaction toggle that makes "share your logs with us" safe.
     // Placed up front (right under the summary) so it's the first thing a user
     // sees before reading or sharing the report.
     page = page.group(
@@ -904,8 +904,8 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                 tr!(
                     "When on (the default), the report below, the bundle you can save, and the \
              activity trail all replace every file and folder name with \u{201c}\u{2026}\u{201d}. \
-             We see only the shape of what you did \u{2014} how deep a folder was, what file \
-             type \u{2014} never the names. So you can share a report with us and we learn \
+             We see only the shape of what you did (how deep a folder was, what file \
+             type), never the names. So you can share a report with us and we learn \
              nothing about your files. Turn it off only if a maintainer asks for real paths \
              to reproduce a bug."
                 ),
@@ -921,7 +921,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
             )),
     );
 
-    // Bug reports — the folders a bug report draws on, then the packaging
+    // Bug reports: the folders a bug report draws on, then the packaging
     // actions. Right after Privacy so "where do I find the crash files"
     // has a one-scroll answer. `config_dir` is pure env-var derivation
     // (no disk I/O), so building these rows here is render-safe; the
@@ -951,7 +951,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
             ));
     }
 
-    // Copy-report / bundle actions — both honor the redaction toggle and scrub
+    // Copy-report / bundle actions, both honor the redaction toggle and scrub
     // the account name out of the app-owned diagnostics paths.
     let report_for_copy = report.clone();
     page = page.group(bug_reports.item(SettingItem::render(move |_o, _w, _cx| {
@@ -1025,7 +1025,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                             ))
                             // Jump to the location this check is about:
                             // reveal it (selected in its parent) in a
-                            // Ferail file window. Local UI action — the
+                            // Ferail file window. Local UI action: the
                             // target never enters a shared report, so it
                             // coexists with the redaction toggle.
                             .children(check.path.clone().map(|path| {
@@ -1046,7 +1046,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
         page = page.group(sg);
     }
 
-    // Recent activity trail (last ~20 events) — rendered through the *same*
+    // Recent activity trail (last ~20 events): rendered through the *same*
     // redaction the bundle uses, so the user sees exactly what would be shared.
     page = page.group(
         SettingGroup::new()
@@ -1107,7 +1107,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
 }
 
 /// One row of the Diagnostics page's Bug-reports group: a folder that
-/// matters when filing an issue — title, an Open button, the folder's
+/// matters when filing an issue: title, an Open button, the folder's
 /// path (account name scrubbed, as the language group shows it), and a
 /// description of what lives inside. The folder may not exist yet (no
 /// crash ever happened), so the click creates it on the background
@@ -1196,8 +1196,8 @@ fn search_dupes_page() -> SettingPage {
                 .item(dropdown_setting(
                     tr!("Search engine"),
                     tr!(
-                        "Automatic uses Spotlight's live index when available \u{2014} instant, \
-                     content-aware, near-zero CPU \u{2014} and falls back to the built-in \
+                        "Automatic uses Spotlight's live index when available (instant, \
+                     content-aware, near-zero CPU) and falls back to the built-in \
                      recursive walker where Spotlight is disabled or blind (some external / \
                      network volumes). Force one if you prefer."
                     ),
@@ -1255,7 +1255,7 @@ fn search_dupes_page() -> SettingPage {
                 ))
                 .item(dropdown_setting(
                     tr!("Ignore small files"),
-                    tr!("Skip files below this size \u{2014} the big wins are large files."),
+                    tr!("Skip files below this size: the big wins are large files."),
                     &[
                         ("0", msgid!("Compare all files")),
                         ("1", msgid!("Skip under 1 MB")),
@@ -1349,7 +1349,7 @@ fn language_group() -> SettingGroup {
                                 i18n::Origin::User => tr!("your file"),
                             };
                             tr!(
-                                "{name} \u{2014} {translated} of {total} strings, {origin}",
+                                "{name} - {translated} of {total} strings, {origin}",
                                 name = p.name,
                                 translated = ferail_core::counts::format_count(p.translated as u64),
                                 total = ferail_core::counts::format_count(p.total as u64),
@@ -1383,7 +1383,7 @@ fn language_group() -> SettingGroup {
                                         i18n::PRESET_LANGUAGES.iter().fold(menu, |menu, (code, name, english)| {
                                             let (code, name, english) = (*code, *name, *english);
                                             menu.item(
-                                                PopupMenuItem::new(SharedString::from(format!("{name} \u{2014} {english}")))
+                                                PopupMenuItem::new(SharedString::from(format!("{name} - {english}")))
                                                     .disabled(installed.contains(code))
                                                     .on_click(move |_, window: &mut Window, cx: &mut App| {
                                                         i18n::create_template(code, name, english, window, cx);
@@ -1432,7 +1432,7 @@ fn language_group() -> SettingGroup {
                         div().w_full().text_scale_sm().text_color(muted).child(tr!(
                             "To add a language: New language\u{2026} writes a template into {folder}. \
                              Give that file to a translator or an AI assistant (Claude, ChatGPT, \u{2026}) \
-                             \u{2014} the instructions are inside it \u{2014} then Import\u{2026} the result. \
+                             (the instructions are inside it), then Import\u{2026} the result. \
                              Export\u{2026} saves the current language the same way, for translating the \
                              missing strings or sharing it. {summary}",
                             folder = folder,
@@ -1455,7 +1455,7 @@ fn appearance_page(
             SettingGroup::new().title(tr!("Theme")).item(
                 // Vertical layout so the three fixed-width tiles drop
                 // below the title rather than competing with it for
-                // horizontal space — previous default-horizontal layout
+                // horizontal space: previous default-horizontal layout
                 // clipped the System tile on the right edge.
                 SettingItem::new(
                     tr!("Theme"),
@@ -1476,7 +1476,7 @@ fn appearance_page(
                     // each frame. Changes flow through the entity's
                     // `ColorPickerEvent::Change` subscription (set up in
                     // `SettingsView::new`), which updates the live global and
-                    // persists — so the file list and grid recolor at once.
+                    // persists, so the file list and grid recolor at once.
                     SettingItem::new(
                         tr!("Selection color"),
                         SettingField::render(move |_options, _window, _cx| {
@@ -1564,7 +1564,7 @@ fn appearance_page(
                     tr!("Show Ant Trail"),
                     tr!(
                         "Tint your most-visited folders so the ones you open most stand out. \
-                     Off hides the tint entirely \u{2014} your visit history still feeds \
+                     Off hides the tint entirely, your visit history still feeds \
                      Recents."
                     ),
                     |cx: &App| crate::ant_trail::enabled(cx),
@@ -1596,7 +1596,7 @@ fn appearance_page(
                     tr!("Don't track favorites"),
                     tr!(
                         "When on, opening a folder from your Favorites doesn't count toward \
-                     its Ant Trail heat or add it to Recents \u{2014} so deliberate \
+                     its Ant Trail heat or add it to Recents, so deliberate \
                      shortcuts don't crowd out folders you actually browse to. Reaching \
                      the same folder any other way still counts."
                     ),
@@ -1622,7 +1622,7 @@ fn appearance_page(
                     tr!(
                         "List the folders you've opened recently in the sidebar, most \
                      recent first. Off hides the section and stops adding to it \
-                     \u{2014} your Ant Trail heat is unaffected."
+                     your Ant Trail heat is unaffected."
                     ),
                     |cx: &App| crate::recents_section::recents_enabled(cx),
                     |val: bool, cx: &mut App| {
@@ -1650,7 +1650,7 @@ fn performance_page() -> SettingPage {
                     tr!("Show file previews"),
                     tr!(
                         "Draw photos, videos, and PDFs as their actual content in the file \
-                     list and grid. Off uses generic type icons \u{2014} lighter, since \
+                     list and grid. Off uses generic type icons, lighter, since \
                      Quick Look never runs."
                     ),
                     |cx: &App| crate::thumbnails::show_thumbnails(cx),
@@ -1667,7 +1667,7 @@ fn performance_page() -> SettingPage {
                     tr!("Calculate folder sizes"),
                     tr!(
                         "Recursively total each folder so the Size column shows how big it is. \
-                     This walks the whole subtree in the background \u{2014} the biggest \
+                     This walks the whole subtree in the background: the biggest \
                      disk cost on large folders. Off shows a dash for folder sizes."
                     ),
                     |cx: &App| crate::folder_sizes::folder_sizing_enabled(cx),
@@ -1677,7 +1677,7 @@ fn performance_page() -> SettingPage {
                     },
                 ))
                 // Magic-byte sniffing (Format column) + Finder-tag xattr
-                // reads (tag dots) — the two remaining per-row disk costs on
+                // reads (tag dots): the two remaining per-row disk costs on
                 // every folder load. Bundled into one switch.
                 .item(switch_setting(
                     tr!("Detect file types and tags"),
@@ -1802,14 +1802,14 @@ fn full_disk_access_setting() -> SettingItem {
 fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
     // Description prefers the live count; the explanatory fallback
     // covers sandbox/CI runs where $HOME can't be read.
-    // Copy intentionally implies "next launch" — Show Hidden writes
+    // Copy intentionally implies "next launch": Show Hidden writes
     // app_state but doesn't push the change into already-open Shell
     // windows. A shared-observer rewire is on the Phase 10 audit
     // list; in the meantime the wording matches reality.
     let description = match home_hidden_count {
         Some(n) if n > 0 => trn!(
-            "Reveal items that start with a dot \u{2014} {n} in your home folder. Takes effect on next launch.",
-            "Reveal items that start with a dot \u{2014} {n} in your home folder. Takes effect on next launch.",
+            "Reveal items that start with a dot: {n} in your home folder. Takes effect on next launch.",
+            "Reveal items that start with a dot: {n} in your home folder. Takes effect on next launch.",
             n
         ),
         _ => tr!(
@@ -1828,7 +1828,7 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
                     |val: bool, _cx: &mut App| persist_show_hidden(val),
                 )),
         );
-    // Sidebar special-folder root — only meaningful where OneDrive's
+    // Sidebar special-folder root, only meaningful where OneDrive's
     // Known-Folder-Move can split a folder between local and cloud, i.e.
     // Windows. Omitted elsewhere.
     #[cfg(target_os = "windows")]
@@ -1872,7 +1872,7 @@ fn terminal_group() -> SettingGroup {
             )
             .layout(Axis::Vertical)
             .description(tr!(
-                "Which terminal \u{201C}Open Terminal Here\u{201D} launches \u{2014} an app name \
+                "Which terminal \u{201C}Open Terminal Here\u{201D} launches: an app name \
                  or .app bundle on macOS, a program path, or a command on PATH. Blank uses the \
                  platform default: Terminal.app on macOS, Windows Terminal on Windows, and \
                  auto-detection ($TERMINAL, then common emulators) on Linux."
@@ -1903,7 +1903,7 @@ fn terminal_group() -> SettingGroup {
             tr!("Launch mode"),
             tr!(
                 "Standard opens the terminal normally. Administrator opens it with elevated \
-             rights \u{2014} a UAC prompt on Windows; on macOS and Linux the window opens \
+             rights: a UAC prompt on Windows; on macOS and Linux the window opens \
              into a root shell, with sudo asking for your password inside the terminal."
             ),
             &[
@@ -1958,7 +1958,7 @@ fn locations_mode_setting() -> SettingItem {
             "When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often \
          leaves a local copy behind, so \u{201C}where is my Documents?\u{201D} has two answers. \
          Automatic follows Windows (cloud where it moved them, local otherwise). Local prefers \
-         your %USERPROFILE% copy; OneDrive prefers the OneDrive copy \u{2014} each falls back to \
+         your %USERPROFILE% copy; OneDrive prefers the OneDrive copy, each falls back to \
          the other when its copy doesn\u{2019}t exist, so a shortcut never opens to nothing."
         ),
         &[
@@ -2065,7 +2065,7 @@ fn plugins_page() -> SettingPage {
                 tr!(
                     "The built-in player uses the platform's native media frameworks. \
                  mpv plays virtually any container/codec, but this build was compiled \
-                 without the `mpv` feature, so mpv is unavailable \u{2014} rebuild with \
+                 without the `mpv` feature, so mpv is unavailable: rebuild with \
                  `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) \
                  to enable it."
                 ),
@@ -2104,7 +2104,7 @@ fn plugins_page() -> SettingPage {
                     )
                     .layout(Axis::Vertical)
                     .description(tr!(
-                        "Where libmpv is loaded from — the dylib, a directory containing it, \
+                        "Where libmpv is loaded from: the dylib, a directory containing it, \
                          or mpv.app on macOS. Blank uses the platform default (Homebrew)."
                     )),
                 ),
@@ -2208,7 +2208,7 @@ fn about_page() -> SettingPage {
     SettingPage::new(tr!("About"))
         .icon(Icon::empty().path("icons/info.svg"))
         .group(
-            // Updates — the automatic check is opt-in; the menu's manual
+            // Updates: the automatic check is opt-in; the menu's manual
             // Check for Updates… works regardless (docs/features/UPDATES.md).
             SettingGroup::new()
                 .title(tr!("Updates"))
@@ -2216,7 +2216,7 @@ fn about_page() -> SettingPage {
                     tr!("Check for updates automatically"),
                     tr!(
                         "Once a day, ask GitHub whether a newer Ferail release exists, and show a \
-                 notification when one does. Off by default \u{2014} when off, Ferail makes no \
+                 notification when one does. Off by default: when off, Ferail makes no \
                  network requests on its own. Nothing is ever downloaded or installed without \
                  you choosing to; use Ferail \u{2192} Check for Updates\u{2026} to check by hand \
                  at any time."
@@ -2279,7 +2279,7 @@ fn about_page() -> SettingPage {
         )
 }
 
-/// English name of a command category as a `msgid!` literal — translate it
+/// English name of a command category as a `msgid!` literal: translate it
 /// for display with `crate::i18n::tr_static`.
 fn category_name(c: Category) -> &'static str {
     match c {
@@ -2296,7 +2296,7 @@ fn category_name(c: Category) -> &'static str {
 }
 
 // =============================================================================
-// Theme tile strip — visual reinforcement of the Theme dropdown
+// Theme tile strip: visual reinforcement of the Theme dropdown
 // =============================================================================
 
 fn theme_tile_strip() -> impl IntoElement {
@@ -2333,7 +2333,7 @@ fn theme_tile(pref: ThemePref) -> impl IntoElement {
 
 fn theme_tile_body(pref: ThemePref) -> impl IntoElement {
     use gpui::rgb;
-    // Hard-coded mock palette per tile — each tile shows the OTHER
+    // Hard-coded mock palette per tile, each tile shows the OTHER
     // theme so the user sees the consequence of clicking. System
     // tile is split-rendered Light/Dark.
     let (bg, panel, accent, fg) = match pref {
@@ -2447,8 +2447,8 @@ fn theme_tile_body(pref: ThemePref) -> impl IntoElement {
             gpui_component::h_flex()
                 .items_center()
                 .gap_1()
-                // Strengthened active state — accent ring + check
-                // badge — applied as a wrapper around the label.
+                // Strengthened active state: accent ring + check
+                // badge: applied as a wrapper around the label.
                 .child(active_state_decoration(pref))
                 .child(div().text_scale_xs().child(pref.label())),
         )
@@ -2456,7 +2456,7 @@ fn theme_tile_body(pref: ThemePref) -> impl IntoElement {
 
 /// Renders the selected-state badge for a theme tile. Lives next to
 /// the label so the strong cue is on the textual identifier rather
-/// than the artwork — matches macOS Settings convention where the
+/// than the artwork: matches macOS Settings convention where the
 /// chosen pill is the one with a check beside it.
 fn active_state_decoration(pref: ThemePref) -> impl IntoElement {
     // We can't read the current pref without &App here, so render an

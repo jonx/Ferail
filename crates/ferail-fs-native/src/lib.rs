@@ -106,7 +106,7 @@ impl NativeFs {
 
     pub fn id_for_path(&self, path: &Path) -> NodeId {
         // Identity contract (shared with ferail-core::NodeStore):
-        // keys are lexically normalized — trailing slash, `./`, and
+        // keys are lexically normalized, trailing slash, `./`, and
         // doubled separators can't mint two NodeIds for one path.
         // Case and symlinks are deliberately NOT folded here; see
         // `normalize_path_key`'s doc for the boundary rules.
@@ -129,7 +129,7 @@ impl Default for NativeFs {
     }
 }
 
-/// Default batch size for streaming enumeration — see
+/// Default batch size for streaming enumeration: see
 /// [`NativeFs::enumerate_streaming`]. 256 is the spec target; tune via
 /// the screenshot timing pass before changing.
 pub const DEFAULT_ENUMERATION_BATCH: usize = 256;
@@ -174,7 +174,7 @@ impl NativeFs {
     }
 
     /// Build a `FileEntry` for an arbitrary path (used by global search,
-    /// where results — e.g. Spotlight hits — arrive as bare paths from
+    /// where results, e.g. Spotlight hits, arrive as bare paths from
     /// outside the current directory). Reads `symlink_metadata` so a
     /// symlink is reported as a link, never followed. Returns `None` for
     /// non-UTF-8 names or unreadable metadata, matching enumerate policy.
@@ -315,7 +315,7 @@ fn system_time_unix(time: std::time::SystemTime) -> Option<i64> {
 
 /// Platform "locked" semantics for `FileEntry::locked`, evaluated once
 /// at enumerate time from the stat already in hand. macOS: the
-/// user/system immutable flags — what Finder's "Locked" checkbox sets.
+/// user/system immutable flags: what Finder's "Locked" checkbox sets.
 /// Windows: the read-only attribute, its closest native analogue.
 #[cfg(target_os = "macos")]
 pub fn entry_is_locked(metadata: &std::fs::Metadata) -> bool {
@@ -346,7 +346,7 @@ pub fn entry_is_locked(_metadata: &std::fs::Metadata) -> bool {
 #[cfg(target_os = "macos")]
 pub fn entry_is_hidden(name: &str, metadata: &std::fs::Metadata) -> bool {
     use std::os::macos::fs::MetadataExt;
-    // From <sys/stat.h>: UF_HIDDEN — "file is hidden in GUI".
+    // From <sys/stat.h>: UF_HIDDEN: "file is hidden in GUI".
     const UF_HIDDEN: u32 = 0x8000;
     name.starts_with('.') || (metadata.st_flags() & UF_HIDDEN) != 0
 }
@@ -355,7 +355,7 @@ pub fn entry_is_hidden(name: &str, metadata: &std::fs::Metadata) -> bool {
 pub fn entry_is_hidden(name: &str, metadata: &std::fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
     // From winnt.h. SYSTEM-attribute files are deliberately NOT
-    // treated as hidden here — Explorer's "hide protected operating
+    // treated as hidden here: Explorer's "hide protected operating
     // system files" is a separate, second toggle; v1 mirrors the
     // primary hidden-files toggle only.
     const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
@@ -476,8 +476,8 @@ impl FsBackend for NativeFs {
 ///
 /// macOS: `NSFileManager.trashItemAtURL:resultingItemURL:error:`.
 /// On success returns the item's new location inside the Trash
-/// (`Some(trashed_path)`) — that's what trash-undo renames back
-/// (docs/features/FILE_OPS.md). On failure the file remains in place —
+/// (`Some(trashed_path)`): that's what trash-undo renames back
+/// (docs/features/FILE_OPS.md). On failure the file remains in place:
 /// the caller should surface the error (we no longer have a
 /// "delete-anyway" fallback).
 #[cfg(target_os = "macos")]
@@ -504,7 +504,7 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
                     err.localizedDescription(),
                 );
                 // NSFileWriteNoPermissionError (513): the item is owned by
-                // another user — e.g. a root-owned Apple app in /Applications.
+                // another user, e.g. a root-owned Apple app in /Applications.
                 // Surface it as a typed PermissionDenied (keyed off the Cocoa
                 // error *code*, not the localized text) so the shell can offer
                 // an elevated retry, exactly as copy/move already do.
@@ -523,7 +523,7 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
 }
 
 /// The user's primary Trash (`~/.Trash` [mac]). An elevated trash worker runs
-/// as root, whose own `trashItemAtURL` would target root's Trash — so it moves
+/// as root, whose own `trashItemAtURL` would target root's Trash, so it moves
 /// protected items into *this* path instead, where the user expects them.
 pub fn home_trash_dir() -> PathBuf {
     paths::home_dir().join(".Trash")
@@ -705,7 +705,7 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
 /// AROS: the AmigaOS convention is a per-volume `Trashcan` drawer at the
 /// volume root (`SYS:Trashcan`, `RAM:Trashcan`, …). Wanderer treats it
 /// specially and empties it on request. We move the item into its OWN
-/// volume's Trashcan (an intra-volume rename — instant, and it never
+/// volume's Trashcan (an intra-volume rename: instant, and it never
 /// crosses devices), creating the drawer on first use. Returns the landed
 /// path so the UI can reveal it.
 #[cfg(target_os = "aros")]
@@ -755,7 +755,7 @@ pub fn trash_dirs() -> Vec<PathBuf> {
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "aros", windows)))]
 pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
-    // Conservative on other targets — refuse rather than silently delete.
+    // Conservative on other targets: refuse rather than silently delete.
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         format!(
@@ -766,7 +766,7 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
 }
 
 /// Volume metadata fetched in one batched NSURL `resourceValuesForKeys`
-/// call. Capacity fields are `None` for non-local (network) volumes —
+/// call. Capacity fields are `None` for non-local (network) volumes,
 /// querying SMB / NFS for capacity can do a remote round-trip and we
 /// don't want that on the section-rebuild path. They're also `None`
 /// when the platform is non-macOS or the lookup itself failed.
@@ -777,7 +777,7 @@ pub struct VolumeInfo {
     pub total_bytes: Option<u64>,
     pub available_bytes: Option<u64>,
     pub is_local: bool,
-    /// "Can the user eject this?" in the Finder sense — removable or
+    /// "Can the user eject this?" in the Finder sense: removable or
     /// ejectable media, external (non-internal) disks, disk images,
     /// network mounts. Drives the sidebar ⏏ affordance and the
     /// same-device eject-all grouping.
@@ -787,8 +787,8 @@ pub struct VolumeInfo {
     pub format: Option<String>,
     /// Mounted read-only (a CD/DVD, a locked SD card, a read-only disk
     /// image, an `ro` mount). Drives the status bar's "is read-only"
-    /// label — "0 B free" on a CD is technically true but the wrong
-    /// message — and the Get Info / preview Access row. The macOS boot
+    /// label, "0 B free" on a CD is technically true but the wrong
+    /// message, and the Get Info / preview Access row. The macOS boot
     /// volume is deliberately exempt: the sealed system snapshot
     /// statfs's as read-only, but the Macintosh HD the user sees is
     /// writable via the firmlinked Data volume.
@@ -800,7 +800,7 @@ pub struct VolumeInfo {
     /// should offer to eject the others (Finder's "eject all" prompt).
     /// macOS: the whole-disk BSD name ("disk4"); Windows: the physical
     /// disk number(s) ("disk3"); Linux: the parent block device ("sdb").
-    /// `None` when unknown or for network mounts — never grouped.
+    /// `None` when unknown or for network mounts, never grouped.
     pub device_id: Option<String>,
 }
 
@@ -808,7 +808,7 @@ pub struct VolumeInfo {
 /// `/`, `/Volumes/External`). Returns `None` on non-macOS, on lookup
 /// failure, or when `path` isn't a volume root.
 ///
-/// Reads the cached, mount-stamped NSURL keys only — does NOT trigger
+/// Reads the cached, mount-stamped NSURL keys only: does NOT trigger
 /// purgeable-content scans (`AvailableCapacityForImportantUsageKey`)
 /// and does NOT spin up sleeping disks. For non-local volumes we
 /// return name + flags but null out the capacity fields, since some
@@ -836,7 +836,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
         // Build an `NSArray<NSURLResourceKey>` via the class method
         // `arrayWithObjects:count:`. The typed `from_slice` constructor
         // wants `IsRetainable`, which NSString doesn't satisfy because
-        // it has a mutable subclass — but at runtime AppKit just wants
+        // it has a mutable subclass, but at runtime AppKit just wants
         // a count + a pointer to a contiguous block of `id`. Apple's
         // constants are immortal `&'static NSString` so the lifetime
         // is fine.
@@ -891,7 +891,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
             .unwrap_or_else(|| path_str.to_string());
         let is_local = lookup_bool(NSURLVolumeIsLocalKey).unwrap_or(true);
         // Finder-parity "can the user eject this?". IsRemovableKey alone
-        // only covers removable *media* (SD cards, USB sticks) — an
+        // only covers removable *media* (SD cards, USB sticks): an
         // external USB/Thunderbolt HDD or SSD reports removable=false,
         // ejectable=false, but internal=false, and disk images report
         // ejectable=true. Any of the three signals means Finder draws
@@ -901,7 +901,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
         let is_removable = lookup_bool(NSURLVolumeIsRemovableKey).unwrap_or(false)
             || lookup_bool(NSURLVolumeIsEjectableKey).unwrap_or(false)
             || !lookup_bool(NSURLVolumeIsInternalKey).unwrap_or(true);
-        // Skip capacity for non-local volumes — see fn doc.
+        // Skip capacity for non-local volumes: see fn doc.
         let (total_bytes, available_bytes) = if is_local {
             (
                 lookup_u64(NSURLVolumeTotalCapacityKey),
@@ -914,7 +914,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
         let (format, bsd_device, read_only) = crate::stat_info::volume_fs_info(path);
         // Group by the whole-disk BSD name so the eject flow can find the
         // other volumes of a multi-partition external device. Local disks
-        // only — an SMB `f_mntfromname` is a URL, not a disk node.
+        // only: an SMB `f_mntfromname` is a URL, not a disk node.
         let device_id = if is_local {
             bsd_device.as_deref().and_then(volumes::whole_disk_bsd)
         } else {
@@ -938,16 +938,16 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
 /// True when macOS reports `path` as an iCloud-synced item. Two
 /// signals, cheapest first:
 ///
-/// 1. **Path prefix** — everything macOS stores under
+/// 1. **Path prefix**: everything macOS stores under
 ///    `~/Library/Mobile Documents/` is ubiquity-managed (iCloud Drive
 ///    and per-app containers). A `starts_with`, no syscall.
-/// 2. **`NSURLIsUbiquitousItemKey`** — catches the Desktop & Documents
+/// 2. **`NSURLIsUbiquitousItemKey`**: catches the Desktop & Documents
 ///    folders that iCloud manages *in place*: their path stays
 ///    `~/Desktop` / `~/Documents`, so the prefix check alone misses
 ///    them. This is exactly the signal Finder uses to draw its cloud
 ///    badge.
 ///
-/// Reads cached resource values only — never downloads a placeholder or
+/// Reads cached resource values only, never downloads a placeholder or
 /// spins a sleeping disk. Always `false` off macOS. Per the prime
 /// directive, callers must not invoke this from the paint path.
 #[cfg(target_os = "macos")]
@@ -1003,7 +1003,7 @@ pub enum CloudState {
     /// In iCloud and materialized on this Mac (Finder shows no badge; we draw
     /// a solid cloud). The common case for synced Desktop/Documents.
     Downloaded,
-    /// In iCloud but a not-downloaded placeholder — APFS dataless, evicted by
+    /// In iCloud but a not-downloaded placeholder: APFS dataless, evicted by
     /// "Optimize Mac Storage" (Finder shows its download cloud; we draw an
     /// outline cloud). "Set up for cloud but the local copy isn't here."
     Placeholder,
@@ -1045,7 +1045,7 @@ pub fn is_cloud_placeholder(_path: &Path) -> bool {
 
 /// The iCloud [`CloudState`] of `path`, or `None` when it isn't an iCloud item.
 ///
-/// Reads cached resource values plus the stat flags only — never reads file
+/// Reads cached resource values plus the stat flags only, never reads file
 /// data, so it never downloads a placeholder or spins a sleeping disk (the
 /// `SF_DATALESS` flag is visible to `lstat` without materializing the file).
 /// Always `None` off macOS. Per the prime directive, callers must not invoke
@@ -1055,7 +1055,7 @@ pub fn cloud_state(path: &Path) -> Option<CloudState> {
     if !path_is_cloud_synced(path) {
         return None;
     }
-    // <sys/stat.h>: SF_DATALESS — "file is dataless object" (the placeholder
+    // <sys/stat.h>: SF_DATALESS: "file is dataless object" (the placeholder
     // for a not-yet-materialized iCloud / FileProvider item). `lstat` reading
     // st_flags does not trigger a download.
     Some(if is_cloud_placeholder(path) {
@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn folder_contents_summary_cases() {
-        // Empty folder — distinct from "we couldn't count".
+        // Empty folder: distinct from "we couldn't count".
         assert_eq!(folder_contents_summary(0, 0), "Empty");
         // Singular vs plural, and the one-sided drops.
         assert_eq!(folder_contents_summary(1, 0), "1 file");
@@ -1319,7 +1319,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// UF_HIDDEN must register as hidden even without a dot prefix —
+    /// UF_HIDDEN must register as hidden even without a dot prefix:
     /// this is what makes `~/Library` disappear like it does in
     /// Finder. Sets the flag via chflags(1) on a temp file.
     #[cfg(target_os = "macos")]
@@ -1345,7 +1345,7 @@ mod tests {
     fn volume_info_for_root_is_local_with_capacity() {
         // The boot volume is always mounted on a macOS test runner.
         // Don't assert the name string (users can rename the volume in
-        // Disk Utility) — just shape: local, removable=false, both
+        // Disk Utility), just shape: local, removable=false, both
         // capacity numbers populated and total >= available.
         let info =
             volume_info_for_path(Path::new("/")).expect("boot volume info available on macOS");
@@ -1362,7 +1362,7 @@ mod tests {
     #[test]
     fn cloud_sync_matches_mobile_documents_prefix() {
         // The path-prefix arm is a pure `starts_with`, independent of
-        // whether the file exists — anything under the ubiquity
+        // whether the file exists, anything under the ubiquity
         // container counts as cloud-synced.
         let home = std::env::var_os("HOME").expect("HOME set on test runner");
         let container = PathBuf::from(&home).join("Library/Mobile Documents");

@@ -1,29 +1,29 @@
 # Update Check
 
-"Is there a newer Ferail on GitHub Releases, and how do I get it?" —
+"Is there a newer Ferail on GitHub Releases, and how do I get it?":
 `ferail-gpui/src/update_check.rs`. Three surfaces over one state machine
 (check status × download status), all reading a process-wide global that
 the dialog re-renders from every frame.
 
 ## Surfaces
 
-- **Ferail ▸ Check for Updates…** (`app.check_updates`) — opens the
+- **Ferail ▸ Check for Updates…** (`app.check_updates`): opens the
   Software Update dialog and starts a check. Always available; the
   setting below gates only the *automatic* path. A check or download
   already in flight is left alone (reopening must not clobber a 90%-done
   download).
-- **Settings ▸ About ▸ Updates ▸ "Check for updates automatically"** —
+- **Settings ▸ About ▸ Updates ▸ "Check for updates automatically"**:
   **off by default**. On: a daily background check; a newer release
   posts one notification per version per session (with a View… button
   into the dialog); up-to-date and failed checks stay silent. The loop
   re-reads the setting each wake, so toggling works without a relaunch;
   toggling *on* checks immediately. Skipped entirely in safe mode.
-- **The dialog** — Installed version, check outcome, then per state:
+- **The dialog**: Installed version, check outcome, then per state:
   Download `<asset>` / Later; a live percent while downloading;
   Open / Show in Folder once done. On Windows, an installed copy instead gets
   Install and Restart for the downloaded Inno package. When something newer exists, a
-  **"What's new"** box renders the release notes — the markdown body of
-  the GitHub release — so the decision to update is made with the
+  **"What's new"** box renders the release notes: the markdown body of
+  the GitHub release, so the decision to update is made with the
   changes in front of you. If the user skipped versions, every release
   through the newest compatible version appears, newest first, each under
   its own `### <title> · <date>` heading (capped at `NOTES_MAX`; the rest
@@ -32,12 +32,12 @@ the dialog re-renders from every frame.
   checksums). The box is a bounded `overflow_y_scroll` region with a
   `TextView::markdown` keyed on the version, so a different release
   gets a fresh parse/selection state.
-- **Staggered platform releases** — the primary result is always the newest
+- **Staggered platform releases**: the primary result is always the newest
   release with an asset for the running OS and architecture. A newer release
   that only ships for another platform is shown as a separate linked note;
   it never hides an older compatible update or replaces its Download button.
   Automatic notifications remain limited to updates this machine can install.
-- **Failures** — the check has a 20-second deadline. Connection/DNS
+- **Failures**: the check has a 20-second deadline. Connection/DNS
   failures, timeouts, missing endpoints (404), rate limits, server errors,
   malformed responses, and an empty release feed become concise localized
   messages with a Retry button; transport details stay in the log. A repeated
@@ -47,7 +47,7 @@ the dialog re-renders from every frame.
 ## What "update" means
 
 Download the platform's asset into `~/Downloads` (`.part` file, then
-rename; names never overwrite — "x (2).dmg"), and hand off to the user.
+rename; names never overwrite: "x (2).dmg"), and hand off to the user.
 Any failed/truncated write removes its `.part` file. Then:
 Open mounts the DMG or opens the portable package; installing is the user's
 step on macOS/Linux. On Windows, CI publishes both
@@ -65,11 +65,11 @@ the running architecture.
 ## Wiring
 
 - **HTTP**: gpui ships a `NullHttpClient`; boot installs zed's
-  `ReqwestClient` (same zed source as gpui, one locked rev — see the
+  `ReqwestClient` (same zed source as gpui, one locked rev: see the
   workspace Cargo.toml note) behind `cx.http_client()`. The check makes
   one `GET /repos/jonx/Ferail/releases?per_page=30` (same shape as
-  zed's `http_client::github` helper — redirects followed, optional
-  `GITHUB_TOKEN` bearer — but parsed into our own `GhRelease` because
+  zed's `http_client::github` helper: redirects followed, optional
+  `GITHUB_TOKEN` bearer, but parsed into our own `GhRelease` because
   zed's struct drops the release `body`/`name`). `summarize()` (pure,
   unit-tested) keeps published, non-prerelease releases *with assets*,
   sorts by version, and tracks both the globally newest release and the
@@ -77,7 +77,7 @@ the running architecture.
   `CARGO_PKG_VERSION` it yields either UpToDate or Available{compatible
   asset + notes through that compatible version}, plus separate metadata
   when the global release is newer but only available elsewhere.
-  Version compare is strict `major.minor.patch` — a malformed remote
+  Version compare is strict `major.minor.patch`: a malformed remote
   tag is skipped, *never* "newer".
 - **Prime Directive**: the API call, timeout, download, and every filesystem
   touch (including failed `.part` cleanup) run on the background executor;
@@ -100,7 +100,7 @@ the running architecture.
   cleans up).
 - `--screenshot x.png --update-dialog <state>` renders the dialog with
   a seeded state, no network: `checking`, `uptodate`, `available`,
-  `elsewhere`, `noasset`, `downloading`, `done`, `failed` — plus `live`,
+  `elsewhere`, `noasset`, `downloading`, `done`, `failed`: plus `live`,
   which runs the real check (docs/features/SCREENSHOTS.md).
 
 ## Known gaps
@@ -108,5 +108,5 @@ the running architecture.
 - No in-place install on macOS/Linux and no skip-this-version memory; the
   automatic check's daily timer resets on relaunch. The Windows setup path
   remains unsigned, so SmartScreen may still require explicit confirmation.
-- The status bar's task registry doesn't show the download — progress
+- The status bar's task registry doesn't show the download: progress
   lives in the dialog (and completion posts a toast).

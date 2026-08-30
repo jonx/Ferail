@@ -11,7 +11,7 @@
 //! - Directories are created 0700 and staged files 0600, so no other user on
 //!   a shared machine can read them.
 //! - Staged files are named by a hash of the entry path ([`opaque_name`]), so
-//!   a leftover file leaks nothing through its *name* — "salary-review.pdf" is
+//!   a leftover file leaks nothing through its *name*: "salary-review.pdf" is
 //!   metadata even when the bytes are unreadable.
 //! - Each directory carries the owning process's PID, and
 //!   [`sweep_stale_scratch`] removes the directories of processes that are no
@@ -34,7 +34,7 @@ pub fn scratch_dir() -> Option<PathBuf> {
 
 /// The one path an entry is ever staged to, inside `dir`.
 ///
-/// Always `preview.<ext>` — the extension is kept because Quick Look
+/// Always `preview.<ext>`: the extension is kept because Quick Look
 /// dispatches on it, and the stem is constant so the filename says nothing
 /// about the entry.
 ///
@@ -121,7 +121,7 @@ pub fn sweep_stale_scratch() {
 fn process_is_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        // SAFETY: signal 0 performs error checking only — it never delivers.
+        // SAFETY: signal 0 performs error checking only: it never delivers.
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
     #[cfg(windows)]
@@ -157,7 +157,7 @@ mod tests {
     use super::*;
 
     /// A private directory per test. `scratch_dir()` is keyed by PID, so every
-    /// test in this process would otherwise share — and delete — the same one.
+    /// test in this process would otherwise share, and delete, the same one.
     fn test_dir(tag: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("ferail-scratch-test-{}-{tag}", std::process::id()));
@@ -170,7 +170,7 @@ mod tests {
     fn staged_path_keeps_the_extension_but_never_the_name() {
         let dir = test_dir("ext");
         let p = staged_path(&dir, "hr/salary-review-2026.pdf");
-        // The extension survives — Quick Look dispatches on it.
+        // The extension survives: Quick Look dispatches on it.
         assert_eq!(p.extension().unwrap(), "pdf");
         // Nothing of the original path does.
         let name = p.file_name().unwrap().to_string_lossy().into_owned();

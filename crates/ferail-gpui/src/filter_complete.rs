@@ -1,15 +1,15 @@
 //! Filter-field token autocomplete.
 //!
 //! The filter box understands structured tokens (`size:>10mb`,
-//! `mod:week`, `locked:yes` — see `ferail_core::filter_expr`). This
+//! `mod:week`, `locked:yes`: see `ferail_core::filter_expr`). This
 //! completion provider makes them discoverable: typing a prefix of a
 //! token key offers the keys (`loc` → `locked:`), and once a key is
 //! accepted the menu chains into its example values (`locked:` →
 //! `yes` / `no`). Clearing the field to empty shows the whole token
 //! list once, as a quiet cheat-sheet.
 //!
-//! Suggestions come from `filter_expr::TOKEN_HELP` — the same table
-//! the parser's tests round-trip — so the menu can never advertise a
+//! Suggestions come from `filter_expr::TOKEN_HELP`: the same table
+//! the parser's tests round-trip, so the menu can never advertise a
 //! token the parser doesn't understand.
 //!
 //! Prime directive: everything here is a lookup in a static table and never

@@ -1,6 +1,6 @@
 # Built-in Text Editor
 
-A deliberately small "open, fix, save, close" editor for text files — not an
+A deliberately small "open, fix, save, close" editor for text files, not an
 IDE. One standalone window per file over gpui-component's `Editor` widget,
 which contributes multi-line editing, undo/redo, find, line numbers, and
 tree-sitter syntax highlighting; Ferail contributes the file I/O discipline
@@ -16,7 +16,7 @@ around it.
   "Edit File" [mac]). The pre-existing system-editor escape hatch ("Edit in
   TextEdit / Notepad / Text Editor") stays directly beneath the new entry.
 - **The window.** Spiral-cascaded standalone window (same
-  `window_cascade` scheme as Get Info), titled `Edit — <name>`, with a
+  `window_cascade` scheme as Get Info), titled `Edit: <name>`, with a
   `•` prefix while the buffer is dirty. Cmd+S saves; Esc and Cmd+W close
   through the unsaved-changes guard; the OS close button goes through
   `on_window_should_close` and honours the same guard. The prompt offers
@@ -43,8 +43,8 @@ around it.
 - **Write**: the serialized text goes to a unique hidden sibling first
   (`.name.ferail-edit-<pid>-<seq>.tmp`), so the bytes are durably on disk
   before the original is touched; then the original is rewritten **in
-  place** — same inode, so Finder tags, permissions, ACLs, and the creation
-  date survive, which a rename-over would silently drop — and the sibling
+  place**, same inode, so Finder tags, permissions, ACLs, and the creation
+  date survive, which a rename-over would silently drop, and the sibling
   is removed. If the in-place write fails midway, the sibling stays behind
   and the error toast names it as the recovery copy.
 - **After a save** the containing directory's listing refreshes through
@@ -59,14 +59,15 @@ around it.
 no filesystem state; the load lands through the window-handle re-entry
 pattern (`confirm_fanout`'s shape). In **Private Mode** the stage blanks
 fail-closed (the file's text is user content) and the window caption stays
-"Private — Ferail"; the headless screenshot harness demonstrated both
+"Private" as its title; the headless screenshot harness demonstrated both
 states (`--text-editor <path>`, with and without `--unsafe-real-data`).
 
 ## Deliberate non-features (v1)
 
 No tabs, no LSP, no Save As, no encoding conversion (non-UTF-8 files are
 refused rather than transcoded), no file watching for concurrent external
-edits — the last writer wins, exactly like TextEdit.
+edits: the last writer wins, exactly like TextEdit. Text zoom does ship
+(toolbar, Cmd+= / Cmd+- / Cmd+0), scaling the document font only.
 
 ## Follow-ups if wanted
 

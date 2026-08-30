@@ -9,9 +9,9 @@ disclosure and ordering only alter presentation.
 `Cmd/Ctrl+Shift+B`, the View-menu command and the title-bar sidebar control
 cycle through:
 
-1. normal — user-resizable, restoring the exact persisted width;
-2. compact — fixed 176 DIP with labels;
-3. icons — fixed 48 DIP;
+1. normal: user-resizable, restoring the exact persisted width;
+2. compact: fixed 176 DIP with labels;
+3. icons: fixed 48 DIP;
 4. normal again.
 
 Compact and icon modes never overwrite the user's normal width. The two mode

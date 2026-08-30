@@ -70,7 +70,7 @@ pub mod safe_mode;
 pub(crate) mod safe_write;
 mod scrub_slider;
 // The headless screenshot driver is a CLI path with no live UI to
-// freeze — the Prime Directive syscall lint doesn't apply to it.
+// freeze: the Prime Directive syscall lint doesn't apply to it.
 #[allow(clippy::disallowed_methods)]
 pub mod screenshot;
 pub mod selection_colors;
@@ -104,7 +104,7 @@ pub mod window_cascade;
 /// environment (`WindowOptions::app_id` → Wayland `app_id` / X11
 /// `WM_CLASS`; a no-op on macOS/Windows). Must equal the basename of
 /// the installed `ferail.desktop` and the hicolor icon name (see
-/// `resources/linux/ferail.desktop` and the cargo-deb assets) —
+/// `resources/linux/ferail.desktop` and the cargo-deb assets):
 /// compositors match these by string, and a mismatch means a generic
 /// taskbar icon and mis-grouped windows.
 pub const APP_ID: &str = "ferail";
@@ -130,7 +130,7 @@ pub fn base_window_options() -> gpui::WindowOptions {
 /// is dead unless the window also claims the drag: left at gpui's default,
 /// `_opaqueRectForWindowMoveWhenInTitlebar` reports an empty rect and **macOS
 /// keeps dragging the window natively from the whole titlebar rect, below
-/// gpui entirely**. A button up there never notices — a click is not a drag —
+/// gpui entirely**. A button up there never notices: a click is not a drag,
 /// but any control that *drags* (the grid icon-size slider) moves the window
 /// instead, and no amount of `cx.stop_propagation()` can prevent it, because
 /// AppKit never asks gpui in the first place. Claiming the drag routes it
@@ -167,7 +167,7 @@ pub use ferail_shell_linux as platform_shell;
 /// keeps compiling on every target. The shell crates' own internal
 /// `cfg(not(target_os = "macos"))` / `cfg(not(windows))` /
 /// `cfg(not(target_os = "linux"))` arms exist purely so each crate
-/// compiles on the *other* hosts as a workspace member — they're not
+/// compiles on the *other* hosts as a workspace member: they're not
 /// reached through this alias.
 ///
 /// `ferail-shell-linux` is currently an all-stub scaffold; see

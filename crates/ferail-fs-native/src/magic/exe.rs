@@ -8,7 +8,7 @@
 //! - PE needs `pe_offset` from byte 0x3C, then optional-header /
 //!   subsystem / data-directory fields at relative offsets up to
 //!   ~0x100 from `pe_offset`. Typical `pe_offset` is < 0x100, so
-//!   the deepest read lands around 0x200 — well within 4 KB.
+//!   the deepest read lands around 0x200: well within 4 KB.
 //!
 //! Ported from bfe-explorer's `sniff_executable_info`,
 //! `sniff_elf_info`, `sniff_macho_info`, `sniff_pe_info`.
@@ -58,7 +58,7 @@ fn sniff_elf(buf: &[u8]) -> MagicInfo {
     info.is_64bit = Some(buf[4] == 2);
     let is_le = buf[5] == 1;
 
-    // EI_OSABI — most GNU/Linux binaries leave this 0 (System V); a named
+    // EI_OSABI, most GNU/Linux binaries leave this 0 (System V); a named
     // OS here is a deliberate marker. AROS stamps ELFOSABI_AROS (15).
     info.os = match buf[7] {
         2 => ElfOs::NetBsd,
@@ -78,7 +78,7 @@ fn sniff_elf(buf: &[u8]) -> MagicInfo {
         }
     };
 
-    // e_type: ET_REL (1) is a relocatable object — not a runnable image,
+    // e_type: ET_REL (1) is a relocatable object, not a runnable image,
     // but the form AROS uses to ship its libraries. Keep the ExeLinux
     // family label (so the icon classifier still tints it as an
     // executable) and flag the kind for the description.
@@ -168,7 +168,7 @@ fn sniff_macho(buf: &[u8]) -> MagicInfo {
             0x1 => MagicType::ObjMac,   // MH_OBJECT
             0x2 => MagicType::ExeMac,   // MH_EXECUTE
             0x6 => MagicType::DylibMac, // MH_DYLIB
-            0x8 => MagicType::DylibMac, // MH_BUNDLE — treat as dylib
+            0x8 => MagicType::DylibMac, // MH_BUNDLE: treat as dylib
             _ => MagicType::ExeMac,
         };
     }

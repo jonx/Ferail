@@ -56,8 +56,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   Right-click an image and choose **Edit Image** to black out sensitive
   parts (rectangle or brush, always opaque) or annotate them (coloured
   outlines and brush strokes, seven colours, three brush sizes), with
-  step-by-step undo. Cmd+S saves an "edited" copy beside the original —
-  the original is never touched by default — and Cmd+Shift+S overwrites
+  step-by-step undo. Cmd+S saves an "edited" copy beside the original
+  (the original is never touched by default) and Cmd+Shift+S overwrites
   it after an explicit confirmation, keeping its Finder tags and
   permissions. Edits always render at the image's full resolution, and
   closing with unsaved edits asks first. Covers PNG, JPEG, BMP, TIFF and
@@ -67,8 +67,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 - **A built-in text editor: open, fix, save, close.** Right-click a file
   and choose **Edit** (or press Cmd+E) to edit it in a small dedicated
-  window — with undo, find, line numbers, and syntax highlighting by file
-  type — instead of round-tripping through TextEdit or Notepad. Cmd+S
+  window, with undo, find, line numbers, and syntax highlighting by file
+  type, instead of round-tripping through TextEdit or Notepad. Cmd+S
   saves; closing with unsaved changes asks Save / Don't Save / Cancel.
   Saves keep the file's identity (Finder tags, permissions, creation date)
   and its exact CRLF/BOM shape, and always write the new text durably to
@@ -100,7 +100,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   content is capped on whole visual lines instead of growing layout without
   limit.
 
-## 0.7.5 — 2026-08-29
+## 0.7.5 - 2026-08-29
 
 - **Large background listings can no longer outrun the interface.** Ordinary
   folders and recursive searches now use the same finite producer queue and
@@ -140,11 +140,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 - **Windows: Fast NTFS now checks its administrator helper before elevating
   it.** Fast NTFS runs a small separate program with administrator rights, and
-  a portable install lives in a folder you can write to — so nothing stopped a
+  a portable install lives in a folder you can write to, so nothing stopped a
   different program from taking that helper's place. Ferail now recognises the
   exact helper it shipped with, and refuses to elevate anything else: a helper
   that is stale, damaged, half-updated or substituted makes Disk Usage say
-  *"Portable fallback — the Fast NTFS helper does not match this build"* and
+  *"Portable fallback: the Fast NTFS helper does not match this build"* and
   scan the ordinary way instead. This is a stopgap, and worth being plain
   about: it reliably catches a broken or replaced helper, but someone who can
   already modify files in Ferail's own folder can work around it. Signing the
@@ -204,7 +204,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   symlinks or Windows reparse points, and scrubs cached metadata in bounded
   batches.
 
-## 0.7.4 — 2026-08-28
+## 0.7.4 - 2026-08-28
 
 - **Audio detection is content-capable without mistaking executables for
   MP3s.** Known audio extensions remain the zero-extra-I/O fast path. Renamed
@@ -258,7 +258,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   with the exact release PDB bundle; no administrator rights are required for
   Ferail to dump its own process.
 
-## 0.7.3 — 2026-08-28
+## 0.7.3 - 2026-08-28
 
 - **Disk Usage remains responsive while Portable scans millions of files.**
   The depth-limited treemap now uses incrementally maintained subtree totals
@@ -280,7 +280,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   alarming `--unsafe-real-data` flag is the only opt-out.
 
 - **Large counts are readable everywhere, not just in the footer.** The
-  status bar already grouped its figures — "1.104.619 items" — but
+  status bar already grouped its figures, "1.104.619 items", but
   everywhere else a big number arrived as one unbroken run of digits:
   Disk Usage's header ("1104619 files, 743.4 GB"), the Flat View and
   duplicate-scan tab subtitles, background-task labels, copy/move/trash
@@ -290,24 +290,24 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   grouped the same way, in every language.
 
 - **Folder contents use the same separator as everything else.** The
-  Description column's recursive rollup grouped with commas —
-  "1,204 files · 88 folders" — the one place that disagreed with the
+  Description column's recursive rollup grouped with commas
+  ("1,204 files · 88 folders") the one place that disagreed with the
   status bar. It now reads "1.204 files · 88 folders".
 
 - **Windows: copied paths no longer start with `\\?\`.** Copy File List,
   Copy Path and Disk Usage's Copy Paths pasted the extended-length spelling
-  Windows returns when Ferail resolves a folder — `\\?\C:\opg\scene\…`
-  instead of `C:\opg\scene\…` — which most shells and apps reject
+  Windows returns when Ferail resolves a folder, `\\?\C:\opg\scene\…`
+  instead of `C:\opg\scene\…`: which most shells and apps reject
   (`cd '\\?\C:\opg\scene'` is not a valid command). They now copy the
   ordinary drive-letter form, and network locations paste as `\\server\share\…`.
 
 - **The app version now sits next to the Ferail name in the toolbar.** Ferail
   draws its own title bar, so the window caption the OS knows about never
-  appears on screen — a screenshot could not say which build it came from.
+  appears on screen: a screenshot could not say which build it came from.
   The version is now shown, muted, beside the wordmark, so a screenshot sent
   in a bug report carries it.
 
-## 0.7.2 — 2026-08-27
+## 0.7.2 - 2026-08-27
 
 This is the first all-platform release since 0.6.5. It brings the accumulated
 Flat View, similar-image search, checksum/sidecar, viewer and Windows
@@ -339,7 +339,7 @@ reliability work to the platform-specific downloads together.
   Fast-engine imports, states and duration formatting are now gated to the
   platforms/builds that use them, and strict Clippy is clean again.
 
-## 0.7.1 — 2026-08-27 (Windows-only release)
+## 0.7.1 - 2026-08-27 (Windows-only release)
 
 - **Fast NTFS no longer appears frozen and no longer requests elevation for
   every folder in one Ferail session.** The elevated helper stays attached to
@@ -365,7 +365,7 @@ reliability work to the platform-specific downloads together.
   real UAC/private-pipe path and verifies that one helper serves repeated
   requests.
 
-## 0.7.0 — 2026-08-27 (Windows-only release)
+## 0.7.0 - 2026-08-27 (Windows-only release)
 
 - **Disk Usage gains an explicit Fast NTFS engine on Windows.** Eligible local
   fixed NTFS volumes can be scanned through a dedicated, one-shot elevated
@@ -418,7 +418,7 @@ reliability work to the platform-specific downloads together.
   `beginning…middle…end` elision and a full-path tooltip instead of overflowing
   the inspector.
 
-## 0.6.9 — 2026-08-26 (Windows-only release)
+## 0.6.9 - 2026-08-26 (Windows-only release)
 
 This release publishes Windows x64 portable and symbols archives only. macOS
 and Linux remain on 0.6.5; Ferail's updater selects the newest release that
@@ -557,7 +557,7 @@ actually has an asset for the current platform.
   Settings › Performance; the faster reader itself does not require that
   permission.
 
-## 0.6.8 — 2026-08-25 (Windows-only release)
+## 0.6.8 - 2026-08-25 (Windows-only release)
 
 This release publishes Windows x64 portable and symbols archives only. macOS
 and Linux remain on 0.6.5; Ferail's updater selects the newest release that
@@ -575,11 +575,11 @@ actually has an asset for the current platform.
 
 - **A native Windows drag no longer leaves two icon stacks in Ferail.** Once a
   drag first exits the source window, the Windows Shell drag image remains the
-  sole visual for the rest of that gesture — including if the pointer comes
+  sole visual for the rest of that gesture, including if the pointer comes
   back over Ferail. Ferail still restores the typed payload invisibly so its
   own folders remain valid drop destinations.
 
-## 0.6.7 — 2026-08-25 (Windows-only release)
+## 0.6.7 - 2026-08-25 (Windows-only release)
 
 This release publishes Windows x64 portable and symbols archives only. macOS
 and Linux remain on 0.6.5; Ferail's updater selects the newest release that
@@ -598,11 +598,11 @@ actually has an asset for the current platform.
   dispatch. Shift+right-click also suppresses Ferail's menu completely rather
   than stacking both menus.
 
-- **See which programs are locking a file — and close them — from the
+- **See which programs are locking a file, and close them, from the
   right-click menu (Windows).** "What's Locking This?" on any file or folder,
   and "What's Blocking Eject?" on a removable volume in the sidebar, open a
   dialog naming every process that has the item open (via the Windows Restart
-  Manager), each with a Close button plus Close All — programs are asked to
+  Manager), each with a Close button plus Close All: programs are asked to
   quit politely first and only force-closed if they refuse, with a warning
   that unsaved changes can be lost. Before, this diagnosis only appeared
   after a copy or move had already failed. Folders and volumes are checked
@@ -612,12 +612,12 @@ actually has an asset for the current platform.
 - **A failed USB eject on Windows now names the apps blocking it.** The
   "couldn't eject" message used to show only a raw error; it now lists the
   programs with files open on the volume, and clicking one brings that
-  program's window forward so you can close the offending files — the same
+  program's window forward so you can close the offending files: the same
   behavior macOS already had.
 
 - **The Delete Immediately confirmation now opens with its Delete button
   focused.** Confirming a permanent delete (Shift+Delete) no longer needs a
-  Tab press or a mouse click first — Enter or Space activates the focused
+  Tab press or a mouse click first: Enter or Space activates the focused
   button right away, and pressing Enter while the dialog itself held focus no
   longer dismissed it without doing anything. The button's focus ring also
   drew with its bottom edge cut off by the dialog body; it now fits.
@@ -642,11 +642,11 @@ actually has an asset for the current platform.
 - **Software Update on Windows downloaded the debug-symbols archive instead of
   the app.** Since releases started shipping a `…-win-x64-symbols.zip` PDB
   bundle alongside the app zip (0.6.6), the updater grabbed whichever Windows
-  zip GitHub listed first — the symbols one. The updater now skips symbols
+  zip GitHub listed first: the symbols one. The updater now skips symbols
   bundles, and the bundle was renamed to `…-x64-symbols.zip` (on the published
   0.6.6 release too) so already-shipped builds also pick the right download.
 
-## 0.6.6 — 2026-08-24 (Windows-only release)
+## 0.6.6 - 2026-08-24 (Windows-only release)
 
 This release publishes Windows x64 portable and symbols archives only. macOS
 and Linux remain on 0.6.5; Ferail's updater selects the newest release that
@@ -683,7 +683,7 @@ actually has an asset for the current platform.
 - **Quitting can no longer crash with a "leaked handles" report in
   released builds.** Beyond the reference cycles fixed above, a UI-library
   behavior still leaks an input handle whenever a second window (such as
-  Get Info) was open — and the library's leak *detector*, a developer
+  Get Info) was open, and the library's leak *detector*, a developer
   diagnostic, was compiled into the builds users download, turning that
   leak into an exit-101 crash with a scary report. Packaged builds no
   longer carry the detector; developer/test teardown now also drains the
@@ -694,7 +694,7 @@ actually has an asset for the current platform.
   gains an Image section: pixel dimensions, camera (make and model,
   deduplicated), lens, date taken, a one-line exposure summary (shutter,
   aperture, ISO, focal length), and the stored rotation when there is one.
-  If the photo embeds GPS coordinates, a Location row says so — the
+  If the photo embeds GPS coordinates, a Location row says so: the
   coordinates themselves are deliberately not read, displayed, or stored.
   Works the same on every platform; unreadable or EXIF-less files simply
   show no section.
@@ -704,20 +704,20 @@ actually has an asset for the current platform.
   (crash and freeze reports, native minidumps, saved report bundles) and
   the settings folder (settings file, metadata database, language packs)
   are shown with their paths and an *Open folder* button that browses
-  them in a Ferail tab — creating the folder first if nothing was ever
+  them in a Ferail tab, creating the folder first if nothing was ever
   written to it.
 
 - **A crash in a terminal no longer floods the console.** The crash
   output used to dump every breadcrumb and a long backtrace on stderr;
-  now the console gets a short digest — the last few breadcrumbs, the
-  most relevant stack frames, and the path of the full report — while
+  now the console gets a short digest: the last few breadcrumbs, the
+  most relevant stack frames, and the path of the full report, while
   the report file under the config folder's `reports/` gets more than
   before: every breadcrumb plus the complete raw backtrace, with no
   environment variable needed. Native faults on Windows, previously
   silent on the console, now print one line naming the exception and
   the minidump path. Also fixed: a second crash in the same run used to
   overwrite the first report file (reports now append), and on Windows the
-  "relevant frames" digest always said no Ferail frames were found — the
+  "relevant frames" digest always said no Ferail frames were found: the
   filter only recognized Unix-style paths.
 
 - **`C:\Windows\Fonts` (and folders like it) no longer shows blank icons.**
@@ -725,11 +725,11 @@ actually has an asset for the current platform.
   ordinary way of looking up icons and thumbnails for files inside it, so
   every font file showed an empty placeholder. Ferail now retries those
   lookups the way Explorer itself does, and font files get their proper
-  icons — and their "Abg" preview cards where Windows provides them.
+  icons, and their "Abg" preview cards where Windows provides them.
 
 - **Font previews are no longer upside down on Windows.** The Windows
   component that renders "Abg" preview cards for font files hands its
-  image back stored bottom-to-top, unlike every image thumbnail — with
+  image back stored bottom-to-top, unlike every image thumbnail, with
   nothing in the data saying so. Those cards rendered rotated 180°;
   font files are now flipped correctly.
 
@@ -741,8 +741,8 @@ actually has an asset for the current platform.
 - **Windows thumbnails no longer look like screenshots of another app.**
   For files with no thumbnail of their own (Word and Excel documents, PDFs
   on machines without a PDF thumbnailer, …), the icon grid and list used to
-  show a capture of the file's *preview* component — the same live viewer
-  Explorer's preview pane hosts — complete with its scrollbars, toolbars
+  show a capture of the file's *preview* component: the same live viewer
+  Explorer's preview pane hosts: complete with its scrollbars, toolbars
   and window chrome. Thumbnails now show what Explorer shows: the file's
   real thumbnail when one exists, otherwise its type icon. Only the preview
   pane still falls back to that capture, where a document rendering with
@@ -750,8 +750,8 @@ actually has an asset for the current platform.
 
 - **PDFs get real thumbnails and previews on Windows, rendered by Windows
   itself.** The first page is now drawn with the PDF renderer built into
-  Windows (the one the Photos and Reader apps use) — in the grid, the list,
-  the preview pane and the viewer — instead of depending on whichever
+  Windows (the one the Photos and Reader apps use), in the grid, the list,
+  the preview pane and the viewer, instead of depending on whichever
   third-party PDF component is installed. It runs without any window or
   helper process, so it is also immune to the PDF preview crash that
   motivated the helper-process change below. Password-protected PDFs still
@@ -766,8 +766,8 @@ actually has an asset for the current platform.
   are initialized too, where before they were skipped.
 
 - **The preview pane no longer shows a big type icon for images Windows
-  declines to thumbnail at preview size.** For some files — OneDrive
-  images, notably — Windows produces the small grid thumbnail but refuses
+  declines to thumbnail at preview size.** For some files: OneDrive
+  images, notably: Windows produces the small grid thumbnail but refuses
   the larger preview-pane extraction, and Ferail then showed the file
   type's icon even though the grid was showing the picture itself. The
   type icon used to be baked into the Windows fetch as its own fallback,
@@ -785,7 +785,7 @@ actually has an asset for the current platform.
 - **Quitting no longer ends in a "leaked handles" crash after using a
   context menu or the filter box.** On Windows, closing Ferail after a
   normal session could exit with an error report about leaked `PopupMenu`
-  and `InputState` handles — the very "crash" files testers sent for 0.6.5.
+  and `InputState` handles: the very "crash" files testers sent for 0.6.5.
   The right-click menu and three text inputs (the filter box, the address
   editor, the shortcuts search) each kept a hidden reference to themselves,
   so they could never be released at shutdown. Those reference cycles are
@@ -794,8 +794,8 @@ actually has an asset for the current platform.
 
 - **A broken PDF or Office preview can no longer crash Ferail on Windows.**
   Third-party preview components (the ones other apps install so Explorer can
-  draw document previews) used to run inside Ferail itself, so a faulty one —
-  like the PDF previewer access violation reported against 0.6.5 — could take
+  draw document previews) used to run inside Ferail itself, so a faulty one
+  (like the PDF previewer access violation reported against 0.6.5) could take
   the whole app down or hang it. Each preview now renders in a short-lived
   helper process: if the component crashes or stalls, only the helper dies,
   the file shows its icon instead, and a component that fails once is
@@ -803,7 +803,7 @@ actually has an asset for the current platform.
 
 - **Windows crashes in native code now leave a minidump next to the crash
   report.** A fault inside a driver, shell extension, or preview component
-  used to vanish without a trace — the text report only covered Rust-side
+  used to vanish without a trace: the text report only covered Rust-side
   panics. Ferail (and its preview helper) now write
   `%APPDATA%\Ferail\reports\ferail-<role>-<pid>.dmp` and note the exception
   code in `ferail-crash-<pid>.txt`; with the published symbols bundle that
@@ -814,7 +814,7 @@ actually has an asset for the current platform.
   statistics, visually orphaned from the "Scanning…"/"Copying…" text at the
   left. The strip now follows the task label directly.
 
-- **The Windows download now starts on a fresh PC — no Visual C++ install
+- **The Windows download now starts on a fresh PC, no Visual C++ install
   required.** The 0.6.5 build could fail before showing a window with a
   `VCRUNTIME140.dll was not found` error, because it expected Microsoft's
   C++ runtime to already be present. Ferail now carries that runtime inside
@@ -861,9 +861,9 @@ actually has an asset for the current platform.
   returned to the allocator while ordinary directory reloads still reuse
   their much smaller buffers.
 
-## 0.6.5 — 2026-08-23
+## 0.6.5 - 2026-08-23
 
-- **Include Subfolders — every file under this folder, in one list.** A third
+- **Include Subfolders: every file under this folder, in one list.** A third
   view button (⌘⇧L, or the View menu) turns the current location into a
   files-only listing of everything below it, subfolder contents included, in
   the same table you already know. Rows appear as Ferail walks the tree rather
@@ -883,25 +883,25 @@ actually has an asset for the current platform.
   calculation with progress and a Copy button. If the clipboard contains one
   SHA-256, Ferail trims surrounding whitespace, accepts common checksum-file
   formats, and shows an explicit match or mismatch. The expected value is
-  editable, and Clear affects only the dialog — never the system clipboard.
+  editable, and Clear affects only the dialog, never the system clipboard.
 
 - **The status bar now shrinks to fit instead of running off the window.** In a
-  narrow window — or a language with longer words, where French turned "up 3m"
-  into "en service depuis 3m" — the bar's right-hand end used to be pushed past
+  narrow window, or a language with longer words, where French turned "up 3m"
+  into "en service depuis 3m": the bar's right-hand end used to be pushed past
   the edge, taking the Show Hidden switch with it. It now steps down as room
   runs out: fuller phrases first give way to short ones ("126.3 GB free on
   Macintosh HD" → "126.3 GB free" → "126.3 GB", "up 3m" → "UP 3m"), then the
-  text drops a size, and only then do readouts start dropping — the app's own
+  text drops a size, and only then do readouts start dropping: the app's own
   CPU/memory figures first, the folder's own numbers last. The item count and
   the Show Hidden switch are always there, whatever the width; at the narrowest
   the switch keeps its label as a tooltip.
 
 - **Sort a folder by how often you go there.** The toolbar's sort menu used to
-  offer only Name, Size, Kind and Date Modified — the same four you get by
+  offer only Name, Size, Kind and Date Modified: the same four you get by
   clicking a column header. It now has a fifth, Ant Trail, which ranks
   subfolders by their visit heat so the places you actually browse rise to the
   top; picking it again flips to coldest-first. Files and folders you've never
-  opened stay below, in name order. Include Subfolders doesn't offer it — those
+  opened stay below, in name order. Include Subfolders doesn't offer it: those
   rows carry no heat.
 
 - **The filter field has a ✕ to clear it.** Typing a filter left you with no
@@ -911,19 +911,19 @@ actually has an asset for the current platform.
 - **Fixed: sorting by Ant Trail could do nothing until you changed folder.**
   After closing Include Subfolders, the list kept an empty Path column and
   still counted itself a subfolder listing, so an Ant Trail pick fell back to
-  sorting by name — the warm folders stayed where they were. Leaving Include
+  sorting by name: the warm folders stayed where they were. Leaving Include
   Subfolders now clears that state properly, and the Ant Trail order is decided
   from the rows themselves, so it can't be silently ignored again.
 
 - **Favorites are marked in search and duplicate results too.** A file you had
   starred showed its star in an ordinary folder listing but not in the results
-  of a search or a duplicate scan — exactly where knowing "this one I care
+  of a search or a duplicate scan, exactly where knowing "this one I care
   about" matters most before you delete something.
 
 - **Large folders take noticeably less memory to hold open.** Every row carries
   its name plus its size, type and description text, and each row used to own
-  a private copy of all of it. Rows that say the same thing — and in a big
-  folder most of them do — now share one copy, taking a row from 264 bytes to
+  a private copy of all of it. Rows that say the same thing, and in a big
+  folder most of them do, now share one copy, taking a row from 264 bytes to
   160. On a folder with a million entries that is roughly 100 MB Ferail no
   longer keeps. Viewport-scoped work and bounded refreshes also avoid spending
   time on rows that are not visible. These improvements apply to every listing,
@@ -931,15 +931,15 @@ actually has an asset for the current platform.
   multi-million scale, the remaining cost now follows the actual data volume.
 
 - **A freeze in a terminal launch now prints a short summary instead of
-  thousands of lines.** The hang report used to be echoed to stderr in full —
-  every loaded system library included — which pushed the one useful line, the
+  thousands of lines.** The hang report used to be echoed to stderr in full
+  (every loaded system library included) which pushed the one useful line, the
   path to the saved report, far out of view. The console now gets a digest:
   where the UI thread is stuck (innermost frames), the longest-running
   background task, your last action, and the report path; the complete report,
   with all thread stacks, still goes to the file you attach to an issue. Set
   `FERAIL_FULL_HANG_REPORT=1` to get everything on stderr again.
 
-## 0.6.0 — 2026-08-23
+## 0.6.0 - 2026-08-23
 
 - **The viewer is better suited to visual comparison and overlays.** Its
   filename now appears only in the native title bar, a live opacity control
@@ -950,9 +950,9 @@ actually has an asset for the current platform.
   crash path left in 0.5.2.
 
 - **The toolbar now folds into its ⋯ menu instead of running off the edge of
-  a narrow window.** As the window narrows the bar sheds clusters in order —
+  a narrow window.** As the window narrows the bar sheds clusters in order:
   the icon-size bar first, then Dock and Show Desktop, then the icon-size
-  buttons, then Sort, and last of all New Folder and Refresh — and everything
+  buttons, then Sort, and last of all New Folder and Refresh, and everything
   it sheds turns up in the ⋯ menu in the same order it had in the bar. The
   list/icon view switcher never folds, and the filter field gives up width
   only once there is nothing left to fold. Previously a window under about
@@ -963,7 +963,7 @@ actually has an asset for the current platform.
   sizes than before.** Click or drag anywhere along it to pick any size you
   like instead of stepping between five fixed ones, and watch the grid
   re-lay-out as you drag. The
-  range now runs from 32 px — small enough to skim a big folder — up to
+  range now runs from 32 px, small enough to skim a big folder, up to
   512 px, where a photo is genuinely previewable. The − and ＋ buttons stay,
   and now jump to the next stop past the size you are on rather than snapping
   to the nearest one, so ＋ always makes icons bigger. A new reset button
@@ -971,7 +971,7 @@ actually has an asset for the current platform.
   itself on windows too narrow to hold it, leaving the buttons in charge.
 
 - **You can choose how a photo fills its icon.** Settings › Layout › **Icon
-  fit** offers *Best fit* (the whole image with bars beside it — what icon
+  fit** offers *Best fit* (the whole image with bars beside it: what icon
   view has always done, and still the default), *Fill frame* (crop the edges
   so the image fills the square completely), *Fit width* and *Fit height*
   (match one edge and let the other letterbox or crop), and *Stretch*. The
@@ -997,12 +997,12 @@ actually has an asset for the current platform.
   When a release ships for some platforms before others, Ferail now offers the
   newest release that has a download for your operating system and processor,
   and mentions the still-newer one as a separate note naming the platforms it
-  exists for — instead of reporting the global latest and leaving you with no
+  exists for, instead of reporting the global latest and leaving you with no
   Download button. "What's new" stops at the version you can install, so the
   notes describe what you are about to get. Automatic notifications stay
   limited to updates this machine can install.
 
-## 0.5.2 — 2026-08-22
+## 0.5.2 - 2026-08-22
 
 Fixes a macOS crash while browsing folders containing videos when the mpv
 backend is selected. The signed release now disables libmpv's unused built-in
@@ -1010,23 +1010,23 @@ Lua scripts before initialization, preventing Homebrew's LuaJIT from creating
 an executable page that the hardened runtime rejects. Video decoding, live
 filters, audio, seeking, and poster thumbnails remain enabled.
 
-## 0.5.1 — 2026-08-22
+## 0.5.1 - 2026-08-22
 
 Windows fixes for 0.5.0's archive work, which was only exercised on macOS and
-Linux before release. Adding files to a ZIP — by dropping them on it, or by
-saving the workbench — failed with *"the process cannot access the file because
+Linux before release. Adding files to a ZIP, by dropping them on it, or by
+saving the workbench: failed with *"the process cannot access the file because
 it is being used by another process"*: the rewritten archive was still open when
 Ferail tried to swap it in, which Windows refuses and Unix allows. Converting an
 archive failed with *"Access is denied"* for a related reason, a flush issued
 through a read-only handle. macOS and Linux were unaffected, so 0.5.0 remains
 current there.
 
-## 0.5.0 — 2026-08-22
+## 0.5.0 - 2026-08-22
 
 Archives become a place you work, not just a list you look at. ZIPs have a
 transactional editing workbench, members drag out to Finder and to Ferail's own
 windows as native file promises, and files dragged the other way are added to a
-ZIP in place — every write staged and swapped in atomically, so a cancelled or
+ZIP in place: every write staged and swapped in atomically, so a cancelled or
 failed operation leaves the original untouched. Ferail also speaks French and
 German now, with importable language packs for anything else, and it can check
 GitHub for a newer version when you ask it to (daily checks are opt-in; with
@@ -1041,7 +1041,7 @@ survive the failures they describe.
   hard process death still belongs to the operating system's crash reporter.
 
 - **Dropping files or folders onto a ZIP adds them to it.** Drag anything onto
-  an archive in the list or grid and it is added in place — no need to open the
+  an archive in the list or grid and it is added in place, no need to open the
   archive first; a dropped folder brings its contents, and a name already in
   the archive is reported instead of quietly shadowing the original. Archives
   that cannot be modified in place (7-Zip, TAR and its compressed variants,
@@ -1074,18 +1074,18 @@ survive the failures they describe.
   macOS using native file promises: decoding starts only after the external
   drop and runs off the GUI thread. The same gesture now crosses into another
   Ferail window, where dropping on the list extracts into its current folder
-  and dropping on a folder row extracts there — previously the drop silently
+  and dropping on a folder row extracts there: previously the drop silently
   did nothing in Ferail (while working in Finder) because the window never
   registered itself as a destination for promised files. No placeholder file
   is created, and a workbench overlapping its parent can drop straight into
   the underlying main window. Dropped members land in the destination under
-  their own name, the same way the identical drag onto Finder behaves — a
+  their own name, the same way the identical drag onto Finder behaves: a
   file arrives as `alpha.txt`, a dragged folder brings its subtree, and
   neither is wrapped in an extra folder named after the archive; a name
   already in use is kept as `alpha (2).txt` rather than overwritten.
   List and grid folder targets plus Browse-tree, volume, available favorite
   rows, sidebar Locations, and breadcrumb segments highlight and extract into
-  the selected folder — sidebar Locations such as Downloads and Desktop, and
+  the selected folder: sidebar Locations such as Downloads and Desktop, and
   breadcrumb segments, previously ignored dropped archive members entirely,
   and every target keeps its highlight during the cross-window part of the
   drag, where nothing used to light up. Dragging members out now also works
@@ -1106,11 +1106,11 @@ survive the failures they describe.
   seconds, and interrupted downloads no longer leave `.part` files behind.
 
 - **Ferail can now speak your language.** Settings › Appearance has a new
-  Language group: follow the system language, or pick a language pack —
+  Language group: follow the system language, or pick a language pack:
   French and German ship built in, and anyone can add another without a
   code change. *New language…* writes a template file with every string
   and a set of translation instructions; give that file to a translator or
-  to an AI assistant (Claude, ChatGPT, a local model — Ferail itself never
+  to an AI assistant (Claude, ChatGPT, a local model: Ferail itself never
   calls one and needs no API key), then *Import…* the result. *Export…*
   saves a language to finish or share it, and the dropdown shows how much
   of the UI each pack covers. Switching takes effect immediately, menus
@@ -1125,31 +1125,31 @@ survive the failures they describe.
 - **Opening a window no longer freezes when your last folder was on a
   sleeping drive.** Ferail reopens at the folder you left off in; if that
   folder lives on an external disk that has spun down (or a network share
-  that's slow to answer), every new window — including Cmd+N — used to sit
+  that's slow to answer), every new window, including Cmd+N, used to sit
   frozen for seconds while the disk woke up. The window now opens at once,
   showing the folder's breadcrumbs with an "Opening …" note in the status
   bar, and fills in when the disk answers. A folder that no longer exists
   falls back to Home, as before. Folder icons in the icon grid and the
-  sidebar are fetched the same way now — one custom-icon folder on a slow
+  sidebar are fetched the same way now, one custom-icon folder on a slow
   volume can't stall scrolling anymore.
 
-- **Ferail can now tell you when a newer version exists — if you ask it
+- **Ferail can now tell you when a newer version exists: if you ask it
   to.** A new **Ferail → Check for Updates…** menu item asks GitHub
   Releases for the latest version and shows the result in a Software
   Update dialog: when something newer exists the dialog shows **what's
-  new** — the release notes from GitHub, rendered right there, and if you
-  skipped a few versions, the notes of every release you missed — so you
+  new**: the release notes from GitHub, rendered right there, and if you
+  skipped a few versions, the notes of every release you missed, so you
   decide with the changes in front of you; then download the right file
   for your machine (macOS disk image,
   Windows zip, Debian/Ubuntu package for your CPU) straight into
-  Downloads with live progress, then open it or show it in the folder —
+  Downloads with live progress, then open it or show it in the folder,
   installing stays your step, Ferail never replaces itself. A separate
   **Settings → About → Updates** switch turns on a *daily automatic*
   check that posts a notification when a new version appears; it is
   **off by default**, and with it off Ferail makes no network requests
   on its own. Nothing is ever downloaded without you choosing to.
 
-## 0.4.0 — 2026-08-19
+## 0.4.0 - 2026-08-19
 
 The Linux build becomes actually usable (a font-lookup/backtrace stack-up
 had it at seconds per frame), and a batch of features lands: a filter box
@@ -1161,7 +1161,7 @@ holds. Linux `.deb`s and the Windows zip are built by CI; Windows remains
 unsigned (SHA-256 on the release page).
 
 - **Linux: the app no longer crawls at seconds per frame.** On a stock
-  Linux install the interface was barely usable — every repaint took
+  Linux install the interface was barely usable: every repaint took
   seconds and input lagged far behind. Two causes stacked: the UI font the
   toolkit asks for by default ("IBM Plex Sans", which Zed bundles and
   Ferail does not) isn't installed, so every piece of text on screen walked
@@ -1172,10 +1172,10 @@ unsigned (SHA-256 on the release page).
   in that order; Noto Sans first under KDE) and a real monospace face for
   code previews (which used to fall through to a proportional font), and it
   no longer lets the crash-diagnostics backtrace setting leak into ordinary
-  error handling on any platform — panics still get full backtraces. Set
+  error handling on any platform: panics still get full backtraces. Set
   `RUST_LIB_BACKTRACE=1` yourself if you want library errors to carry one.
 
-- **The viewer now fits media to the window by default — and you can pick a
+- **The viewer now fits media to the window by default, and you can pick a
   different default.** Small images and videos used to open as a tiny
   postage stamp in the middle of the window (the viewer fitted large media
   down but never enlarged anything); now everything opens filling the
@@ -1186,10 +1186,10 @@ unsigned (SHA-256 on the release page).
   return to, and applies from the next viewer window you open.
 
 - **A frozen app now explains itself.** If the interface stops responding
-  for about ten seconds, Ferail automatically writes a hang report — what
+  for about ten seconds, Ferail automatically writes a hang report: what
   background work was running, the recent action history (path-redacted,
   honoring the privacy toggle), and on macOS full stack traces of every
-  thread — to the same `reports/` folder as the issue bundle, and keeps
+  thread, to the same `reports/` folder as the issue bundle, and keeps
   running in case it recovers. Launched from a terminal, pressing
   `Ctrl+\` (macOS/Linux) or `Ctrl+Break` (Windows) writes the same report
   on demand and exits; `Ctrl+C` on a frozen app writes one on the way
@@ -1198,9 +1198,9 @@ unsigned (SHA-256 on the release page).
 
 - **New `--safe-mode` launch flag (or `FERAIL_SAFE_MODE=1`) for freeze
   hunting.** It starts the app with every optional background subsystem
-  off — file watching, folder sizes, thumbnails, format detection, the
+  off: file watching, folder sizes, thumbnails, format detection, the
   metadata database, free-space lookups, and the volume/power/stats
-  watchers — so one relaunch answers whether a freeze comes from the
+  watchers, so one relaunch answers whether a freeze comes from the
   background work. Settings are untouched; a normal restart brings
   everything back. Favorites, Recents, and Ant Trail stay empty for the
   safe-mode session by design.
@@ -1208,7 +1208,7 @@ unsigned (SHA-256 on the release page).
 - **The filter box now filters by metadata values, not just names.** Typing
   `size:>10mb`, `mod:week`, `created:2026-01-01..2026-06-30`, `kind:folder`,
   `ext:pdf`, or `locked:yes` narrows the listing by the file's actual size,
-  dates, kind, extension, or locked flag — alone or combined with ordinary
+  dates, kind, extension, or locked flag: alone or combined with ordinary
   text (`report ext:pdf mod:month`). Plain words keep working exactly as
   before, and anything unrecognized is treated as literal text rather than
   guessed at. The same tokens work when Enter escalates the filter into a
@@ -1218,13 +1218,13 @@ unsigned (SHA-256 on the release page).
   Size column shows. Wrap a phrase in quotes to match it with its spaces.
 
 - **The filter box suggests its own syntax as you type.** Start typing a
-  token key and a completion menu offers the supported filters — type `lo`
+  token key and a completion menu offers the supported filters: type `lo`
   and it offers `locked:` with a one-line description; accept it and the
   menu chains into the valid values (`yes` / `no`, or ready-made examples
   like `size:>1mb` and `mod:today`). Clearing the field shows the full
   token list once, so the syntax is discoverable without reading docs.
   Arrow keys and Enter pick from the menu while it's open; Esc dismisses
-  it, and plain typing is never interrupted — the menu only appears when
+  it, and plain typing is never interrupted: the menu only appears when
   what you're typing looks like a token.
 
 - **A (?) button beside the filter field opens a filter-syntax cheat sheet.**
@@ -1232,7 +1232,7 @@ unsigned (SHA-256 on the release page).
   examples, plus the date and size rules, so you never have to remember the
   syntax or hunt for it in the docs. Esc or a click outside closes it.
 
-- **The mpv video player now works in release downloads — no rebuild needed.**
+- **The mpv video player now works in release downloads, no rebuild needed.**
   The optional mpv backend (plays virtually any video format, and powers live
   grading and the transparent chroma-key windows) used to require compiling
   Ferail from source with a special flag. Release builds now ship with the
@@ -1240,10 +1240,10 @@ unsigned (SHA-256 on the release page).
   (macOS: `brew install mpv`; Windows: a libmpv build; Linux: `libmpv2`,
   which the .deb now pulls in automatically on current distributions) and
   pick **mpv** under **Settings → Plugins**. Ferail still does not bundle
-  libmpv itself — without it the built-in player works as before.
+  libmpv itself, without it the built-in player works as before.
 
 - **Right-clicking the file list's empty space now opens a folder menu.**
-  Right-clicking below the last row — or anywhere in an empty folder —
+  Right-clicking below the last row, or anywhere in an empty folder:
   used to do nothing. It now opens a context menu of commands that act on
   the folder you're browsing: New Folder, Paste, Select All, Get Info,
   Reveal in Finder, Copy Path, Open Terminal Here, Add Folder to
@@ -1252,18 +1252,18 @@ unsigned (SHA-256 on the release page).
 
 - **The status bar now says how much the filter field is hiding.** Typing in
   the filter narrowed the listing, but the item count and total size beside
-  it silently narrowed too — "11 items · 214 KB" looked like the whole
+  it silently narrowed too, "11 items · 214 KB" looked like the whole
   folder when it was only the matches. The count now carries a companion
-  figure for what the filter is holding back — "11 items · 214.3 KB" now
-  sits beside "16 filtered out · 281.1 KB" — so the rest of the folder,
+  figure for what the filter is holding back, "11 items · 214.3 KB" now
+  sits beside "16 filtered out · 281.1 KB", so the rest of the folder,
   and its size, is never a mystery. When the filter matches nothing at
   all, the status bar says "All 60 items filtered out · 15.0 MB" and the
   empty listing says
-  "All 60 items filtered out." instead of claiming the folder is empty —
+  "All 60 items filtered out." instead of claiming the folder is empty,
   which used to send you looking for files that were only being filtered.
 
 - **Ejecting a volume you're still browsing now works.** Eject used to fail
-  with "Ferail has files open on it" when the app itself was the culprit —
+  with "Ferail has files open on it" when the app itself was the culprit:
   a tab open on the volume, an archive being browsed, or a viewer window
   playing a file from it was enough. Eject now first releases Ferail's own
   holds: tabs on the volume (in every window) go back to your home folder,
@@ -1271,21 +1271,21 @@ unsigned (SHA-256 on the release page).
   playing from it close; then the eject proceeds, waiting a moment and
   retrying once so the freed files are really closed. And when another app
   still blocks the eject, the failure message shows each blocking app as a
-  **clickable button** — clicking one brings that app to the front so you
+  **clickable button**: clicking one brings that app to the front so you
   can close whatever it has open on the volume and try again. (Buttons for
   processes without windows, like background daemons, do nothing; on Linux
   and Windows the names are shown but aren't clickable yet.)
 
-## 0.3.0 — 2026-08-08
+## 0.3.0 - 2026-08-08
 
 First release with **Linux downloads** (Ubuntu/Debian `.deb`, Intel and ARM),
 and the first where dragging files out of Ferail to other apps works on macOS.
 macOS remains signed + notarized; Windows remains unsigned (SHA-256 on the
 release page).
 
-- **Dragging files out of Ferail into other apps now works — with full
+- **Dragging files out of Ferail into other apps now works, with full
   Finder semantics.** Dragging rows, grid cells, or sidebar folders to
-  Finder, the Desktop, an editor, or any other app never actually worked —
+  Finder, the Desktop, an editor, or any other app never actually worked:
   the drag ghost just stopped at the edge of the window and nothing was
   handed to the system, because the UI framework's drag was in-window only
   and the code wrongly believed otherwise. Ferail now promotes a drag to a
@@ -1293,17 +1293,17 @@ release page).
   the drop behaves exactly like a drag started in Finder: a drop on the
   same volume moves the files, a drop on another volume copies them (with
   the system's green “+” badge on the cursor), holding ⌥ forces a copy,
-  ⌘ forces a move, ⌃ drops an alias — and pressing Esc cancels the drag,
+  ⌘ forces a move, ⌃ drops an alias, and pressing Esc cancels the drag,
   inside or outside the window, with the items animating back to where
-  they came from. Entries inside an archive are the one exception — they
+  they came from. Entries inside an archive are the one exception: they
   have no on-disk files until extracted, so they still only drag within
   the window.
 - **The status bar shows what Ferail itself costs.** A quiet readout on the
-  right — "up 3d 4h · CPU 0.2% · MEM 184.0 MB · 0 rps" — reports how long the
+  right, "up 3d 4h · CPU 0.2% · MEM 184.0 MB · 0 rps", reports how long the
   app has been running, its CPU share, its memory footprint, and how many
   times per second the window redrew. All figures are about Ferail, not the
   machine: the last figure is deliberately labelled *rps* (redraws per
-  second), not "fps" — the app only draws when something changes, so an idle
+  second), not "fps": the app only draws when something changes, so an idle
   window honestly reads 0, and any number it shows is a plain count of real
   redraws rather than a claim about animation smoothness. A nonzero value
   while you aren't doing anything means something is wastefully repainting.
@@ -1318,36 +1318,36 @@ release page).
   and group Ferail windows together. Verified end to end on Ubuntu 24.04
   (arm64): the package builds, installs, and the installed app launches and
   browses folders. CI builds both the Intel (amd64) and ARM (arm64)
-  packages against Ubuntu 22.04, so they run on 22.04 and later — and they
+  packages against Ubuntu 22.04, so they run on 22.04 and later, and they
   are attached to the GitHub release as public downloads, starting with this
   release. Opening a *specific folder* from the
-  desktop ("Open with Ferail") isn't wired yet — the binary doesn't take a
+  desktop ("Open with Ferail") isn't wired yet: the binary doesn't take a
   directory argument.
 - **Fixed a crash-on-build for ARM Linux.** Owner/group name lookup used a
-  buffer type that only compiles where C's `char` is signed — fine on
+  buffer type that only compiles where C's `char` is signed: fine on
   Intel/macOS, a build failure on ARM Linux (Raspberry Pi class machines,
   ARM servers, Apple-Silicon VMs).
 - **Choose your terminal.** Settings → Files → Terminal picks which terminal
-  "Open Terminal Here" launches — an app name or `.app` bundle on macOS, a
-  program path, or a command on `PATH` — with your own launch arguments
+  "Open Terminal Here" launches: an app name or `.app` bundle on macOS, a
+  program path, or a command on `PATH`: with your own launch arguments
   (`{dir}` expands to the folder) and a Standard/Administrator mode. Blank
   keeps the platform default: Terminal.app, Windows Terminal, or the usual
   Linux emulator hunt. Administrator means a UAC prompt on Windows and a root
   shell in the terminal on macOS and Linux.
 - **Paste, move, rename, and the result is selected for you.** When an
   operation finishes in the folder you're still looking at, what it produced is
-  selected and scrolled into view — pasted and moved files, a renamed item, a
+  selected and scrolled into view: pasted and moved files, a renamed item, a
   new folder, a duplicate, an alias. Previously a paste into a long listing
   gave no sign of where the file landed.
 - **Hidden files are easier to reason about.** With *Show hidden* on, hidden
   entries render dimmed so they read as distinct from your real files. With it
-  off, the status bar quietly reports what's out of sight — "3 hidden ·
-  12.1 KB" — so you know hidden content exists, and how much space it takes,
+  off, the status bar quietly reports what's out of sight, "3 hidden ·
+  12.1 KB", so you know hidden content exists, and how much space it takes,
   without unhiding it.
 - **Diagnostics can take you to the files it talks about.** Settings →
   Diagnostics now shows the full path of the running app, and every row about a
-  location on disk — the app itself, the config folder, the settings file, the
-  metadata database, mpv — has a Reveal button that opens that spot in Ferail
+  location on disk: the app itself, the config folder, the settings file, the
+  metadata database, mpv: has a Reveal button that opens that spot in Ferail
   with the item selected.
 - **Read-only volumes are detected on Windows and Linux.** The status bar says
   "{volume} is read-only" instead of reporting "0 B free", which is true on a
@@ -1368,28 +1368,28 @@ release page).
   or Option+Cmd+Delete on macOS) was missing from the Cmd+K command palette and
   the keyboard-shortcut sheet, so it could only be reached from a menu.
 
-## 0.2.2 — 2026-07-31
+## 0.2.2 - 2026-07-31
 
 First release with a **Windows download**. Also the release that unbroke the
-Windows build — which had been failing to compile on `main` for two weeks
+Windows build, which had been failing to compile on `main` for two weeks
 without anyone noticing, because nothing in CI ever built it.
 
 - **Windows builds are back, and now ship.** A single `IMFMediaEngine::SetMuted`
   call written from a Mac on 2026-07-14 could not compile under the `windows`
-  crate's type inference, and took the whole Windows app down with it. Fixed —
+  crate's type inference, and took the whole Windows app down with it. Fixed,
   and with it the app builds, runs, passes its tests, and screenshots on
   Windows again.
-- **Windows packaging** — `scripts/package-win.ps1` produces a portable ZIP
+- **Windows packaging**: `scripts/package-win.ps1` produces a portable ZIP
   (`Ferail.exe`, the `ferail` CLI, and the licence notices), plus an installer
   with a Start Menu entry and an uninstaller when Inno Setup is present.
   Authenticode signing is wired but this release is **unsigned**, so Windows
-  shows a SmartScreen warning — verify the download instead:
+  shows a SmartScreen warning: verify the download instead:
   `Ferail-0.2.2-win-x64.zip` is SHA-256
   `9993AF0EF53DE617C255BF9EBBA7FF53DFB3EDDC80866FF5D969715A78F30E6B`.
 - **Fixed: the viewer's "Stay on Top" did nothing on Windows.** The toggle never
   reached the OS. It now really does keep the window above other apps.
 - Note that nothing automatically builds Windows yet, so the class of breakage
-  above can still recur — it is caught only by someone building on a Windows
+  above can still recur: it is caught only by someone building on a Windows
   machine.
 - **Fixed: a fresh `git clone` could not build on any platform.** The workspace
   manifest referenced checkouts that only exist on one developer's machine, so
@@ -1399,11 +1399,11 @@ without anyone noticing, because nothing in CI ever built it.
   into every build, which is incompatible with distributing a binary under
   MIT/Apache-2.0. Ferail now vendors that one Apache-2.0 crate with the edge
   removed. Related correction: THIRD-PARTY-NOTICES.md previously said the edge
-  was already gone upstream — it was not; the lockfile that suggested so had
+  was already gone upstream: it was not; the lockfile that suggested so had
   been generated with an unrelated local override active.
 - No user-visible macOS changes.
 
-## 0.2.1 — 2026-07-31
+## 0.2.1 - 2026-07-31
 
 - **Fixed: the 0.2.0 app would not launch on a Mac without Homebrew.** It quit
   immediately with a dyld *"Library not loaded:
@@ -1416,88 +1416,88 @@ without anyone noticing, because nothing in CI ever built it.
 - The macOS app bundle now carries `LICENSE-MIT`, `LICENSE-APACHE` and
   `THIRD-PARTY-NOTICES.md` in `Contents/Resources/licenses`.
 
-## 0.2.0 — 2026-07-30
+## 0.2.0 - 2026-07-30
 
-- **Archive support (compress & extract)** — right-click **Extract** on any
+- **Archive support (compress & extract)**: right-click **Extract** on any
   `.zip`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.gz`, `.bz2`, `.xz`,
   or `.7z`, then **Extract Here** (into the current folder) or **Extract To…**
   (pick a destination). Extraction lands in place when the archive holds a
   single top-level folder, or in a new folder named after the archive
-  otherwise — and it's safe against malicious archive paths (no writing outside
+  otherwise, and it's safe against malicious archive paths (no writing outside
   the destination). **Compress** is now a submenu offering **ZIP**, **7-Zip**,
   and **TAR** (Gzip / Bzip2 / XZ / uncompressed), powered by a new built-in
   archive engine (no more shelling out to `ditto`), so it works the same on
   every platform.
-- **New Archive dialog** — "New Archive…" in the Compress menu opens a dialog to
+- **New Archive dialog**: "New Archive…" in the Compress menu opens a dialog to
   pick the format (ZIP / 7-Zip / TAR.GZ / TAR.BZ2 / TAR.XZ / TAR), the
   compression level (Store / Fast / Normal / Maximum), and an optional password,
   instead of taking the one-click defaults.
-- **Add files to a zip by dropping them in** — drag files from Finder or the file
+- **Add files to a zip by dropping them in**: drag files from Finder or the file
   list onto an open archive to add them in place (ZIP only; formats that can't be
   edited show no drop target). Names already in the archive are reported rather
   than silently duplicated.
-- **Browse inside archives** — right-click a file → **Open as Archive** to open
+- **Browse inside archives**: right-click a file → **Open as Archive** to open
   its contents (like Disk Usage): a real, sortable file list with the usual
-  columns, expandable folders, and a filter box — so a 5000-file archive opens
+  columns, expandable folders, and a filter box, so a 5000-file archive opens
   as one folder to drill into, not 5000 rows. Then **Extract Selected**
   (a selected folder brings its whole subtree) or **Extract All**. It works on
-  anything that *is* an archive underneath, even without the extension —
-  `.docx`, `.xlsx`, `.pptx`, `.jar`, `.apk` — and says so plainly when a file
+  anything that *is* an archive underneath, even without the extension
+  (`.docx`, `.xlsx`, `.pptx`, `.jar`, `.apk`) and says so plainly when a file
   isn't one. Formats that can't be edited in place (tar, 7z) are marked
   read-only. The workbench can also be **popped out into its own window** (and
-  docked back), like Disk Usage — handy for dragging files into an archive with
+  docked back), like Disk Usage: handy for dragging files into an archive with
   Finder open beside it. You can also **drag entries out of an archive** onto a
   folder row or another Ferail window to extract them there (dragging to
   Finder itself is still to come).
-- **Richer 7-Zip descriptions** — `.7z` files now show their file count, root
+- **Richer 7-Zip descriptions**: `.7z` files now show their file count, root
   folder, and whether they're encrypted in the Description column, the same way
   ZIPs already did.
 
-## 0.1.0 — 2026-07-24
+## 0.1.0 - 2026-07-24
 
 First signed & notarized macOS build.
 
-- **Folder contents at a glance** — folders now show their recursive item counts
+- **Folder contents at a glance**: folders now show their recursive item counts
   ("1,204 files · 88 folders") in the Description column.
-- **Easier favorites** — "Add to Favorites" is now in the File menu, and you can
+- **Easier favorites**: "Add to Favorites" is now in the File menu, and you can
   drag a folder straight onto an empty Favorites list (it's a proper drop zone
   now).
-- **Filenames truncate in the middle** — long names in the list keep their start
+- **Filenames truncate in the middle**: long names in the list keep their start
   and their extension visible ("Annual Board Meeting…approved).pdf"), Finder-style,
   instead of losing the end.
-- **Tidier viewer** — the viewer toolbar folds into a "…" menu when the window is
+- **Tidier viewer**: the viewer toolbar folds into a "…" menu when the window is
   too narrow to fit every button.
-- **Fixed:** typing a name into the New Folder / Rename dialogs now works — those
+- **Fixed:** typing a name into the New Folder / Rename dialogs now works: those
   fields were silently ignoring keystrokes.
-- **Fixed:** resizing a column while a folder is still loading now sticks — the
+- **Fixed:** resizing a column while a folder is still loading now sticks: the
   width no longer snapped back while background work was running.
 
-## 2026-07 — More platforms, steadier on slow drives
+## 2026-07 - More platforms, steadier on slow drives
 
-- **Runs on AROS** — Ferail now boots on AROS (aarch64) with menus, previews,
+- **Runs on AROS**: Ferail now boots on AROS (aarch64) with menus, previews,
   and disk usage.
-- **Windows & Linux caught up** — resilient file operations with clear errors
+- **Windows & Linux caught up**: resilient file operations with clear errors
   when a file is busy, OneDrive/Trash/Open-With integration, native video, and
   Finder-style "Eject All" everywhere.
-- **Image previews without macOS** — a built-in thumbnail renderer means previews
+- **Image previews without macOS**: a built-in thumbnail renderer means previews
   work off macOS too.
-- **Calmer on slow media** — spun-down drives and network mounts no longer freeze
+- **Calmer on slow media**: spun-down drives and network mounts no longer freeze
   the window.
 
-## 2026-06 — Viewer, video, search & disk usage
+## 2026-06 - Viewer, video, search & disk usage
 
-- **Media viewer** — images and video with zoom/pan, rotation, slideshow,
+- **Media viewer**: images and video with zoom/pan, rotation, slideshow,
   In/Out cues, one-click enhance, and transparent stacking windows.
 - **Icon (grid) view** and a Finder-style drag with real thumbnails and
   spring-loaded folders.
-- **Find things** — recursive + Spotlight search and a duplicate finder, each in
+- **Find things**: recursive + Spotlight search and a duplicate finder, each in
   its own tab.
-- **Disk Usage** — treemap with a Top-N panel and HTML export.
-- **Richer previews** — inline text/code with syntax highlighting and formatted
+- **Disk Usage**: treemap with a Top-N panel and HTML export.
+- **Richer previews**: inline text/code with syntax highlighting and formatted
   markdown.
 - **Command palette** (Cmd+K) and a keyboard-shortcuts overlay.
 
-## 2026-05 — The core explorer
+## 2026-05 - The core explorer
 
 - Rebuilt on a new rendering foundation, then filled in the essentials:
   **multi-window tabs, a curated Favorites sidebar, sortable columns, copy /

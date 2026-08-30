@@ -35,7 +35,7 @@ use crate::tasks::TaskKind;
 
 /// A batch of confirmed groups, **fully built on the worker thread**:
 /// table rows, their paths, and the retained panel model, so the UI
-/// thread only appends — never stats a file (prime directive).
+/// thread only appends, never stats a file (prime directive).
 #[derive(Default)]
 pub(super) struct DupeBatch {
     /// Ready-to-append table rows.
@@ -237,7 +237,7 @@ pub(super) fn member_row(
     Some((entry, path.to_path_buf()))
 }
 
-/// The member's location with a trailing " · hard link" / " · clone — no
+/// The member's location with a trailing " · hard link" / " · clone, no
 /// extra space" note when it reclaims nothing, or the bare location for a
 /// storage-owning copy. Shared by the row description and the panel's
 /// member line.
@@ -250,7 +250,7 @@ pub(super) fn location_with_note(
         tr!("{location} \u{00B7} hard link", location = location)
     } else if is_clone {
         tr!(
-            "{location} \u{00B7} clone \u{2014} no extra space",
+            "{location} \u{00B7} clone, no extra space",
             location = location
         )
     } else {
@@ -296,7 +296,7 @@ impl Shell {
         // The directory listing's selection must not survive into the
         // result surface: the dupe panel reuses `tab.selection` as its
         // marked-for-trash set, so rows selected in the folder would
-        // arrive pre-checked — one click on "Trash N marked" could
+        // arrive pre-checked, one click on "Trash N marked" could
         // trash a file the user never marked in the panel.
         self.tabs[idx].clear_selection();
         self.tabs[idx].anchor = None;
@@ -776,7 +776,7 @@ impl Shell {
         );
     }
 
-    /// Apply one worker-built batch. Pure data shuffling — the rows and
+    /// Apply one worker-built batch. Pure data shuffling: the rows and
     /// the panel model were already built off the UI thread, so this only
     /// registers node ids, bumps the running totals, and appends.
     fn apply_dupe_batch_in_tab(
@@ -875,7 +875,7 @@ impl Shell {
         });
         self.refresh_file_list_selection_in_tab(idx, cx);
         // Land any deferred selection (keyboard / screenshot seed) once
-        // its row has streamed in — same as the directory load path.
+        // its row has streamed in, same as the directory load path.
         self.apply_pending_select_row_in_tab(idx, cx);
         if visible {
             cx.notify();

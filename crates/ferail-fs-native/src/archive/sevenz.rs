@@ -1,4 +1,4 @@
-//! 7-Zip read path (read/extract only — no write in v1). A 7z file keeps its
+//! 7-Zip read path (read/extract only, no write in v1). A 7z file keeps its
 //! file list in a header/footer, so the TOC is cheap to read without inflating
 //! payloads. Header encryption means the list itself can require a password; we
 //! surface that as [`ArchiveError::PasswordRequired`] so the workbench can

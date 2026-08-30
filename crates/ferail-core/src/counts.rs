@@ -1,23 +1,23 @@
-//! Display formatting for counts of things — files, folders, items,
+//! Display formatting for counts of things: files, folders, items,
 //! entries, matches, duplicate groups.
 //!
 //! Ferail shows counts that routinely run into the millions (a disk-usage
 //! scan reports every file it walked), and `1104619` is unreadable at a
 //! glance. Every user-visible count is therefore grouped with `.` every
-//! three digits — `1.104.619` — the separator the UI settled on for the
+//! three digits, `1.104.619`: the separator the UI settled on for the
 //! status bar, applied everywhere so the same number reads the same way
 //! in the footer, a scan header, a toast, and a task row.
 //!
 //! Two entry points, because count strings are built two ways:
 //!
 //! - [`format_count`] formats one number for a **named placeholder**:
-//!   `tr!("{files} files", files = counts::format_count(n))`. Prefer it —
+//!   `tr!("{files} files", files = counts::format_count(n))`. Prefer it:
 //!   it groups exactly the number you meant and nothing else.
 //! - [`group_digits`] is a **post-translation pass** over a finished
 //!   label, for `trn!` whose plural `{n}` is substituted implicitly and
 //!   so cannot take a pre-formatted string. It groups every run of four
 //!   or more digits in the text, so only pass it a short count phrase
-//!   (optionally carrying a humanized size) — never a string holding a
+//!   (optionally carrying a humanized size), never a string holding a
 //!   path, file name, hash, year, or version, whose digits it would
 //!   happily mangle.
 
@@ -44,7 +44,7 @@ pub fn format_count(n: u64) -> String {
 /// entirely locale-driven. Idempotent: text that is already grouped has
 /// no digit run longer than three and passes through untouched.
 ///
-/// Only for short count phrases — see the module docs for what not to
+/// Only for short count phrases: see the module docs for what not to
 /// feed it.
 pub fn group_digits(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + text.len() / 3);

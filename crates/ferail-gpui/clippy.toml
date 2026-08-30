@@ -1,9 +1,9 @@
 # Prime Directive tripwires (docs/ARCHITECTURE.md#prime-directive).
 #
 # This file lives in the UI crate (not the workspace root) on purpose:
-# clippy resolves its config per-crate, so only ferail-gpui — where
+# clippy resolves its config per-crate, so only ferail-gpui - where
 # these calls can freeze every open window when the target sits on a
-# spun-down external drive or a network mount — sees the ban. Worker
+# spun-down external drive or a network mount - sees the ban. Worker
 # crates (ferail-fs-native, ferail-shell-mac, …) do blocking I/O by
 # design and stay unrestricted. The lint is DENIED via this crate's
 # Cargo.toml [lints.clippy].

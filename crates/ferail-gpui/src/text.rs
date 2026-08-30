@@ -1,7 +1,7 @@
 //! App typography. The single source of truth for text sizes is
 //! [`ferail_design::TextTokens::BASE`]; this module applies those token
-//! sizes to GPUI elements **rem-relative**, so UI zoom — the window rem
-//! size, driven by [`crate::shell::Shell::ui_scale`] — scales every text
+//! sizes to GPUI elements **rem-relative**, so UI zoom: the window rem
+//! size, driven by [`crate::shell::Shell::ui_scale`]: scales every text
 //! tier together.
 //!
 //! Render code calls the semantic tier methods ([`TextScale::text_scale_xs`],
@@ -12,7 +12,7 @@
 //!
 //! Glyph affordances whose size is tied to a fixed-size box (disclosure
 //! triangles, the favorites `+`, the viewer seek grip) and the code-block
-//! preview font stay on explicit `px(..)` — they are not part of the UI
+//! preview font stay on explicit `px(..)`: they are not part of the UI
 //! type scale and must not drift with it.
 
 use ferail_design::TextTokens;
@@ -20,7 +20,7 @@ use gpui::{SharedString, Styled, rems};
 
 pub use ferail_design::TextSize;
 
-/// Baseline rem the token px values are authored against — gpui's default
+/// Baseline rem the token px values are authored against: gpui's default
 /// rem size and gpui-component's default `theme.font_size`. Zoom works by
 /// scaling that base: `Shell::apply_ui_zoom` sets
 /// `theme.font_size = BASE_REM_PX * ui_scale`, and gpui-component's `Root`
@@ -37,7 +37,7 @@ fn tier_rems(size: TextSize) -> gpui::Rems {
 /// scale. Blanket-implemented, so it's available anywhere gpui's raw
 /// `text_xs` / `text_sm` used to be.
 pub trait TextScale: Styled + Sized {
-    /// Set the font size from a design-token tier (rem-relative — scales
+    /// Set the font size from a design-token tier (rem-relative: scales
     /// with the window rem size / UI zoom).
     fn text_token(self, size: TextSize) -> Self {
         self.text_size(tier_rems(size))
@@ -46,7 +46,7 @@ pub trait TextScale: Styled + Sized {
     fn text_scale_xxs(self) -> Self {
         self.text_token(TextSize::Xxs)
     }
-    /// Body and metadata — the workhorse tier (`TextSize::Xs`).
+    /// Body and metadata: the workhorse tier (`TextSize::Xs`).
     fn text_scale_xs(self) -> Self {
         self.text_token(TextSize::Xs)
     }
@@ -77,7 +77,7 @@ impl<T: Styled + Sized> TextScale for T {}
 ///
 /// Use this for raw `gpui::svg()` / `img()` icons. gpui-component's own
 /// [`gpui_component::Icon`] already inherits the (rem-scaled) ambient
-/// font size *unless* given an explicit `px` size via `with_size` — in
+/// font size *unless* given an explicit `px` size via `with_size`: in
 /// that one case, pre-multiply by `ui_scale` instead.
 ///
 /// Not for: grid thumbnails (their own icon-size axis), glyph
@@ -98,7 +98,7 @@ impl<T: Styled + Sized> IconScale for T {}
 /// "Screen Recording 2026-06-12 at 22.20.44.mov" reads as
 /// "Screen Recording 2026-…22.20.44.mov" rather than losing ".mov" off
 /// the right edge. Truncation is pixel-accurate (gpui's
-/// `TextOverflow::TruncateMiddle`), measured by the text renderer — no
+/// `TextOverflow::TruncateMiddle`), measured by the text renderer, no
 /// per-row allocation or measurement on the paint path, so it's safe in
 /// the dense list. Use for filename cells; end-truncation (`.truncate()`)
 /// still fits paths and free-form text where the tail is expendable.
@@ -158,9 +158,9 @@ pub fn elide_label(text: &str, max_chars: usize) -> SharedString {
 /// gpui-component's theme defaults to `.SystemUIFont`. macOS and Windows
 /// resolve that natively; gpui's Linux text system maps it to "IBM Plex
 /// Sans" (the family Zed bundles, which Ferail does not), so on a stock
-/// Linux box the lookup misses and gpui walks its fallback stack —
+/// Linux box the lookup misses and gpui walks its fallback stack,
 /// `.ZedMono`, `.ZedSans`, Helvetica, Segoe UI, Ubuntu, Adwaita Sans,
-/// Cantarell, Noto Sans, … — until something like DejaVu Sans answers. gpui
+/// Cantarell, Noto Sans, …, until something like DejaVu Sans answers. gpui
 /// caches the miss but re-derives an `anyhow!` error from it on **every**
 /// `resolve_font`, i.e. per text run per frame: nine failed lookups, nine
 /// error allocations (and, before `obs::init` disabled it, nine backtrace
@@ -243,7 +243,7 @@ pub fn install_platform_font_families(cx: &mut gpui::App) {
 /// Is `family` a real, loadable face on this machine? `resolve_font` never
 /// fails (it falls back), so ask which family the resolved id belongs to
 /// and compare. Virtual names (`.SystemUIFont`) count as installed when the
-/// face they map to exists — the cache maps the virtual name itself to the
+/// face they map to exists: the cache maps the virtual name itself to the
 /// id, so the round trip returns the virtual name.
 #[cfg(target_os = "linux")]
 fn font_family_installed(text_system: &gpui::TextSystem, family: &str) -> bool {

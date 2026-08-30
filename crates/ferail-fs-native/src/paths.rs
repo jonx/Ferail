@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 /// Convert a raw on-disk filename *leaf* to the form the user should see.
 ///
-/// macOS inherits two path separators — the colon (`:`) from classic Mac OS /
+/// macOS inherits two path separators: the colon (`:`) from classic Mac OS /
 /// HFS+ and the slash (`/`) from Unix / NeXTSTEP. The POSIX layer stores a
 /// colon *inside* a name component where Finder shows a slash, so a file
 /// `ls` reports as `a:b` is presented by Finder as `a/b`. We mirror Finder:
@@ -19,7 +19,7 @@ use std::path::PathBuf;
 /// user-facing surface shows the slash. See
 /// <https://www.osnews.com/story/145356/a-tale-of-two-path-separators/>.
 ///
-/// Operates on a single leaf, never a full path — the caller has already split
+/// Operates on a single leaf, never a full path: the caller has already split
 /// off the component. Returns `Cow::Borrowed` when nothing changes (the common
 /// case), so the no-alloc-on-paint contract holds for clean names. Other
 /// platforms are the identity today; this is the seam where future
@@ -66,14 +66,14 @@ pub fn display_path(path: &std::path::Path) -> String {
 ///
 /// On Windows this catches the three classic footguns:
 /// - **Reserved characters** `< > : " | ? *`, the separators `\` `/`, and
-///   control chars — the filesystem rejects them outright.
+///   control chars: the filesystem rejects them outright.
 /// - **Reserved DOS device names** (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
 ///   `LPT1`–`LPT9`), with or without an extension (`CON.txt` is reserved too):
 ///   creating one either fails or yields a handle to the device.
 /// - **Trailing dot or space**: Windows strips these, so `report.` silently
 ///   becomes `report` and `data ` becomes an inaccessible sibling.
 ///
-/// Off Windows this is the identity (`Ok(())`) — POSIX only forbids `/` and NUL
+/// Off Windows this is the identity (`Ok(())`): POSIX only forbids `/` and NUL
 /// in a leaf, and the caller has already split off the component. Operates on a
 /// single leaf, never a full path.
 pub fn validate_leaf(name: &str) -> Result<(), String> {
@@ -102,7 +102,7 @@ pub fn validate_leaf(name: &str) -> Result<(), String> {
 }
 
 /// Whether `stem` (a filename's base, before any extension) is a reserved DOS
-/// device name — case-insensitive `CON`/`PRN`/`AUX`/`NUL` or `COM`/`LPT`
+/// device name: case-insensitive `CON`/`PRN`/`AUX`/`NUL` or `COM`/`LPT`
 /// followed by a single `1`–`9`.
 #[cfg(windows)]
 fn is_reserved_dos_name(stem: &str) -> bool {
@@ -124,7 +124,7 @@ fn is_reserved_dos_name(stem: &str) -> bool {
 /// to the bytes to write on disk.
 ///
 /// On macOS a user who types `/` in a rename / New-Folder field means the
-/// Finder-displayed slash, which is stored as a colon — exactly what Finder
+/// Finder-displayed slash, which is stored as a colon, exactly what Finder
 /// does. This also removes a footgun: without the swap, a typed `/` reaches
 /// `rename(2)` / `mkdir(2)` as a real separator and either errors (parent
 /// component missing) or silently retargets an existing subdirectory.
@@ -174,13 +174,13 @@ pub struct WellKnownLocation {
 /// folders (typically Desktop / Documents / Pictures) into the OneDrive
 /// tree while leaving others (Downloads / Music / Videos) in the local
 /// profile, and a leftover local copy of a redirected folder often still
-/// exists — so "where is my Documents?" genuinely has two answers. This
+/// exists, so "where is my Documents?" genuinely has two answers. This
 /// lets the user pin which one the sidebar points at.
 ///
 /// Has no effect off Windows (no Known-Folder-Move there).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpecialFolderMode {
-    /// Whatever the shell reports via `SHGetKnownFolderPath` — OneDrive for
+    /// Whatever the shell reports via `SHGetKnownFolderPath`: OneDrive for
     /// the redirected folders, local for the rest. The correct default.
     #[default]
     Auto,
@@ -214,7 +214,7 @@ impl SpecialFolderMode {
     }
 }
 
-/// The sidebar Locations in `Auto` mode — the standard entry point. Equivalent
+/// The sidebar Locations in `Auto` mode: the standard entry point. Equivalent
 /// to [`well_known_locations_for`]`(SpecialFolderMode::Auto)`.
 pub fn well_known_locations() -> Vec<WellKnownLocation> {
     well_known_locations_for(SpecialFolderMode::default())
@@ -225,7 +225,7 @@ pub fn well_known_locations() -> Vec<WellKnownLocation> {
 /// macOS / Unix: `home_dir()` joined with the standard subfolder name (or
 /// `home_dir()` itself for "Home"). `mode` is Windows-only and ignored here.
 /// AROS: the Unix "home joined with Desktop/Documents/Downloads" scheme does
-/// not apply — those drawers do not exist on a stock AROS volume, and
+/// not apply: those drawers do not exist on a stock AROS volume, and
 /// navigating into a missing path currently trips a `posixc.library` open()
 /// fault. List the always-present system roots plus any standard `SYS:`
 /// drawers that actually exist, filtered so a dead row can never be clicked.
@@ -240,7 +240,7 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         ("Utilities", "SYS:Utilities", "icons/nav/folder.svg"),
         ("Tools", "SYS:Tools", "icons/nav/folder.svg"),
         ("Storage", "SYS:Storage", "icons/nav/folder.svg"),
-        // The boot volume's Amiga Trashcan drawer — appears once something
+        // The boot volume's Amiga Trashcan drawer: appears once something
         // has been trashed (Move to Trash creates it). Per-volume trashcans
         // for other volumes are reachable from those volumes' roots.
         ("Trash", "SYS:Trashcan", "icons/nav/trash.svg"),
@@ -261,7 +261,7 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
 /// Used to decide whether an optional sidebar row is worth drawing at all, so
 /// a location that resolves to an empty-looking folder can be dropped instead
 /// of misleading the user. Reads one directory and short-circuits on the first
-/// hit, and is only ever reached from [`well_known_locations_for`] — i.e. the
+/// hit, and is only ever reached from [`well_known_locations_for`], i.e. the
 /// startup / settings-change resolve, never render.
 #[cfg(target_os = "macos")]
 fn dir_has_visible_entry(dir: &std::path::Path) -> bool {
@@ -354,7 +354,7 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         .map(|&(label, sub, icon)| WellKnownLocation {
             label,
             // An *absolute* `sub` (macOS `/Applications`) deliberately escapes
-            // the home base — `Path::join` discards the base when the joined
+            // the home base: `Path::join` discards the base when the joined
             // component is absolute. Do not "fix" it to a relative name.
             path: sub.map_or_else(|| home.clone(), |s| home.join(s)),
             icon,
@@ -362,11 +362,11 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         .collect();
 
     // `~/Applications` (macOS): a genuinely separate app folder that Finder's
-    // sidebar hides — per-user installs plus the Chrome/Edge PWA shims. Shown
+    // sidebar hides, per-user installs plus the Chrome/Edge PWA shims. Shown
     // right under the system row, but only when it holds something the user
     // would recognise: on many Macs it is absent, or contains nothing but
     // `.localized` and would be a junk row. Reads one directory, on the same
-    // startup / settings-change path as the iCloud probe below — never render.
+    // startup / settings-change path as the iCloud probe below, never render.
     #[cfg(target_os = "macos")]
     {
         let user_apps = home.join("Applications");
@@ -387,7 +387,7 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
     }
 
     // iCloud Drive (macOS): the ubiquity container root. Only surfaced
-    // when it actually exists — a user with iCloud Drive disabled has no
+    // when it actually exists: a user with iCloud Drive disabled has no
     // such folder, and an unconditional dead row would mislead. This
     // resolves once at startup (cached in `special_folders`), never on
     // the render/hit-test path, so the single `exists()` is Prime-
@@ -413,7 +413,7 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
 ///
 /// `mode` picks which root a redirected folder points at (see
 /// [`SpecialFolderMode`]). `Local` / `OneDrive` only override the shell
-/// answer when their preferred path *exists on disk* — otherwise they fall
+/// answer when their preferred path *exists on disk*, otherwise they fall
 /// back to the shell path, so the sidebar never shows an entry that opens
 /// to nothing. The shell answer itself is the final fallback to the literal
 /// `home\<sub>` when the folder can't be resolved at all.
@@ -427,7 +427,7 @@ pub fn well_known_locations_for(mode: SpecialFolderMode) -> Vec<WellKnownLocatio
     let home = home_dir();
     // OneDrive root for `OneDrive` mode. `OneDriveCommercial` is the
     // work/school sync root, `OneDrive` the primary one of whichever kind,
-    // `OneDriveConsumer` the personal one — prefer the most specific that's
+    // `OneDriveConsumer` the personal one: prefer the most specific that's
     // set. `None` when the machine has no OneDrive (then `OneDrive` mode
     // simply behaves like `Auto`).
     let onedrive_root = std::env::var_os("OneDriveCommercial")
@@ -436,7 +436,7 @@ pub fn well_known_locations_for(mode: SpecialFolderMode) -> Vec<WellKnownLocatio
         .map(PathBuf::from);
 
     let mut out = vec![WellKnownLocation {
-        // Home is the profile dir itself — never redirected, so `mode`
+        // Home is the profile dir itself, never redirected, so `mode`
         // doesn't touch it.
         label: ferail_core::msgid!("Home"),
         path: home.clone(),
@@ -499,7 +499,7 @@ pub fn well_known_locations_for(mode: SpecialFolderMode) -> Vec<WellKnownLocatio
 
 /// Return `preferred` when it resolves to an existing directory, else
 /// `fallback`. The single `is_dir` stat here is why resolution is computed
-/// off the render path (once at startup / on a settings change) and cached —
+/// off the render path (once at startup / on a settings change) and cached:
 /// `render` must never stat (the Prime Directive's OneDrive-placeholder rule).
 #[cfg(windows)]
 fn prefer_if_exists(preferred: PathBuf, fallback: PathBuf) -> PathBuf {
@@ -669,7 +669,7 @@ mod mac_tests {
     use super::*;
 
     /// The sidebar's "Applications" must be the system-wide `/Applications`,
-    /// like Finder's — not `~/Applications`, which on most Macs holds only PWA
+    /// like Finder's, not `~/Applications`, which on most Macs holds only PWA
     /// shims and would make the row look near-empty. Regression guard: the row
     /// is spelled as an absolute join, which reads like a typo.
     #[test]
@@ -684,7 +684,7 @@ mod mac_tests {
 
     /// `~/Applications` gets its own row, directly after the system one, and
     /// only when it holds a visible entry. Skipped on a machine that has no
-    /// such folder (or an empty one) — there the absence *is* the contract.
+    /// such folder (or an empty one), there the absence *is* the contract.
     #[test]
     fn user_applications_row_is_optional_and_adjacent() {
         let locs = well_known_locations();

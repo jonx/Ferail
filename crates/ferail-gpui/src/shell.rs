@@ -1,4 +1,4 @@
-//! File-manager shell — main window content during Phases 4+.
+//! File-manager shell: main window content during Phases 4+.
 //!
 //! Phase 4.a: holds `current_dir`, renders a clickable breadcrumb at
 //! the top of the main pane, sidebar entries are still placeholder.
@@ -97,7 +97,7 @@ enum FileOpSuccessToast {
     /// toasting every time.
     IfSurfaced(String),
     /// Always confirm, however fast it finished. For operations whose result
-    /// is not visible where the user is looking — extraction writes its output
+    /// is not visible where the user is looking: extraction writes its output
     /// into the destination folder, which may not be the folder on screen, so
     /// "did that work?" has no on-screen answer without this.
     Always(String),
@@ -158,14 +158,14 @@ pub enum UndoOp {
     /// register [`UndoOp::MoveBackCross`] instead.
     MoveBack(Vec<(PathBuf, PathBuf)>),
     /// Undo a cross-volume move: copy each `(original, moved)` pair's
-    /// `moved` back to `original` (engine copy — same fidelity as the
+    /// `moved` back to `original` (engine copy, same fidelity as the
     /// forward path), then delete `moved` only once its copy-back fully
     /// landed. Registered when the move replaced nothing (same
     /// eligibility spirit as `MoveBack`); a reoccupied `original`
     /// refuses per pair and keeps `moved` intact.
     MoveBackCross(Vec<(PathBuf, PathBuf)>),
     /// Undo a copy: delete the items it created. Only registered when
-    /// the copy replaced nothing — undoing a replace would delete the
+    /// the copy replaced nothing, undoing a replace would delete the
     /// sole remaining version.
     RemoveCreated(Vec<PathBuf>),
     /// Undo a move-to-trash: rename each `(original, trashed)` pair's
@@ -176,13 +176,13 @@ pub enum UndoOp {
     /// Undo a bulk rename: rename each `(original, renamed)` pair's
     /// renamed location back to its original
     /// (docs/features/BULK_RENAME.md). Only pairs that actually renamed
-    /// register — failed items never enter the record.
+    /// register: failed items never enter the record.
     RenameBatch(Vec<(PathBuf, PathBuf)>),
 }
 
 impl UndoOp {
     /// Apply filesystem-only variants. Favorites variants return
-    /// `Err` here — the caller routes them through Shell + cx.
+    /// `Err` here: the caller routes them through Shell + cx.
     fn apply_fs(&self) -> Result<(), String> {
         match self {
             UndoOp::Rename { current, original } => {
@@ -247,7 +247,7 @@ impl UndoOp {
             }
             UndoOp::RenameBatch(pairs) => {
                 // Reverse through the same chain/cycle-aware worker the
-                // forward pass used — renumbering batches rename through
+                // forward pass used, renumbering batches rename through
                 // each other's names, so a naive in-order loop would trip
                 // its own exists-guard. `rename_guarded` inside keeps
                 // MoveBack's "don't clobber something new" contract per
@@ -282,7 +282,7 @@ impl UndoOp {
         }
     }
 
-    /// Parent directories whose listings change when this op applies —
+    /// Parent directories whose listings change when this op applies:
     /// the reload set after a successful undo.
     fn affected_parents(&self) -> Vec<PathBuf> {
         let mut out: Vec<PathBuf> = Vec::new();
@@ -330,7 +330,7 @@ impl UndoOp {
 }
 
 /// Undo one cross-volume moved item: copy `moved` back so it lands at
-/// `original`, then — only once the copy-back fully succeeded — delete
+/// `original`, then, only once the copy-back fully succeeded, delete
 /// `moved`. Synchronous filesystem work; runs inside `apply_fs`'s
 /// background context, never the UI thread.
 ///
@@ -372,7 +372,7 @@ fn copy_back_moved_item(original: &Path, moved: &Path) -> Result<(), String> {
         return Err(f.to_string());
     }
     let Some((_, landed)) = out.created.first() else {
-        // Skip policy fired — the copy-back destination is occupied.
+        // Skip policy fired: the copy-back destination is occupied.
         let occupied = dest_dir.join(moved.file_name().unwrap_or_default());
         return Err(tr!(
             "{path} exists again; not overwriting it",
@@ -389,13 +389,13 @@ fn copy_back_moved_item(original: &Path, moved: &Path) -> Result<(), String> {
             return Err(format!("{}: {e}", landed.display()));
         }
     }
-    // Copy-back landed — delete the moved copy (symlink-safe, same
+    // Copy-back landed: delete the moved copy (symlink-safe, same
     // removal the forward cross-volume move uses).
     remove_file_or_tree(moved)
 }
 
 /// Symlink-safe removal of one path: a real directory removes
-/// recursively, anything else (file or symlink — never followed)
+/// recursively, anything else (file or symlink, never followed)
 /// removes as a file. Mirrors the forward move's source deletion.
 fn remove_file_or_tree(path: &Path) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -424,7 +424,7 @@ fn file_op_error_notification(
 }
 
 /// Best-effort classification of a stringly-typed error message (the mutation
-/// surfaces that still return `Result<_, String>` — duplicate, compress,
+/// surfaces that still return `Result<_, String>`: duplicate, compress,
 /// alias, rename) into a [`FileOpErrorKind`], so every surface shares the one
 /// advice table the structured engine path uses.
 fn classify_error_text(err: &str) -> ferail_fs_native::file_ops::FileOpErrorKind {
@@ -465,7 +465,7 @@ fn classify_error_text(err: &str) -> ferail_fs_native::file_ops::FileOpErrorKind
     }
 }
 
-/// The most actionable failure kind in a batch — the one whose advice we show
+/// The most actionable failure kind in a batch: the one whose advice we show
 /// and whose retry affordance (elevation / who's-locking) we offer. Permission
 /// and lock failures win because the user can do something about them.
 fn dominant_failure_kind(
@@ -530,7 +530,7 @@ pub(crate) fn file_op_failure_report(
     for e in failed.iter().take(SHOW) {
         msg.push('\n');
         msg.push_str(&tr!(
-            "\u{2022} {item} \u{2014} {reason}",
+            "\u{2022} {item}: {reason}",
             item = e.item_label(),
             reason = crate::i18n::tr_static(e.kind.summary())
         ));
@@ -551,7 +551,7 @@ pub(crate) fn file_op_failure_report(
 }
 
 /// An error notification that shows a one-line headline by default and can be
-/// expanded to reveal the full message — so a long failure (a native error with
+/// expanded to reveal the full message, so a long failure (a native error with
 /// a path and a sentence of detail) is legible, not clipped to "it failed". A
 /// **Copy** button always puts the *whole* message on the clipboard, handy for
 /// pasting into a bug report. Both controls also keep the toast from
@@ -574,7 +574,7 @@ pub(crate) fn error_notification(message: String) -> gpui_component::notificatio
             let is_expanded = expanded.get();
             let mut col = v_flex().gap_1().pt_1();
 
-            // The full, untruncated message — only once the user expands it.
+            // The full, untruncated message, only once the user expands it.
             if has_more && is_expanded {
                 col = col.child(
                     div()
@@ -620,7 +620,7 @@ pub(crate) fn error_notification(message: String) -> gpui_component::notificatio
 
 /// Headline for an error toast: the first line, capped so a long path or
 /// sentence doesn't blow the toast up before the user chooses to expand it.
-/// Returns the summary and whether anything was hidden — i.e. whether to offer
+/// Returns the summary and whether anything was hidden, i.e. whether to offer
 /// a **Details** toggle at all (short, single-line errors need none).
 fn collapse_error_summary(message: &str) -> (String, bool) {
     const MAX: usize = 140;
@@ -647,15 +647,15 @@ pub(crate) struct TransferRetry {
     pub dest: PathBuf,
     /// The *resolved* mode (never `Auto`), so the retry behaves identically.
     pub mode: file_ops::TransferMode,
-    /// At least one failure is a bare permission denial — elevation may help.
+    /// At least one failure is a bare permission denial: elevation may help.
     pub elevation_recoverable: bool,
-    /// The exact paths that failed as [`FileOpErrorKind::Locked`] (capped) —
+    /// The exact paths that failed as [`FileOpErrorKind::Locked`] (capped):
     /// the ones "What's using it?" diagnoses via the platform lock lookup.
     pub locked: Vec<PathBuf>,
 }
 
 /// The transparent failure toast: the per-item "N of M · why" summary plus
-/// actions to cope — **Copy** (raw detail → clipboard for a bug report),
+/// actions to cope: **Copy** (raw detail → clipboard for a bug report),
 /// in-process **Retry** of the failed items, and, when a permission failure
 /// could be fixed by elevating and the platform supports it, **Retry as
 /// administrator…**. Setting `.action` also keeps the toast from auto-hiding.
@@ -776,7 +776,7 @@ pub(crate) fn transfer_failure_notification(
 #[derive(Clone)]
 pub(crate) struct TrashRetry {
     pub shell: WeakEntity<Shell>,
-    /// Just the *permission-denied* items — the only class elevation fixes.
+    /// Just the *permission-denied* items: the only class elevation fixes.
     /// Empty when nothing is elevation-recoverable (then no admin button).
     pub sources: Vec<PathBuf>,
     /// `false` = move to the user's Trash; `true` = delete permanently.
@@ -787,7 +787,7 @@ pub(crate) struct TrashRetry {
 /// permission denial and the platform can elevate, it offers a primary
 /// **"Move to Trash / Delete as administrator…"** button (re-runs just those
 /// items as root) plus a **Copy** of the full detail. Otherwise it falls back
-/// to the plain expandable/copyable [`error_notification`] — there's no
+/// to the plain expandable/copyable [`error_notification`]: there's no
 /// elevated recourse for a locked file or a vanished path.
 pub(crate) fn trash_failure_notification(
     headline: String,
@@ -818,7 +818,7 @@ pub(crate) fn trash_failure_notification(
                 let _ = r.shell.update(cx, |shell, cx| {
                     shell.retry_trash_elevated(r.sources.clone(), r.delete, window, cx);
                 });
-                // Retire this failure toast — the elevated retry posts its own
+                // Retire this failure toast: the elevated retry posts its own
                 // result toast (success / partial / cancelled), so leaving this
                 // one up would just stack a stale dialog the user must close.
                 note.dismiss(window, cx);
@@ -877,7 +877,7 @@ fn wsl_resolved_target_is_dir(path: &Path) -> bool {
 
 const UNDO_STACK_CAP: usize = 20;
 
-/// Key-context name for the Shell's outer container — same convention
+/// Key-context name for the Shell's outer container, same convention
 /// gpui-component uses (e.g. `Root` / `Input`). The keymap module
 /// drives every binding off `ferail_core::commands` as of Harvest
 /// Stage 3; SHELL_CONTEXT gates them to the file-pane focus.
@@ -885,7 +885,7 @@ pub const SHELL_CONTEXT: &str = "Shell";
 
 /// Phase 10: live System-Appearance follow. The macOS observer in
 /// `crate::platform_shell::start_system_theme_observer` runs on the main
-/// thread but has no `&mut App` — it can't call `Theme::change` itself.
+/// thread but has no `&mut App`: it can't call `Theme::change` itself.
 /// Instead it pushes the latest dark-mode bool here; Shell::render
 /// consumes the pending value (if any) and calls `Theme::change`
 /// before painting. Single-digit-millisecond lag at worst.
@@ -931,7 +931,7 @@ pub struct Shell {
     /// Open tabs in this window. Always non-empty; closing the last
     /// tab is rejected. Each tab owns its own `Entity<TableState>`,
     /// its own enumeration generation/cancel/task, and its own
-    /// last-error / pending-select state — so tab-switching is
+    /// last-error / pending-select state, so tab-switching is
     /// instant and an inactive tab's enumeration keeps streaming.
     pub tabs: Vec<Tab>,
     /// Index of the active tab in `tabs`.
@@ -940,7 +940,7 @@ pub struct Shell {
     /// against `SHELL_CONTEXT` only fire when this handle (or one of
     /// its children) holds focus.
     pub focus_handle: FocusHandle,
-    /// When true, dotfiles are shown in the list. Per-window today —
+    /// When true, dotfiles are shown in the list. Per-window today:
     /// future preference may make it per-tab.
     pub show_hidden: bool,
     /// Row index the user most recently right-clicked. Actions
@@ -974,7 +974,7 @@ pub struct Shell {
     /// Off-thread-warmed child-folder lists per breadcrumb segment path,
     /// backing each segment's "Go to Subfolder" submenu. `None` == an
     /// enumeration is in flight (show "Loading…"); `Some(vec)` == done
-    /// (possibly empty). Never `read_dir` on the menu/render path — the
+    /// (possibly empty). Never `read_dir` on the menu/render path: the
     /// Prime Directive; the submenu reads this cache only.
     pub breadcrumb_children: BreadcrumbChildren,
     /// Spring-load dwell tracker: `(row_ix, first-hover time)` for a
@@ -992,7 +992,7 @@ pub struct Shell {
     /// CLI-injected status-bar progress override
     /// (`--simulate-progress`). `Some(_)` keeps the strip visible
     /// at that fraction (negative = indeterminate) regardless of
-    /// `tasks` state — useful for screenshots.
+    /// `tasks` state: useful for screenshots.
     pub simulated_progress: Option<f32>,
     /// CLI-injected status-bar stats segment (`--simulate-stats`):
     /// renders a fixed "up · CPU · MEM · redraws/s" label so screenshots
@@ -1020,7 +1020,7 @@ pub struct Shell {
         crate::inline_edit::InlineEditModel<crate::inline_edit::FileNameEditTarget>,
     pub inline_name_input: Entity<InputState>,
     /// Stage 9.b: keyboard-shortcuts help overlay. `Some(filter)`
-    /// while visible — the string is the live filter text shown in
+    /// while visible: the string is the live filter text shown in
     /// the modal's search input.
     pub shortcuts_help_filter: Option<String>,
     /// Upstream command-palette state: owns query, highlight, keyboard
@@ -1037,7 +1037,7 @@ pub struct Shell {
     pub private_toggle_bounds: Bounds<Pixels>,
     /// True while that track is being scrubbed. Held on the Shell rather
     /// than the track element so the drag keeps following the cursor after
-    /// it leaves the 96-px bar — the same reason the viewer's adjustment
+    /// it leaves the 96-px bar: the same reason the viewer's adjustment
     /// sliders track their drag at panel level.
     pub icon_size_dragging: bool,
     /// Painted bounds for the two Similar Images criteria tracks. Like the
@@ -1082,10 +1082,10 @@ pub struct Shell {
     /// horizontally when there are more open tabs than fit the window.
     /// The chevron arrows in `Shell::tabstrip` page it; trackpad /
     /// shift-wheel scrolling rides `overflow_x_scroll` directly.
-    /// Persistent across renders so the position — and the measured
-    /// `max_offset` the arrows read — survive frame to frame.
+    /// Persistent across renders so the position, and the measured
+    /// `max_offset` the arrows read: survive frame to frame.
     pub tab_scroll: ScrollHandle,
-    /// Path the preview pane showed last frame — the selection-change
+    /// Path the preview pane showed last frame: the selection-change
     /// edge detector for the scroll reset above.
     pub preview_scroll_path: Option<PathBuf>,
     /// UI zoom factor (Stage 9.b.5). 1.0 = default; bumped by Cmd+=
@@ -1123,7 +1123,7 @@ pub struct Shell {
     /// True while a trailing splitter-width save is queued. The
     /// on_resize callback fires per drag tick; rather than write on each
     /// (and risk dropping the final value), the first tick arms a
-    /// deferred write that reads the latest widths when it fires —
+    /// deferred write that reads the latest widths when it fires,
     /// guaranteeing the width at drag-end persists. See
     /// `schedule_splitter_save`.
     pub splitter_save_scheduled: bool,
@@ -1167,7 +1167,7 @@ pub struct Shell {
     /// fires and drops it. Cleared on the actual `Removed` event.
     pub fav_removing: HashSet<ferail_core::favorites::FavoriteId>,
     /// Windows/Linux app menu bar (`gpui-component::AppMenuBar`).
-    /// `Some(_)` only on non-macOS — those platforms have no global
+    /// `Some(_)` only on non-macOS: those platforms have no global
     /// menu bar, so we render the menu strip in-window beneath the
     /// title bar. macOS uses `cx.set_menus()` for its NSApp menu and
     /// leaves this `None`. Reads from the same `cx.set_menus()`
@@ -1185,12 +1185,12 @@ pub struct Shell {
     pub tree_children: HashMap<PathBuf, Vec<TreeChild>>,
     /// Window-docking state (docs/features/DOCK.md). `Some` while the window
     /// is docked to a screen edge as an auto-hiding drawer; `None` when it's a
-    /// normal window. Session-only — docking does not persist across launches
+    /// normal window. Session-only, docking does not persist across launches
     /// (see the doc's deferral note). The geometry math lives in `dock.rs`.
     pub dock: Option<DockState>,
     /// The docked window's content `NSView`, captured (as a `usize`, since raw
-    /// pointers aren't `Send`) when docking so the reveal poller — an async
-    /// task with no `Window` handle — can move the window. `0` when undocked.
+    /// pointers aren't `Send`) when docking so the reveal poller: an async
+    /// task with no `Window` handle: can move the window. `0` when undocked.
     pub dock_ns_view: usize,
     /// Generation guard for the reveal poll loop: docking bumps it and spawns a
     /// fresh loop; superseded loops see the mismatch and exit (same pattern as
@@ -1202,7 +1202,7 @@ pub struct Shell {
     /// so an empty caption shows a nameless entry. Synced from the
     /// active tab's folder at render; cached here so the platform call
     /// only fires when the text actually changed (one string compare
-    /// per frame — see `sync_window_title`).
+    /// per frame: see `sync_window_title`).
     last_window_title: String,
     /// Tracks the window's OS activation so the activation observer
     /// only force-refreshes folder sizes on a genuine background→
@@ -1220,7 +1220,7 @@ pub struct Shell {
     /// starts clean. `None` until first use. See `on_typeahead_key`.
     typeahead: Option<(String, std::time::Instant)>,
     /// Live subscription handles (Input change, future watchers).
-    /// Dropping them tears down the listeners — keep alongside the
+    /// Dropping them tears down the listeners: keep alongside the
     /// Shell so they outlive any frame.
     #[allow(dead_code)]
     _subscriptions: Vec<Subscription>,
@@ -1228,7 +1228,7 @@ pub struct Shell {
 
 impl Shell {
     /// Immutable accessor for the active tab. Panics if tabs is
-    /// empty — but the constructor + close_tab() invariant keep
+    /// empty, but the constructor + close_tab() invariant keep
     /// that from happening.
     #[inline]
     pub fn active_tab(&self) -> &Tab {
@@ -1514,7 +1514,7 @@ impl Shell {
     /// Keep the OS-level window caption in step with the active tab's
     /// folder. The custom titlebar hides the native caption, but the
     /// Windows taskbar / Alt+Tab switcher (and the macOS Window menu)
-    /// still read it — without this the window shows up nameless when
+    /// still read it, without this the window shows up nameless when
     /// switching tasks. Called from render; the cached `last_window_title`
     /// makes the per-frame cost a single string compare and the platform
     /// `SetWindowTextW`/`setTitle:` call only fires on change.
@@ -1531,18 +1531,18 @@ impl Shell {
 }
 
 /// The OS window caption for a folder: its basename plus the app name,
-/// e.g. `Documents — Ferail`. Roots like `C:\` or `/` have an empty
+/// e.g. `Documents: Ferail`. Roots like `C:\` or `/` have an empty
 /// `file_name()`, so fall back to the full path; a fully empty path
 /// yields the bare app name. The app name is always present so the
 /// Windows Alt+Tab / taskbar entry is never blank.
 fn window_title_for(dir: &Path) -> String {
     // The OS title bar is drawn by the host's native title font. On AROS
     // that is the Intuition topaz bitmap font (ASCII only), which renders the
-    // em-dash as garbage — use a plain hyphen there.
+    // em-dash as garbage: use a plain hyphen there.
     #[cfg(target_os = "aros")]
     const SEP: &str = " - ";
     #[cfg(not(target_os = "aros"))]
-    const SEP: &str = " \u{2014} ";
+    const SEP: &str = " - ";
     match dir.file_name() {
         Some(name) if !name.is_empty() => {
             // Finder-parity leaf: a folder stored with `:` titles as `/` on macOS.
@@ -1601,7 +1601,7 @@ fn now_unix_secs() -> i64 {
 
 /// Pull existing Ant Trail visit counts out of the metadata DB so
 /// heat is reflected on the very first render. Returns
-/// `(empty_map, 0)` when the DB is absent or the read fails — heat
+/// `(empty_map, 0)` when the DB is absent or the read fails: heat
 /// tint just won't show until the user's done some navigating.
 fn hydrate_ant_trail(
     db: Option<&Arc<Mutex<ferail_meta::MetadataDb>>>,
@@ -1617,7 +1617,7 @@ fn hydrate_ant_trail(
     };
     // Recents = the same visit log ordered by last access (the heat
     // map ignores time, so derive it separately from the same rows).
-    // `last_access_unix == 0` is the cleared sentinel — those rows may
+    // `last_access_unix == 0` is the cleared sentinel: those rows may
     // still carry heat (`hits`) but are no longer recent, so skip them.
     let mut by_recency: Vec<(PathBuf, i64)> = entries
         .iter()
@@ -1645,7 +1645,7 @@ fn hydrate_ant_trail(
 /// (`ferail_meta::default_db_path`: Application Support on macOS,
 /// %APPDATA% on Windows, XDG data dir elsewhere). Returns `None` and
 /// logs a warning when the base env var is unset, mkdir fails, or
-/// open fails — in-memory state still works in those cases, just
+/// open fails, in-memory state still works in those cases, just
 /// without persistence. Reuses the path resolution + parent-dir
 /// helpers from `ferail_meta`.
 fn open_metadata_db() -> Option<Arc<Mutex<ferail_meta::MetadataDb>>> {
@@ -1673,7 +1673,7 @@ fn open_metadata_db() -> Option<Arc<Mutex<ferail_meta::MetadataDb>>> {
 }
 
 /// Open a fresh Shell window already navigated to `path`. Backs the
-/// Cmd+Option-click "open favorite in a new window" gesture (§11.3) —
+/// Cmd+Option-click "open favorite in a new window" gesture (§11.3):
 /// reuses the singleton [`crate::process_state::ProcessState`] so the
 /// new window shares favorites, caches, and the watcher with every
 /// other window. The window-options shape mirrors `main.rs`'s
@@ -1694,13 +1694,13 @@ pub fn open_window_at(cx: &mut App, path: PathBuf) {
     });
 }
 
-/// Reveal `path` in a Ferail file window from a non-Shell context — the
+/// Reveal `path` in a Ferail file window from a non-Shell context: the
 /// Settings window's Diagnostics "Reveal" buttons. Finder-style reveal:
 /// navigate to the parent folder with the entry queued for selection
 /// (scrolled into view once rows land). The first live Shell window gets
 /// a new tab and is raised; with none open, a fresh window opens at the
 /// parent. A target that doesn't exist yet ("not created yet" rows)
-/// still opens the parent — the unresolved name is dropped when the
+/// still opens the parent: the unresolved name is dropped when the
 /// load completes.
 pub fn reveal_path_in_app(cx: &mut App, path: PathBuf) {
     let (dir, names) = match (path.parent(), path.file_name()) {
@@ -1750,7 +1750,7 @@ pub fn reselect_path_in_origin(
     reveal_path_in_app(cx, path);
 }
 
-/// Open the folder `dir` itself in a Ferail tab — the Settings window's
+/// Open the folder `dir` itself in a Ferail tab: the Settings window's
 /// Bug-reports folder buttons. Same window policy as
 /// [`reveal_path_in_app`] (new tab in a live Shell window, else a fresh
 /// window), but lands *inside* the folder instead of selecting it in
@@ -1761,7 +1761,7 @@ pub fn open_dir_in_app(cx: &mut App, dir: PathBuf) {
 
 fn open_in_app(cx: &mut App, dir: PathBuf, names: Vec<String>) {
     // Prefer an existing Shell window: new tab there, then raise it. The
-    // windows list also holds Settings/viewer Roots — the downcast skips
+    // windows list also holds Settings/viewer Roots: the downcast skips
     // them.
     for handle in cx.windows() {
         let Some(root) = handle.downcast::<gpui_component::Root>() else {
@@ -1838,7 +1838,7 @@ impl Shell {
     pub fn build_process_state(cx: &mut App) -> Rc<crate::process_state::ProcessState> {
         let fs = Arc::new(NativeFs::new());
         // Spin up the platform file-system watcher. Errors
-        // (sandboxed CI without FSEvents) are non-fatal — the app
+        // (sandboxed CI without FSEvents) are non-fatal: the app
         // still runs, just without live external updates. Safe mode
         // skips it entirely (no notify backend, no fs-watcher thread);
         // every watcher consumer already tolerates `None`.
@@ -1872,9 +1872,9 @@ impl Shell {
         // contract: the raw stored path must be validated and
         // re-canonicalized before it is trusted (a symlinked spelling
         // saved last session must not mint a second NodeId; a vanished
-        // directory falls back to home). Both of those are disk I/O —
+        // directory falls back to home). Both of those are disk I/O:
         // `is_dir` + `canonicalize` block for seconds on a spun-down
-        // external drive or a network mount — and this runs on the UI
+        // external drive or a network mount, and this runs on the UI
         // thread at *every* window open (Cmd+N used to freeze for the
         // duration). Prime Directive: the window boots on the raw
         // spelling immediately and `resolve_start_path_then_load` does
@@ -1887,7 +1887,7 @@ impl Shell {
         };
         let start_id = process.fs.id_for_path(&start);
         // Seed the NodeStore with the start path so the very first
-        // navigate doesn't re-mint a different NodeId. Idempotent —
+        // navigate doesn't re-mint a different NodeId. Idempotent:
         // the second window seeing the same path is a no-op.
         process
             .node_store
@@ -1901,7 +1901,7 @@ impl Shell {
         }
         let show_hidden = persisted.show_hidden.unwrap_or(false);
         // Safe mode forces the three background-scan switches off for
-        // this session, whatever was persisted — freeze bisection needs
+        // this session, whatever was persisted: freeze bisection needs
         // a launch with no ambient disk work. The persisted values are
         // untouched; a normal relaunch restores them.
         let safe_mode = crate::safe_mode::enabled();
@@ -2083,7 +2083,7 @@ impl Shell {
 
         // Foreground-executor polling task. Wakes every POLL_INTERVAL,
         // drains the channel, asks the Shell to reload if anything
-        // changed. Stops when this.update returns Err — that means
+        // changed. Stops when this.update returns Err: that means
         // the Shell entity has been dropped.
         let poll_watcher = process.watcher.clone();
         let poll_process = process.clone();
@@ -2091,7 +2091,7 @@ impl Shell {
             // Per-directory reload throttle (leading edge). Pending dirty
             // paths carry across polls; a directory reloads at once on its
             // first event, then at most once per RELOAD_DEBOUNCE while events
-            // keep arriving — coalescing FSEvents bursts without ever dropping
+            // keep arriving, coalescing FSEvents bursts without ever dropping
             // a change (see `RELOAD_DEBOUNCE`).
             let mut last_reload: std::collections::HashMap<PathBuf, std::time::Instant> =
                 std::collections::HashMap::new();
@@ -2144,7 +2144,7 @@ impl Shell {
         //   - newest file < 1 h old  → 1 s   (a seconds component is shown)
         //   - otherwise              → 60 s  (minute/hour/day granularity)
         // and it skips the repaint entirely once every visible row is a
-        // week or more old, where the label is a static date — so browsing
+        // week or more old, where the label is a static date, so browsing
         // an old folder costs nothing. A new file arriving re-enumerates
         // and repaints through the watcher path, which re-arms fine ticking.
         cx.spawn(async move |this, cx| {
@@ -2179,7 +2179,7 @@ impl Shell {
                 });
                 match next {
                     Ok(d) => delay = d,
-                    // Shell entity dropped (window closed) — stop ticking.
+                    // Shell entity dropped (window closed): stop ticking.
                     Err(_) => break,
                 }
             }
@@ -2201,7 +2201,7 @@ impl Shell {
         // gpui-component's AppMenuBar is the Win/Linux equivalent of
         // macOS's NSApp menu. Reads from the same `cx.set_menus()`
         // global state, so the menu spec lives once in
-        // `install_app_menus`. None on macOS — the global menu bar
+        // `install_app_menus`. None on macOS: the global menu bar
         // covers it natively.
         let menu_bar = if cfg!(target_os = "macos") {
             None
@@ -2239,7 +2239,7 @@ impl Shell {
             // Cmd+P (or whatever shortcut binds the toggle in keymap)
             // brings it back. Once DB-persistence for layout state
             // wires into Shell::new the user's last choice will
-            // override this default — until then this is the boot
+            // override this default, until then this is the boot
             // state on every launch.
             preview_visible: false,
             preview_override: None,
@@ -2326,7 +2326,7 @@ impl Shell {
         // breadcrumb (star indicator), and the title-bar header.
         // The file list reads its own delegate's `is_favorited`
         // parallel vec, which `load_path` recomputes from the same
-        // entity, so it picks up the change on the next load — for
+        // entity, so it picks up the change on the next load, for
         // truly synchronous list updates we also push a refresh here.
         let fav_subscription = cx.observe(&shell.process.favorites(), |this, _favs, cx| {
             this.refresh_file_list_favorited(cx);
@@ -2395,8 +2395,8 @@ impl Shell {
 
         // Live thumbnail toggle (Settings window → file list). Render
         // already reflects the global, but the viewport's thumbnails
-        // still need warming — `visible_rows_changed` only fires on
-        // scroll — so kick a warm of the active tab's current visible
+        // still need warming: `visible_rows_changed` only fires on
+        // scroll, so kick a warm of the active tab's current visible
         // range whenever the toggle flips. Turning thumbnails on then
         // fills the visible rows at once instead of waiting for a
         // scroll.
@@ -2427,7 +2427,7 @@ impl Shell {
         shell._subscriptions.push(folder_size_subscription);
 
         // Live file-detail-scan toggle (Settings → Performance). Turning
-        // it on reloads each open tab in place — a same-path reload
+        // it on reloads each open tab in place: a same-path reload
         // re-streams without flicker and re-fires the viewport format-sniff +
         // tag passes under the new setting; turning it off cancels any
         // in-flight viewport worker so scanning stops at once.
@@ -2456,7 +2456,7 @@ impl Shell {
         // Esc cancels an in-progress drag. gpui only auto-cancels on
         // mouse-up, and an element `on_key_down` needs the shell focused
         // (which it may not be mid-drag), so observe keystrokes globally
-        // — this fires regardless of focus. Two phases: while the drag is
+        //: this fires regardless of focus. Two phases: while the drag is
         // in-window it is gpui state (`active_drag`); once the pointer
         // leaves the window gpui hands it to a native platform drag
         // (`has_active_drag` normally goes false). AppKit cancellation goes
@@ -2494,7 +2494,7 @@ impl Shell {
         // up. This runs **cache-first** (`force = false`) on purpose:
         // switching apps is something a user does constantly, and a
         // cache-bypassing re-walk here meant every single return
-        // re-measured every visible tree from scratch — the size column
+        // re-measured every visible tree from scratch: the size column
         // could never settle. Deep external changes are bounded by the
         // TTL and caught exactly by watcher-driven ancestor
         // invalidation; a user who wants them *now* hits Refresh.
@@ -2512,7 +2512,7 @@ impl Shell {
         });
         shell._subscriptions.push(activation_subscription);
 
-        // Safe mode: never open the metadata SQLite DB — a damaged disk
+        // Safe mode: never open the metadata SQLite DB: a damaged disk
         // or a DB on slow media is a real hang candidate. Favorites, Ant
         // Trail and Recents stay cold for the session (expected).
         if !crate::safe_mode::enabled() {
@@ -2530,7 +2530,7 @@ impl Shell {
     /// [`Shell::new`]): validate + canonicalize the persisted start path
     /// on the background executor, then load. Until the answer lands the
     /// tab shows its breadcrumbs over an empty list with an "Opening …"
-    /// task in the status bar — for a local disk that is a few
+    /// task in the status bar, for a local disk that is a few
     /// milliseconds; for a sleeping drive it is however long the spin-up
     /// takes, with the window responsive the whole time.
     ///
@@ -2645,15 +2645,15 @@ impl Shell {
                     // reorder or resize on any tab writes through and
                     // seeds every NEW tab/window (existing tabs keep
                     // their live state). app_state::save is cached +
-                    // write-behind — no I/O on this thread.
+                    // write-behind, no I/O on this thread.
                     TableEvent::MoveColumn(..) | TableEvent::ColumnWidthsChanged(..) => {
                         let spec = table.update(cx, |state, _| {
                             // Fold the live (just-dragged / just-moved) widths
                             // back into the delegate's own column set. The table
                             // rebuilds its column groups from THESE delegate
-                            // widths on every `refresh()` — including the
+                            // widths on every `refresh()`: including the
                             // refreshes a background folder-size / prefetch batch
-                            // triggers — while a drag only updates the transient
+                            // triggers, while a drag only updates the transient
                             // col_groups. Without this write-back an in-flight
                             // worker snaps a resized (or reordered) column
                             // straight back to its construction width, and the
@@ -2677,7 +2677,7 @@ impl Shell {
                         app_state::save(&s);
                     }
                     TableEvent::ExternalDrop { row_ix, paths } => {
-                        // Dropped onto a folder row — transfer into
+                        // Dropped onto a folder row: transfer into
                         // that folder (dnd-spec §3.5). Non-folder rows
                         // never emit this; the pane background target
                         // covers them with current-dir semantics. Shared
@@ -2690,7 +2690,7 @@ impl Shell {
                         entries,
                         password,
                     } => {
-                        // Members dropped on an archive row — add them there
+                        // Members dropped on an archive row: add them there
                         // rather than extracting into the current folder.
                         if let Some(target) = this.path_for_row(*row_ix, cx) {
                             this.add_archive_entries_to_archive(
@@ -2704,7 +2704,7 @@ impl Shell {
                         }
                     }
                     TableEvent::ArchiveAddDrop { row_ix, paths } => {
-                        // Dropped onto an archive file row — add to it
+                        // Dropped onto an archive file row: add to it
                         // instead of transferring into a folder.
                         this.drop_onto_archive_row(*row_ix, paths.clone(), window, cx);
                     }
@@ -2765,7 +2765,7 @@ impl Shell {
                         // Empty-space right-click: the background menu's
                         // folder verbs (Get Info / Reveal / Copy Path /
                         // Open Terminal) act on `context_target`, staged
-                        // here to the folder being browsed — same pattern
+                        // here to the folder being browsed, same pattern
                         // as the breadcrumb menu. Emitted at menu-build
                         // time, so this lands before any item is clicked.
                         this.context_row = None;
@@ -2775,7 +2775,7 @@ impl Shell {
                 }
             },
         );
-        // Filter input — per-tab so cursor / focus / value persist
+        // Filter input, per-tab so cursor / focus / value persist
         // when the user switches tabs. The closure captures `tab_id`
         // so only this tab's enumeration is re-triggered.
         let filter_input = cx.new(|cx| {
@@ -2789,7 +2789,7 @@ impl Shell {
                 .submit_on_enter(true)
                 .placeholder(placeholder)
         });
-        // Read through the `state` parameter — a captured strong clone of the
+        // Read through the `state` parameter: a captured strong clone of the
         // subscribed entity is a self-cycle that leaks the input past quit
         // (GPUI leaked-handle assertion, seen on Windows 0.6.5).
         let filter_subscription = cx.subscribe_in(
@@ -2918,13 +2918,13 @@ impl Shell {
         )
     }
 
-    /// "Which row is this action targeting?" — context_row first
+    /// "Which row is this action targeting?": context_row first
     /// (right-click triggered), then selected (keyboard / single-
     /// click). Consumes context_row so the next keyboard action uses
     /// the keyboard selection.
     ///
     /// After the multi-select rework, the keyboard fallback is the
-    /// **lead's row index in the current model** — the row index
+    /// **lead's row index in the current model**: the row index
     /// derived from `Tab::lead` against the delegate's `entries`.
     /// The lead is the right semantic target: a single-row action
     /// like Rename or Compress on a multi-selection should operate
@@ -2951,7 +2951,7 @@ impl Shell {
             .map(|e| e.kind)
     }
 
-    /// Schedule the preview providers for `row_ix` — unless it's a
+    /// Schedule the preview providers for `row_ix`: unless it's a
     /// folder. Folders have no file preview (qlmanage on a directory
     /// is wasted work and the text read just fails), so the request is
     /// skipped and the pane shows folder metadata only.
@@ -3258,7 +3258,7 @@ impl Shell {
         // cache) and the recursive folder sizes (bypassing the
         // `folder_sizes` cache). Refresh is the user's explicit "measure
         // this again", and the only gesture that pays for a full
-        // re-walk — see docs/features/FRESHNESS.md.
+        // re-walk: see docs/features/FRESHNESS.md.
         //
         // `load_path_for_tab` just reset both flags to `false` and
         // bumped the load generation, so arming them here scopes the
@@ -3287,7 +3287,7 @@ impl Shell {
     // floats over everything (NSFloatingWindowLevel + join-all-spaces) and
     // slides off-screen leaving a thin handle; slamming the cursor into that
     // screen edge slides it back. All the geometry is pure in `dock.rs`; this
-    // is the GPUI glue — capture the window/screen frames once at dock time,
+    // is the GPUI glue: capture the window/screen frames once at dock time,
     // then drive a self-re-arming poll that reads the cursor and moves the
     // window each tick.
     // -----------------------------------------------------------------
@@ -3332,7 +3332,7 @@ impl Shell {
         match edge {
             None => {
                 if let Some(d) = self.dock.take() {
-                    // The display may have changed while docked — clamp
+                    // The display may have changed while docked: clamp
                     // the remembered frame onto the CURRENT screen so
                     // undock can't strand the window off every display.
                     let mut r = d.restore;
@@ -3381,7 +3381,7 @@ impl Shell {
                     })
                     .unwrap_or(screen);
                 // The drawer keeps the window's OWN size and vertical
-                // position — docking is a pure horizontal translation.
+                // position, docking is a pure horizontal translation.
                 // (gpui's drawable doesn't follow an out-of-band AppKit
                 // resize; stretching the window to the screen height
                 // left the extra area black.)
@@ -3431,7 +3431,7 @@ impl Shell {
 
     /// One reveal-poll tick. Reads the global cursor, flips the drawer's
     /// revealed target on an edge-slam (or while the pointer is still over it),
-    /// steps the slide, and moves the window only if it actually advanced — so
+    /// steps the slide, and moves the window only if it actually advanced, so
     /// a settled drawer touches AppKit zero times per tick. Re-arms itself
     /// unless the loop was superseded (epoch bumped) or the window undocked.
     fn dock_poll_tick(&mut self, epoch: u64, cx: &mut Context<Self>) {
@@ -3444,7 +3444,7 @@ impl Shell {
         let ptr = self.dock_ns_view as *mut std::ffi::c_void;
         // Liveness probe for the cached raw pointer: `window_frame`
         // returning None means there's no NSWindow behind the view any
-        // more (teardown) — stop the loop instead of msg_send'ing into
+        // more (teardown): stop the loop instead of msg_send'ing into
         // a dead view.
         let Some(live_frame) = crate::platform_shell::window_frame(ptr) else {
             self.dock = None;
@@ -3462,7 +3462,7 @@ impl Shell {
             // tucked away. Re-query the screen and adopt the actual
             // window frame so the slide targets live geometry instead
             // of the dock-time snapshot (which could be a disconnected
-            // display). Size passes through untouched — docking never
+            // display). Size passes through untouched, docking never
             // resizes the window.
             if let Some((sx, sy, sw, sh)) =
                 crate::platform_shell::screen_visible_frame_for_window(ptr)
@@ -3507,7 +3507,7 @@ impl Shell {
         // Re-assert the focus after the current update cycle. When this fires
         // from the View > Find menu item (rather than the Ctrl+F key), the app
         // menu bar restores focus to its previously-focused element as it
-        // closes — which would otherwise immediately steal focus straight back
+        // closes, which would otherwise immediately steal focus straight back
         // out of the filter, making the menu item look like it did nothing.
         // Deferring lets our focus win the race; it's a harmless no-op repeat
         // for the direct Ctrl+F path.
@@ -3608,7 +3608,7 @@ impl Shell {
         // This fires only when the filter field owns focus (Esc in the
         // shell pane routes to ClearSelection instead). When the field
         // has text or the tab is showing a results view, Esc clears the
-        // field / leaves the results and reloads the directory — but
+        // field / leaves the results and reloads the directory, but
         // keeps focus in the field so the user can immediately type a
         // new query (their preference). Only when the field is already
         // empty and not showing results does Esc fall through to the
@@ -3713,12 +3713,12 @@ impl Shell {
         false
     }
 
-    /// Cmd+Shift+H — navigate the active tab to the home directory.
+    /// Cmd+Shift+H: navigate the active tab to the home directory.
     fn on_go_home(&mut self, _: &GoHome, _: &mut Window, cx: &mut Context<Self>) {
         self.navigate(home_dir(), cx);
     }
 
-    /// Cmd+G — open the "Go to Folder" prompt.
+    /// Cmd+G: open the "Go to Folder" prompt.
     pub fn on_go_to_folder(&mut self, _: &GoToFolder, window: &mut Window, cx: &mut Context<Self>) {
         self.open_go_to_folder_prompt(true, window, cx);
     }
@@ -3730,7 +3730,7 @@ impl Shell {
     /// breadcrumb (`crate::path_complete`). Enter or the **Go** button
     /// commits.
     ///
-    /// `in_new_tab` is true for the ordinary invocation — the typed
+    /// `in_new_tab` is true for the ordinary invocation: the typed
     /// folder lands in a new tab beside the current one, leaving what
     /// the user was looking at intact. The window that `boot` opens
     /// *because* nothing was open passes false: its lone tab is a blank
@@ -3759,7 +3759,7 @@ impl Shell {
                 .child(dialog_prompt.clone())
                 // A `Dialog` only draws buttons it's given a footer for;
                 // `button_props` alone renders nothing. Cancel first,
-                // Go primary — Esc and Enter are the keyboard twins.
+                // Go primary: Esc and Enter are the keyboard twins.
                 .footer(
                     DialogFooter::new()
                         .child(
@@ -3782,15 +3782,15 @@ impl Shell {
                 )
         });
         // Focus + select-all on the next frame, once the dialog and its
-        // input are mounted — doing it synchronously wouldn't stick.
+        // input are mounted, doing it synchronously wouldn't stick.
         // Same shape as `open_text_prompt`.
         window.on_next_frame(move |window, cx| {
             prompt.update(cx, |prompt, cx| prompt.focus_and_select_all(window, cx));
         });
     }
 
-    /// Commit a Go to Folder entry. Resolution — canonicalisation plus
-    /// the "is this a file?" probe — is filesystem work, so it runs on
+    /// Commit a Go to Folder entry. Resolution: canonicalisation plus
+    /// the "is this a file?" probe: is filesystem work, so it runs on
     /// the background executor and only the result comes back to the
     /// UI thread (Prime Directive). A path that names a *file* opens
     /// its enclosing folder, which is what a copied full path from a
@@ -3891,7 +3891,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Programmatic version of `on_shortcuts_help` — the CLI flag
+    /// Programmatic version of `on_shortcuts_help`: the CLI flag
     /// can seed the filter so the screenshot captures a focused
     /// subset of the catalogue.
     pub fn open_shortcuts_help(
@@ -3921,9 +3921,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// Cmd+Shift+D — open the Disk Usage window at the active tab's
+    /// Cmd+Shift+D: open the Disk Usage window at the active tab's
     /// current directory. Spawns a new native window; if opening
-    /// fails (rare — only when gpui can't allocate a window), the
+    /// fails (rare, only when gpui can't allocate a window), the
     /// failure is logged-and-ignored.
     /// Throttled persistence of the splitter pane widths. Called
     /// from the `on_resize` callback (fires per drag tick at 60 Hz).
@@ -3937,7 +3937,7 @@ impl Shell {
     /// `SPLITTER_PERSIST_INTERVAL` later; further ticks within that window
     /// are no-ops (a write is already queued). When the timer fires it
     /// reads the *latest* widths off `self`, so the value at drag-end always
-    /// persists — and a single drag costs at most a couple of file writes.
+    /// persists, and a single drag costs at most a couple of file writes.
     pub(crate) fn schedule_splitter_save(&mut self, cx: &mut Context<Self>) {
         if self.splitter_save_scheduled {
             return;
@@ -4018,7 +4018,7 @@ impl Shell {
         self.dock_archive_entity(archive, view, cx);
     }
 
-    /// Dock an existing archive view into the active tab — used both by a fresh
+    /// Dock an existing archive view into the active tab: used both by a fresh
     /// open and by a standalone window docking itself back.
     pub(crate) fn dock_archive_entity(
         &mut self,
@@ -4274,7 +4274,7 @@ impl Shell {
         self.pop_out_active_disk_usage(window, cx);
     }
 
-    /// Find Duplicates — scan the active tab's directory for duplicate
+    /// Find Duplicates: scan the active tab's directory for duplicate
     /// files and show them grouped in the tab.
     pub fn on_find_duplicates(
         &mut self,
@@ -4292,7 +4292,7 @@ impl Shell {
         );
     }
 
-    /// Find Similar Images — the duplicate finder panel with a perceptual,
+    /// Find Similar Images: the duplicate finder panel with a perceptual,
     /// entirely in-memory image funnel.
     pub fn on_find_similar_images(
         &mut self,
@@ -4354,7 +4354,7 @@ impl Shell {
         self.set_sort_column(crate::file_list::SortColumn::Modified, cx);
     }
 
-    /// Sort by Ant Trail heat — the folders this user opens most, on
+    /// Sort by Ant Trail heat: the folders this user opens most, on
     /// top (docs/features/ANT_TRAIL.md). Reads the heat the delegate
     /// already cached per row, so it is the same in-memory re-sort as
     /// every other sort pick.
@@ -4367,7 +4367,7 @@ impl Shell {
         self.set_sort_column(crate::file_list::SortColumn::AntTrail, cx);
     }
 
-    /// Cmd+Y — open the viewer window (docs/features/VIEWER.md) on a
+    /// Cmd+Y: open the viewer window (docs/features/VIEWER.md) on a
     /// snapshot of the current tab's visible files (sorted + filtered
     /// order, directories skipped), starting at the lead row. The
     /// snapshot is in-memory only: entries are already enumerated and
@@ -4406,7 +4406,7 @@ impl Shell {
         crate::viewer::open_viewer(playlist, start, window, cx);
     }
 
-    /// File-list context action — open the viewer anchored to the
+    /// File-list context action: open the viewer anchored to the
     /// right-clicked file and start the slideshow immediately
     /// (docs/features/VIEWER.md). Same folder playlist as `OpenViewer`,
     /// but `start` follows the context row rather than the lead.
@@ -4448,7 +4448,7 @@ impl Shell {
         crate::viewer::open_viewer_playing(playlist, start, window, cx);
     }
 
-    /// Cmd+P — toggle preview-pane visibility. The pane defaults to
+    /// Cmd+P: toggle preview-pane visibility. The pane defaults to
     /// shown; toggling off gives the file list the full content width.
     fn on_toggle_preview(&mut self, _: &TogglePreview, _: &mut Window, cx: &mut Context<Self>) {
         self.preview_visible = !self.preview_visible;
@@ -4531,7 +4531,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Cmd+I — open the Get Info popup for the target row (the right-click
+    /// Cmd+I: open the Get Info popup for the target row (the right-click
     /// row, else the lead selection). With nothing selected, gets info on
     /// the tab's current folder, matching Finder.
     pub(crate) fn on_get_info(&mut self, _: &GetInfo, window: &mut Window, cx: &mut Context<Self>) {
@@ -4609,8 +4609,8 @@ impl Shell {
     /// font size. `Root::render` copies `theme.font_size` into the
     /// window rem size every frame, and all chrome text is rem-relative
     /// through the `crate::text` design tokens, so this is the
-    /// framework-native zoom hook: it scales the whole window —
-    /// including Root-level overlays (notifications, dialogs) — rather
+    /// framework-native zoom hook: it scales the whole window
+    /// (including Root-level overlays (notifications, dialogs)) rather
     /// than fighting `Root` by overriding `rem_size` on just the shell
     /// subtree. (Icon and fixed-px layout scaling are still TODO.)
     pub(crate) fn apply_ui_zoom(&self, cx: &mut App) {
@@ -4620,7 +4620,7 @@ impl Shell {
         }
     }
 
-    /// Cmd+= / Cmd+- / Cmd+0 — UI zoom. Bumps `ui_scale` by ±0.1
+    /// Cmd+= / Cmd+- / Cmd+0: UI zoom. Bumps `ui_scale` by ±0.1
     /// (clamped to [0.6, 2.0]) and re-applies it to the theme base font
     /// size; `window.refresh()` forces `Root` to re-read it this frame.
     fn on_zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
@@ -4640,7 +4640,7 @@ impl Shell {
     }
 
     /// Open the selected folder(s) in a new tab (context-menu command). A
-    /// single file opens its containing folder and selects the file there —
+    /// single file opens its containing folder and selects the file there:
     /// useful for recursive Search results. Multi-selection still fans out
     /// folders only; opening one tab per selected file would be explosive.
     fn on_open_in_new_tab(
@@ -4734,7 +4734,7 @@ impl Shell {
         // Spawn a second native window hosting the SettingsView,
         // matching macOS convention where Preferences is its own
         // window not a modal sheet. Independent of the file-manager
-        // shell's lifecycle — closing one doesn't close the other.
+        // shell's lifecycle, closing one doesn't close the other.
         let _ = window;
         crate::settings::open_settings_window(cx);
     }
@@ -4823,7 +4823,7 @@ impl Shell {
     /// the history entry's snapshot, then issue a reload of the
     /// destination. The reload preserves selection through
     /// `load_path` (no longer clears it), and `finish_directory_load`
-    /// reconciles the snapshot against the freshly streamed model —
+    /// reconciles the snapshot against the freshly streamed model,
     /// dropping NodeIds that no longer exist.
     fn restore_from_history(
         &mut self,
@@ -4853,7 +4853,7 @@ impl Shell {
     /// Persist last-dir + show-hidden + UI-scale to disk off the UI
     /// thread. Even though the state file is tiny, navigation must
     /// not wait on app-support directory creation or disk writes.
-    /// `theme_pref` is owned by the Settings entity — persisted there
+    /// `theme_pref` is owned by the Settings entity: persisted there
     /// after a tile click, not from Shell.
     fn save_state_async(&self, cx: &mut Context<Self>) {
         let last_dir = self.active_tab().current_dir.clone();
@@ -4882,7 +4882,7 @@ impl Shell {
 
     /// Schedule a directory load against a specific tab. Used by
     /// `load_path` (active tab) and, in Phase A+B + beyond, any
-    /// background path that wants to retarget an inactive tab —
+    /// background path that wants to retarget an inactive tab,
     /// e.g. the cross-window reload fan-out in Phase E.
     pub fn load_path_for_tab(&mut self, tab_id: TabId, path: PathBuf, cx: &mut Context<Self>) {
         let Some(tab_index) = self.tabs.iter().position(|t| t.id == tab_id) else {
@@ -4901,7 +4901,7 @@ impl Shell {
         // (Refresh, Esc clear-filter, show-hidden, watcher reload).
         // Stage the new listing off-screen and swap it in atomically on
         // `Done` so the live rows never collapse to the first batch and
-        // stream back — that collapse/refill is the visible flicker.
+        // stream back: that collapse/refill is the visible flicker.
         // Fresh navigation (`path` differs, or nothing on screen yet)
         // keeps the progressive streaming reveal.
         let reload_in_place = self.tabs[tab_index].current_dir == path
@@ -4952,7 +4952,7 @@ impl Shell {
             cancel.store(true, Ordering::Relaxed);
         }
         // The folder-size and prefetch passes for the previous listing
-        // are also obsolete — stop their walks before the new
+        // are also obsolete: stop their walks before the new
         // enumeration starts competing for disk I/O.
         if let Some(cancel) = self.tabs[tab_index].folder_size_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
@@ -4985,7 +4985,7 @@ impl Shell {
         });
 
         // Point the watcher at the new directory. This only queues a
-        // command — the OS registration (which can block on a
+        // command: the OS registration (which can block on a
         // spun-down drive; notify's FSEvents `watch()` canonicalizes
         // the path) happens on the watcher's worker thread. Failures
         // there (path doesn't exist, watcher saturated) are non-fatal:
@@ -5024,7 +5024,7 @@ impl Shell {
                 let done = update.done.is_some();
                 let stale = this
                     .update(cx, |this, cx| {
-                        // Find the loading tab by id — its index may
+                        // Find the loading tab by id: its index may
                         // have shifted under reorder, and it may have
                         // closed entirely.
                         let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) else {
@@ -5035,7 +5035,7 @@ impl Shell {
                         {
                             return true;
                         }
-                        // Helpers address the loading tab by index —
+                        // Helpers address the loading tab by index:
                         // the Phase A+B "swap self.active and restore"
                         // hack is gone. It was re-entrancy-fragile: an
                         // observer firing synchronously inside the
@@ -5066,8 +5066,8 @@ impl Shell {
         .detach();
 
         // Slow-device feedback (docs/ARCHITECTURE.md#prime-directive): if
-        // the first batch is still missing after the delay — an
-        // external drive spinning up, a cold network mount — swap the
+        // the first batch is still missing after the delay: an
+        // external drive spinning up, a cold network mount: swap the
         // pane to the skeleton loading view. The status bar's
         // indeterminate stripe is already running (the Enumeration
         // task above); this adds the in-pane signal and retires the
@@ -5137,7 +5137,7 @@ impl Shell {
         }
         // In-place reload: accumulate off-screen, leaving the live rows
         // untouched. The complete listing swaps in at `Done`
-        // (`finish_directory_load_in_tab`) — no clear, no collapse, no
+        // (`finish_directory_load_in_tab`), no clear, no collapse, no
         // flicker. Selection / favorited / range passes also wait for
         // the swap so they reconcile against the final model once.
         if let Some(staging) = self.tabs.get_mut(idx).and_then(|t| t.load_staging.as_mut()) {
@@ -5242,7 +5242,7 @@ impl Shell {
         let _ = favs_ref;
         table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
-            // Resize defensively — the table may have been cleared
+            // Resize defensively: the table may have been cleared
             // between the snapshot and this update.
             delegate.is_favorited.resize(delegate.entries.len(), false);
             for (i, b) in bits.into_iter().enumerate() {
@@ -5259,7 +5259,7 @@ impl Shell {
     /// Populate the file list's per-row Finder colour tags (the §5 dot
     /// chips the list row and grid cell paint from `delegate.tags`).
     ///
-    /// Tags live in xattrs, so reading them is filesystem I/O — barred
+    /// Tags live in xattrs, so reading them is filesystem I/O: barred
     /// from the UI thread by the Prime Directive. Unlike the in-memory
     /// favorited refresh, this snapshots each row's `(NodeId, path)`,
     /// reads `read_canonical_tags` on the background executor, then
@@ -5276,8 +5276,8 @@ impl Shell {
         }
         // Finder-tag reads are xattr I/O, part of the file-detail scan the
         // Performance toggle gates. Off, rows render tagless (no per-row
-        // xattr read). Gated inside the fn so every caller — the load-done
-        // pass and the post-file-op refresh — respects the setting.
+        // xattr read). Gated inside the fn so every caller: the load-done
+        // pass and the post-file-op refresh: respects the setting.
         if !crate::prefetch::file_detail_scan_enabled(cx) {
             return;
         }
@@ -5326,7 +5326,7 @@ impl Shell {
                         Vec<ferail_core::commands::TagColor>,
                     > = tagged.into_iter().collect();
                     let del = state.delegate_mut();
-                    // Defensive resize — the model may have grown or
+                    // Defensive resize: the model may have grown or
                     // shrunk between the snapshot and this apply.
                     let ids: Vec<NodeId> = del.entries.iter().map(|e| e.id).collect();
                     del.tags.resize(ids.len(), Vec::new());
@@ -5370,7 +5370,7 @@ impl Shell {
         if let Some(staged) = self.tabs[idx].load_staging.take() {
             // In-place reload finished: swap the complete listing in
             // atomically over the still-visible old rows. One rebuild,
-            // no intermediate empty/partial state — the refresh is
+            // no intermediate empty/partial state: the refresh is
             // flicker-free. Reconcile passes run once against the final
             // model, mirroring the streaming path's per-batch passes.
             self.tabs[idx].load_pending_first_batch = false;
@@ -5420,7 +5420,7 @@ impl Shell {
         }
         // The listing is final: queued post-op names that didn't resolve
         // never will (hidden file with Show Hidden off, filtered out, or
-        // gone again) — drop them so they can't select a same-named entry
+        // gone again): drop them so they can't select a same-named entry
         // after a later reload or navigation. Active tab only: a
         // background tab's queue hasn't had its apply chance yet (the
         // apply passes are active-tab-scoped).
@@ -5465,7 +5465,7 @@ impl Shell {
             self.tabs[idx].last_error = None;
             // Finder colour tags for the now-complete listing. xattr
             // reads are filesystem I/O, so this runs off-thread and
-            // reports back — unlike the cheap per-batch favorited
+            // reports back: unlike the cheap per-batch favorited
             // refresh, it fires once here at `Done`.
             self.refresh_file_list_tags_in_tab(idx, cx);
         }
@@ -5497,7 +5497,7 @@ impl Shell {
         // against each folder's mtime, recomputed off-thread on
         // miss, streamed back as they resolve. Skipped entirely when
         // the user has disabled folder sizing (Settings → Performance)
-        // — the Size column then shows a dash for directories.
+        //: the Size column then shows a dash for directories.
         // WSL roots are path-backed but remote/service-mediated. The current
         // folder-size pass recursively walks *every* directory row, so running
         // it here would defeat viewport-bounded WSL browsing. Keep the Size
@@ -5510,8 +5510,8 @@ impl Shell {
             let size_tab_id = self.tabs[idx].id;
             let size_generation = self.tabs[idx].load_generation;
             // Only an explicit Refresh bypasses the cache (`Tab::force_folder_sizes`).
-            // Plain navigation — including coming back to a folder you just
-            // left — answers from the `folder_sizes` rows the last pass wrote.
+            // Plain navigation, including coming back to a folder you just
+            // left: answers from the `folder_sizes` rows the last pass wrote.
             let force_sizes = self.tabs[idx].force_folder_sizes;
             self.tabs[idx].folder_size_cancel = Some(size_cancel.clone());
             crate::folder_sizes::start(
@@ -5528,7 +5528,7 @@ impl Shell {
         }
         let icon_seeds = self.icon_seeds_from_table_in_tab(idx, cx);
         self.start_icon_warm(icon_seeds, cx);
-        // Real thumbnails and file details for the first screen — without
+        // Real thumbnails and file details for the first screen, without
         // this they'd only appear after the first scroll on a folder whose
         // visible range matches the previous one's.
         self.warm_loaded_viewport_in_tab(idx, cx);
@@ -5541,7 +5541,7 @@ impl Shell {
     /// Refresh the cached free-space / volume-name pair for one tab,
     /// off-thread. The underlying `volume_info_for_path` is an NSURL
     /// `resourceValuesForKeys:` round-trip (plus a statfs) that can
-    /// stall on network mounts, so render must never call it — it
+    /// stall on network mounts, so render must never call it: it
     /// reads the `Tab::volume_free_bytes` / `Tab::volume_name` cache
     /// this method maintains. Guarded by tab id + load generation so
     /// a slow result for a departed directory is dropped.
@@ -5639,7 +5639,7 @@ impl Shell {
     /// Warm the icon grid's visible entry range: Quick Look thumbnails
     /// for thumbnailable files (background) and crisp NSWorkspace icons
     /// for folders (main thread). Driven from the grid's `uniform_list`
-    /// item closure via `App::defer`, which re-runs on every scroll —
+    /// item closure via `App::defer`, which re-runs on every scroll,
     /// so unlike a render-time warm it keeps up as the user scrolls.
     ///
     /// Runs on the Shell entity's context so completion `cx.notify()`s
@@ -5701,7 +5701,7 @@ impl Shell {
 
         // Folders: the platform icon fetch on the background executor,
         // same as the file thumbnails below. (It used to be a synchronous
-        // main-thread NSWorkspace call per uncached folder — one custom
+        // main-thread NSWorkspace call per uncached folder, one custom
         // folder icon on a sleeping volume stalled the grid.)
         {
             let icons = self.process.icons.borrow();
@@ -5719,7 +5719,7 @@ impl Shell {
     /// Driven by the live `ShowThumbnails` toggle observer so flipping
     /// the setting on fills the viewport immediately rather than on the
     /// next scroll. Cheap to call when thumbnails are off or already
-    /// warm — `warm_thumbnails` no-ops in both cases.
+    /// warm: `warm_thumbnails` no-ops in both cases.
     fn warm_active_visible_thumbnails(&mut self, cx: &mut Context<Self>) {
         // The grid warms its own visible range (at its bucket size) from
         // `grid_body` on every render, so this table-range warm only
@@ -5739,7 +5739,7 @@ impl Shell {
     ///
     /// The table's `visible_rows_changed` hook only fires when the
     /// visible *row-index range* changes, and the table entity persists
-    /// across navigations — so opening a new folder that happens to show
+    /// across navigations, so opening a new folder that happens to show
     /// the same range as the previous one (e.g. rows 0..30) never fires
     /// the hook, and thumbnails wouldn't appear until the first scroll.
     /// We warm explicitly here instead. Deferred one frame so the table
@@ -5798,8 +5798,8 @@ impl Shell {
     }
 
     /// Warm path-keyed sidebar icons (tree rows, favorites) in the
-    /// background. The render path never fetches — `folder_icon_for`
-    /// returns the blank placeholder under the render guard — so
+    /// background. The render path never fetches: `folder_icon_for`
+    /// returns the blank placeholder under the render guard, so
     /// without this, rows revealed by expanding a folder kept their
     /// blank icon until some unrelated file-list warm happened to
     /// cache the same path. `Shell::render` collects the paths that
@@ -5815,7 +5815,7 @@ impl Shell {
     /// folders at a crisp bucket) on the background executor and land
     /// them in the shared `IconCache`, repainting once per wave. The
     /// platform fetch (`fetch_icon_rgba`) can block on a sleeping volume
-    /// — a folder with custom artwork makes NSWorkspace stat it — so it
+    ///, a folder with custom artwork makes NSWorkspace stat it, so it
     /// must never run on the UI thread (Prime Directive). Callers pass
     /// only paths `needs_path_icon` approved; this marks them in flight
     /// so the per-frame collectors don't re-request a pending fetch.
@@ -5846,7 +5846,7 @@ impl Shell {
                 .collect();
             delegate.heats = heats;
             // Under an Ant Trail sort the heat *is* the sort key, so new
-            // heat means a new row order — hydration finishing (or a
+            // heat means a new row order: hydration finishing (or a
             // fresh visit) has to re-rank, not just re-tint.
             if delegate.current_sort.map(|(col, _)| col)
                 == Some(crate::file_list::SortColumn::AntTrail)
@@ -5914,7 +5914,7 @@ impl Shell {
                         .and_then(|d| d.lock().ok().map(|g| g.favorites_section_collapsed()))
                         .unwrap_or(false);
                     // `None` = the DB exists but the favorites load
-                    // FAILED (busy, poisoned lock, corrupt row) —
+                    // FAILED (busy, poisoned lock, corrupt row),
                     // which is a different thing from "the user has no
                     // favorites". Conflating them is a data-loss
                     // hazard: hydrating empty with a writable DB
@@ -5956,7 +5956,7 @@ impl Shell {
                 this.process.ant_max.set(ant_max);
                 // Merge the DB's recency-ordered list *behind* whatever
                 // this session already navigated to before the async
-                // load landed — the live entries stay most-recent,
+                // load landed: the live entries stay most-recent,
                 // historical ones fill in behind, deduped and capped.
                 {
                     let mut live = this.process.recents.borrow_mut();
@@ -5971,7 +5971,7 @@ impl Shell {
                 this.favorites_section_collapsed = favs_collapsed;
                 // Attach the writable DB to the favorites entity and
                 // hydrate. The dev seed runs only when the entry list
-                // is empty AND `FERAIL_DEV_SEED_FAVORITES=1` — see
+                // is empty AND `FERAIL_DEV_SEED_FAVORITES=1`: see
                 // `crate::favorites::maybe_seed_dev_favorites`.
                 let fav_entity = this.process.favorites().clone();
                 fav_entity.update(cx, |f, cx| match favorites {
@@ -6008,14 +6008,14 @@ impl Shell {
     }
 
     /// Re-run the folder-size pass for every tab. Cancels any pass
-    /// still in flight first. Both callers pass `force = false` — the
+    /// still in flight first. Both callers pass `force = false`: the
     /// metadata DB attaching and the window returning from the
     /// background are both "re-seed from the cache" moments, not
     /// "re-measure everything" ones. The parameter stays because the
     /// pass itself supports forcing; only Refresh arms it today, per-tab
     /// through `Tab::force_folder_sizes`.
     fn restart_folder_size_passes(&mut self, force: bool, cx: &mut Context<Self>) {
-        // Respect the Performance toggle — this is also the activation
+        // Respect the Performance toggle: this is also the activation
         // re-seed path (`observe_window_activation`), so disabling folder
         // sizing stops the re-scan that would otherwise fire every time
         // the window comes forward.
@@ -6053,7 +6053,7 @@ impl Shell {
             .tabs
             .iter()
             // A tab showing a tool result is not
-            // displaying its directory — a watcher reload would clobber
+            // displaying its directory: a watcher reload would clobber
             // the results.
             .filter(|tab| tab.tool_result.is_none())
             .filter(|tab| paths.iter().any(|path| path == &tab.current_dir))
@@ -6068,7 +6068,7 @@ impl Shell {
     /// wake-from-sleep (docs/features/POWER.md): contents may have
     /// changed while the watcher was asleep, and the cheapest correct
     /// answer is a re-list. Skips tool results
-    /// for the same reason `reload_tabs_matching_paths` does — a reload
+    /// for the same reason `reload_tabs_matching_paths` does: a reload
     /// would clobber the results.
     pub(crate) fn reload_dir_tabs(&mut self, cx: &mut Context<Self>) {
         let targets: Vec<(TabId, PathBuf)> = self
@@ -6099,7 +6099,7 @@ impl Shell {
                 });
             }
         }
-        // A watched directory changed — a favorited path inside it may
+        // A watched directory changed: a favorited path inside it may
         // have been deleted/moved/restored. Re-check availability off the
         // UI thread (no-op when there are no path favorites). This is the
         // live Missing-transition hook (§8): favorite parents are watched
@@ -6112,7 +6112,7 @@ impl Shell {
     /// Drop cached folder sizes for each changed directory and all of
     /// its ancestors. A change at `P` alters the recursive size of `P`
     /// and every directory above it (each contains the change), yet
-    /// only `P`'s own mtime moves — the ancestors' rows would read
+    /// only `P`'s own mtime moves: the ancestors' rows would read
     /// stale until their TTL lapses (see folder_sizes.rs). This is the
     /// exact, immediate path for *in-app* work and for external
     /// shallow changes the watcher catches; the deletes run off the UI
@@ -6485,7 +6485,7 @@ impl Shell {
     }
 
     /// Remove a favorite with the §3.2 collapse-on-remove animation.
-    /// The row is marked `removing` — it fades and collapses in place —
+    /// The row is marked `removing`: it fades and collapses in place,
     /// and dropped from the entity once the fade window elapses. Callers
     /// capture the pre-removal entry for undo *before* calling this, so a
     /// Cmd+Z during the brief collapse still restores name/icon/sort.
@@ -6622,7 +6622,7 @@ impl Shell {
     /// row-level context menu sets `favorites_context_path` before
     /// dispatching. Rename/icon actions only exist on favorite rows,
     /// and favorite paths are canonicalized at every entry boundary
-    /// (hydrate, add, external drop) — so the lookup needs no stat
+    /// (hydrate, add, external drop), so the lookup needs no stat
     /// here, which matters: this runs in a menu-dispatch handler on
     /// the UI thread.
     fn pop_favorite_id_for_action(
@@ -6894,7 +6894,7 @@ impl Shell {
         self.move_favorite_focus(1, cx);
     }
 
-    /// Enter on the focused favorite — navigate the active tab to it
+    /// Enter on the focused favorite: navigate the active tab to it
     /// when it's `Available`, else surface the broken-target dialog.
     pub fn on_activate_favorite(
         &mut self,
@@ -6917,7 +6917,7 @@ impl Shell {
         }
     }
 
-    /// Delete / Backspace on the focused favorite — remove it with undo,
+    /// Delete / Backspace on the focused favorite: remove it with undo,
     /// the keyboard twin of the context-menu / source-folder removes.
     pub fn on_delete_favorite(
         &mut self,
@@ -6931,7 +6931,7 @@ impl Shell {
         };
         let removed = self.process.favorites().read(cx).entry_by_id(id).cloned();
         let Some(fav) = removed else {
-            // Stale focus (entry already gone) — clear it.
+            // Stale focus (entry already gone): clear it.
             self.focused_favorite = None;
             return;
         };
@@ -6957,7 +6957,7 @@ impl Shell {
         // Resolve the contextual favorite up front (same path Rename /
         // Reset Icon use), then hand the shared favorites entity + id to
         // the picker window. The picker writes the chosen glyph straight
-        // through the entity — no `favorites_context_path` to keep alive
+        // through the entity, no `favorites_context_path` to keep alive
         // across the window's lifetime.
         let Some(id) = self.pop_favorite_id_for_action(cx) else {
             return;
@@ -6980,7 +6980,7 @@ impl Shell {
     ) -> Option<(PathBuf, FavoriteResolved)> {
         // A path that is already in the favorites index must be
         // classifiable as `Folder` even when its on-disk presence is
-        // gone (Missing or Unmounted state) — otherwise "Remove from
+        // gone (Missing or Unmounted state), otherwise "Remove from
         // Favorites" on a broken row routes to the NotAFolder rejection
         // toast and the user can never remove the stale shortcut.
         let already_favorite =
@@ -6989,7 +6989,7 @@ impl Shell {
             // Every surface that sets `favorites_context_path` is
             // folder-only by construction (favorites rows, sidebar
             // tree rows, breadcrumb segments, the active tab's
-            // current_dir) — classify as Folder without a stat. An
+            // current_dir): classify as Folder without a stat. An
             // `is_dir()` here hung Cmd+D on dead network mounts
             // (Prime Directive). Keep that invariant when adding
             // setters.
@@ -7022,7 +7022,7 @@ impl Shell {
     // ----- Tab management (5.5.d) ---------------------------------
 
     /// Cmd+T: open a new tab beside the active one, at the active
-    /// tab's current directory. Spec §4.3: "new tab default — same
+    /// tab's current directory. Spec §4.3: "new tab default, same
     /// directory as the currently active tab (so Cmd+T is 'another
     /// view of where I am'), inserted after the active tab."
     fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -7052,7 +7052,7 @@ impl Shell {
     /// / hashing the disk) and ends its task-registry row so the status
     /// bar doesn't show a ghost "Searching…" / "Finding duplicates…".
     /// Covers directory enumeration, folder-size, search, and duplicate
-    /// scans — they all ride `load_cancel` / `load_task`.
+    /// scans: they all ride `load_cancel` / `load_task`.
     fn dismiss_tab_work(&self, tab: &Tab) {
         if let Some(cancel) = &tab.load_cancel {
             cancel.store(true, Ordering::Relaxed);
@@ -7096,7 +7096,7 @@ impl Shell {
         // directory's file watch.
         let own_dirs: Vec<PathBuf> = self.tabs.iter().map(|t| t.current_dir.clone()).collect();
         self.process.prune_watches(cx.entity_id(), own_dirs, cx);
-        // No re-load — the now-active tab already has its own
+        // No re-load: the now-active tab already has its own
         // TableState populated from its earlier load (Phase A+B).
         cx.notify();
     }
@@ -7132,7 +7132,7 @@ impl Shell {
         let path = closed.current_dir.clone();
         // Re-register the path in NodeStore to mint (or reuse) a
         // stable NodeId. ProcessState is the singleton, so a NodeId
-        // captured before the tab closed is still valid — but we
+        // captured before the tab closed is still valid, but we
         // pass through `get_or_create_path_with_id` regardless, the
         // same way Cmd+T does, so the reopen path stays a normal
         // "new tab at this path" pipeline.
@@ -7165,7 +7165,7 @@ impl Shell {
         self.active = insert_at;
         // Stream the directory fresh. The captured `selection` set
         // is reconciled against the model on streaming `Done` via
-        // the standard reconciliation path — best-effort per spec
+        // the standard reconciliation path: best-effort per spec
         // §3.3 (rows that no longer exist drop, surviving rows
         // re-light).
         self.load_path(path, cx);
@@ -7194,7 +7194,7 @@ impl Shell {
     }
 
     /// Switch to the tab at `idx`. Used by tabstrip click handlers.
-    /// No re-enumeration — the target tab already owns its own
+    /// No re-enumeration: the target tab already owns its own
     /// `TableState` with whatever its last load produced.
     pub fn select_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
         if idx >= self.tabs.len() || idx == self.active {
@@ -7206,7 +7206,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Phase D, spec §3.3 "Reorder tab" — move the tab identified by
+    /// Phase D, spec §3.3 "Reorder tab": move the tab identified by
     /// `from_id` into gap position `to_pos`. Gap positions number
     /// `0..=tabs.len()`: gap 0 is before the first tab, gap N is after
     /// the last. Drops at gap-of-itself or gap-just-after-itself are
@@ -7563,7 +7563,7 @@ impl Shell {
                 self.navigate(parent, cx);
                 // Select the folder we came from so it's highlighted and
                 // scrolled into view once the parent's contents stream
-                // in — `cur` is by definition an immediate child of
+                // in: `cur` is by definition an immediate child of
                 // `parent`. `navigate` just cleared selection; seed it
                 // here and the streaming reconcile
                 // (`refresh_file_list_selection_in_tab`) applies + reveals
@@ -7581,7 +7581,7 @@ impl Shell {
     /// Navigate to a path that entered the app from OUTSIDE (typed
     /// breadcrumb input today; any future "go to folder" prompt).
     /// The path-identity contract says external paths canonicalize
-    /// once at their entry boundary — but canonicalize is a stat
+    /// once at their entry boundary, but canonicalize is a stat
     /// call, so it runs on the background executor, then the real
     /// `navigate` applies on the main thread. A failed canonicalize
     /// falls back to the typed path; navigation's enumeration owns
@@ -7619,11 +7619,11 @@ impl Shell {
     /// clickable and lands the user on the result with it selected.
     ///
     /// A new tab rather than navigating in place, for two reasons. It never
-    /// costs the user the folder they were in — extraction is a side errand,
+    /// costs the user the folder they were in: extraction is a side errand,
     /// not a navigation. And it always *visibly* does something: when the
     /// destination happens to be the folder already on screen, navigating
     /// would do nothing at all and only select a row, which the first
-    /// version of this did — off-screen in a long listing, that reads as a
+    /// version of this did: off-screen in a long listing, that reads as a
     /// dead link.
     ///
     /// The selection is queued by name because the new tab has not
@@ -7692,8 +7692,8 @@ impl Shell {
     }
 
     /// Navigate originating from a favorite (sidebar click / Enter). When
-    /// the "exclude favorites from tracking" setting is on — the default
-    /// — the visit is *not* recorded: clicking a favorite is a deliberate
+    /// the "exclude favorites from tracking" setting is on: the default
+    ///: the visit is *not* recorded: clicking a favorite is a deliberate
     /// shortcut, not organic browsing, so it shouldn't inflate the
     /// folder's Ant Trail heat or push it into Recents. The same folder
     /// reached by browsing still records normally.
@@ -7813,7 +7813,7 @@ impl Shell {
         tab.nav.navigate_to(node_id);
         // Any pending screenshot select belongs to the previous
         // path; drop it so a stale row index doesn't apply. Same for
-        // queued post-op names — a leftover name must not select a
+        // queued post-op names: a leftover name must not select a
         // same-named entry in an unrelated folder.
         self.active_tab_mut().pending_select_row = None;
         self.active_tab_mut().pending_select_rows.clear();
@@ -7839,7 +7839,7 @@ impl Shell {
 
     /// Bump the Ant Trail visit count for `path` in the in-memory
     /// map and persist asynchronously through `metadata_db`. Cheap
-    /// on the foreground executor — the DB write is a single upsert
+    /// on the foreground executor: the DB write is a single upsert
     /// dispatched to the background executor (one shared connection
     /// behind a mutex; there is no pooling).
     pub fn record_ant_visit(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
@@ -7873,7 +7873,7 @@ impl Shell {
         }
     }
 
-    /// Compute the Ant Trail heat for `path` — 0.0 (never visited)
+    /// Compute the Ant Trail heat for `path`: 0.0 (never visited)
     /// through 1.0 (most-visited folder). Log-scaled so a 10-visit
     /// folder isn't 10× brighter than a 5-visit one. Used by the
     /// file list to apply a subtle background tint per row.
@@ -7903,7 +7903,7 @@ impl Shell {
     /// Toggle expansion for a directory in the sidebar tree.
     /// Collapsing also removes every descendant from `expanded` so a
     /// future re-open doesn't carry stale sub-expansions forward.
-    /// Cache stays — re-expand is instantaneous.
+    /// Cache stays: re-expand is instantaneous.
     pub fn toggle_tree_expand(&mut self, path: &Path, cx: &mut Context<Self>) {
         if self.expanded.contains(path) {
             let prefix = path.to_path_buf();
@@ -7977,7 +7977,7 @@ impl Shell {
     /// already cached. On first call, runs `std::fs::read_dir`
     /// synchronously (consistent with `Shell::load_path`'s sync
     /// enumeration; a unified async-streaming refactor lives in a
-    /// later iter). Folder-only — files don't appear in the tree.
+    /// later iter). Folder-only: files don't appear in the tree.
     ///
     /// Hidden entries are *included* in the cache; the renderer
     /// filters them out based on the live `show_hidden` flag so a
@@ -8194,9 +8194,9 @@ mod tests {
             s.starts_with("Move to Trash: 3 of 5 done \u{00b7} 2 failed"),
             "{s}"
         );
-        assert!(s.contains("Report.pdf \u{2014} permission denied"), "{s}");
+        assert!(s.contains("Report.pdf: permission denied"), "{s}");
         assert!(
-            s.contains("notes.txt \u{2014} in use by another program"),
+            s.contains("notes.txt: in use by another program"),
             "{s}"
         );
         // Permission denied dominates → elevation advice.
@@ -8260,7 +8260,7 @@ mod tests {
     fn window_title_includes_folder_and_app_name() {
         assert_eq!(
             window_title_for(Path::new("/Users/jk/Documents")),
-            "Documents \u{2014} Ferail"
+            "Documents - Ferail"
         );
     }
 
@@ -8270,7 +8270,7 @@ mod tests {
         // platform; show the path itself rather than dropping to the
         // bare app name. (`/` is a root with empty `file_name()` on
         // both Windows and Unix, so this stays platform-stable.)
-        assert_eq!(window_title_for(Path::new("/")), "/ \u{2014} Ferail");
+        assert_eq!(window_title_for(Path::new("/")), "/ - Ferail");
     }
 
     #[test]

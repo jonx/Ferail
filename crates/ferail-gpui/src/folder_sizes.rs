@@ -1,4 +1,4 @@
-//! Background folder-size worker — recursive sizes for the Size
+//! Background folder-size worker: recursive sizes for the Size
 //! column's directory rows.
 //!
 //! Mirrors the `prefetch` worker shape (seed snapshot on the
@@ -19,17 +19,17 @@
 //! mtime only changes when its *direct* children change, so edits
 //! deep inside a subtree leave a parent's cached size looking valid.
 //! Two mechanisms close that gap (see docs/features/FRESHNESS.md):
-//!   - **In-app work** invalidates exactly — every mutation deletes
+//!   - **In-app work** invalidates exactly: every mutation deletes
 //!     the cached size for the mutated path and all its ancestors
 //!     (`Shell::invalidate_folder_size_ancestors`), so the next visit
 //!     recomputes.
-//!   - **External (3rd-party) work** is caught lazily — the TTL
+//!   - **External (3rd-party) work** is caught lazily: the TTL
 //!     bounds how long a deep external change can hide, and an
 //!     explicit Refresh (`start(.., force = true)`) recomputes visible
 //!     rows on demand.
 //!
 //! Nothing else bypasses the cache. Navigation, revisiting a folder you
-//! just left, and the window coming forward all answer from it — the
+//! just left, and the window coming forward all answer from it: the
 //! Size column is meant to settle, not to re-measure under the user.
 
 use std::cell::RefCell;
@@ -53,7 +53,7 @@ use crate::tasks::{TaskKind, TaskRegistry};
 
 /// AROS soak switch for the gate in [`start`]: `SetEnv FERAIL_FOLDER_SIZES 1`
 /// (any non-empty value except `0`) before launch enables the walker.
-/// Read once — the env can't change mid-run, and `start` runs on the UI
+/// Read once: the env can't change mid-run, and `start` runs on the UI
 /// thread where we keep even cheap syscalls out of the per-navigation path.
 fn aros_walker_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -67,7 +67,7 @@ fn aros_walker_enabled() -> bool {
 /// changes the folder's own mtime can't reveal (an in-app mutation
 /// invalidates the exact ancestor chain immediately and doesn't wait
 /// for this). A recompute only happens when the folder is actually
-/// loaded again, off the UI thread — so a longer TTL trades a little
+/// loaded again, off the UI thread, so a longer TTL trades a little
 /// staleness for fewer re-walks of big trees. Tune here, one place.
 const FOLDER_SIZE_TTL_SECS: i64 = 10 * 60;
 const SIZE_CHANNEL_BATCHES: usize = 8;
@@ -98,7 +98,7 @@ pub fn folder_sizing_enabled(cx: &gpui::App) -> bool {
         .unwrap_or(true)
 }
 
-/// Snapshot used to seed the worker — `Send` copies of the bits it
+/// Snapshot used to seed the worker: `Send` copies of the bits it
 /// needs, like `PrefetchSeed`.
 struct SizeSeed {
     row_ix: usize,
@@ -109,7 +109,7 @@ struct SizeSeed {
     mtime_unix: i64,
 }
 
-/// One resolved folder size. Keyed by `NodeId`, not row index —
+/// One resolved folder size. Keyed by `NodeId`, not row index:
 /// rows can re-sort while the walk is in flight. Carries the recursive
 /// item counts from the same walk so the apply can fill the folder's
 /// Description column ("N files · M folders") alongside the Size.
@@ -129,7 +129,7 @@ struct SizeRow {
 /// flipped on the next navigation/reload, which both stops the
 /// in-flight `recursive_size` walk at its next dirent and marks
 /// any partial sum as not-cacheable.
-/// `force` bypasses the cache fast-path entirely — every folder is
+/// `force` bypasses the cache fast-path entirely: every folder is
 /// re-walked and written through. Armed only by Refresh
 /// (`Tab::force_folder_sizes`), which is the user asking for exactly
 /// that; every other load path passes `false`.
@@ -150,7 +150,7 @@ pub fn start(
     // (`Error 0x80000002`, contained Guru), and because it starts on *every*
     // directory listing it made ordinary navigation unusable. posixc's
     // unlocked fd table (T-FDLOCK, aros-upstream d702d708) was a real bug
-    // but NOT the whole story — that un-gate was premature. The 2026-07-18
+    // but NOT the whole story: that un-gate was premature. The 2026-07-18
     // preemption + diag-scanner fixes are the likelier real story, so the
     // gate is now a runtime switch: `SetEnv FERAIL_FOLDER_SIZES 1` before
     // launch enables the walker on AROS for soak testing without a rebuild.
@@ -161,7 +161,7 @@ pub fn start(
     }
     // Snapshot the directory rows on the foreground executor. The
     // worker gets `Send` data only. Symlinks-to-directories are
-    // `EntryKind::Symlink` and stay excluded — we never follow them.
+    // `EntryKind::Symlink` and stay excluded: we never follow them.
     let seeds: Vec<SizeSeed> = table
         .read(cx)
         .delegate()
@@ -343,7 +343,7 @@ fn run_worker(
             dirs,
             ..
         } = recursive_totals(&seed.path, &cancel);
-        // A cancelled walk returns a partial sum — neither cacheable
+        // A cancelled walk returns a partial sum, neither cacheable
         // nor showable.
         if cancel.load(Ordering::Relaxed) {
             return;
@@ -384,7 +384,7 @@ fn run_worker(
 /// `NodeId`. Rows that vanished (re-enumeration, filter) skip
 /// silently. Sets `size` (so Size-sorting orders folders correctly),
 /// the pre-formatted `display_size`, and the folder's `display_description`
-/// with the recursive item counts (per the no-alloc-on-paint contract —
+/// with the recursive item counts (per the no-alloc-on-paint contract,
 /// both strings are formatted here, not during render). Only folders
 /// carry a count description; the prefetch worker leaves directory
 /// descriptions empty (dirs have no magic facts), so the two never
@@ -429,7 +429,7 @@ fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<SizeRow>) {
 }
 
 /// Resolve one folder's recursive size through the shared
-/// `folder_sizes` cache — the single-path analogue of the worker's
+/// `folder_sizes` cache: the single-path analogue of the worker's
 /// batch sweep, for Get Info's "Calculate" button. Honors the same
 /// contract: a cached row counts only while its mtime matches the
 /// folder's live mtime and it's younger than [`FOLDER_SIZE_TTL_SECS`];
@@ -469,7 +469,7 @@ pub(crate) fn folder_size_cached(
     if cancel.load(Ordering::Relaxed) {
         return size;
     }
-    // Write through the full record — this shares the `folder_sizes`
+    // Write through the full record: this shares the `folder_sizes`
     // cache with the file-list worker, so the counts must land too or a
     // later cache hit there would read this row as "0 files".
     if let Some(db) = db {

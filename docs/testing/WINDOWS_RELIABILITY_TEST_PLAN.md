@@ -21,7 +21,7 @@ Status notation for a test record:
 
 - `[ ]` not run
 - `[x]` pass
-- `[F]` fail — attach evidence and issue id
+- `[F]` fail: attach evidence and issue id
 - `[N/A]` capability unavailable on this machine, with reason
 
 ### Current feature-level acceptance
@@ -34,7 +34,7 @@ in `WINDOWS_HANDOVER.md` and is the baseline for continued work.
 
 The report does not by itself claim every numbered stress/adversarial subcase
 below. Leave an exact case unchecked until its defining conditions and evidence
-were exercised—for example ten complete scroll passes, injected provider
+were exercised, for example ten complete scroll passes, injected provider
 failure, exact memory/latency limits, every path class or a 100-open handle
 soak. This preserves the user's successful validation without manufacturing
 measurements that were not retained.
@@ -72,7 +72,7 @@ redact the report locally before it leaves the machine.
 
 ## 2. Required Windows environments
 
-### WENV-A — primary development machine
+### WENV-A - primary development machine
 
 - Fully patched supported Windows 11, physical machine preferred.
 - Visual Studio Build Tools/Windows SDK, Rust MSVC toolchain, WinDbg.
@@ -87,7 +87,7 @@ redact the report locally before it leaves the machine.
 
 This environment runs every case.
 
-### WENV-B — constrained machine
+### WENV-B - constrained machine
 
 - The oldest Windows version Ferail promises to support.
 - Four logical processors, 8 GB RAM, integrated GPU or a VM with equivalent
@@ -99,7 +99,7 @@ reveal, clipboard, context menu, and packaging. The four-million-row fixture
 may run on WENV-A only if disk capacity makes it impractical here, but WENV-B
 must open and scroll the one-million fixture.
 
-### WENV-C — clean release machine
+### WENV-C - clean release machine
 
 - Fresh Windows Sandbox or clean VM.
 - No Rust, Visual Studio, VC++ redistributable installed deliberately, Office,
@@ -202,7 +202,7 @@ main executable.
   command, especially `view.toggle_flat`.
 - [x] `WTEST-003` Package dependency inspection finds no undeclared runtime
   DLL. *2026-08-24: both packaged binaries import 34 Windows system DLLs and
-  nothing else — no `vcruntime*`/`msvcp*`/`ucrtbase`/`api-ms-win-crt-*`; the
+  nothing else, no `vcruntime*`/`msvcp*`/`ucrtbase`/`api-ms-win-crt-*`; the
   gate now fails packaging if one appears.*
 - [ ] `WTEST-004` Portable ZIP launches offline on WENV-C. *2026-08-25:
   user-reported clean Windows Sandbox pass with the current v0.6.8 portable
@@ -220,7 +220,7 @@ signature output, and clean-machine recording.
 
 ## 6. Exact interactive cases
 
-### A. Startup, shutdown, and diagnostics — WIN-001/WIN-015/WIN-016
+### A. Startup, shutdown, and diagnostics - WIN-001/WIN-015/WIN-016
 
 - [ ] `WTEST-010` Launch/quit the diagnostic build 100 times with no leaked
   `InputState`/`TableState` assertion, orphan helper, or rising handle count.
@@ -250,7 +250,7 @@ signature output, and clean-machine recording.
 Release blocker: any in-process crash, shutdown assertion, unsymbolizable dump,
 or orphan helper.
 
-### B. Ordinary browsing and background work — WIN-005/WIN-006
+### B. Ordinary browsing and background work - WIN-005/WIN-006
 
 Run with file details enabled and eager full-folder indexing disabled.
 
@@ -276,7 +276,7 @@ Run with file details enabled and eager full-folder indexing disabled.
 Release blocker: whole-folder work on ordinary navigation, >1 s heartbeat gap,
 or loss of Format/Description while the feature is enabled.
 
-### C. Million-row Flat View — non-negotiable cross-platform scale gate
+### C. Million-row Flat View - non-negotiable cross-platform scale gate
 
 Run Release on WENV-A with previews/folder sizes/file details set to their
 normal user defaults. Flat View itself must automatically keep work
@@ -328,7 +328,7 @@ Scale acceptance:
 Release blocker: truncation, input freeze, per-row Shell state, repeat-scan
 growth, or >10% memory/performance regression.
 
-### D. 10k previews, scrolling, and hostile providers — WIN-002/WIN-003/WIN-011
+### D. 10k previews, scrolling, and hostile providers - WIN-002/WIN-003/WIN-011
 
 - [ ] `WTEST-040` Open `WCORPUS-MEDIA-10K` in list and grid. Initial requests
   cover only the viewport plus overscan; worker and upload queues stay within
@@ -362,7 +362,7 @@ growth, or >10% memory/performance regression.
 Release blocker: any third-party DLL loaded in Ferail, disappearing scrollbar,
 whole-list repaint loop, unbounded queue/cache, or crash.
 
-### E. Multi-selection — WIN-004
+### E. Multi-selection - WIN-004
 
 - [ ] `WTEST-050` Single, Ctrl-toggle, Shift-range, keyboard range, and
   right-click selection semantics match the documented selection rules.
@@ -377,7 +377,7 @@ whole-list repaint loop, unbounded queue/cache, or crash.
 Release blocker: crash, wrong target set, or eager path/id materialization for
 Select All.
 
-### F. Open and Reveal — WIN-008/WIN-009
+### F. Open and Reveal - WIN-008/WIN-009
 
 For every item in `WCORPUS-OPEN`, repeat from double-click, Enter, context menu,
 and command palette where available.
@@ -399,7 +399,7 @@ and command palette where available.
 Release blocker: `cmd /C start` remains in the Windows default-open path,
 Explorer opens an unrelated default folder, or path characters change.
 
-### G. Native Windows context menu — WIN-007
+### G. Native Windows context menu - WIN-007
 
 - [ ] `WTEST-070` Normal right-click opens the Ferail menu at baseline speed
   and creates no helper, COM/PIDL query, or prefetch task.
@@ -432,7 +432,7 @@ Explorer opens an unrelated default folder, or path characters change.
 Release blocker: any selection/hover prefetch, Shell extension in Ferail's
 process, normal-menu regression, or uncontained handler failure.
 
-### H. Shortcuts — WIN-010
+### H. Shortcuts - WIN-010
 
 - [ ] `WTEST-080` Open `.lnk` targets for a file, directory, application with
   arguments, UNC path, and Shell item; behavior matches Explorer.
@@ -453,7 +453,7 @@ process, normal-menu regression, or uncontained handler failure.
   and concurrent COM work remain bounded, paint performs no I/O, cancellation
   drops stale results, and local/Flat 1M baselines remain within their gates.
 
-### I. Explorer clipboard and drag/drop — WIN-012
+### I. Explorer clipboard and drag/drop - WIN-012
 
 For each `WCORPUS-CLIPBOARD` set, test Explorer→Ferail and Ferail→Explorer.
 
@@ -476,7 +476,7 @@ For each `WCORPUS-CLIPBOARD` set, test Explorer→Ferail and Ferail→Explorer.
 Release blocker: common `CF_HDROP` regression, wrong copy/move effect, UI-thread
 materialization, or silent failure.
 
-### J. Shell namespace and Recycle Bin — WIN-013
+### J. Shell namespace and Recycle Bin - WIN-013
 
 Current source boundary (2026-08-26): enumeration, navigation into pathless
 containers, handoff of real filesystem paths, and the explicit native Windows
@@ -508,7 +508,7 @@ completed first-class location claim and all gates below remain open.
 Release blocker: path fabrication for virtual items, raw PIDL lifetime bug, or
 ordinary directories switching to Shell enumeration.
 
-### K. WSL Linux locations — WIN-017
+### K. WSL Linux locations - WIN-017
 
 - [ ] `WTEST-130` With WSL absent, then installed with no distributions, the
   Linux location is hidden or shows a bounded unavailable/empty state. Startup,
@@ -558,7 +558,7 @@ navigation/tab/window close, no failed-listing activation fallback, explicit
 WSL native-menu refusal, and pre-materialization selection caps. The WTEST
 checkboxes deliberately remain manual real-machine evidence gates.
 
-### L. Metadata and Properties — WIN-014
+### L. Metadata and Properties - WIN-014
 
 - [ ] `WTEST-110` Known-answer EXIF fields match fixture manifests for JPEG,
   TIFF, and HEIC where supported; orientation is not double-applied.
@@ -630,7 +630,7 @@ On current macOS and the supported Linux test environment:
 - [ ] `WTEST-X02` normal context menus, selection semantics, open/reveal,
   clipboard, preview, Format and Description still work;
 - [ ] `WTEST-X03` platform capability absence hides Windows-only entries
-  cleanly—no disabled “Windows” placeholders on macOS/Linux;
+  cleanly, no disabled “Windows” placeholders on macOS/Linux;
 - [ ] `WTEST-X04` helper packaging and Windows DTOs add no per-row allocation
   or process startup on non-Windows targets;
 - [ ] `WTEST-X05` all localization and command-catalogue tests pass.
@@ -652,7 +652,7 @@ shutdown/helper leak checks, and the primary macOS/Linux regressions.
 Run the entire document on WENV-A, the defined subset on WENV-B, and packaging
 on WENV-C using the exact signed artifacts intended for publication. A retest
 after any release-blocking fix covers the fixed case, its subsystem section,
-startup/shutdown, Flat 4M, and 10k preview smoke—not only the single failing
+startup/shutdown, Flat 4M, and 10k preview smoke, not only the single failing
 step.
 
 ## 9. Sign-off record

@@ -11,11 +11,11 @@ use std::path::Path;
 /// Fetch the system icon for `path` at `size_px`, rasterized to straight
 /// (non-premultiplied) RGBA8.
 ///
-/// **Safe to call from worker threads** (and meant to be — it can block on
+/// **Safe to call from worker threads** (and meant to be: it can block on
 /// a spun-down volume when the folder carries custom artwork, so the UI
 /// thread must never call it; see the Prime Directive). `iconForFile:`
-/// itself is thread-safe, and the one hazard in this function — resizing
-/// the shared, cached `NSImage` the workspace hands back — is avoided by
+/// itself is thread-safe, and the one hazard in this function, resizing
+/// the shared, cached `NSImage` the workspace hands back: is avoided by
 /// drawing a private copy. Rasterization goes through a per-thread
 /// `NSGraphicsContext`, so concurrent fetches don't share drawing state.
 #[cfg(target_os = "macos")]
@@ -42,7 +42,7 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
         let alloc = NSBitmapImageRep::alloc();
         // NSBitmapFormat::empty() = 0 = "default", which is premultiplied
         // RGBA. NSGraphicsContext refuses non-premultiplied formats for
-        // drawing — Apple's "drawing always premultiplies" rule. We undo
+        // drawing: Apple's "drawing always premultiplies" rule. We undo
         // the premult on the read side below.
         let rep = NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
             alloc,
@@ -98,7 +98,7 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
 /// `ferail-shell-win32::fetch_quick_look_thumbnail`) so transparent
 /// icon backgrounds are preserved.
 ///
-/// Returns straight (non-premultiplied) RGBA — the shell's icon
+/// Returns straight (non-premultiplied) RGBA: the shell's icon
 /// pipeline gives back premultiplied BGRA, we swap channels here.
 /// (For most file icons the premultiplied vs straight distinction
 /// is invisible because the alpha is 0 or 255 everywhere; soft-edge
@@ -203,7 +203,7 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
 /// that PNG/SVG to straight RGBA8.
 ///
 /// Cached by kind/extension one level up (`IconCache`), so the MIME + theme
-/// resolution runs at most once per distinct file type, not per file — and
+/// resolution runs at most once per distinct file type, not per file, and
 /// never on the render path (the caller gates on `path_guard::is_rendering`).
 #[cfg(target_os = "linux")]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
@@ -217,7 +217,7 @@ mod linux_icons {
 
     use xdg_mime::SharedMimeInfo;
 
-    /// The system shared-mime-info database — parsing it walks
+    /// The system shared-mime-info database, parsing it walks
     /// `/usr/share/mime`, so load it once for the process.
     fn mime_db() -> &'static SharedMimeInfo {
         static DB: OnceLock<SharedMimeInfo> = OnceLock::new();
@@ -225,7 +225,7 @@ mod linux_icons {
     }
 
     /// The active GTK icon theme name (via gsettings), resolved once.
-    /// Falls back to Adwaita — freedesktop-icons cascades to hicolor from
+    /// Falls back to Adwaita: freedesktop-icons cascades to hicolor from
     /// any theme, so the concrete name only picks the preferred artwork.
     fn theme_name() -> &'static str {
         static THEME: OnceLock<String> = OnceLock::new();
@@ -354,7 +354,7 @@ mod icon_tests {
     }
 
     /// A returned icon must have the requested square dimensions, a matching
-    /// buffer length, and at least one non-transparent pixel — an all-zero
+    /// buffer length, and at least one non-transparent pixel: an all-zero
     /// buffer is the classic "resolved a path but rasterized nothing" bug.
     fn assert_wellformed(icon: (Vec<u8>, u32, u32), size: u32) {
         let (rgba, w, h) = icon;
@@ -383,7 +383,7 @@ mod icon_tests {
 
     // Linux depends on an installed icon theme. When one is present (the normal
     // desktop case, and our WSL2 test box) the result must be well-formed; when
-    // absent (a headless CI image) None is acceptable — we only guard against a
+    // absent (a headless CI image) None is acceptable: we only guard against a
     // malformed non-None result.
     #[cfg(target_os = "linux")]
     #[test]
@@ -413,7 +413,7 @@ mod icon_tests {
 /// `.lnk` shortcut arrow).
 ///
 /// The simple-parse half mirrors
-/// `ferail-shell-win32::shell_item_image_factory` — the two crates
+/// `ferail-shell-win32::shell_item_image_factory`: the two crates
 /// deliberately don't depend on each other, so keep the twins in sync.
 #[cfg(windows)]
 mod win_shell {
@@ -431,7 +431,7 @@ mod win_shell {
     /// context when the namespace refuses the plain string.
     /// `C:\Windows\Fonts` is the canonical refusal: it is a namespace
     /// junction, so ordinary file paths under it come back
-    /// `E_INVALIDARG` even though the files are plain — which is what
+    /// `E_INVALIDARG` even though the files are plain, which is what
     /// left the Fonts grid with blank icons (WIN-011). Registering an
     /// `IFileSystemBindData` under `STR_FILE_SYS_BIND_DATA` forces
     /// plain file-system parsing, Explorer's own escape hatch.
@@ -482,7 +482,7 @@ mod win_shell {
 
         // Ask for the overlay *index* (upper 8 bits of iIcon). The flag
         // is only honored together with SHGFI_ICON, whose HICON we
-        // immediately destroy — the small composed icon itself is not
+        // immediately destroy: the small composed icon itself is not
         // what we want at grid sizes.
         let mut shfi = SHFILEINFOW::default();
         let got = SHGetFileInfoW(

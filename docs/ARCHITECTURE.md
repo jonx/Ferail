@@ -5,7 +5,7 @@
 
 Ferail is a macOS-first file manager written in Rust. It began as a
 port and UI rewrite of the Windows project Ferail-Win32 (which held the
-Ferail name until this app took it over on 2026-07-30 — history before
+Ferail name until this app took it over on 2026-07-30: history before
 that commit says *Feraille* and means this app),
 but the active application is now the GPUI shell:
 
@@ -34,12 +34,12 @@ The rule extends beyond render code: **semantic event handlers (action
 handlers, click handlers, subscriptions) run on the UI thread too**, and
 a single blocking syscall there freezes every open window. A call that
 returns in microseconds on a local SSD can take *seconds* against a
-spun-down external drive, a cold network mount, or a cloud placeholder —
+spun-down external drive, a cold network mount, or a cloud placeholder,
 so "it's fast on my machine" is never an argument. Calls that look
 innocent but block on slow media include:
 
-- `Path::exists` / `metadata` / `canonicalize` / `read_dir` — all stat.
-- `notify`'s FSEvents `Watcher::watch()` — canonicalizes the path
+- `Path::exists` / `metadata` / `canonicalize` / `read_dir`: all stat.
+- `notify`'s FSEvents `Watcher::watch()`: canonicalizes the path
   internally (this froze navigation onto sleeping drives until watch
   registration moved to the `fs-watcher` worker thread).
 - NSWorkspace / LaunchServices lookups, xattr reads, Quick Look.
@@ -54,17 +54,17 @@ Every feature that touches the filesystem follows the same shape (see
 2. The work runs on `cx.background_executor()` (or a dedicated worker
    thread), carrying a generation counter and a cooperative cancel flag.
 3. Results stream back through entity updates
-   (`this.update(cx, …)`) — the only place UI state mutates.
+   (`this.update(cx, …)`): the only place UI state mutates.
 4. A result that arrives after the user moved on (generation mismatch,
    tab closed, path changed) is **dropped**, not applied.
 5. If the work might be slow, the UI shows cached/placeholder state
    immediately and upgrades when results land (e.g. the file pane's
    skeleton loading view appears only after `SLOW_LOAD_INDICATOR_DELAY`
-   without a first batch — fast loads never flash it).
+   without a first batch: fast loads never flash it).
 
 ### Enforcement
 
-The directive is enforced by the program, not just this document —
+The directive is enforced by the program, not just this document:
 `ferail_core::path_guard` holds two debug-build tripwires:
 
 - **Render guard**: render implementations hold a `RenderPathGuard`;
@@ -72,13 +72,13 @@ The directive is enforced by the program, not just this document —
   (`assert_path_resolution_allowed`).
 - **UI-thread guard**: `boot::run_gui` marks the UI thread at startup
   (`mark_ui_thread`), and known-blocking entry points in
-  `ferail-fs-native` call `assert_off_ui_thread` — running one on the
+  `ferail-fs-native` call `assert_off_ui_thread`: running one on the
   UI thread panics in debug builds with a pointer back to this section.
 - **Lint wall**: `crates/ferail-gpui/clippy.toml` disallows the
   syscalls most likely to freeze the UI (`canonicalize`, blocking
   `Command::output`/`status`, raw `notify` watch registration) and the
   crate denies `clippy::disallowed_methods`. A legitimate off-thread
-  use carries a per-site `#[allow]` with a justification comment — that
+  use carries a per-site `#[allow]` with a justification comment: that
   annotation is the review marker.
 
 When one of these fires, the fix is never to remove the guard: move the
@@ -133,7 +133,7 @@ Path-identity contract: both maps key on
 `ferail_core::node_store::normalize_path_key`, a lexical-only
 normalization (trailing slashes, `.` segments, doubled separators fold
 together; no filesystem access). Case, symlinks, and `..` are
-deliberately NOT folded by the key — case-insensitivity is a per-volume
+deliberately NOT folded by the key: case-insensitivity is a per-volume
 property and folding would corrupt identity on case-sensitive volumes;
 the other two need filesystem knowledge. Paths from outside the app
 (typed breadcrumbs, CLI args, external drops) are canonicalized once at
@@ -161,7 +161,7 @@ fields:
 extension-derived kind, and flag real mismatches.
 
 Raw name vs. display name: `name` is the on-disk leaf (the bytes `readdir`
-returned) and is the *only* value used to reconstruct a path — joins,
+returned) and is the *only* value used to reconstruct a path: joins,
 renames, opens. `display_name` is what the user reads. They differ on macOS
 because of its two inherited path separators: HFS/classic Mac OS used the
 colon, Unix/NeXTSTEP the slash, so the POSIX layer stores a `:` *inside* a
@@ -170,9 +170,9 @@ name component where Finder shows a `/` (a file `ls` reports as `a:b` is
 Finder-parity swap (`:` → `/`, macOS only; identity elsewhere) when the
 backend builds each `FileEntry`, and its inverse `on_disk_leaf` (`/` → `:`)
 runs on names typed into the rename / New-Folder fields. Every user-facing
-surface — list rows, grid cells, the preview header, Get Info, breadcrumb
+surface: list rows, grid cells, the preview header, Get Info, breadcrumb
 segments, the window title, sidebar-tree labels, drag-ghost chips, and the
-search/sort keys — renders `display_name` (or routes a path leaf through
+search/sort keys: renders `display_name` (or routes a path leaf through
 `display_leaf`); only path operations touch `name`. This is the seam where
 future per-platform display quirks plug in. `name_has_hazards` is
 precomputed (`name_hazards::has_hazards(&display_name)`) so the dense row
@@ -230,21 +230,21 @@ Columns are Name, Size, Format, and Modified. Columns can be sorted,
 resized, and reordered. Cell rendering is keyed by column id so moved
 columns keep headers and content aligned.
 
-The preview pane shows the current selection's media (a content thumbnail —
+The preview pane shows the current selection's media (a content thumbnail:
 Quick Look, embedded audio cover art, or an mpv video poster frame; see
-docs/features/PREVIEW.md — or inline highlighted text) plus the name and a
+docs/features/PREVIEW.md, or inline highlighted text) plus the name and a
 "Get Info" button. The dense attribute rows it used to carry now live in the
 Get Info popup.
 
 Get Info opens a standalone, resizable, movable window (`crate::entry_info`)
-via the `GetInfo` command (Cmd+I, context menu, toolbar) — not a modal, so
+via the `GetInfo` command (Cmd+I, context menu, toolbar), not a modal, so
 several can be open at once for different files. The same `EntryInfoView`
 also renders inline in the preview pane (an `embedded` mode that drops the
 window chrome and defers scrolling/notifications to the shell window). A
 background `gather()` composes a platform-neutral
 `ferail_core::entry_info::EntryInfo` from POSIX stat
 (`ferail-fs-native::stat_info`), batched NSURL resource values
-(`ferail-shell-mac::resource_values`), volume info, magic, and tags — never
+(`ferail-shell-mac::resource_values`), volume info, magic, and tags, never
 on the paint path. The record drives a dense, editable form: Locked /
 Invisible / Hide-extension toggles, color labels, a POSIX permission grid,
 and an on-demand "Calculate" recursive size. Edits write through the native
@@ -263,19 +263,19 @@ Disk Usage opens as a separate GPUI window. Scanning is performed by
 ## Typography And UI Scale
 
 Division of labour: the **gpui-component theme** (`cx.theme()`) owns colors
-and the **base font size** (`theme.font_size`, default 16px — the rem base
+and the **base font size** (`theme.font_size`, default 16px: the rem base
 that `Root::render` pumps into the window `rem_size` every frame). It does
-*not* provide a named multi-tier type scale for chrome — only that one base
+*not* provide a named multi-tier type scale for chrome, only that one base
 plus per-widget `Sizable` tiers. `ferail-design` fills that gap: a named
 scale layered on top of the theme's rem base.
 
-All chrome text is sized through that one design-token scale — never gpui's
+All chrome text is sized through that one design-token scale, never gpui's
 raw `.text_xs()` / `.text_sm()` Tailwind helpers. Those bake in a looser
 scale that can't be retuned in one place and silently drift whenever a
 component defaults to a different tier (that is how the Get Info permission
 grid ended up rendering its `r`/`w`/`x` labels oversized).
 
-- **Source of truth:** `ferail_design::TextTokens::BASE` — six tiers
+- **Source of truth:** `ferail_design::TextTokens::BASE`: six tiers
   (`xxs` 10, `xs` 11, `sm` 12, `md` 13, `lg` 15, `xl` 18 logical px; a dense
   Zed-aligned scale). Retune the whole app by editing those six numbers.
 - **Applied via:** the `crate::text::TextScale` extension trait. Use
@@ -284,17 +284,17 @@ grid ended up rendering its `r`/`w`/`x` labels oversized).
   **rem-relative** (`token_px / 16`), so it cascades exactly like gpui's
   helpers.
 - **UI zoom:** `Shell::ui_scale` (Cmd+= / Cmd+- / Cmd+0, persisted) feeds the
-  framework's own hook — `Shell::apply_ui_zoom` writes
+  framework's own hook: `Shell::apply_ui_zoom` writes
   `theme.font_size = 16 * ui_scale`, and `Root` copies that into the window
   rem size each frame. Because every text size is rem-relative the whole
   window scales together, **including Root-level overlays** (notifications,
-  dialogs) — which a `set_rem_size` confined to the shell subtree would miss.
+  dialogs), which a `set_rem_size` confined to the shell subtree would miss.
   Re-applied after a `Theme::change` (appearance flip can reset the base).
   `ui_scale == 1.0` is the gpui default, a no-op. Fixed-px *layout* scaling
   (pane widths, row heights) is still TODO.
 - **gpui-component widgets** (Checkbox, Button, Switch, …) carry their own
   text via the `Sizable` trait, not the tokens. Size them to match the dense
-  scale — `.xsmall()` inline with body text, `.small()` in dialogs — instead
+  scale, `.xsmall()` inline with body text, `.small()` in dialogs, instead
   of leaving the `Medium` (16px) default. `Sizable` is also rem-relative, so
   these zoom too.
 - **Chrome icons** scale with text via the `crate::text::IconScale` trait:
@@ -302,13 +302,13 @@ grid ended up rendering its `r`/`w`/`x` labels oversized).
   size at `ui_scale == 1`), so the sidebar icons, the cloud/star/eject
   accessories, and the file-list badges grow with zoom. gpui-component's
   `Icon` already inherits the rem-scaled ambient font size unless given an
-  explicit `with_size(px(…))` — the one such site (sidebar locations)
+  explicit `with_size(px(…))`: the one such site (sidebar locations)
   pre-multiplies by `ui_scale` instead, since `Size` is px-only.
 - **Exceptions kept on explicit `px`:** glyph affordances pinned to a
   fixed-size box (disclosure triangles, the favorites `+`, the viewer seek
   grip); the code-block preview font (a separate "content font" axis, cf.
   Zed's buffer vs UI font); grid thumbnails + their overlay badges (their own
-  icon-size axis — the size slider); and the drag-ghost chip. These are
+  icon-size axis: the size slider); and the drag-ghost chip. These are
   deliberately outside the UI scale.
 
 **Rule for new code:** size chrome text with `text_scale_*` / `text_token`,
@@ -319,14 +319,14 @@ chrome icons with `icon_px`, component widgets with `Sizable`; never add a raw
 
 Every user-visible string goes through `tr!` / `trc!` / `trn!` (gpui crate:
 returns `SharedString`; core and shell crates: `ferail_core::tr!` returns
-`ferail_core::i18n::Text`), with **the English text as the key** — there are
+`ferail_core::i18n::Text`), with **the English text as the key**: there are
 no abstract string ids and no second file to keep in sync. Static tables
 (the command catalogue, option labels) mark their literals with `msgid!` and
 translate at display time with `tr_raw` / `tr_static`.
 
 - `ferail_core::i18n` owns the catalog (an `ArcSwap<Catalog>`; `tr!` is one
   lock-free load + one hash probe and returns the `&'static str` untouched
-  while English is active — render-safe), the JSON language-pack format,
+  while English is active: render-safe), the JSON language-pack format,
   CLDR plural rules, and the extractor.
 - `locales/en.json` is **generated** from the sources by
   `FERAIL_I18N_UPDATE=1 cargo test -p ferail-core i18n::extract`; a test
@@ -406,8 +406,8 @@ settings, and future command-palette work share one identity layer.
 
 Most shortcuts bind under `SHELL_CONTEXT`, so they only fire when a
 Shell window has focus. A command that must still work when the process
-is resident with **zero windows** — `window.new_window` (Cmd+N),
-`go.go_to_folder` (Cmd+G) — binds with no context and pairs the
+is resident with **zero windows**: `window.new_window` (Cmd+N),
+`go.go_to_folder` (Cmd+G): binds with no context and pairs the
 Shell-level handler with an App-level `cx.on_action` fallback in
 `boot`. Element handlers win the bubble phase and stop propagation, so
 the fallback only runs when the action reached no window; it checks
@@ -429,7 +429,7 @@ promptable categories (Desktop/Documents/Downloads/removable/network);
 arbitrary folders still need Full Disk Access, which can't be prompted.
 `scripts/bundle-mac.sh` assembles and signs the bundle from
 `packaging/macos/Info.plist`. Running the loose `cargo run` binary cannot
-prompt — it has no bundle identity or usage strings.
+prompt: it has no bundle identity or usage strings.
 
 ## Observability And Failures
 

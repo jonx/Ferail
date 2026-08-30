@@ -1,9 +1,9 @@
 //! Native-exception minidumps (WIN-001).
 //!
 //! Rust panics already leave `reports/ferail-crash-<pid>.txt` behind
-//! (`ferail_gpui::obs`), but an access violation inside native code — a
+//! (`ferail_gpui::obs`), but an access violation inside native code: a
 //! GPU driver, a shell extension, a third-party preview handler in the
-//! broker — never reaches the panic hook. This installs a top-level
+//! broker, never reaches the panic hook. This installs a top-level
 //! unhandled-exception filter that writes a `MiniDumpWriteDump` file next
 //! to the text report and appends one line naming the exception code and
 //! address to that report, so a tester's dump plus the published PDBs
@@ -16,7 +16,7 @@
 //! standard library afterwards.
 //!
 //! Dump contents: thread stacks and module list (`MiniDumpNormal`), thread
-//! info, handle data, and the **unloaded-module list** — the 0.6.5 report
+//! info, handle data, and the **unloaded-module list**: the 0.6.5 report
 //! faulted in an already-unloaded `pdfprevhndlr.dll`, which only that
 //! stream can attribute.
 
@@ -195,7 +195,7 @@ fn write_process_dump(pid: u32, destination: &Path) -> windows::core::Result<()>
 ///
 /// `quiet` decides what happens after the dump is written: `false` lets
 /// the OS continue its default handling (Windows Error Reporting, a
-/// debugger if attached) — right for the GUI; `true` terminates the
+/// debugger if attached): right for the GUI; `true` terminates the
 /// process straight away, which keeps a crashing preview helper from
 /// popping WER UI on every affected file.
 ///

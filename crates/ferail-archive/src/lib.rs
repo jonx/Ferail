@@ -2,8 +2,8 @@
 //! matrix, the table-of-contents entry model, and zip-slip path validation.
 //! No I/O, no platform dependencies.
 //!
-//! The actual codec work — reading a central directory, extracting entries,
-//! writing a new archive — lives in `ferail-fs-native` and runs off the UI
+//! The actual codec work, reading a central directory, extracting entries,
+//! writing a new archive: lives in `ferail-fs-native` and runs off the UI
 //! thread (Prime Directive). This crate is what both the codec layer and the
 //! GPUI archive view agree on: the format enum, what each format is allowed to
 //! do, and the shape of a parsed entry. Mirrors `ferail-disk-usage` (pure
@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn capability_matrix_marks_read_only_formats() {
-        // "Read-only" means no in-place entry editing — only zip is editable.
+        // "Read-only" means no in-place entry editing, only zip is editable.
         assert!(!Format::Zip.capabilities().is_read_only());
         assert!(Format::SevenZ.capabilities().is_read_only());
         assert!(Format::Tar.capabilities().is_read_only());

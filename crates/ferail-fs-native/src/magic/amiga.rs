@@ -12,7 +12,7 @@
 //! # Ordering
 //!
 //! [`sniff`] runs after the ELF/Mach-O/PE parser and before the generic
-//! signature table. It deliberately does **not** claim `FORM….AIFF`/`AIFC` —
+//! signature table. It deliberately does **not** claim `FORM….AIFF`/`AIFC`:
 //! those are IFF too, but [`super::audio`] already parses them properly and
 //! reports channels and duration.
 
@@ -46,14 +46,14 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
     sniff_misc(buf)
 }
 
-/// AmigaOS hunk binaries — the native 68k executable format, which is not ELF
+/// AmigaOS hunk binaries: the native 68k executable format, which is not ELF
 /// and so was previously invisible to the detector.
 ///
 /// | Magic | Meaning |
 /// |---|---|
-/// | `0x000003F3` | `HUNK_HEADER` — a loadable program |
-/// | `0x000003E7` | `HUNK_UNIT` — a linker object |
-/// | `0x000003FA` | `HUNK_LIB` — a link library |
+/// | `0x000003F3` | `HUNK_HEADER`: a loadable program |
+/// | `0x000003E7` | `HUNK_UNIT`: a linker object |
+/// | `0x000003FA` | `HUNK_LIB`: a link library |
 ///
 /// After `HUNK_HEADER` comes a (usually empty) resident-library name list
 /// terminated by a zero longword, then the hunk table size, and the first and
@@ -98,7 +98,7 @@ fn sniff_hunk(buf: &[u8]) -> Option<MagicInfo> {
     Some(info)
 }
 
-/// Workbench `.info` icons — `DiskObject`, magic `0xE310`.
+/// Workbench `.info` icons: `DiskObject`, magic `0xE310`.
 ///
 /// Layout (all big-endian):
 ///
@@ -172,7 +172,7 @@ fn sniff_iff(buf: &[u8]) -> Option<MagicInfo> {
     }
 }
 
-/// Tracker modules — the Amiga's other ubiquitous format.
+/// Tracker modules: the Amiga's other ubiquitous format.
 ///
 /// ProTracker-family modules carry a 4-byte tag at offset **1080**, past the
 /// 20-byte title and 31 sample records; the tag encodes the channel count.
@@ -182,7 +182,7 @@ fn sniff_tracker(buf: &[u8]) -> Option<MagicInfo> {
     let mut info = MagicInfo::new(MagicType::TrackerModule);
 
     // The ProTracker check reads a tag deep inside the file rather than at
-    // offset 0, and this sniffer runs before the image/audio/video parsers —
+    // offset 0, and this sniffer runs before the image/audio/video parsers,
     // so on its own it could claim any file that happens to hold one of these
     // four bytes at 1080. Require the 20-byte title field to look like a
     // title (printable ASCII or NUL padding) as corroboration; that is true
@@ -223,7 +223,7 @@ fn sniff_tracker(buf: &[u8]) -> Option<MagicInfo> {
         info.tracker_kind = Some("ScreamTracker 3");
         return Some(info);
     }
-    // OctaMED / MED — Amiga native, `MMD0`..`MMD3`.
+    // OctaMED / MED: Amiga native, `MMD0`..`MMD3`.
     if let Some(tag) = buf.get(0..4) {
         if tag.starts_with(b"MMD") && matches!(tag[3], b'0'..=b'3') {
             info.tracker_kind = Some("OctaMED");
@@ -235,7 +235,7 @@ fn sniff_tracker(buf: &[u8]) -> Option<MagicInfo> {
 
 /// Disk images, the LZX archiver, and AmigaGuide hypertext.
 fn sniff_misc(buf: &[u8]) -> Option<MagicInfo> {
-    // ADF floppy image: the bootblock starts `DOS` plus a filesystem flag —
+    // ADF floppy image: the bootblock starts `DOS` plus a filesystem flag,
     // 0 = OFS, 1 = FFS, and 2..7 the international/dir-cache variants.
     if buf.starts_with(b"DOS") {
         if let Some(flag) = buf.get(3) {

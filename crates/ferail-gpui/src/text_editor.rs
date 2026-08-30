@@ -1,6 +1,6 @@
 //! Built-in lightweight text editor (docs/features/TEXT_EDITOR.md).
 //!
-//! One small standalone window per file — deliberately not an IDE: no tabs,
+//! One small standalone window per file, deliberately not an IDE: no tabs,
 //! no project model, no LSP. The whole file is read off-thread (with a size
 //! guard), edited in gpui-component's `Editor` widget (which brings undo,
 //! find, and tree-sitter highlighting by extension), and Cmd+S writes it
@@ -9,7 +9,7 @@
 //!
 //! Saving writes the full text to a unique hidden sibling first, so the
 //! bytes are durably on disk before the original is touched, then rewrites
-//! the original **in place** (same inode — Finder tags, permissions, and
+//! the original **in place** (same inode, so Finder tags, permissions, and
 //! creation date survive) and removes the sibling. If the in-place write
 //! fails midway, the sibling is left behind and the error toast names it as
 //! the recovery copy.
@@ -31,7 +31,7 @@ use gpui_component::{
 use crate::shell::Shell;
 use crate::text::TextScale as _;
 
-/// Key-binding context for the editor window — Cmd+S saves, Esc / Cmd+W
+/// Key-binding context for the editor window: Cmd+S saves, Esc / Cmd+W
 /// close (through the unsaved-changes guard). Bound in
 /// `keymap::install_extras`.
 pub const TEXT_EDITOR_CONTEXT: &str = "TextEditor";
@@ -67,14 +67,14 @@ fn command_tooltip(label: SharedString, mac: &str, other: &str) -> SharedString 
     .into()
 }
 
-/// Refuse files past this size — the widget is comfortable to ~50K lines,
+/// Refuse files past this size. The widget is comfortable to ~50K lines,
 /// and "fast and simple" stops being either on a huge file. The system
 /// editor entry in the context menu covers the rest.
 const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
 /// Same guard expressed in lines, for files made of very short lines.
 const MAX_EDIT_LINES: usize = 100_000;
 
-/// Number of editor windows currently open — drives the spiral cascade,
+/// Number of editor windows currently open. Drives the spiral cascade,
 /// exactly like Get Info's (see [`crate::window_cascade`]).
 static OPEN_TEXT_EDITOR_WINDOWS: AtomicUsize = AtomicUsize::new(0);
 
@@ -227,7 +227,7 @@ impl TextEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        // Extension-only language pick — no content sniffing here (prime
+        // Extension-only language pick: no content sniffing here (prime
         // directive: constructors run on the UI thread). Unknown extensions
         // fall back to plain text inside the widget.
         let language = path
@@ -622,7 +622,7 @@ impl Render for TextEditorView {
         let muted = cx.theme().muted_foreground;
 
         let body = if private {
-            // Fail-closed: the file's text is user content — blank the whole
+            // Fail-closed: the file's text is user content, so blank the whole
             // stage, keep the window chrome (same stance as the viewer).
             div().flex_1().into_any_element()
         } else {
@@ -722,7 +722,7 @@ impl Render for TextEditorView {
     }
 }
 
-/// Read `path` for editing: whole file, bounded, UTF-8 only. Blocking —
+/// Read `path` for editing: whole file, bounded, UTF-8 only. Blocking:
 /// background executor only.
 fn read_for_edit(path: &Path) -> ReadOutcome {
     ferail_core::path_guard::assert_off_ui_thread("text_editor read");
@@ -763,12 +763,12 @@ fn read_for_edit(path: &Path) -> ReadOutcome {
     }
 }
 
-/// Write the edited text back. Blocking — background executor only.
+/// Write the edited text back. Blocking: background executor only.
 ///
 /// Two steps: (1) the full serialized text goes to a unique hidden sibling
 /// (durable before the original is touched), (2) the original is rewritten
-/// **in place** — same inode, so Finder tags, ACLs, permissions, and the
-/// creation date all survive, which a rename-over would silently drop —
+/// **in place**, same inode, so Finder tags, ACLs, permissions, and the
+/// creation date all survive, which a rename-over would silently drop,
 /// then the sibling is removed. If step 2 fails the sibling stays behind
 /// and the error names it as the recovery copy.
 fn write_for_edit(path: &Path, text: &str, had_crlf: bool, had_bom: bool) -> Result<(), String> {
@@ -799,7 +799,7 @@ fn write_for_edit(path: &Path, text: &str, had_crlf: bool, had_bom: bool) -> Res
 
 #[cfg(test)]
 mod tests {
-    // Deliberately no `use super::*` — that would pull in `gpui::*`, whose
+    // Deliberately no `use super::*`: that would pull in `gpui::*`, whose
     // `test` attribute macro shadows the built-in `#[test]`.
     use super::{ReadOutcome, read_for_edit, write_for_edit};
 

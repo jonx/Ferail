@@ -1,7 +1,7 @@
 //! Turning a flat [`Toc`] into an expandable tree.
 //!
 //! An archive's table of contents is a flat list of `/`-separated paths, and
-//! most writers record only *files* — the directories are implied by those
+//! most writers record only *files*: the directories are implied by those
 //! paths (a zip of `ares.app/Contents/MacOS/ares` may contain no directory
 //! record at all). Showing that list flat is unusable at real archive sizes:
 //! the 4990-entry app bundle that motivated this renders every nested resource
@@ -9,7 +9,7 @@
 //!
 //! [`ArchiveTree`] indexes the flat list once (synthesizing the missing
 //! directories), then [`ArchiveTree::visible_rows`] projects the subset the
-//! user has actually expanded. Pure logic — the view owns the `expanded` set
+//! user has actually expanded. Pure logic: the view owns the `expanded` set
 //! and does nothing but render what comes back.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -33,7 +33,7 @@ pub struct TreeRow {
     pub expandable: bool,
     /// Whether this directory is currently open.
     pub expanded: bool,
-    /// Uncompressed size — `None` for directories and for formats that don't
+    /// Uncompressed size: `None` for directories and for formats that don't
     /// record it.
     pub size: Option<u64>,
     pub compressed_size: Option<u64>,
@@ -126,7 +126,7 @@ impl ArchiveTree {
     }
 
     /// Rows to draw, in display order, given the currently open directories.
-    /// Directories sort before files, then case-insensitively by name —
+    /// Directories sort before files, then case-insensitively by name,
     /// matching the file list's folders-first default.
     pub fn visible_rows(&self, expanded: &HashSet<String>) -> Vec<TreeRow> {
         let mut rows = Vec::new();
@@ -179,7 +179,7 @@ impl ArchiveTree {
     }
 
     /// Every path in the archive whose leaf name contains `needle`
-    /// (case-insensitive), as a flat result list — the tree's answer to the
+    /// (case-insensitive), as a flat result list: the tree's answer to the
     /// filter box. Directories are included so a folder can still be selected
     /// (and extracted whole) from a filtered view.
     pub fn matching_rows(&self, needle: &str) -> Vec<TreeRow> {
@@ -258,7 +258,7 @@ mod tests {
         }
     }
 
-    /// A zip that records only files — the common case, and the one that made
+    /// A zip that records only files: the common case, and the one that made
     /// the flat list unusable.
     fn implied_toc() -> Toc {
         Toc {

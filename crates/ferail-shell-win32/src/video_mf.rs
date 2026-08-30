@@ -15,7 +15,7 @@
 //! multithread protection enabled because the engine touches it off-thread.
 //!
 //! Any failure (no codec, file missing, COM error) returns handle `0` /
-//! `None`, so the viewer silently falls back to the still poster — no crash,
+//! `None`, so the viewer silently falls back to the still poster, no crash,
 //! no regression from the previous stub.
 #![cfg(windows)]
 
@@ -51,7 +51,7 @@ use windows::Win32::System::Com::{
 /// MF version arg to `MFStartup` (MF_VERSION = 0x00020070).
 const MF_VERSION: u32 = 0x0002_0070;
 
-// CLSID_MFMediaEngineClassFactory — not surfaced as a constant by windows 0.58.
+// CLSID_MFMediaEngineClassFactory, not surfaced as a constant by windows 0.58.
 const CLSID_MF_MEDIA_ENGINE_CLASS_FACTORY: windows::core::GUID =
     windows::core::GUID::from_u128(0xb44392da_499b_446b_a4cb_005fead0e6d5);
 
@@ -101,7 +101,7 @@ impl IMFMediaEngineNotify_Impl for Notify_Impl {
         } else if event == MF_MEDIA_ENGINE_EVENT_ENDED.0 as u32 {
             self.fire_ended();
         } else if event == MF_MEDIA_ENGINE_EVENT_ERROR.0 as u32 {
-            // Treat a load/decode error as "ended" — the callback is the only
+            // Treat a load/decode error as "ended": the callback is the only
             // signal the viewer gets, so without it a broken file would stall
             // playlist auto-advance forever.
             self.fire_ended();
@@ -201,7 +201,7 @@ pub fn video_overlay_show(path: &Path, on_ended: Box<dyn Fn() + 'static + Send>)
 }
 
 /// Log a `windows::core::Result` failure and convert to `None` for the `?`
-/// chain — temporary diagnostics for the MF backend bring-up.
+/// chain: temporary diagnostics for the MF backend bring-up.
 macro_rules! mf_step {
     ($e:expr, $what:expr) => {
         match $e {
@@ -355,7 +355,7 @@ pub fn video_overlay_copy_frame(id: u64) -> Option<(u32, u32, Vec<u8>)> {
         // Only transfer when a *new* frame is ready. OnVideoStreamTick returns
         // the new frame's presentation time on success; when no new frame is
         // ready the windows wrapper still yields `Ok` (S_FALSE isn't an error)
-        // with a sentinel/garbage timestamp — real presentation times are
+        // with a sentinel/garbage timestamp: real presentation times are
         // non-negative, so treat `pts < 0` (e.g. the `i64::MIN` sentinel) as
         // "nothing new", and dedupe identical timestamps.
         let pts = match unsafe { player.engine.OnVideoStreamTick() } {

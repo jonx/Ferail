@@ -46,7 +46,7 @@ echo "[link] compile harness ferail_main.c"
 "$CC" "${CFLAGS[@]}" -c "$DIR/c/ferail_main.c" -o "$OUT/ferail_main.o"
 
 # The rust-aros std's C shim layer (sys/*/aros.rs call these), same recipe
-# as hosted/rust/std-build.sh — fs/sync need the posixc include dir.
+# as hosted/rust/std-build.sh - fs/sync need the posixc include dir.
 RS="${AROS_RS:-/Users/jkn/Source/aros-aarch64/hosted/rust}"
 echo "[link] compile rust-aros std glues"
 "$CC" "${CFLAGS[@]}" -c "$RS/aros_net_glue.c" -o "$OUT/aros_net_glue.o"
@@ -55,7 +55,7 @@ echo "[link] compile rust-aros std glues"
 # aros_proc_glue.c is the newer pipe/spawn/signal layer (aros_pipe_*,
 # aros_proc_*, aros_sig_*, aros_task_self) the std's process pal grew for the
 # over-pipes shell. Distinct file from aros_process_glue.c above, and not in
-# hosted/rust/std-build.sh's list — without it the final link fails with 13
+# hosted/rust/std-build.sh's list - without it the final link fails with 13
 # undefined symbols.
 "$CC" "${CFLAGS[@]}" -c "$RS/aros_proc_glue.c" -o "$OUT/aros_proc_glue.o"
 "$CC" "${CFLAGS[@]}" -c "$RS/aros_thread_glue.c" -o "$OUT/aros_thread_glue.o"

@@ -1,4 +1,4 @@
-//! Issue reporter — bundle the diagnostics report, the activity trail, and a
+//! Issue reporter: bundle the diagnostics report, the activity trail, and a
 //! screenshot of the current window into a `.zip` the user can attach to a bug
 //! report, optionally blacking out sensitive regions of the screenshot first.
 //!
@@ -11,7 +11,7 @@
 //!
 //! Screenshot capture uses `Window::render_to_image` (the same path as the
 //! `--screenshot` harness). On Windows that needs the gpui_windows patch, so a
-//! capture failure is non-fatal — the bundle still carries diagnostics + trail.
+//! capture failure is non-fatal: the bundle still carries diagnostics + trail.
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -80,7 +80,7 @@ fn encode_png(img: &RgbaImage) -> Result<Vec<u8>> {
 pub fn build_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<Vec<u8>> {
     use zip::write::SimpleFileOptions;
 
-    // Diagnostics carry only app-owned paths (config dir, DB) — username-scrub
+    // Diagnostics carry only app-owned paths (config dir, DB): username-scrub
     // is enough. The trail carries the user's *own* folders, so it is path-
     // redacted at the source via `render_lines_sanitized`. The note is free
     // text, so it gets the best-effort path scrub on top.
@@ -91,11 +91,11 @@ pub fn build_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<Vec<u8
     let note = crate::redact::scrub_text(&redact_username(note));
 
     let privacy = if crate::redact::enabled() {
-        "Privacy: file and folder names have been replaced with \u{2026} \u{2014} this report \
+        "Privacy: file and folder names have been replaced with \u{2026}. This report \
          reveals nothing about your files, so it is safe to share. (Toggle under \
          Settings \u{203a} Diagnostics.)\n"
     } else {
-        "Privacy: path redaction is OFF \u{2014} this report contains real file and folder \
+        "Privacy: path redaction is OFF. This report contains real file and folder \
          names. Turn on \u{201c}Redact file names & paths\u{201d} under Settings \u{203a} \
          Diagnostics to hide them.\n"
     };
@@ -160,7 +160,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 static REPORT_SEQ: AtomicU32 = AtomicU32::new(0);
 
 /// Assemble + save a bundle for `screenshot`/`note`, then reveal it in the file
-/// manager. Logs and returns the path (or the error) — never panics.
+/// manager. Logs and returns the path (or the error), never panics.
 pub fn finish_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<PathBuf> {
     let bytes = build_bundle(screenshot, note)?;
     let seq = REPORT_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -170,7 +170,7 @@ pub fn finish_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<PathB
     Ok(path)
 }
 
-/// One-click issue report: capture the current window (best-effort — capture
+/// One-click issue report: capture the current window (best-effort: capture
 /// is unsupported on a Windows build without the gpui_windows patch, in which
 /// case the bundle simply omits the screenshot), bundle it with the diagnostics
 /// report + activity trail, and reveal the resulting zip.
@@ -182,13 +182,13 @@ pub fn open_reporter(#[allow(unused_variables)] window: &mut gpui::Window) {
     #[cfg(feature = "screenshot-harness")]
     let shot = window.render_to_image().ok();
     // render_to_image is test-support-gated in gpui and packaged builds
-    // strip that feature (it drags in the leak-detection exit assert) —
+    // strip that feature (it drags in the leak-detection exit assert):
     // the bundle then simply omits the screenshot, as documented above.
     #[cfg(not(feature = "screenshot-harness"))]
     let shot: Option<image::RgbaImage> = None;
     // Only the capture needs the window/UI thread. Bundle assembly is
     // zip + disk I/O and the reveal can block on a D-Bus round-trip
-    // (Linux) — run them on their own thread (Prime Directive).
+    // (Linux): run them on their own thread (Prime Directive).
     let spawned = std::thread::Builder::new()
         .name("issue-report".into())
         .spawn(move || match finish_bundle(shot.as_ref(), "") {

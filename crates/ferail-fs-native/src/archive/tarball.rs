@@ -1,6 +1,6 @@
 //! Tar-family read path: plain `.tar` and the compressed `.tar.gz` / `.tar.bz2`
-//! / `.tar.xz`. Tar has no central directory — the only way to know what is
-//! inside is to walk the whole stream — so there is deliberately **no**
+//! / `.tar.xz`. Tar has no central directory: the only way to know what is
+//! inside is to walk the whole stream, so there is deliberately **no**
 //! bounded-summary path here (the dispatcher returns a format-only summary for
 //! these). [`read_toc`] streams the entire archive, which is why it is a
 //! full-mode, off-UI-thread operation.
@@ -163,7 +163,7 @@ pub(super) fn extract(
     progress: &TransferProgress,
     cancel: &AtomicBool,
 ) -> Result<ExtractOutcome, ArchiveError> {
-    // Tar has no directory, so totals are unknown up front — leave the progress
+    // Tar has no directory, so totals are unknown up front: leave the progress
     // indeterminate (total 0) and count items as they stream.
     progress.begin_transfer(0, 0);
     let reader = decoded_reader(archive, format)?;
@@ -217,7 +217,7 @@ pub(super) fn extract(
 }
 
 /// Append every planned item into `tb` and return the inner writer (the still-
-/// open compression encoder) so the caller can `finish()` it explicitly —
+/// open compression encoder) so the caller can `finish()` it explicitly,
 /// dropping a boxed encoder would only flush best-effort and swallow errors.
 fn build_tar<W: Write>(
     mut tb: tar::Builder<W>,
@@ -262,7 +262,7 @@ pub(super) fn create(
             enc.finish()?;
         }
         Format::TarBz2 => {
-            // bzip2 has no level 0 — clamp Store up to the minimum.
+            // bzip2 has no level 0: clamp Store up to the minimum.
             let enc = bzip2::write::BzEncoder::new(file, bzip2::Compression::new(level.max(1)));
             let enc = build_tar(tar::Builder::new(enc), items, progress, cancel)?;
             enc.finish()?;

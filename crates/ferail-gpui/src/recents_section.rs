@@ -1,8 +1,8 @@
 //! The sidebar's **Recents** section: recently-visited folders, most-
-//! recent first (docs/features — Recents).
+//! recent first (docs/features: Recents).
 //!
 //! A live view over the same `folder_usage` visit log that powers the
-//! Ant Trail heat tint — the section reads the in-memory
+//! Ant Trail heat tint: the section reads the in-memory
 //! `ProcessState::recents` cache (front-inserted on every navigate,
 //! hydrated from the DB at startup ordered by last access), so render
 //! never touches SQLite. Modeled on [`crate::favorites_section`] but
@@ -29,7 +29,7 @@ use crate::shell::Shell;
 /// Master switch for the Recents feature. Default `true`. When off, the
 /// sidebar section is hidden and navigation stops pushing folders into
 /// [`crate::process_state::ProcessState::recents`]. The Ant Trail is
-/// unaffected — the two share the `folder_usage` visit log but each has
+/// unaffected: the two share the `folder_usage` visit log but each has
 /// its own switch ([`crate::ant_trail::AntTrailEnabled`]). Seeded from
 /// persisted settings at startup and set live by the settings toggle;
 /// reading [`recents_enabled`] during render subscribes the window so
@@ -96,7 +96,7 @@ impl Collapsible for RecentsSection {
 }
 
 /// Last path component for the row label, or "/" for the filesystem
-/// root. Pure display — never resolves the path.
+/// root. Pure display, never resolves the path.
 fn row_label(path: &std::path::Path) -> String {
     match path.file_name() {
         Some(name) => {

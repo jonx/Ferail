@@ -2,13 +2,13 @@
 //!
 //! Built once at startup via [`install_app_menu`]. Menu items for
 //! Ferail-owned actions are emitted from
-//! [`ferail_core::commands::all_commands`] — the menu is a *view*
+//! [`ferail_core::commands::all_commands`]: the menu is a *view*
 //! over the command catalogue. Picking an item fires
 //! [`register_command_callback`]'s registered closure with the
 //! corresponding [`CommandId`]; the host app routes from there.
 //!
 //! Built-in AppKit actions (Hide / Quit / Cut / Copy / Minimize /
-//! Zoom / Close) ride the responder chain unchanged — they are
+//! Zoom / Close) ride the responder chain unchanged: they are
 //! deliberately NOT in the catalogue and are emitted here with their
 //! AppKit selectors hard-coded.
 
@@ -60,7 +60,7 @@ thread_local! {
         const { RefCell::new(None) };
 
     /// Snapshot of the host app's tab count. Read by `validateMenuItem:`
-    /// to grey out `file.close_tab` when only one tab is open — letting
+    /// to grey out `file.close_tab` when only one tab is open, letting
     /// AppKit's Cmd+W key-equivalent dispatch fall through to
     /// `Close Window` in the Window submenu (which uses NSWindow's
     /// built-in `performClose:`). The host calls `set_tab_count()` on
@@ -128,7 +128,7 @@ declare_class!(
             };
             // Mirror the per-command on/off state into the item's
             // checkmark. Items not registered in COMMAND_STATES default
-            // to "off" — i.e. no checkmark — which is the right
+            // to "off", i.e. no checkmark, which is the right
             // behaviour for non-toggle commands.
             if let Some(id) = id {
                 let on = COMMAND_STATES.with(|s| s.borrow().get(&id).copied().unwrap_or(false));
@@ -167,7 +167,7 @@ pub fn set_tab_count(n: usize) {
 
 /// Set whether a command's menu item should render a checkmark.
 /// `validateMenuItem:` reads this on every menu open, so the change
-/// is picked up the next time the user opens the menu — no need to
+/// is picked up the next time the user opens the menu, no need to
 /// rebuild. Use for radio-button-style exclusive groups (the host
 /// flips one to `true` and the rest to `false`).
 pub fn set_command_state(id: CommandId, on: bool) {
@@ -232,9 +232,9 @@ pub fn install_app_menu(app_name: &str, tagline: &str, version: &str, copyright:
 
     let main_menu = NSMenu::new(mtm);
 
-    // App submenu — App-category commands, then standard AppKit items.
+    // App submenu: App-category commands, then standard AppKit items.
     main_menu.addItem(&build_app_submenu(mtm, &target, app_name));
-    // File / View / Go / Edit / Window — pulled from the catalogue
+    // File / View / Go / Edit / Window: pulled from the catalogue
     // (or hard-coded for built-in selectors).
     if let Some(item) = build_category_submenu(mtm, &target, Category::File, &tr!("File")) {
         main_menu.addItem(&item);
@@ -556,7 +556,7 @@ unsafe fn build_command_item(
     item
 }
 
-/// Build an item that targets the responder chain — no Ferail
+/// Build an item that targets the responder chain, no Ferail
 /// callback, just AppKit's first-responder dispatch. Used for built-in
 /// selectors (Hide, Cut, Minimize, …).
 unsafe fn make_responder_item(

@@ -5,7 +5,7 @@
 > This document is the map: what lives where and why.
 
 Ferail on AROS (the open-source AmigaOS), targeting the user's hosted
-`darwin-aarch64` AROS (AROS running as a macOS process — see
+`darwin-aarch64` AROS (AROS running as a macOS process: see
 `~/Source/aros-aarch64`). Local-only work: absolute paths to sibling
 checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 
@@ -17,14 +17,14 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 > [`aros-aarch64/graft/HANDOVER-2026-07-17.md`](../../../aros-aarch64/graft/HANDOVER-2026-07-17.md).
 > Start there before touching AROS stability.
 
-> **Update, 2026-07-18 — supersedes the correction below.** The dominant
+> **Update, 2026-07-18: supersedes the correction below.** The dominant
 > systemic freeze mechanism is found and fixed: hosted darwin delivered the
 > scheduler's preemption ticks (process-directed SIGALRM) to arbitrary host
 > threads and `core_IRQ` dropped them, so a CPU-bound task ran forever and
 > starved the UI, timer.device, and the guest clock (measured: **0** ticks
 > reached the AROS thread in 10 s under load). Fixed by forwarding
 > mis-delivered ticks thread-directed (`pthread_kill`), plus the
-> pthread/posixc/gpui_aros fix stack — full story in the handover. This is
+> pthread/posixc/gpui_aros fix stack: full story in the handover. This is
 > the root cause of the *reproducible scheduler-starvation freezes*; folder
 > walking, tree unfolding, and long-paint stalls do not yet have enough
 > human-use coverage to rule out independent bugs. Post-fix: boot,
@@ -37,14 +37,14 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 > validated: 89 SIGINFO dumps into heavy paint traffic, 90 unreadable
 > frames skipped by the guards, zero traps, app alive. Human-mouse soak
 > still pending. The correction below is kept
-> for its verification lessons — its "only About and Settings are reliable"
+> for its verification lessons: its "only About and Settings are reliable"
 > snapshot predates the preemption fix.
 
 > **Correction, 2026-07-17** *(superseded by the 2026-07-18 update above).* The claim below that the posixc fix closed the
 > *whole* crash family was **wrong**, and the folder-size walker has been
 > re-gated. Under real (human, mouse-driven) use the app still bus-faults on
-> ordinary navigation once the walker runs — `Error 0x80000002`, contained
-> Guru, `Module kernel Segment 1 .text Offset 0x1AA0`, task `C:Ferail` —
+> ordinary navigation once the walker runs: `Error 0x80000002`, contained
+> Guru, `Module kernel Segment 1 .text Offset 0x1AA0`, task `C:Ferail`,
 > and a separate hang shows the AROS exec thread pinned at 100% CPU spinning
 > in the kernel's `sigprocmask` interrupt-mask path with every task parked in
 > `WAIT`. **Current real state: only About and Settings are reliable; most
@@ -55,7 +55,7 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 >    Guru both leave `state=running crash=none`, so it scored a frozen,
 >    dead-on-screen app as a pass for 40 cycles.
 > 2. Synthetic input (`aros-ctl click`) does not reproduce the failure at all
->    — 24 scripted rounds pass clean while a human freezes it in a few
+>   , 24 scripted rounds pass clean while a human freezes it in a few
 >    clicks. Injected clicks teleport the pointer; they generate none of the
 >    `IDCMP_MOUSEMOVE`/hover-repaint traffic real mouse motion does. **Until
 >    the harness can drive real pointer motion, on-device claims need a human
@@ -65,7 +65,7 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 > (it is an objectively unlocked shared table); it simply was not the whole
 > story. UPSTREAM-NOTES item 36 is re-opened.
 
-- **The posixc fd-table race — fixed, 2026-07-16 (but see the correction
+- **The posixc fd-table race: fixed, 2026-07-16 (but see the correction
   above: this did NOT close the crash family).** The "tree expand freezes the
   app" hang, the emul-handler
   `DoExamineNext` bus fault that kept the folder-size walker gated
@@ -82,27 +82,27 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
   `close()`d the sibling's live handle). Depending on what got hit the
   symptom was a containment requester, a freeze, or a silent deadend
   reboot. Fixed in aros-upstream `crash-containment` (`d702d708`,
-  "T-FDLOCK"): a `SignalSemaphore` in `PosixCIntBase` — shared for reads,
+  "T-FDLOCK"): a `SignalSemaphore` in `PosixCIntBase`: shared for reads,
   exclusive for mutation and pool ops, atomic find+claim in
   `open`/`opendir`/`pipe`/`dup`/`dup2`/`fcntl(F_DUPFD)`, geometric table
   growth. Rebuild `compiler-posixc`; no Ferail relink needed. Verified:
-  - ~~**Folder-size walker un-gated and working**~~ — **FALSIFIED, re-gated
+  - ~~**Folder-size walker un-gated and working**~~: **FALSIFIED, re-gated
     2026-07-17.** One walk of `SYS:` did complete (494.6 MB, Size column
-    populated, `screenshots/aros-walker-sizes.png`) — but under real use the
+    populated, `screenshots/aros-walker-sizes.png`), but under real use the
     walk bus-faults the app and, because it starts on every listing, it broke
     all navigation. One green run is not evidence of a fixed race.
-  - **Tree expand** — `SYS:` and `SYS:Classes` expansion ran clean under
+  - **Tree expand**: `SYS:` and `SYS:Classes` expansion ran clean under
     scripted input (the previously deterministic OS-reboot repro no longer
     reboots). Unverified under real mouse use; treat as provisional.
-  - **Second window works** — Settings opens as a real second Intuition
+  - **Second window works**: Settings opens as a real second Intuition
     window, fully rendered and interactive, and About (now an in-window
     modal) renders (`screenshots/aros-settings-window.png`).
   - **The residual "silent reboot" is also fixed (2026-07-16, verified by a
-    40-cycle soak — previous builds died by cycle 15).** It was two stacked
+    40-cycle soak: previous builds died by cycle 15).** It was two stacked
     problems, unmasked one at a time with forensics added along the way
     (exec `Alert()`/`ShutdownA()` host-log breadcrumbs, a truncation-proof
     `tail -F` host-log sidecar, and a panic hook that persists to
-    `MacRW:ferail-panic.txt` — the documented panic file had never
+    `MacRW:ferail-panic.txt`: the documented panic file had never
     actually been implemented):
     1. `graft/aros-host-conf.sh` clobbered `AROS_HOST_MEMORY` with the
        conf's `memory 256`, so every boot ran a 256 MB guest → Rust OOM
@@ -115,7 +115,7 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
        ColdReboot of the whole OS. `obs.rs` now writes stderr
        non-panicking and the AROS `log` bridge defaults to Info
        (`FERAIL_LOG_TRACE=1` restores the firehose).
-  - **Open (minor) — closing the last window leaves a windowless process.**
+  - **Open (minor), closing the last window leaves a windowless process.**
     On macOS the app keeps running without windows by design; on AROS
     there is no Dock to reopen from, so closing the main window strands a
     live `C:Ferail` with no UI (`ERROR gpui::app: window not found` on
@@ -126,7 +126,7 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
   - **Font-glyph tofu boxes replaced by SVG icons.** The disclosure triangles
     (`\u{25B6}`/`\u{25BC}`) in the Favorites/Recents section headers and the tree-row
     carets, plus the filter placeholder's return symbol (`\u{23CE}`), rendered as
-    tofu on AROS — IBM Plex Sans has no geometric-shapes/symbol glyphs and the AROS
+    tofu on AROS: IBM Plex Sans has no geometric-shapes/symbol glyphs and the AROS
     font stack has no fallback. Carets are now `nav/disclosure-{right,down}.svg`
     (new assets); the filter placeholder uses the word "Enter" on AROS.
   - **Window title.** The OS title bar is drawn by Intuition's topaz bitmap font
@@ -138,14 +138,14 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
     (Prefs/Utilities/Tools/Storage) that actually exist, filtered by `exists()`.
     (`ferail-fs-native/src/paths.rs`.)
   - **Volumes as drives.** The Volumes section was empty on AROS (`list_volumes`
-    had no arm). It now surfaces the default mounts — `SYS:`, `RAM:`, `MacRO:`,
-    `MacRW:` — probed by `exists()` (no `Work:`-style named volume, which would pop
+    had no arm). It now surfaces the default mounts: `SYS:`, `RAM:`, `MacRO:`,
+    `MacRW:`: probed by `exists()` (no `Work:`-style named volume, which would pop
     the AmigaOS insert-media requester). (`ferail-fs-native/src/volumes.rs`.)
-  - ~~**Open — tree expand freezes the app.**~~ **RESOLVED 2026-07-21** — was
+  - ~~**Open: tree expand freezes the app.**~~ **RESOLVED 2026-07-21**: was
     the scheduler-starvation family in a mask. Retested after the preemption +
     diag-scanner fixes: Browse › Home unfolds fine (boot/C/Classes…, nested
     `boot › darwin` too), no freeze, no trap, tree connector lines draw.
-    Same session: the **folder-size walker survives on AROS now** — full
+    Same session: the **folder-size walker survives on AROS now**: full
     `SYS:` pass (30 folders, 497.3 MB total, every Size cell filled) plus
     3 rounds of navigate-away-mid-walk, crash-free. It stays default-off
     behind `SetEnv FERAIL_FOLDER_SIZES 1` (`folder_sizes.rs`) until it
@@ -153,16 +153,16 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 
     The first walker-on human soak (2026-07-21) then flushed out three
     more real bugs, all fixed + committed the same day:
-    1. **Priority livelock** — workers at pri -1 got zero CPU while the
+    1. **Priority livelock**: workers at pri -1 got zero CPU while the
        task-strip spinner kept the pri-0 UI repainting: sizes never
        applied, tasks never ended, navigation enumeration starved
        ("listview doesn't update", "sizing never ends"). Workers now run
        at pri 0 (zed-aros `5b92de3412`), relying on round-robin
        time-slicing now that preemption works.
-    2. **stderr steals the display** — every log line popped the boot
+    2. **stderr steals the display**: every log line popped the boot
        console's screen over the app's; logs are file-only on AROS now
        (`d8e8435`).
-    3. **Host-lock deadlock** — a guest task preempted mid-`getenv`
+    3. **Host-lock deadlock**: a guest task preempted mid-`getenv`
        (emul-handler `localtime` under the stat storm) kept libc's
        environ lock in its suspended context; cocoametal's per-tick
        `getenv` then wedged the main thread, and `cm_pump_events`'s
@@ -170,12 +170,12 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
        un-signalable). Fixed Windows-style with `USE_FORBID_LOCK` on
        darwin (aros-upstream `061b4b98`) + a cached watchdog env probe
        (aros-aarch64 `d15750f`). UPSTREAM-NOTES item 41.
-  - **Tree connector lines drew as boxes** — the CPU renderer collapsed
+  - **Tree connector lines drew as boxes**: the CPU renderer collapsed
     per-side border widths to a max-width outline stroke, so the
     `border_l`+`border_b` elbows rendered as rectangles. Fixed with
     per-edge strips for unequal widths (zed-aros `5b92de3412`); verified
     on-device, `├` tees and leaf stubs draw correctly.
-  - **Open — `posixc.library __open` bus-faults on a missing path.** Clicking a
+  - **Open: `posixc.library __open` bus-faults on a missing path.** Clicking a
     nonexistent folder (the old phantom `Downloads`) bus-faulted a worker thread
     inside `posixc __open` (Error 0x80000002) rather than returning ENOENT. The
     Locations fix removes the common trigger, but this is a latent landmine (any
@@ -188,7 +188,7 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
   the "Chrome / bundled SVG icons" section below.
 - **Rebuilt + re-verified on-device, 2026-07-13.** Both AROS binaries rebuild
   from clean after two regressions were fixed:
-  - `aros-aarch64/hosted/rust/compat/include/{endian.h,sys/ioctl.h}` — the host
+  - `aros-aarch64/hosted/rust/compat/include/{endian.h,sys/ioctl.h}`: the host
     libc compat shim that `.cargo/config.toml` references via
     `-DHAVE_ENDIAN_H -I .../compat/include`. It had been gitignored as
     "experimental/unwired" but is required: a newer tree-sitter calls `le16toh`,
@@ -198,44 +198,44 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
     (`std::env::vars`) after the scripts were written, so the link failed on an
     undefined `aros_env_enum`.
   - **Runs live:** `C:Ferail` (203 MB stripped) LoadSegs and opens its window
-    on the Wanderer desktop — the dark theme renders, the `SYS:` listing shows
+    on the Wanderer desktop: the dark theme renders, the `SYS:` listing shows
     30 items with Name/Size/Format columns and the sidebar, `crash=none`,
     rendering clean (no dirty-rect smearing). **Memory:** the 203 MB binary needs
-    more than the default 256 MB hosted RAM to LoadSeg — boot with
+    more than the default 256 MB hosted RAM to LoadSeg: boot with
     `AROS_HOST_MEMORY=1280` (or `memory 1280` in `aros-host.conf`), else the load
     silently fails and no window appears. **Launch:** the app must start *before*
     the desktop Startup-Sequence's `EndCLI` (a launch appended after `EndCLI`
     never runs); `ferail.startup`'s `Stack 16000000` + `SetEnv HOME` still apply.
 - **On-device battery, 2026-07-06** (booted via `graft/aros-ctl`, `C:Ferail`
   rebuilt with the native-shell + dirty-rect backend):
-  - **Self-guard boot WORKS** — launched with no `Stack` line, the wrapper
+  - **Self-guard boot WORKS**: launched with no `Stack` line, the wrapper
     relaunches its own seglist at 16 MB and Ferail boots to a full themed
     SYS: listing (30 items), sidebar, columns. `crash=none`.
-  - **Native Intuition menu bar WORKS** — the gadtools `SetMenuStrip` populated
+  - **Native Intuition menu bar WORKS**: the gadtools `SetMenuStrip` populated
     from gpui `set_menus` shows `Ferail | File | Edit | Go | View | Window`
     with the app menu (About / Settings / Quit). Verified with `aros-ctl menu`.
-  - **Open finding — selecting a menu item that opens a second window traps**
+  - **Open finding, selecting a menu item that opens a second window traps**
     (About Ferail → new window → `Trap signal 5/11`, thin backtrace). The menu
     strip renders/populates fine; the fault is in the pick→action→window-open
     path (multi-window is untested on AROS). Containment keeps the desktop alive.
   - **emul-handler: ExWalk PASS** (`C:ExWalk 8x25 EXALL` over SYS:C, 24600
-    entries, 0 errors) — the stack fix holds. **But** Ferail's recursive SYS:
+    entries, 0 errors): the stack fix holds. **But** Ferail's recursive SYS:
     folder-size walk trips a *distinct* `DoExamineNext` bus fault (0x80000002),
     so the walker is re-gated on AROS again (see aros-aarch64 UPSTREAM-NOTES
     item 36). Everything else runs clean.
-  - **Wheel scrolling WORKS end-to-end** — a real trackpad/mouse scroll over
+  - **Wheel scrolling WORKS end-to-end**: a real trackpad/mouse scroll over
     the Ferail window scrolls the list: host `NSEvent scrollWheel` → shim
     `CM_EV_WHEEL` → the rebuilt `cocoa.hidd` → NewMouse rawkeys 0x7A/0x7B →
     Intuition `IDCMP_RAWKEY` → `gpui_aros` `ScrollWheel`. Confirms the rebuilt
     `cocoa.hidd` is live in the booted kickstart. (The *injected* automation
-    path — `aros-ctl wheel`, the shim's `W` control-FIFO synth — did not move
+    path, `aros-ctl wheel`, the shim's `W` control-FIFO synth, did not move
     the list in testing; that is a harness gap, separate from the real path,
     and likely needs the pointer over the window.)
-  - **GPU video path measured** — `hosted/gpufx-bench` (`C:GpuFxBench`) shows the
+  - **GPU video path measured**: `hosted/gpufx-bench` (`C:GpuFxBench`) shows the
     3D shim's YUV420→RGBA is 5-7× faster than the software kernel; relevant to a
     future `ferail-video` / preview path on AROS.
 - **`cargo check -p ferail-gpui --target aarch64-unknown-aros` is GREEN**
-  — the whole app type-checks for AROS: gpui via the `gpui_aros` CPU
+ : the whole app type-checks for AROS: gpui via the `gpui_aros` CPU
   backend, gpui-component (full tree-sitter grammar set), bundled sqlite,
   notify, and every ferail crate.
 - **GPUI RUNS INTERACTIVELY ON BOOTED AROS** (2026-07-04). The smoke app
@@ -257,13 +257,13 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 - **Stack is the sharp edge**: AROS shells launch commands with tens-of-KB
   stacks; gpui's dispatch/layout recursion overflows that, and in AROS's
   single address space the overflow corrupts *neighboring* tasks
-  (emul-handler / graphics.library crash with wild NULL-offset faults —
+  (emul-handler / graphics.library crash with wild NULL-offset faults,
   nothing points back at the app). `Stack 16000000` before launching (see
   `gpui_aros_smoke/gpui-smoke.startup`) fixes it. Ferail's eventual
   launcher must set this (startup script or icon stack tooltype).
 - **FERAIL ITSELF RUNS ON AROS** (same day): `crates/ferail-aros-app`
   (staticlib + C harness + `link-aros.sh`, mirroring the smoke) boots the
-  full app through the shared `ferail_gpui::boot::run_gui` — complete
+  full app through the shared `ferail_gpui::boot::run_gui`: complete
   chrome, dark theme, and a real `SYS:` listing (30 items: boot, C,
   Classes, Developer, Devs, Fonts, Libs, Prefs, Storage…). Proof:
   `screenshots/aros-ferail-clean.png`. Launch recipe:
@@ -272,11 +272,11 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 - Landed on the way: `ferail_gpui::boot` (the GUI boot moved from
   `main.rs` into the library so the desktop binary and the AROS wrapper
   share one path), and a rust-aros std fix (`cstr()` translates unix
-  path joins — `SYS:/C` → `SYS:C` — at the syscall boundary; commit
+  path joins: `SYS:/C` → `SYS:C`: at the syscall boundary; commit
   a089e3d there).
 - Known AROS-side frontier: under Ferail's concurrent metadata walkers
   the OS's own **emul-handler** can bus-fault in `DoExamineNext`
-  (graft/UPSTREAM-NOTES item 35 territory — its stack). The
+  (graft/UPSTREAM-NOTES item 35 territory: its stack). The
   crash-containment work catches it (Suspend keeps the session alive).
   Consider gating the folder-size walker / thumbnail warmers on AROS
   until the handler is hardened. Also: `--screenshot` (headless) is
@@ -287,13 +287,13 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 | Piece | Where | Branch |
 | --- | --- | --- |
 | gpui AROS backend (`gpui_aros`: Intuition/CyberGraphics C glue, tiny-skia CPU renderer, std-thread dispatcher, keyboard/wheel input, clipboard.device) | `~/Source/zed-aros` | `aros-platform` |
-| Custom Rust std for AROS (posixc-backed fs/thread/net/random) | `~/Source/rust-aros` (symlinked into the nightly's `rust-src`) | — |
-| Target spec JSON + C compat shims (`endian.h`, `sys/ioctl.h`) + std C glue | `~/Source/aros-aarch64/hosted/rust/` | — |
+| Custom Rust std for AROS (posixc-backed fs/thread/net/random) | `~/Source/rust-aros` (symlinked into the nightly's `rust-src`) |, |
+| Target spec JSON + C compat shims (`endian.h`, `sys/ioctl.h`) + std C glue | `~/Source/aros-aarch64/hosted/rust/` |, |
 | gpui-component with `smol` → `async-channel` (keeps the async-io/rustix reactor out) | `~/Source/gpui-component-aros` (worktree @ pinned rev c112e7b) | `aros-port` |
 | AROS OS source (incl. `exec/types.h` storage-class-macro guards) | `~/Source/aros-upstream` | `crash-containment` |
-| AROS build tree / SDK / boot image | `~/aros-build` (env `AROS_BUILD`) | — |
-| Patched crosstools (AROS clang/lld, `aarch64elf_aros` emulation, compiler-rt builtins) | `~/aros-crosstools` (env `AROS_CROSSTOOLS`) | — |
-| Hosted-AROS run/automation harness | `~/Source/aros-aarch64/graft/` (`aros-ctl`, `run-window.sh`, smokes) | — |
+| AROS build tree / SDK / boot image | `~/aros-build` (env `AROS_BUILD`) |, |
+| Patched crosstools (AROS clang/lld, `aarch64elf_aros` emulation, compiler-rt builtins) | `~/aros-crosstools` (env `AROS_CROSSTOOLS`) |, |
+| Hosted-AROS run/automation harness | `~/Source/aros-aarch64/graft/` (`aros-ctl`, `run-window.sh`, smokes) |, |
 
 ## The check command
 
@@ -315,16 +315,16 @@ cargo +nightly-2026-06-27 check -p ferail-gpui \
 
 ## C-of-the-graph lessons (all encoded in `.cargo/config.toml`)
 
-- **`-D_GNU_SOURCE`** — AROS posixc guards core-POSIX `fdopen`/`popen`
+- **`-D_GNU_SOURCE`**: AROS posixc guards core-POSIX `fdopen`/`popen`
   behind `_GNU_SOURCE`/`_XOPEN_SOURCE`; tree-sitter et al. expect them
   visible.
-- **`-DHAVE_ENDIAN_H` + compat include** — AROS has no `<endian.h>`;
+- **`-DHAVE_ENDIAN_H` + compat include**: AROS has no `<endian.h>`;
   tree-sitter's `portable/endian.h` honors `HAVE_ENDIAN_H`. Shim at
   `aros-aarch64/hosted/rust/compat/include/endian.h`; the same dir shims
   `sys/ioctl.h` (sqlite includes it unconditionally, calls it only behind
   `__linux__`).
 - **sqlite**: `-DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0
-  -DSQLITE_OMIT_LOAD_EXTENSION=1` — AROS has no mmap/shm-WAL/dlopen; the
+  -DSQLITE_OMIT_LOAD_EXTENSION=1`: AROS has no mmap/shm-WAL/dlopen; the
   classic rollback-journal configuration is semantically required, not just
   a compile fix.
 - **`exec/types.h`** unconditionally `#define GLOBAL extern` and clobbered
@@ -334,12 +334,12 @@ cargo +nightly-2026-06-27 check -p ferail-gpui \
 
 ## Vendored / patched crates (`[patch]` in `Cargo.toml`)
 
-- `stacker` (zed-aros/vendor-aros) — no-op stack growth on AROS. The lock
+- `stacker` (zed-aros/vendor-aros), no-op stack growth on AROS. The lock
   must resolve to the vendored 0.1.23: `cargo update -p stacker --precise
   0.1.23` if a bump reintroduces 0.1.24.
-- `filetime` (zed-aros/vendor-aros) — AROS arm reading via std `Metadata`;
+- `filetime` (zed-aros/vendor-aros): AROS arm reading via std `Metadata`;
   set-times returns `Unsupported` (notify's poll watcher only reads).
-- `gpui-component` — the `aros-port` worktree swaps `smol::channel` for
+- `gpui-component`: the `aros-port` worktree swaps `smol::channel` for
   `async-channel` (identical re-export) so smol's async-io → rustix →
   errno reactor never enters the graph.
 - gpui's `test-support` gates `proptest` off AROS (rusty-fork/wait-timeout
@@ -382,13 +382,13 @@ Legend: ✅ works · 🟡 partial/unverified · ❌ absent.
 | Native menu bar | ✅ | gadtools strip from gpui `set_menus`; verified live (About/Settings picks work) |
 | Native file requesters | 🟡 | `asl.library` wired in `gpui_aros` (`prompt_for_paths`); unverified on device |
 | Media viewer (mpv) | ❌ | `ferail-video-mpv` is a macOS backend |
-| Quick Look previews | 🟡 | qlmanage is macOS-only, but the tiers behind it now serve AROS: **images** via the pure-Rust `image`-crate raster tier (row icons + grid + preview pane, `screenshots/aros-image-preview.png`), **video posters** via `C:FFThumb` — the native-ffmpeg one-frame thumbnailer shelled out to like qlmanage (`screenshots/aros-video-poster.png`), **audio cover art** via lofty (platform-neutral). Missing: video *playback* (needs a `ferail-video-ffmpeg` `VideoBackend`), datatypes-based previews for Amiga-native formats (IFF etc.) |
+| Quick Look previews | 🟡 | qlmanage is macOS-only, but the tiers behind it now serve AROS: **images** via the pure-Rust `image`-crate raster tier (row icons + grid + preview pane, `screenshots/aros-image-preview.png`), **video posters** via `C:FFThumb`: the native-ffmpeg one-frame thumbnailer shelled out to like qlmanage (`screenshots/aros-video-poster.png`), **audio cover art** via lofty (platform-neutral). Missing: video *playback* (needs a `ferail-video-ffmpeg` `VideoBackend`), datatypes-based previews for Amiga-native formats (IFF etc.) |
 | Spotlight / indexed search | ❌ | macOS-only; no AROS equivalent yet |
 | Tags, quarantine "where from" | ❌ | macOS-only; AROS-way = **filenote** comment |
 | Drag & drop | ❌ | needs Intuition/Workbench drag |
 | Multi-window / tabs | ✅ | Settings opens as a real second Intuition window (2026-07-16); About is an in-window modal |
 
-### Chrome / bundled SVG icons don't draw — RESOLVED (2026-07-14)
+### Chrome / bundled SVG icons don't draw - RESOLVED (2026-07-14)
 
 Fixed live on booted AROS. Every icon now draws (toolbar, sidebar nav, window
 buttons, sort chevrons, per-row folder icons); the `could not find asset` error
@@ -412,7 +412,7 @@ produced, because the SVG source bytes were never found.
 (`crates/ferail-gpui/Cargo.toml`). rust-embed is feature-unified across the
 graph, so the single flag also makes `gpui_component_assets` embed.
 
-**How it was found — the AROS diagnostic channel had to be built first.** The
+**How it was found: the AROS diagnostic channel had to be built first.** The
 obvious step ("boot AROS and grep the run log") could not work: on AROS no app
 output reaches the aros-ctl log at all. gpui's `.log_err()` routes through the
 `log` crate facade, which is a no-op until a logger is installed, and nothing
@@ -421,7 +421,7 @@ not). Ferail's own `eprintln!` does not reach the host log either, because AROS
 routes a shell command's stderr to the AROS console, not the host fd 2 that
 aros-ctl captures. So `obs::init()` now (AROS-only) installs a `log::Log` bridge
 and mirrors every diagnostic line into `MacRW:ferail-log.txt` (host-shared,
-readable as `~/AROS/Shared/ferail-log.txt`) — the same host-durable trick the
+readable as `~/AROS/Shared/ferail-log.txt`): the same host-durable trick the
 panic hook uses for `ferail-panic.txt`. With it, the `could not find asset`
 lines were visible on the first frame and named the cause. Any future AROS-side
 gpui diagnosis reads that file.
@@ -430,7 +430,7 @@ gpui diagnosis reads that file.
 > (scale_factor / atlas / tint), but the actual cause was upstream: the assets
 > were never embedded, so nothing downstream of asset load was ever reached.
 
-Symptom (original): **most icons in the main window don't draw on AROS** — the
+Symptom (original): **most icons in the main window don't draw on AROS**: the
 toolbar / sidebar / command glyphs *and* the Lucide file-type fallback glyphs (the
 `739c9b2` fallback that kicks in because `fetch_icon_rgba` is a stub on AROS).
 This is **separate from** the "native file icons" row above (that's the
@@ -442,7 +442,7 @@ tests, not an AROS repro):
 
 - **Not a bad asset.** A ferail test rasterizes every icon the app draws
   (`assets::tests` in `ferail-gpui`) through the same `usvg`/`resvg` path gpui
-  uses — all pass, non-empty masks. So every glyph is a valid SVG.
+  uses, all pass, non-empty masks. So every glyph is a valid SVG.
 - **Not the rasterizer.** `SvgRenderer::render_alpha_mask` →
   `render_pixmap` is pure Rust (`usvg` + `resvg`/`tiny_skia`) and produces an
   **A8 alpha mask**, exactly like text glyphs. The AROS smoke test already
@@ -451,12 +451,12 @@ tests, not an AROS repro):
 - **So the failure is in `gpui_aros`'s paint path**, downstream of the mask:
   `elements/svg.rs` calls `window.paint_svg(bounds, …, color, …).log_err()`,
   which builds a `MonochromeSprite` (A8 atlas sample tinted by the element's
-  text color) — the *same* primitive kind as text glyphs. The error is
+  text color): the *same* primitive kind as text glyphs. The error is
   **swallowed into a log line**, so:
 
   **First step on the Mac: grep the AROS run log for the `paint_svg` failure.**
   `render_alpha_mask` bails with *"can't render at a zero size"* when
-  `params.size` (bounds × `window.scale_factor()`) collapses — the leading
+  `params.size` (bounds × `window.scale_factor()`) collapses: the leading
   hypothesis, since a bad AROS `scale_factor()` would zero the icon size while
   text (font-point sized) still renders. If the log is silent, the mask is
   reaching the atlas and the bug is in how `gpui_aros` uploads/draws
@@ -471,17 +471,17 @@ tests, not an AROS repro):
 
 #### Action plan on the Mac (do these in order)
 
-The whole loop runs on the Mac against the `zed-aros` checkout — nothing here is
+The whole loop runs on the Mac against the `zed-aros` checkout, nothing here is
 reproducible from the Windows/Linux boxes (their renderers work). Boot Ferail
 on AROS (`graft/aros-ctl run`, see [aros-building.md](aros-building.md)); the
 window paints (title bar, rows, text) but the glyphs are missing.
 
-1. **Read the log first — it almost certainly names the cause.**
+1. **Read the log first: it almost certainly names the cause.**
    `elements/svg.rs` swallows every SVG paint failure with `.log_err()`, so the
    reason is already being printed each frame. Look for `can't render at a zero
    size` (from `SvgRenderer::render_alpha_mask`) or any atlas error. Ferail's
    panic/obs log lands in `MacRW:ferail-panic.txt` on hard failures, but these
-   are *logged, not panicked* — capture stderr from `aros-ctl run` instead.
+   are *logged, not panicked*: capture stderr from `aros-ctl run` instead.
    - **Log is loud (`zero size`) → cause #1.** Confirm by logging
      `window.scale_factor()` and the SVG `bounds` once in `elements/svg.rs`
      before `paint_svg`. If `scale_factor()` is `0.0`/NaN or `bounds` is empty,
@@ -496,17 +496,17 @@ window paints (title bar, rows, text) but the glyphs are missing.
    example): one window whose root is `svg().path("icons/nav/home.svg").size_6()
    .text_color(white)` next to a `div().child("A")`. If the letter draws and the
    house doesn't, you've isolated the SVG-sprite path from text with a 20-line
-   repro — rebuild-run that, not the whole app.
+   repro: rebuild-run that, not the whole app.
 
 3. **Compare the two `MonochromeSprite` sources in the renderer.** Text glyphs
    and SVG icons emit the *same* `Primitive::MonochromeSprite`
    (`scene.rs`), batched as `PrimitiveBatch::MonochromeSprites`. In
    `gpui_aros`'s batch handler, check: (a) the atlas tile is allocated in the
    **monochrome/A8** texture (not the polychrome one) for both; (b) the sample
-   uses the tile's real size — an icon tile (24 px+) is bigger than a glyph
+   uses the tile's real size: an icon tile (24 px+) is bigger than a glyph
    tile, so a row-packing or max-tile-size bug shows up only for icons;
    (c) the tint is `sprite.color` (the element's `text_color`), not the
-   background — a swapped/zeroed color paints the glyph invisibly.
+   background: a swapped/zeroed color paints the glyph invisibly.
 
 4. **Regression guard back in ferail:** once it draws, the existing
    `ferail-gpui` `assets::tests` (every icon rasterizes non-empty) already
@@ -516,26 +516,26 @@ window paints (title bar, rows, text) but the glyphs are missing.
 
 > Status-table cross-ref: the **Icon grid / native file icons ❌** row is the
 > *separate* `icon.library` shell stub (real per-file OS icons). This section is
-> the bundled-SVG chrome + Lucide-fallback path — fixing it makes the toolbar,
+> the bundled-SVG chrome + Lucide-fallback path, fixing it makes the toolbar,
 > sidebar, and type-icon glyphs appear even while native file icons stay stubbed.
 
-#### Static analysis done on the Mac (2026-07-14) — the three ranked causes are ruled out
+#### Static analysis done on the Mac (2026-07-14) - the three ranked causes are ruled out
 
 Followed the action plan on the Mac against the `zed-aros` checkout, but by code
 read + host tests rather than a boot. **All three ranked causes above are
-eliminated — the bug is not statically findable, so the run log is genuinely the
+eliminated: the bug is not statically findable, so the run log is genuinely the
 next step, not more code reading.**
 
 - **Cause #1 (`scale_factor()` → 0) is impossible.** `gpui_aros`'s
   `window.rs::scale_factor()` returns `render_scale`, seeded by `dynres_scale()`,
-  which `.clamp(0.25, 1.0)`s and defaults to `1.0` — it can never be `0.0`/NaN.
+  which `.clamp(0.25, 1.0)`s and defaults to `1.0`: it can never be `0.0`/NaN.
   And `Window::paint_svg` (shared gpui `window.rs`) sizes the raster as
   `bounds.size * SMOOTH_SVG_SCALE_FACTOR` (the constant `2`), **not**
-  `* scale_factor()` — so the icon raster can't collapse to zero at scale 1.0.
+  `* scale_factor()`: so the icon raster can't collapse to zero at scale 1.0.
   The "text survives a zero scale factor, SVG doesn't" theory doesn't apply here.
 - **Causes #2 (atlas) and #3 (tint) are already pinned green on the host.**
   `cargo test -p gpui_aros` passes 16/16, including `svg_sprite_downsamples_into_bounds`,
-  `glyph_sprite_blits_one_to_one`, and `monochrome_tint_is_premultiplied` — the
+  `glyph_sprite_blits_one_to_one`, and `monochrome_tint_is_premultiplied`: the
   exact monochrome-sprite atlas + downsample + premultiplied-tint path. The
   renderer draws SVG-sourced masks correctly on the host (a prior 2×-size icon
   bug, 2026-07-04, was already fixed and pinned there). The conformance suite
@@ -547,30 +547,30 @@ host-tested Rust: either the SVG mask never reaches the atlas (real
 which the `.log_err()` swallows), or the AROS-side scene upload/draw treats the
 SVG `MonochromeSprites` batch differently from the glyph one at runtime. **Do
 step 1 first: capture `graft/aros-ctl run` stderr and grep for the `paint_svg` /
-`can't render at a zero size` / atlas line — it names which.** Static analysis
+`can't render at a zero size` / atlas line: it names which.** Static analysis
 can't narrow it further from here.
 
 ### Roadmap (rough order)
 
-1. **Make `gpui_aros` native-shell-complete** — menus, `asl.library` file
+1. **Make `gpui_aros` native-shell-complete**: menus, `asl.library` file
    requesters, cursor shapes. (See `gpui_aros/HANDOFF.md` §What's missing.)
 2. **Implement `ferail-shell-aros` for real** (it's a Linux-stub re-export
    today): `icon.library` icons, Workbench reveal, `clipboard.device` file
    URLs, `datatypes.library` thumbnails.
-3. **Harden the OS frontier** — the `emul-handler` bus-fault under concurrent
+3. **Harden the OS frontier**: the `emul-handler` bus-fault under concurrent
    metadata walkers (folder-size walker is gated off on AROS today; see Status).
-4. **Native-the-Amiga-way features** — quarantine→filenote, previews via
+4. **Native-the-Amiga-way features**: quarantine→filenote, previews via
    `datatypes.library`, an AROS media path.
 
-### The AROS-specific crates (the owner flagged this — do it)
+### The AROS-specific crates (the owner flagged this - do it)
 
 Both `gpui_aros` and `ferail-shell-aros` need AROS platform APIs, and both
 currently reach them through ad-hoc C glue. Consolidate into a shared binding
 layer instead:
 
-- **`aros-sys`** — raw `extern "C"` + C shim for exec/dos/intuition/graphics/
+- **`aros-sys`**: raw `extern "C"` + C shim for exec/dos/intuition/graphics/
   cybergraphics/keymap/asl/workbench/icon/datatypes/clipboard.device.
-- **`aros`** — safe wrappers (`Window`, `MenuStrip`, `FileRequester`, `Icon`,
+- **`aros`**: safe wrappers (`Window`, `MenuStrip`, `FileRequester`, `Icon`,
   `DataType`, `Clipboard`, …), RAII, `-ffixed-x18`-safe.
 
 Then `ferail-shell-aros` builds reveal/icons/thumbnails on `aros`, and
@@ -598,8 +598,8 @@ graft/aros-ctl shot proof.png
 The canonical AROS build tree and toolchain live **outside `/tmp`** (moved
 2026-07-05 after the macOS `/tmp` cleaner repeatedly gutted them):
 
-- **`~/aros-build`** — the AROS SDK / build tree / boot image.
-- **`~/aros-crosstools`** — the preserved patched clang 20.1.0 + `ld.lld` +
+- **`~/aros-build`**: the AROS SDK / build tree / boot image.
+- **`~/aros-crosstools`**: the preserved patched clang 20.1.0 + `ld.lld` +
   compiler-rt (the expensive part; never rebuild it).
 
 `check-aros.sh`, `link-aros.sh`, and the `.cargo/config.toml` CFLAGS all point
@@ -613,34 +613,34 @@ rebuild + relink Ferail: `cargo … build -p ferail-aros-app …` then
 ### Legacy: the `/tmp` GC failure modes (why the move happened)
 
 macOS periodically GCs `/tmp` **by file atime**, so `/tmp/arosbuild` decayed
-piecemeal — headers, kickstart modules, C: commands and crosstools binaries
+piecemeal: headers, kickstart modules, C: commands and crosstools binaries
 vanished independently while directories survived. Encountered:
 
-- SDK headers (`gen/include`) — regenerate with the scratch recipe:
+- SDK headers (`gen/include`): regenerate with the scratch recipe:
   configure a fresh `/tmp/arosbuild2` (thin xtools per
   `graft/build-darwin-aarch64.sh` step 2, retargeted at
   `/tmp/aros-crosstools`'s patched clang) and `make includes`, then rsync
   over the canonical tree.
-- `Devs/FileSystem.resource` (kickstart module) — `make kernel-filesystem`
+- `Devs/FileSystem.resource` (kickstart module): `make kernel-filesystem`
   in the scratch tree, copy over. Needs the crosstools clang (spec flags
   like `-noposixc`), Homebrew clang builtin headers copied into its GC'd
   resource dir, and `lib/generic/libclang_rt.builtins-aarch64.a` symlinked
   into the xtools.
-- **`AROS.boot`** — the sneakiest one. dos's `__dos_IsBootable` requires a
+- **`AROS.boot`**: the sneakiest one. dos's `__dos_IsBootable` requires a
   signature file `:AROS.boot` at the boot volume root containing the CPU
   string (`aarch64`). With it GC'd, every mount succeeds but the boot
   volume is deemed "not bootable" (Res2=212) and dos.library's init
-  returns NULL — surfacing as the wildly misleading `Could not open
+  returns NULL, surfacing as the wildly misleading `Could not open
   version 36 or higher of library "dos.library"` alert from dosboot.
   Restore with `echo aarch64 > <bootdir>/AROS.boot`. (Diagnosed by
   transplanting a `-DDEBUG=1` dos.library built via
-  `make kernel-dos` in the scratch tree — the `Dos/CliInit:` trace names
+  `make kernel-dos` in the scratch tree: the `Dos/CliInit:` trace names
   the failing step directly. Keep the debug build out of normal boots:
   it logs every DOS packet and makes big LoadSegs crawl.)
 - Single-file transplants from the scratch tree into the old image work
   fine (FileSystem.resource, dos.library round-tripped cleanly);
   `make <metatarget>` in the scratch tree is the recovery tool of choice.
-  Avoid plain `make` — the default target tries to fetch and build LLVM.
+  Avoid plain `make`: the default target tries to fetch and build LLVM.
 
 The durable fix would be moving the canonical build out of `/tmp` (the
 tooling honors `AROS_BUILD`/`BUILD`/`AROS_CTL_BOOTD` env for that).

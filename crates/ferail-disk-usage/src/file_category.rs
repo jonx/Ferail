@@ -1,5 +1,5 @@
 //! Cheap file-category classification (extension only). No I/O, no
-//! magic-byte sniffing — magic detection is a separate worker that posts
+//! magic-byte sniffing: magic detection is a separate worker that posts
 //! its results into [`FileEntry::display_magic`] when it lands.
 //!
 //! macOS additions over the Ferail original: `pages`/`numbers`/`key` join

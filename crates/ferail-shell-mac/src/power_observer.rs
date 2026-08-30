@@ -16,7 +16,7 @@
 //! one), the callback runs on the main thread, and registration is
 //! main-thread-only and idempotent.
 //!
-//! `WillSleep` is delivered synchronously before the machine sleeps —
+//! `WillSleep` is delivered synchronously before the machine sleeps:
 //! the callback must be cheap and non-blocking (the host just pokes a
 //! channel). Don't do real work here; the system is waiting on us.
 
@@ -102,7 +102,7 @@ impl PowerObserver {
 
 /// Begin observing system sleep/wake and display sleep/wake. Replaces
 /// any prior callback. Must run on the main thread; off-thread calls
-/// are a no-op. Idempotent — re-registering refreshes the callback
+/// are a no-op. Idempotent: re-registering refreshes the callback
 /// without stacking observers.
 pub fn start(callback: Box<dyn Fn(PowerEvent) + 'static>) {
     let Some(mtm) = MainThreadMarker::new() else {

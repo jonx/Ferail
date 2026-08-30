@@ -2,7 +2,7 @@
 //!
 //! macOS already maintains a live, content-aware index via Spotlight,
 //! kept fresh by FSEvents. Rather than build and warm our own whole-disk
-//! index, we query that one — instant name *and* content search at ~zero
+//! index, we query that one: instant name *and* content search at ~zero
 //! ongoing CPU. This module shells out to `mdfind` (the spike from the
 //! plan); a later iteration can swap the implementation for the `MDQuery`
 //! C API behind the same signature if we need finer batching control.
@@ -52,7 +52,7 @@ fn mdfind_args(scope: &SpotlightScope, needle: &str, name_only: bool) -> Vec<Str
 /// binary exists and runs). Callers use it to decide whether to route a
 /// global search to Spotlight or fall back to the built-in recursive
 /// walker. NOT cheap: `.output()` forks, execs, and waits for the child
-/// — worker-thread only.
+///: worker-thread only.
 #[cfg(target_os = "macos")]
 pub fn spotlight_available() -> bool {
     ferail_core::path_guard::assert_off_ui_thread("spotlight_available");
@@ -72,7 +72,7 @@ pub fn spotlight_available() -> bool {
 /// the `mdfind` child is killed and the function returns.
 ///
 /// Returns `Err` only when the `mdfind` process could not be spawned
-/// (e.g. Spotlight disabled) — callers should fall back to the recursive
+/// (e.g. Spotlight disabled): callers should fall back to the recursive
 /// walker in that case.
 #[cfg(target_os = "macos")]
 pub fn spotlight_search(

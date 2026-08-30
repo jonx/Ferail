@@ -1,4 +1,4 @@
-//! OLE2 / CFBF (Compound File Binary Format) detection — the container
+//! OLE2 / CFBF (Compound File Binary Format) detection: the container
 //! behind legacy Office documents (.doc / .xls / .ppt), MSI installers,
 //! and **password-protected OOXML**: an encrypted .docx/.xlsx/.pptx is
 //! not a ZIP at all but a CFBF file wrapping an `EncryptedPackage`
@@ -7,11 +7,11 @@
 //!
 //! Two-stage pipeline, mirroring `magic::zip`:
 //!
-//! 1. **[`sniff`] — header-only.** The 8-byte CFBF magic at offset 0
+//! 1. **[`sniff`]: header-only.** The 8-byte CFBF magic at offset 0
 //!    classifies the container as [`MagicType::OleCompound`]; the app
 //!    can't be told from the header alone.
 //!
-//! 2. **[`refine_with_directory`] — one targeted read.** The header
+//! 2. **[`refine_with_directory`], one targeted read.** The header
 //!    names the first directory sector; its entries name the main
 //!    stream (`WordDocument`, `Workbook`, `PowerPoint Document`,
 //!    `EncryptedPackage`), which pins the application. Best-effort:
@@ -45,7 +45,7 @@ pub(super) fn refine_with_directory(
         return;
     }
     // Sector size: 512 (v3, shift 9) or 4096 (v4, shift 12). Sector n
-    // starts at byte (n + 1) << shift — the header occupies "sector -1".
+    // starts at byte (n + 1) << shift: the header occupies "sector -1".
     let sector_shift = u16::from_le_bytes([header_buf[30], header_buf[31]]);
     if !(7..=15).contains(&sector_shift) {
         return;
@@ -58,7 +58,7 @@ pub(super) fn refine_with_directory(
         header_buf[51],
     ]);
     if first_dir_sector >= 0xFFFF_FFFA {
-        // ENDOFCHAIN / FREESECT / FAT markers — no directory to read.
+        // ENDOFCHAIN / FREESECT / FAT markers, no directory to read.
         return;
     }
     let dir_offset = (first_dir_sector as u64 + 1) << sector_shift;

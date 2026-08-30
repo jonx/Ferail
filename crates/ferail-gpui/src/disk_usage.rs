@@ -3,7 +3,7 @@
 //! A second native window showing a squarified treemap of the scanned
 //! folder's contents. Reuses every piece of the existing
 //! `ferail-disk-usage` crate (scan tree, layout, classification) and
-//! `ferail-fs-native::scan_disk_usage` for the walker — the new
+//! `ferail-fs-native::scan_disk_usage` for the walker: the new
 //! code is just orchestration + GPUI rendering.
 //!
 //! Streaming pattern: the BG scan pushes fact batches into an
@@ -32,7 +32,7 @@ use std::ffi::OsString;
 #[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStringExt as _;
 
-/// Key context for the Disk Usage pane — keymap.rs binds the treemap
+/// Key context for the Disk Usage pane: keymap.rs binds the treemap
 /// keys (Enter/Backspace/Escape, Cmd+C/I/Backspace) against it.
 pub const DISK_USAGE_CONTEXT: &str = "DiskUsage";
 
@@ -135,7 +135,7 @@ fn topn_rebuild_interval(nodes: usize) -> Duration {
 }
 /// Backpressure cap on the BG→FG queue. The drain applies at most
 /// `DU_MAX_MSGS_PER_TICK` per busy tick, so a warm-cache scan of a huge
-/// volume can outrun it indefinitely — without a cap the backlog grows
+/// volume can outrun it indefinitely, without a cap the backlog grows
 /// to hundreds of MB of fact batches. When the queue is full the
 /// scanner thread naps ([`DU_BACKPRESSURE_NAP`]) until the drain
 /// catches up, re-checking `cancel` each lap so a cancelled scan (or a
@@ -390,14 +390,14 @@ pub struct DiskUsageView {
     treemap_size: Option<(f32, f32)>,
     scan_generation: u64,
 
-    /// `last() == focus` — the deepest folder the user has clicked
+    /// `last() == focus`: the deepest folder the user has clicked
     /// into. Empty == root.
     zoom_path: Vec<NodeId>,
     /// Multi-selection over treemap rects / Top-N rows, spec-matching
     /// the file list: plain click selects one, Cmd-click toggles.
     /// In-memory interaction state only.
     selected: HashSet<NodeId>,
-    /// Most recently selected node — drives the status line's
+    /// Most recently selected node: drives the status line's
     /// single-item detail and Zoom In targeting.
     lead: Option<NodeId>,
     category_filter: Option<FileCategory>,
@@ -450,7 +450,7 @@ pub struct DiskUsageView {
 
     /// Shared task registry from the parent Shell. The DU view
     /// `begin`s a task at scan start, optionally updates progress, and
-    /// `end`s it when the scan finishes — so the status bar's progress
+    /// `end`s it when the scan finishes, so the status bar's progress
     /// strip stays live while the DU view scans.
     tasks: Rc<RefCell<TaskRegistry>>,
     /// Active task id while the scan is in flight. `None` after Done.
@@ -688,7 +688,7 @@ impl DiskUsageView {
         let root_id = path_arena.root_id();
         let cancel = Arc::new(AtomicBool::new(false));
         let msg_queue = Arc::new(Mutex::new(VecDeque::new()));
-        // Volume capacity for the header bar arrives off-thread below —
+        // Volume capacity for the header bar arrives off-thread below:
         // the NSURL/statfs lookup can round-trip to a network mount,
         // and this constructor runs on the UI thread.
         let volume = None;
@@ -958,7 +958,7 @@ impl DiskUsageView {
 
         // FG: drain the queue periodically + apply on the view.
         // CRITICAL: expensive work (layout invalidation, top-N rebuild,
-        // cx.notify) runs ONCE per drain tick — not once per message —
+        // cx.notify) runs ONCE per drain tick, not once per message,
         // because at peak scan rate dozens of batches accumulate
         // between drains. Doing 50× sorts of a million-node tree in a
         // single main-thread update is what was freezing the UI.
@@ -1078,7 +1078,7 @@ impl DiskUsageView {
         .detach();
     }
 
-    /// Pure data application — no cache invalidation, no notify. The
+    /// Pure data application, no cache invalidation, no notify. The
     /// drain loop batches those so they happen once per tick.
     fn apply_scan_msg(&mut self, msg: ScanMsg) {
         match msg {
@@ -1278,7 +1278,7 @@ impl DiskUsageView {
     ///   2. Bump `scan_generation` so the drain task sees a stale
     ///      generation at its next tick and breaks. Late
     ///      `ScanMsg::Batch`/`Done` from the dying worker land in the
-    ///      orphan queue and are never applied — accumulated tree
+    ///      orphan queue and are never applied: accumulated tree
     ///      data stays exactly where it was at click time.
     ///   3. Flip `scan_complete = true` locally so the header swaps
     ///      from "Scanning…" / Stop button to the final summary +
@@ -1298,7 +1298,7 @@ impl DiskUsageView {
             self.with_tasks(cx, |reg| reg.end(id));
         }
         // The drain loop breaks on the stale generation without a final
-        // pass, and streaming ticks throttle layout rebuilds — so rebuild
+        // pass, and streaming ticks throttle layout rebuilds, so rebuild
         // here (user-driven, immediate) to show every fact applied so far.
         self.invalidate_layout();
         self.rebuild_layout_if_ready();
@@ -1343,7 +1343,7 @@ impl DiskUsageView {
     }
 
     /// The selection resolved to `(path, is_dir, NodeId)` triples via
-    /// the id map — action handlers only (never render).
+    /// the id map: action handlers only (never render).
     fn selected_paths(&self) -> Vec<(PathBuf, bool, NodeId)> {
         let mut out = Vec::with_capacity(self.selected.len());
         for id in &self.selected {
@@ -1573,25 +1573,25 @@ impl DiskUsageView {
             if let Some(reason) = self.fast_fallback {
                 return Some(match reason {
                     FastFallbackReason::ElevationDeclined => {
-                        tr!("Portable fallback — administrator access was declined")
+                        tr!("Portable fallback: administrator access was declined")
                     }
                     FastFallbackReason::HelperMissing => {
-                        tr!("Portable fallback — the Fast NTFS helper is missing")
+                        tr!("Portable fallback: the Fast NTFS helper is missing")
                     }
                     FastFallbackReason::HelperUntrusted => {
-                        tr!("Portable fallback — the Fast NTFS helper does not match this build")
+                        tr!("Portable fallback: the Fast NTFS helper does not match this build")
                     }
                     FastFallbackReason::Unsupported => {
-                        tr!("Portable fallback — Fast NTFS is unavailable here")
+                        tr!("Portable fallback: Fast NTFS is unavailable here")
                     }
                     FastFallbackReason::Failed => {
-                        tr!("Portable fallback — Fast NTFS could not finish safely")
+                        tr!("Portable fallback: Fast NTFS could not finish safely")
                     }
                 });
             }
             if self.active_engine == DuEngine::FastNtfs {
                 return Some(if self.fast_best_effort_live {
-                    tr!("Fast NTFS — best effort because files changed during the scan")
+                    tr!("Fast NTFS: best effort because files changed during the scan")
                 } else {
                     tr!("Fast NTFS engine")
                 });
@@ -1652,7 +1652,7 @@ impl DiskUsageView {
         let folders = format_count(self.stats.dirs_scanned);
         let skipped = self.stats.dirs_skipped;
         let scanning = !self.scan_complete;
-        // A failed scan must say so — it used to store the error and
+        // A failed scan must say so: it used to store the error and
         // render "0 files, 0 folders, 0 B", indistinguishable from an
         // empty folder (this hid "canonicalize unsupported" on AROS).
         let mut summary = if let Some(err) = &self.error {
@@ -1665,7 +1665,7 @@ impl DiskUsageView {
                     crate::private_mode::present_label(msg)
                 }
             };
-            tr!("Scan failed \u{2014} {detail}", detail = why).to_string()
+            tr!("Scan failed: {detail}", detail = why).to_string()
         } else if self.scan_complete && skipped > 0 {
             trn!(
                 "{files} files, {folders} folders, {scanned} · {n} folder skipped",
@@ -2204,7 +2204,7 @@ impl DiskUsageView {
             // what the right-click landed on. Each rect records itself
             // in `menu_rect_target` on right-mouse-down (which runs
             // before the deferred menu build); no per-rect ContextMenu
-            // layers — the overlay hitboxes paint above the rects, so
+            // layers: the overlay hitboxes paint above the rects, so
             // stacked layers all fired at once (two menus colliding on
             // screen, and the background arm wiping the selection).
             .context_menu(move |menu, window, cx| {
@@ -2215,7 +2215,7 @@ impl DiskUsageView {
                     let target = this.menu_rect_target.take();
                     if target.is_none() {
                         // True background click: the view is the
-                        // target — drop the rect selection so the
+                        // target: drop the rect selection so the
                         // status line and the menu agree.
                         this.selected.clear();
                         this.lead = None;
@@ -2361,7 +2361,7 @@ impl DiskUsageView {
                 .cursor_pointer()
                 // Topmost-rect-wins for right-clicks: without occlusion
                 // every ancestor rect's context menu (and the container's
-                // background menu) would ALSO fire — gpui-component's
+                // background menu) would ALSO fire: gpui-component's
                 // ContextMenu tests `hitbox.is_hovered` without stopping
                 // propagation.
                 .occlude()
@@ -2476,7 +2476,7 @@ impl DiskUsageView {
     /// zoom path and rebuilds the cached layout against the current
     /// treemap size.
     pub fn zoom_into(&mut self, target: NodeId, cx: &mut Context<Self>) {
-        // Ignore the root — already focused.
+        // Ignore the root, already focused.
         if target == self.focus_id() {
             return;
         }
@@ -2686,7 +2686,7 @@ impl DiskUsageView {
             let (ok, failed, parents) = results;
             if let Some(this) = this.upgrade() {
                 this.update(cx, |this, cx| {
-                    // The scan tree still counts the trashed bytes —
+                    // The scan tree still counts the trashed bytes:
                     // rescan for an honest picture.
                     if ok > 0 {
                         this.restart_scan(cx);
@@ -2708,7 +2708,7 @@ impl DiskUsageView {
                     window.push_notification(
                         crate::shell::error_notification(
                             tr!(
-                                "Trashed {ok}, {failed} failed \u{2014} {detail}",
+                                "Trashed {ok}, {failed} failed: {detail}",
                                 ok = format_count(ok as u64),
                                 failed = format_count(failed.len() as u64),
                                 detail = failed.first().cloned().unwrap_or_default()
@@ -2757,7 +2757,7 @@ impl DiskUsageView {
     }
 
     /// The single selected container, when the selection is exactly one
-    /// folder — the target rule for Zoom In and the subtree HTML export.
+    /// folder: the target rule for Zoom In and the subtree HTML export.
     fn single_selected_container(&self) -> Option<NodeId> {
         if self.selected.len() != 1 {
             return None;
@@ -2775,7 +2775,7 @@ impl DiskUsageView {
     }
 
     /// Build the HTML for `root` at the current size mode. Runs inline
-    /// on a semantic user action — same order of work as one streaming
+    /// on a semantic user action, same order of work as one streaming
     /// layout rebuild tick.
     fn export_html(&self, root: NodeId, document: bool) -> String {
         let (w, h) = self.export_dims();
@@ -2829,7 +2829,7 @@ impl DiskUsageView {
         crate::platform_shell::copy_to_clipboard(&html);
         window.push_notification(
             Notification::success(tr!(
-                "Treemap HTML copied \u{2014} paste into any page or document."
+                "Treemap HTML copied, paste into any page or document."
             )),
             cx,
         );
@@ -2934,7 +2934,7 @@ impl Focusable for DiskUsageView {
 
 impl Drop for DiskUsageView {
     /// Closing the Disk Usage window must stop the still-running
-    /// scanner — without this, the worker keeps walking the volume
+    /// scanner, without this, the worker keeps walking the volume
     /// in the background long after the user has dismissed the
     /// window. The scanner checks `cancel` at every dirent boundary
     /// and exits cleanly once it sees the flag flip; the drain task
@@ -2966,7 +2966,7 @@ impl Render for DiskUsageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.host == ToolHostContext::Windowed {
             window.set_window_title(&tr!(
-                "Disk Usage — {path}",
+                "Disk Usage: {path}",
                 path = crate::private_mode::present_path(&self.root_path)
             ));
             // The filter field needs a `Window`, which the constructor
@@ -3427,7 +3427,7 @@ fn ntfs_ticks_to_system_time(ticks: u64) -> Option<SystemTime> {
 }
 
 /// Category fill, from the canonical palette in `ferail-disk-usage`
-/// (`category_color_rgba`) — one source shared with the HTML export so
+/// (`category_color_rgba`), one source shared with the HTML export so
 /// the window and an exported page can't drift apart.
 fn category_color(cat: FileCategory) -> Rgba {
     let (r, g, b, a) = ferail_disk_usage::category_color_rgba(cat);
@@ -3480,7 +3480,7 @@ fn size_for_mode(apparent: u64, allocated: u64, mode: SizeMode) -> u64 {
     }
 }
 
-/// Legend / filter label for a category, as a msgid — translate at the
+/// Legend / filter label for a category, as a msgid: translate at the
 /// display site with `crate::i18n::tr_static`.
 fn category_label(cat: FileCategory) -> &'static str {
     use ferail_core::msgid;
@@ -3496,7 +3496,7 @@ fn category_label(cat: FileCategory) -> &'static str {
 }
 
 /// Open the Disk Usage window for `root`. Independent of the main
-/// shell — closing one doesn't affect the other. The shared `tasks`
+/// shell, closing one doesn't affect the other. The shared `tasks`
 /// registry lets the DU scan register a task so the owner Shell's
 /// status bar shows progress, and `notify_owner` is invoked after each
 /// task mutation so the Shell's status bar repaints promptly.
@@ -3532,7 +3532,7 @@ pub fn open_existing_window(
 ) -> Result<WindowHandle<Root>, anyhow::Error> {
     view.update(cx, |view, cx| view.set_dock_owner(dock_owner, cx));
     let menu_label = tr!(
-        "Disk Usage \u{2014} {path}",
+        "Disk Usage: {path}",
         path = crate::private_mode::present_path(&root)
     );
     let opts = WindowOptions {

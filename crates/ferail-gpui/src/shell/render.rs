@@ -12,7 +12,7 @@ pub(crate) const PREVIEW_MD_MIN_W: f32 = 520.0;
 /// Code/source preview: a `whitespace_nowrap` code block clips long lines
 /// but won't grow its container past the pane on its own, so the box has
 /// nothing to scroll toward. We give the content a definite width sized to
-/// the widest line — these tune that estimate. Width per column at the 9px
+/// the widest line: these tune that estimate. Width per column at the 9px
 /// mono used in the code block; slightly over the real ~5.4px advance so
 /// the last glyphs aren't clipped (a little slop on the right is fine,
 /// lost characters are not).
@@ -23,7 +23,7 @@ pub(crate) const PREVIEW_CODE_TAB_COLS: usize = 4;
 /// Box + code-block horizontal padding added to the measured line width.
 pub(crate) const PREVIEW_CODE_PAD: f32 = 48.0;
 /// Upper bound on the sized width so a minified single-line file doesn't
-/// build a multi-thousand-pixel element (it clips past this — rare).
+/// build a multi-thousand-pixel element (it clips past this: rare).
 pub(crate) const PREVIEW_CODE_MAX_W: f32 = 4000.0;
 /// Render-aware ceiling for preview text. The worker already caps source
 /// lines; this additionally bounds heavily wrapped prose by visual lines.
@@ -31,7 +31,7 @@ pub(crate) const PREVIEW_TEXT_MAX_VISUAL_LINES: usize = 1000;
 
 /// Payload carried by a tab-strip drag (Phase D, spec §3.3
 /// "Reorder tab"). The same Render-as-its-own-preview shape
-/// `FavoriteDragPayload` uses — a chip following the cursor with the
+/// `FavoriteDragPayload` uses: a chip following the cursor with the
 /// dragged tab's label. The `id` is the source tab's process-local
 /// `TabId`; the drop target resolves it back to an index against the
 /// current `Shell::tabs` vec so concurrent reorder operations stay
@@ -44,7 +44,7 @@ pub struct TabDragPayload {
     pub id: TabId,
     pub label: SharedString,
     /// Strip index at drag start. Only used to pick which edge of a
-    /// hovered chip gets the insertion highlight — the strip can't
+    /// hovered chip gets the insertion highlight: the strip can't
     /// reorder mid-drag, so the render-time index stays valid for
     /// styling. Drop handlers must still resolve by `id`.
     pub from_idx: usize,
@@ -67,13 +67,13 @@ impl Render for TabDragPayload {
 }
 
 /// One drop gap between (or at the ends of) tab chips. `pos` is the
-/// gap position in `0..=tabs.len()` — gap 0 is before the first tab,
+/// gap position in `0..=tabs.len()`: gap 0 is before the first tab,
 /// gap N is after the last. `drag_over` paints a 2-DIP vertical accent
-/// rule so the user sees exactly where the drop will land — same idea
+/// rule so the user sees exactly where the drop will land, same idea
 /// as `favorites_section::render_drop_gap` rotated 90°. On drop,
 /// `Shell::reorder_tab` resolves the source `TabId` and moves the tab
 /// into this position.
-/// Drag payload for the resize grip under the preview thumbnail —
+/// Drag payload for the resize grip under the preview thumbnail,
 /// same invisible-ghost shape as `multi_table`'s `ResizeColumn`: the
 /// drag machinery wants a Render entity to follow the cursor, but a
 /// resize has nothing to show, so it renders `Empty`. The real state
@@ -88,7 +88,7 @@ impl Render for ResizePreviewThumb {
 }
 
 /// Truncated single-line URL for the preview pane's provenance rows,
-/// with the full URL in a hover tooltip — same treatment as the
+/// with the full URL in a hover tooltip, same treatment as the
 /// "Where" path row. Pure display; no parsing.
 pub(crate) fn truncated_url_value(
     key: &'static str,
@@ -167,7 +167,7 @@ impl Shell {
     fn tool_result_breadcrumb_summary(&self) -> Option<String> {
         let surface = self.active_tab().tool_result.as_ref()?;
         match &surface.mode {
-            // Text only — the 🔍/⧉ pictographs here rendered as tofu boxes
+            // Text only: the 🔍/⧉ pictographs here rendered as tofu boxes
             // on fonts without them (AROS bundled font).
             super::tab::ToolResultMode::Search(search) => Some(format!(
                 "{}  \u{00B7}  {}",
@@ -242,13 +242,13 @@ impl Shell {
     /// tree starting at the home folder. (Phase 2: the flat
     /// shortcut list moved out into the dedicated Favorites menu
     /// above this section, which eliminates the
-    /// Downloads-appears-twice IA bug — favorites don't expand.)
+    /// Downloads-appears-twice IA bug: favorites don't expand.)
     ///
     /// Direct children of Home that are already pinned in Favorites
     /// are hidden from the tree so the same path can never appear
     /// twice in the sidebar, even when Home is expanded. Browse then
     /// reads as "the parts of Home that aren't already in Favorites"
-    /// — Library, Public, custom subfolders, etc. — plus their
+    ///, Library, Public, custom subfolders, etc., plus their
     /// hierarchy. Deeper descendants are untouched: expanding
     /// `Library/Application Support` is fine because that's already
     /// not pinned anywhere.
@@ -256,7 +256,7 @@ impl Shell {
         let home = home_dir();
         // Hide Locations from the Browse tree so the same depth-1 entry
         // (Documents, Downloads, etc.) doesn't appear twice. User-curated
-        // Favorites are *not* hidden — those are intentional shortcuts.
+        // Favorites are *not* hidden: those are intentional shortcuts.
         let location_paths: HashSet<PathBuf> = crate::special_folders::locations(cx)
             .iter()
             .map(|loc| loc.path.clone())
@@ -318,7 +318,7 @@ impl Shell {
     /// Build the **Recents** section from the in-memory recents cache
     /// (most-recent-first folders). Returns `None` when the feature is
     /// switched off or the cache is empty, so the section stays hidden
-    /// for a disabled user or a brand-new profile — no clutter.
+    /// for a disabled user or a brand-new profile, no clutter.
     fn build_recents_section(&self, weak: WeakEntity<Self>, cx: &App) -> Option<ShellSidebarItem> {
         if !crate::recents_section::recents_enabled(cx) {
             return None;
@@ -380,7 +380,7 @@ impl Shell {
     /// Drop the right-clicked folder from Recents only. Recency and Ant
     /// Trail heat are separate columns of the same `folder_usage` row,
     /// so this clears the recency (DB + in-memory list) and deliberately
-    /// leaves the heat (`ant_visits`) alone — taking a folder off the
+    /// leaves the heat (`ant_visits`) alone, taking a folder off the
     /// recent list shouldn't erase how often you go there.
     pub fn on_remove_from_recents(
         &mut self,
@@ -404,7 +404,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Clear Recents — confirm, then empty the recents list. Recency and
+    /// Clear Recents: confirm, then empty the recents list. Recency and
     /// Ant Trail heat are separate columns of the same `folder_usage`
     /// row, so this clears only the recency (`last_access_unix`) and
     /// keeps the heat (`hits`): the most-visited tint survives. The
@@ -430,7 +430,7 @@ impl Shell {
                         .title(tr!("Clear Recents?"))
                         .child(div().text_scale_sm().child(tr!(
                             "Forget every folder in Recents? Your Ant Trail heat is \
-                             kept \u{2014} only the recent list is emptied. This can't \
+                             kept, only the recent list is emptied. This can't \
                              be undone."
                         )))
                         .child(
@@ -480,7 +480,7 @@ impl Shell {
     ///
     /// These render through [`crate::locations_section`] rather than
     /// gpui-component's `SidebarMenu`, because that widget exposes no drop
-    /// hooks — Locations silently rejected every drag until this moved to
+    /// hooks: Locations silently rejected every drag until this moved to
     /// rows we own. Building stays here, where `&Shell` state lives.
     fn build_locations_rows(&mut self, cx: &App) -> Vec<crate::locations_section::LocationRow> {
         let current = self.active_tab().current_dir.clone();
@@ -493,7 +493,7 @@ impl Shell {
                 node_id,
                 is_active: path == current,
                 favorited: favs.contains_path(&path),
-                // In-memory lookup only — the iCloud probe ran off-thread at
+                // In-memory lookup only: the iCloud probe ran off-thread at
                 // startup / volume refresh (ProcessState::cloud_locations).
                 // `None` = not an iCloud Location; `Some(..)` drives the
                 // solid-vs-outline trailing cloud badge.
@@ -597,13 +597,13 @@ impl Shell {
     }
 
     /// Recursively append children of `parent` (and their expanded
-    /// descendants) to `rows`. Reads from `tree_children` only —
+    /// descendants) to `rows`. Reads from `tree_children` only:
     /// callers must have called `ensure_tree_children` first
     /// (`toggle_tree_expand` / `reveal_path_in_tree` do). The
     /// `show_hidden` flag is checked here, not at enumeration time,
     /// so toggling Show Hidden doesn't require cache invalidation.
     ///
-    /// Thin wrapper that runs without a skip filter — used by
+    /// Thin wrapper that runs without a skip filter: used by
     /// Volumes and any deeper-than-depth-1 recursion in Browse.
     fn append_tree_descendants(
         &self,
@@ -627,7 +627,7 @@ impl Shell {
     /// `true` while that ancestor still has visible siblings below
     /// it (its connector line continues through these rows). The
     /// recursion pushes/pops as it descends so each row's `guides`
-    /// column list comes out precomputed — render stays a pure read.
+    /// column list comes out precomputed: render stays a pure read.
     // 8 args, all load-bearing per recursion level; a param struct
     // would be rebuilt at every level of the walk for style points.
     #[allow(clippy::too_many_arguments)]
@@ -644,14 +644,14 @@ impl Shell {
         let Some(children) = self.tree_children.get(parent) else {
             return;
         };
-        // Resolve visibility up front — last-visible-child status
+        // Resolve visibility up front: last-visible-child status
         // decides between the `├` and `└` connector, so hidden /
         // skipped children must not count.
         let visible: Vec<&TreeChild> = children
             .iter()
             .filter(|child| {
                 // `hidden` resolved at load time with platform
-                // semantics (FileEntry::hidden contract) — pure flag
+                // semantics (FileEntry::hidden contract): pure flag
                 // read on render.
                 if !self.show_hidden && child.hidden {
                     return false;
@@ -928,7 +928,7 @@ impl Shell {
                                     cx,
                                 );
                             }
-                            // LaunchServices resolution can stall —
+                            // LaunchServices resolution can stall:
                             // worker, not UI thread (Prime Directive).
                             cx.background_spawn(async move {
                                 crate::platform_shell::open_url(url);
@@ -1066,13 +1066,13 @@ impl Shell {
 
         let theme = cx.theme();
         let muted = theme.muted_foreground;
-        // Grid-cell hover wash — the icon grid was the one surface with no
+        // Grid-cell hover wash: the icon grid was the one surface with no
         // hover feedback at all. Reuse the list's `table_hover` token so
         // hovering a cell reads the same as hovering a list row.
         let hover_bg = theme.table_hover;
         // Finder-style blue selection. The default theme's `accent` is a
-        // near-white gray — fine for hover, invisible as a selection on a
-        // busy thumbnail grid — so we key selection off the shared
+        // near-white gray: fine for hover, invisible as a selection on a
+        // busy thumbnail grid, so we key selection off the shared
         // selection accent (`theme.blue` unless the user overrode it):
         // a solid pill behind the label plus a light-blue wash and border
         // on the cell. Lead is full-strength; other members of a
@@ -1182,12 +1182,12 @@ impl Shell {
                     // delegate vecs the list row consumes (see
                     // `file_list::render_td`). All render-only lookups.
                     let cell_is_dir = matches!(entry.kind, EntryKind::Directory);
-                    // Ant Trail heat tint — directories only, warm orange
+                    // Ant Trail heat tint: directories only, warm orange
                     // scaled by visit heat (matches file_list.rs heat tint).
                     let heat = del.heats.get(i).copied().unwrap_or(0.0);
                     // Cut (Cmd+X) cells dim until the move pastes.
                     let is_cut = del.cut_marker.borrow().iter().any(|c| c == &path);
-                    // §5 favorite star — folder cells whose path is in the
+                    // §5 favorite star: folder cells whose path is in the
                     // favorites index. Star is crowding-prone, so gated.
                     let show_star = !is_editing
                         && adorn_visible
@@ -1370,11 +1370,11 @@ impl Shell {
                         .p_1()
                         .rounded(px(6.0))
                         // Hover wash on unselected cells (selection bg wins
-                        // when both apply) — the grid's missing hover state.
+                        // when both apply): the grid's missing hover state.
                         .when(!selected, |d| d.hover(|s| s.bg(hover_bg)))
                         // Ant Trail heat tint behind unselected directory
                         // cells (selection bg wins when both apply). Stable
-                        // warm hue across themes — same recipe as the row.
+                        // warm hue across themes, same recipe as the row.
                         .when(ant_enabled && !selected && cell_is_dir && heat > 0.0, |d| {
                             d.bg(crate::ant_trail::tint(ant_base, heat))
                         })
@@ -1416,7 +1416,7 @@ impl Shell {
                                     )
                                 })
                                 // Finder tag dots, centered along the slot's
-                                // bottom edge — also overlaid for layout
+                                // bottom edge, also overlaid for layout
                                 // stability. Empty (and skipped) below the
                                 // adornment size threshold.
                                 .when(!cell_tags.is_empty(), |d| {
@@ -1473,7 +1473,7 @@ impl Shell {
                     // Wrap the highlighted content in a fixed-size cell box
                     // and inset it with uniform padding, so adjacent
                     // selection fills/borders never touch. The gutter lives
-                    // *inside* the cell footprint — the row still strides by
+                    // *inside* the cell footprint: the row still strides by
                     // `cell_width`, so column count is unchanged. Interaction
                     // (click / drag / menu / tooltip) lives on this outer box
                     // so the whole cell, gutter included, stays hittable.
@@ -1486,7 +1486,7 @@ impl Shell {
                         .cursor_pointer()
                         // Cut cells dim until the move pastes; hidden
                         // entries dim more gently (mirrors the list
-                        // rows — cut wins over hidden).
+                        // rows: cut wins over hidden).
                         .when(is_cut, |d| d.opacity(0.45))
                         .when(!is_cut && entry.hidden, |d| d.opacity(0.6))
                         .child(inner)
@@ -1770,7 +1770,7 @@ impl Shell {
                         })
                         .platform_context_menu(move |menu, window, cx| {
                             // Same right-click menu the table uses, reached
-                            // through the shared TableState delegate — so
+                            // through the shared TableState delegate, so
                             // icons mode gets Rename, Open With, tags, Trash,
                             // everything the list row has, from one menu
                             // definition. Mirrors TableEvent::RightClickedRow:
@@ -1974,7 +1974,7 @@ impl Shell {
         }
     }
 
-    /// Set the grid icon size and persist it — the discrete controls
+    /// Set the grid icon size and persist it: the discrete controls
     /// (−/＋ and reset), where one click is one deliberate size.
     fn apply_icon_size(&self, px: u32, cx: &mut Context<Self>) {
         let px = crate::grid::clamp_icon_size(px);
@@ -2022,7 +2022,7 @@ impl Shell {
     }
 
     /// Scrub in progress. Lives on the shell root so the drag keeps
-    /// following the cursor once it leaves the 96-px bar — dragging past
+    /// following the cursor once it leaves the 96-px bar, dragging past
     /// either end should peg to that end, not stop responding.
     pub(super) fn on_icon_size_drag(
         &mut self,
@@ -2093,7 +2093,7 @@ impl Shell {
     /// Tabstrip above the toolbar. Each tab is a clickable pill
     /// labelled with the directory's basename; the active tab has
     /// a filled background. A trailing "+" opens a new tab; when more
-    /// than one tab is open each carries a leading close affordance —
+    /// than one tab is open each carries a leading close affordance:
     /// the shared `close.svg` glyph in a rounded hover highlight.
     fn tabstrip(&self, cx: &mut Context<Self>) -> Div {
         use gpui_component::Sizable as _;
@@ -2151,7 +2151,7 @@ impl Shell {
             }
             chip = chip
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    // Resolve by TabId, not the render-time `idx` —
+                    // Resolve by TabId, not the render-time `idx`,
                     // same staleness rule as the close button: a
                     // drag-reorder can shift positions between the
                     // frame this listener was built and the click.
@@ -2166,7 +2166,7 @@ impl Shell {
                 // resolve the current index even if the strip changed
                 // between drag-start and drop. Spec §5.4: tab drags
                 // and node drags are distinguished by origin surface
-                // — this is the tab-strip origin.
+                //: this is the tab-strip origin.
                 .on_drag(
                     TabDragPayload {
                         id: tab_id,
@@ -2176,7 +2176,7 @@ impl Shell {
                     |payload, _offset, _window, cx| cx.new(|_| payload.clone()),
                 )
                 // The chip is also a drop TARGET. The between-chip gaps
-                // are only 6 DIP wide — without this, the natural
+                // are only 6 DIP wide, without this, the natural
                 // gesture (release over another tab) lands on the chip
                 // and silently does nothing. Dropping on a chip puts
                 // the dragged tab in that chip's slot; the accent edge
@@ -2192,7 +2192,7 @@ impl Shell {
                 })
                 .on_drop(
                     cx.listener(move |this, payload: &TabDragPayload, _window, cx| {
-                        // Resolve BOTH ends by TabId at drop time —
+                        // Resolve BOTH ends by TabId at drop time,
                         // same staleness rule as click/close.
                         let (Some(from_idx), Some(chip_idx)) = (
                             this.tabs.iter().position(|t| t.id == payload.id),
@@ -2231,7 +2231,7 @@ impl Shell {
                     .size(px(14.0))
                     .rounded(theme.radius)
                     // Subtle close affordance: muted grey by default, darkening
-                    // to foreground on hover (plus a rounded highlight) — the
+                    // to foreground on hover (plus a rounded highlight): the
                     // common tab-close convention.
                     .hover(|this| this.bg(theme.accent.opacity(0.15)))
                     // Color set ON the svg, not just the parent div: the AROS
@@ -2316,7 +2316,7 @@ impl Shell {
             .border_color(theme.border)
             .bg(theme.secondary);
 
-        // Left arrow — only while the strip overflows; dimmed once
+        // Left arrow, only while the strip overflows; dimmed once
         // scrolled fully to the start.
         if overflow {
             outer = outer.child(
@@ -2334,7 +2334,7 @@ impl Shell {
         // arrows + "+" stay pinned to the row's right edge.
         outer = outer.child(h_flex().flex_1().overflow_x_hidden().child(row));
 
-        // Right arrow — mirror of the left; dimmed once at the end.
+        // Right arrow: mirror of the left; dimmed once at the end.
         if overflow {
             outer = outer.child(
                 Button::new("tab-scroll-right")
@@ -2347,7 +2347,7 @@ impl Shell {
             );
         }
 
-        // Trailing "+" — new tab. Pinned outside the scroll viewport.
+        // Trailing "+": new tab. Pinned outside the scroll viewport.
         // House-style `nav/plus.svg` (Lucide outline, stroke 1.75) so the
         // affordance matches the sidebar icon family instead of a thin font
         // glyph; sized through IconScale to zoom with the UI.
@@ -2390,9 +2390,9 @@ impl Shell {
         outer
     }
 
-    /// Page the tab strip horizontally by `dx` DIPs — positive reveals
+    /// Page the tab strip horizontally by `dx` DIPs: positive reveals
     /// tabs toward the start (scroll left), negative toward the end
-    /// (scroll right) — clamped to the scrollable range. Drives the
+    /// (scroll right): clamped to the scrollable range. Drives the
     /// tab-strip chevron arrows; trackpad / shift-wheel scrolling goes
     /// straight through `overflow_x_scroll` and never reaches here. The
     /// offset convention matches the preview scroll: `0` at the start,
@@ -2415,7 +2415,7 @@ impl Shell {
     /// header + toolbar. Layout (left → right):
     ///   • "Ferail" name
     ///   • Back / forward navigation (history nav lives next to the
-    ///     brand — Finder convention)
+    ///     brand: Finder convention)
     ///   • flex spacer
     ///   • Filter `Input` (~half its previous width, centred-ish via
     ///     the trailing flex spacer)
@@ -2442,7 +2442,7 @@ impl Shell {
             });
         let collapsed = self.sidebar_collapsed;
         // Active sort drives the sort button's glyph (asc/descending)
-        // and the checkmark in its menu. Read once here — render-time
+        // and the checkmark in its menu. Read once here: render-time
         // cache read, no I/O.
         let current_sort = self
             .process
@@ -2475,7 +2475,7 @@ impl Shell {
             .tool_result
             .as_ref()
             .is_some_and(|surface| surface.flat_mode().is_some());
-        // Live grid icon size — drives the slider's readout and greys the
+        // Live grid icon size: drives the slider's readout and greys the
         // reset button out when there is nothing to reset. Render-time
         // global read, no I/O.
         let icon_px = crate::grid::icon_size(cx);
@@ -2485,8 +2485,8 @@ impl Shell {
         // keeps its height, so a narrow window folds whole clusters into the
         // trailing "…" menu instead of wrapping or running off the edge.
         // Unlike the viewer's, nothing up here is a flex_1 that can absorb a
-        // bad estimate — the two spacers collapse to zero and then the
-        // overflow button itself is pushed out of the window — so these lean
+        // bad estimate: the two spacers collapse to zero and then the
+        // overflow button itself is pushed out of the window, so these lean
         // deliberately generous and fold a touch early.
         //
         // Logical px at `ui_scale == 1`, each including the 8-px flex gap
@@ -2499,7 +2499,7 @@ impl Shell {
         // plus its gap, read off a column profile at ui_scale 1); rounded to
         // 34 to keep this estimate on the generous side it wants to be on.
         const W_BASE: f32 = 562.0; // sidebar + brand + version + back/fwd + filter + (?) + "…" + padding
-        const W_VIEW: f32 = 102.0; // list / grid / flat switcher — never folds
+        const W_VIEW: f32 = 102.0; // list / grid / flat switcher, never folds
         const W_SORT: f32 = 34.0;
         const W_DESKTOP: f32 = 34.0;
         const W_NEW_REFRESH: f32 = 68.0;
@@ -2516,7 +2516,7 @@ impl Shell {
         // same thing, just coarsely); window/system placement verbs go before
         // anything that acts on the current folder; and New Folder / Refresh
         // hold out longest because they are the two things people came to the
-        // toolbar for. The view switcher is not a tier at all — it is how you
+        // toolbar for. The view switcher is not a tier at all: it is how you
         // get back out of icon view, and it is the most-used pair up here.
         let tiers = [
             if is_grid { W_SIZE_BAR } else { 0.0 },
@@ -2551,8 +2551,8 @@ impl Shell {
         ] = hide;
 
         // Below the last tier the remainder is still ~600 px, and a bar whose
-        // children are all `flex_shrink_0` just pushes its own tail — the view
-        // switcher and the "…" itself — off the edge. Flexbox cannot rescue
+        // children are all `flex_shrink_0` just pushes its own tail: the view
+        // switcher and the "…" itself: off the edge. Flexbox cannot rescue
         // that from in here: gpui-component's `#bar` takes its automatic
         // minimum size from our total content width, so it overflows its own
         // parent and no shrink pressure ever reaches our children. Size the
@@ -2686,7 +2686,7 @@ impl Shell {
                 )
                 // Wordmark + build version. The version rides here and not in
                 // the OS caption because the custom TitleBar replaces the
-                // native one (see `Shell::sync_window_title`) — that caption
+                // native one (see `Shell::sync_window_title`): that caption
                 // only reaches Alt+Tab and the macOS Window menu, so it never
                 // appears in a screenshot. This wordmark does, which is the
                 // whole point: a screenshot sent in a bug report says which
@@ -2782,7 +2782,7 @@ impl Shell {
                         // (the private-mode twin below always had it).
                         .flex()
                         .items_center()
-                        // Filter input — also lives inside TitleBar's
+                        // Filter input, also lives inside TitleBar's
                         // drag region. Stop mouse-down propagation so
                         // Win32 doesn't capture the click as window
                         // drag (same bug as the toolbar buttons; see
@@ -2899,7 +2899,7 @@ impl Shell {
                                 .into_any_element()
                         }),
                 )
-                // (?) — filter-syntax cheat sheet (filter_help.rs). A
+                // (?): filter-syntax cheat sheet (filter_help.rs). A
                 // stopgap until the filter grows chips; same mouse-down
                 // stop as its neighbours for the Win32 title-bar drag.
                 .child(
@@ -2920,7 +2920,7 @@ impl Shell {
                         ),
                 )
                 .child(div().flex_1())
-                // Phase 7 follow-on: density buttons on the right —
+                // Phase 7 follow-on: density buttons on the right:
                 // Refresh and New Folder. Icon-only with tooltips so
                 // the bar stays narrow.
                 //
@@ -2930,10 +2930,10 @@ impl Shell {
                 // here, Win32's NCHITTEST returns HTCAPTION for the
                 // button's screen rect, the OS captures the mouse for
                 // window-drag, and the button's mouse-up never fires
-                // — leaving the button visually pressed forever and
+                //, leaving the button visually pressed forever and
                 // never running the click handler. Matches the pattern
                 // `gpui_component::AppMenuBar` uses for its own buttons.
-                // Sort dropdown — pick the column (re-pick flips
+                // Sort dropdown: pick the column (re-pick flips
                 // direction); the glyph shows the current direction and
                 // the active column carries a checkmark. Wrapped in a
                 // mouse-down-stopping div for the Win32 title-bar drag
@@ -2990,7 +2990,7 @@ impl Shell {
                                 }),
                         )
                 }))
-                // Show Desktop — left of New Folder. Present only when the
+                // Show Desktop: left of New Folder. Present only when the
                 // private Dock symbol resolved on a supported OS; otherwise
                 // it silently doesn't render (no crash, no empty slot).
                 .children((show_desktop_available && !hide_desktop).then(|| {
@@ -3032,12 +3032,12 @@ impl Shell {
                             this.on_refresh(&Refresh, window, cx);
                         }))
                 }))
-                // Dock menu — park the whole window against a screen edge as
+                // Dock menu: park the whole window against a screen edge as
                 // an auto-hiding drawer (docs/features/DOCK.md). Pressed look
                 // while docked; the active edge carries a checkmark. Wrapped
                 // in a mouse-down-stopping div for the Win32 title-bar-drag
                 // gotcha, like the other dropdowns. macOS-only for now (the
-                // win32/linux window primitives are stubs) — hidden elsewhere
+                // win32/linux window primitives are stubs): hidden elsewhere
                 // so the menu isn't three silent no-ops.
                 .when(has_dock && !hide_dock, |bar| {
                     bar.child(
@@ -3122,7 +3122,7 @@ impl Shell {
                             this.on_toggle_flat_view(&ToggleFlatView, window, cx);
                         })),
                 )
-                // Icon size stepper — only in grid mode.
+                // Icon size stepper, only in grid mode.
                 .children(show_size_steps.then(|| {
                     Button::new("toolbar-icon-smaller")
                         .small()
@@ -3166,8 +3166,8 @@ impl Shell {
                             this.reset_icon_size(cx);
                         }))
                 }))
-                // Continuous icon-size slider — the exact size the −/＋
-                // stops cannot express — plus a live px readout.
+                // Continuous icon-size slider: the exact size the −/＋
+                // stops cannot express, plus a live px readout.
                 //
                 // The mouse-down-stopping wrapper is the same title-bar
                 // drag guard the buttons use, but it matters more here:
@@ -3193,7 +3193,7 @@ impl Shell {
                                 .child(format!("{icon_px}")),
                         )
                 }))
-                // Overflow menu — the less-frequent view + action verbs
+                // Overflow menu: the less-frequent view + action verbs
                 // that don't each warrant a toolbar button. Items
                 // dispatch existing actions, so they target the current
                 // selection / folder exactly like their keyboard and
@@ -3293,8 +3293,8 @@ impl Shell {
                                         folded = true;
                                     }
                                     if hide_size_steps && is_grid {
-                                        // No actions back these — the toolbar
-                                        // buttons call the methods directly —
+                                        // No actions back these: the toolbar
+                                        // buttons call the methods directly,
                                         // so they go through the shell entity.
                                         // Labels are the buttons' own tooltip
                                         // strings rather than Title Case
@@ -3377,21 +3377,21 @@ impl Shell {
     // Reads the delegate's per-entry `paths` map (a pure in-memory
     // lookup populated at load for directory, search, AND duplicate
     // rows) so it works for results views whose files live outside
-    // `current_dir` — without touching the guarded node store, which
+    // `current_dir`: without touching the guarded node store, which
     // would panic on the paint path. Falls back to `current_dir + name`
     // only when the map has no entry.
 
     /// Build the breadcrumb row from `current_dir`. Each ancestor is
     /// clickable and navigates the pane to that level. The root `/`
     /// gets its own leading segment. When a breadcrumb inline-edit session
-    /// is active (Cmd+L) the row swaps in an Input field instead — Enter
+    /// is active (Cmd+L) the row swaps in an Input field instead: Enter
     /// commits the path, Blur cancels.
     /// Host the preview panel, pointing it at whatever this tab has selected.
     fn preview_pane(&mut self, cx: &mut Context<Self>) -> Div {
         use crate::preview_panel::PreviewTarget;
 
         // Preview always reflects the **lead** row, even with a
-        // multi-selection — Finder's "the focused one of many" semantics.
+        // multi-selection: Finder's "the focused one of many" semantics.
         let selected = {
             let entries = &self.active_tab().table.read(cx).delegate().entries;
             self.active_tab()
@@ -3406,7 +3406,7 @@ impl Shell {
         }
         let target = match selected {
             Some(entry) => {
-                // The delegate's per-entry map has the true path — search and
+                // The delegate's per-entry map has the true path: search and
                 // duplicate results live outside `current_dir`, so rebuilding
                 // it from the name would key the preview cache wrong.
                 let path = self
@@ -3604,7 +3604,7 @@ impl Shell {
             //     forward them to the completion menu.
             //  2. CompletionMenu::handle_action calls cx.propagate()
             //     unconditionally, which re-opens the dispatch even
-            //     after the menu handled the key — Enter would both
+            //     after the menu handled the key: Enter would both
             //     accept the completion AND fall through to the
             //     Shell's OpenSelected. Every handler here ends with
             //     stop_propagation; the Enter/Escape backstops only
@@ -3740,7 +3740,7 @@ impl Shell {
             let tooltip_path = crate::private_mode::present_path(&path);
             // Phase 6 (next-level): right-click on a breadcrumb
             // segment offers "Open in New Tab" / "Reveal in Finder"
-            // / "Copy Path" — same right-click surface as the
+            // / "Copy Path", same right-click surface as the
             // sidebar Favorites. context_target carries the path of
             // *this* segment, not the active tab's current_dir.
             use gpui_component::menu::ContextMenuExt as _;
@@ -3777,7 +3777,7 @@ impl Shell {
                 // gpui allows one `.hover()` per element, so the ordinary
                 // hover wash and the drop-target ring share it. The ring is
                 // the only feedback a crumb can give during a native archive
-                // promise session — gpui holds no typed drag then, so
+                // promise session: gpui holds no typed drag then, so
                 // `drag_over` never fires.
                 .hover({
                     let secondary = cx.theme().secondary;
@@ -3805,7 +3805,7 @@ impl Shell {
                 })
                 // Suppress the full-path tooltip while this crumb's
                 // context menu is open so the two don't overlap
-                // (docs/GPUI-UPSTREAM.md — no menu-open callback upstream).
+                // (docs/GPUI-UPSTREAM.md, no menu-open callback upstream).
                 .when(!self.breadcrumb_menu_open, |crumb| {
                     crumb.tooltip({
                         let t = SharedString::from(tooltip_path);
@@ -3836,7 +3836,7 @@ impl Shell {
                     );
                 }))
                 // Archive members dropped on a crumb extract into that
-                // ancestor folder — the same destination a file drop uses.
+                // ancestor folder: the same destination a file drop uses.
                 .drag_over::<crate::file_list::ArchiveEntryDrag>(
                     move |style, _payload, _window, cx| {
                         style
@@ -3921,7 +3921,7 @@ impl Shell {
                     } else {
                         tr!("Add to Favorites")
                     };
-                    // "Go to Subfolder ▸" — jump to any child folder of
+                    // "Go to Subfolder ▸": jump to any child folder of
                     // this segment (Finder's column-view-style lateral
                     // navigation). Children are enumerated off-thread and
                     // cached; the submenu reads that cache only (Prime
@@ -3965,7 +3965,7 @@ impl Shell {
                                 Some(Some(_)) => sub
                                     .item(PopupMenuItem::new(tr!("No subfolders")).disabled(true)),
                                 _ => {
-                                    // Cold or in-flight — kick a warm and show
+                                    // Cold or in-flight: kick a warm and show
                                     // a placeholder; a re-open shows the list.
                                     s.update(c, |sh, cx| {
                                         sh.warm_breadcrumb_children(path_sub.clone(), cx);
@@ -4010,7 +4010,7 @@ impl Shell {
             );
         if self.active_tab().tool_result.is_some() {
             if self.active_tool_result_can_pop_out() {
-                // One button, two surfaces — dispatch the action that matches
+                // One button, two surfaces: dispatch the action that matches
                 // whichever tool currently owns the pane.
                 let is_archive = matches!(
                     self.active_tab().tool_result.as_ref().map(|s| &s.mode),
@@ -4044,7 +4044,7 @@ impl Shell {
     }
 
     /// The grab handle drawn at the window's inner edge while docked and not
-    /// fully revealed (docs/features/DOCK.md). Purely a visual hint — the
+    /// fully revealed (docs/features/DOCK.md). Purely a visual hint: the
     /// reveal trigger is the screen edge itself, driven by the poll loop. It
     /// anchors opposite the dock edge because the drawer hides toward its dock
     /// edge, leaving that side on-screen as the strip.
@@ -4071,7 +4071,7 @@ impl Shell {
             .justify_center()
             .bg(cx.theme().secondary)
             .child(pill);
-        // The handle sits on the window edge opposite the dock edge — the side
+        // The handle sits on the window edge opposite the dock edge: the side
         // left on-screen as the strip when the drawer hides toward its edge.
         let strip = match dock.edge {
             DockEdge::Left => strip.right_0(),
@@ -4097,12 +4097,12 @@ impl Render for Shell {
             };
             gpui_component::Theme::change(mode, Some(window), cx);
             // `Theme::change` re-applies the theme config, which can
-            // reset the base font size — re-assert the current UI zoom
+            // reset the base font size: re-assert the current UI zoom
             // so an appearance flip doesn't silently reset text scaling.
             self.apply_ui_zoom(cx);
             // Keep native window chrome in step with the theme flip.
             // Deferred: render itself must not mutate AppKit state
-            // (Prime Directive) — this runs on the main thread right
+            // (Prime Directive): this runs on the main thread right
             // after the pass instead.
             cx.defer(move |_| {
                 crate::platform_shell::set_app_appearance(is_dark);
@@ -4149,7 +4149,7 @@ impl Render for Shell {
         self.start_tree_icon_warm(icon_warm, cx);
         let breadcrumb = self.breadcrumb(cx);
         // Keep the OS window caption (Windows taskbar / Alt+Tab,
-        // macOS Window menu) in step with the active folder — without
+        // macOS Window menu) in step with the active folder, without
         // it the window is nameless when switching tasks.
         self.sync_window_title(window);
 
@@ -4165,7 +4165,7 @@ impl Render for Shell {
         // SidebarMenu); Favorites = user-curated, persisted, reorderable
         // shortcuts (docs/features/FAVORITES.md); Browse = single-rooted
         // expandable Home tree; Volumes = expandable per-volume tree.
-        // Sidebar no longer carries the "Ferail" header — that moved
+        // Sidebar no longer carries the "Ferail" header: that moved
         // into the TitleBar at the top of the window. Icon-mode collapse
         // is enabled so the toggle button in the TitleBar can shrink the
         // sidebar to a 48-DIP icon strip.
@@ -4307,7 +4307,7 @@ impl Render for Shell {
         let delegate = self.active_tab().table.read(cx).delegate();
         let entries = &delegate.entries;
         let entry_count = entries.len();
-        // Totals come from the delegate's lazy caches — recomputed
+        // Totals come from the delegate's lazy caches: recomputed
         // once per model/selection change, not O(N) per render pass
         // (a 100k-entry folder added hundreds of µs to every repaint).
         let total_size: u64 = delegate.cached_total_size.get().unwrap_or_else(|| {
@@ -4331,7 +4331,7 @@ impl Render for Shell {
                 s
             })
         };
-        // Free-space label — reads the per-tab cache maintained by
+        // Free-space label: reads the per-tab cache maintained by
         // `refresh_volume_info_in_tab` (load completion + volume
         // watch). The underlying NSURL/statfs query can round-trip to
         // a network mount, so it never runs on the paint path.
@@ -4347,7 +4347,7 @@ impl Render for Shell {
         // filtered view off as the whole folder.
         let filter_summary = self.active_tab().filter_summary;
         // A docked archive workbench owns its own table, so the tab's delegate
-        // is (correctly) empty — read the counts from the archive's table
+        // is (correctly) empty: read the counts from the archive's table
         // instead, or the status bar would report "Empty folder" while the
         // pane is showing an archive's contents.
         let archive_mode = self
@@ -4472,7 +4472,7 @@ impl Render for Shell {
         };
         // App-footprint stats segment. The real path reads the cached
         // snapshot the off-thread sampler last published (never
-        // samples here — Prime Directive); `--simulate-stats` pins the
+        // samples here: Prime Directive); `--simulate-stats` pins the
         // fixed reference values instead.
         let metrics = crate::status_bar::StatusMetrics {
             stats: if self.simulated_stats {
@@ -4499,7 +4499,7 @@ impl Render for Shell {
         // Auto-dismiss the background-task popover when the pointer
         // leaves it. `on_hover` fires only on a hover-state change and
         // starts `false`, so opening it above the status-bar click
-        // point doesn't instant-close — it shuts when the mouse, after
+        // point doesn't instant-close: it shuts when the mouse, after
         // being over the popover, moves off. Click-outside dismissal
         // (the shell's `on_mouse_down`) still applies for the
         // never-hovered case.
@@ -4691,7 +4691,7 @@ impl Render for Shell {
             // §3.1 tear-off remove. The favorites section's drop gaps
             // already intercept FavoriteDragPayload to reorder; any
             // drop that falls through to the shell's outer container
-            // is by definition outside the section — treat it as a
+            // is by definition outside the section: treat it as a
             // remove with undo (§3.2). Same code path as the menu /
             // keyboard remove, so Cmd+Z restores at the prior index.
             .on_drop(cx.listener(
@@ -4744,9 +4744,9 @@ impl Render for Shell {
                 // file-row menu selection to dismiss without firing.
                 // Don't reintroduce one here. The empty-space menu
                 // (New Folder / Paste / …) now lives INSIDE the
-                // table's own platform context-menu wrapper instead — see
+                // table's own platform context-menu wrapper instead: see
                 // `FileListDelegate::background_context_menu` and the
-                // capture-phase region pick in `TableState::render` —
+                // capture-phase region pick in `TableState::render`,
                 // so it can't fight the row menus for events.
                 // Drop target for OS file drags (Finder → Ferail,
                 // and row drag-outs landing back in our own pane):
@@ -4875,7 +4875,7 @@ impl Render for Shell {
                     .child(file_body);
                 // The preview pane is hidden by default; whenever it's visible
                 // the user explicitly turned it on (Cmd+P / View menu), so
-                // honour that at any window width — the splitter's per-panel
+                // honour that at any window width: the splitter's per-panel
                 // min widths keep the layout sane on narrow windows. (A prior
                 // auto-hide below 900px silently suppressed the explicit
                 // toggle, so Cmd+P appeared to do nothing on smaller windows.)
@@ -4886,7 +4886,7 @@ impl Render for Shell {
                     None
                 };
                 // Pull the persisted widths into the panels' initial
-                // `.size(...)` — they survive across launches because
+                // `.size(...)`: they survive across launches because
                 // they're written through `on_resize` to app_state
                 // (debounced via SPLITTER_PERSIST_INTERVAL below).
                 let sidebar_width_px = if self.sidebar_collapsed {
@@ -5038,7 +5038,7 @@ impl Render for Shell {
                     // mark and the toolbar's nav buttons + filter
                     // input.
                     .child(title_bar)
-                    // Windows/Linux app menu strip — File/Edit/View/Go
+                    // Windows/Linux app menu strip: File/Edit/View/Go
                     // dropdowns reading from the same `cx.set_menus()`
                     // spec the macOS NSApp menu uses. `None` on macOS,
                     // so the closure runs zero-cost there.
@@ -5059,18 +5059,18 @@ impl Render for Shell {
                     // column, above the status bar. Only rendered
                     // when task_panel_open == true.
                     .when_some(task_panel, |this, panel| this.child(panel))
-                    // Docked-drawer grab handle (docs/features/DOCK.md) —
+                    // Docked-drawer grab handle (docs/features/DOCK.md):
                     // absolute, on the inner edge, above the column content.
                     // `None` unless docked-and-not-fully-revealed.
                     .children(dock_handle)
             })
-            // Dialog overlay layer — rendered last so dialogs draw
+            // Dialog overlay layer: rendered last so dialogs draw
             // above the shell content. Needed for the New Folder /
             // Rename modals (5.5.c).
             .when(!crate::private_mode::enabled(), |this| {
                 this.children(Root::render_dialog_layer(window, cx))
             })
-            // Notification overlay (Stage 5.c) — toasts pushed via
+            // Notification overlay (Stage 5.c): toasts pushed via
             // `Window::push_notification` show up in the corner the
             // active theme specifies. The outer `div().relative()`
             // gives the absolute-positioned notification list a

@@ -6,16 +6,16 @@
 //! attach to an issue. Three cooperating pieces, core is std-only so every
 //! port (macOS / Windows / Linux / AROS) gets at least the in-process data:
 //!
-//! - **Heartbeat** — a foreground-executor loop bumps an atomic counter
+//! - **Heartbeat**: a foreground-executor loop bumps an atomic counter
 //!   once a second. The continuation only runs while the UI thread pumps
 //!   its event loop, so "counter stopped" ⇔ "UI thread wedged". Each beat
 //!   also snapshots the active background tasks into a thread-safe cell;
 //!   the last snapshot before a freeze usually names the culprit.
-//! - **Watchdog thread** — a plain `std::thread` (the GPUI pool could be
+//! - **Watchdog thread**: a plain `std::thread` (the GPUI pool could be
 //!   starved by the very bug under diagnosis) that watches the counter and
 //!   writes a hang report automatically after ~10 s of silence, no user
 //!   action needed. Re-arms if the UI recovers.
-//! - **Kill interception** — on macOS/Linux, `Ctrl+\` (SIGQUIT) always
+//! - **Kill interception**: on macOS/Linux, `Ctrl+\` (SIGQUIT) always
 //!   dumps a report and exits; SIGINT/SIGTERM dump one only when the UI
 //!   was already stalled, then exit as usual. The signal handler itself
 //!   only writes a byte to a self-pipe (the only async-signal-safe part);
@@ -23,8 +23,8 @@
 //!   handler gives Ctrl+Break / Ctrl+C the same behavior.
 //!
 //! The report carries: the last task snapshot, breadcrumbs (`crate::obs`),
-//! the activity trail (`crate::trail`, path-redacted), and — where a
-//! platform tool exists — full symbolized stacks of every thread
+//! the activity trail (`crate::trail`, path-redacted), and: where a
+//! platform tool exists: full symbolized stacks of every thread
 //! (`/usr/bin/sample` on macOS; `eu-stack`/`gdb` on Linux). It is written
 //! to the same `reports/` folder as the issue bundle *before* the stack
 //! capture is attempted, so a misbehaving capture tool can't lose it.
@@ -37,7 +37,7 @@ use gpui::App;
 
 /// Heartbeat period; also the watchdog thread's check period.
 const BEAT_INTERVAL: Duration = Duration::from_secs(1);
-/// Consecutive silent checks before the automatic report fires (~10 s —
+/// Consecutive silent checks before the automatic report fires (~10 s:
 /// long enough that a slow-but-alive frame never false-alarms).
 const STALL_REPORT_CHECKS: u32 = 10;
 /// Consecutive silent checks before SIGINT/SIGTERM count as "killed while
@@ -48,7 +48,7 @@ static BEAT: AtomicU64 = AtomicU64::new(0);
 /// UI thread silent for at least [`STALL_SUSPECT_CHECKS`]; maintained by
 /// the watchdog thread, read by the signal/console handlers.
 static STALLED: AtomicBool = AtomicBool::new(false);
-/// Heartbeat loop lost its App (normal quit) — the watchdog must not
+/// Heartbeat loop lost its App (normal quit): the watchdog must not
 /// mistake shutdown for a freeze.
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static TASK_SNAPSHOT: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
@@ -113,7 +113,7 @@ impl StallTracker {
 
 /// Install every piece. Called once from `boot::run_gui`, after the
 /// `ProcessState` global exists (the snapshot reads it) and before any
-/// window opens. Deliberately NOT called on the screenshot path — a
+/// window opens. Deliberately NOT called on the screenshot path: a
 /// headless capture has no event loop to monitor.
 pub fn start(cx: &mut App) {
     // Quit teardown stops the heartbeat without being a freeze; tell the
@@ -134,7 +134,7 @@ pub fn start(cx: &mut App) {
 }
 
 /// Test hook: `FERAIL_DEBUG_FREEZE=<secs>` deliberately wedges the UI
-/// thread for that many seconds, three seconds after boot — the only
+/// thread for that many seconds, three seconds after boot: the only
 /// sanctioned Prime Directive violation, existing so the watchdog, the
 /// hang report, and the kill interception can be verified end-to-end
 /// (by us and by a user asking "would this catch *my* freeze?").
@@ -160,7 +160,7 @@ fn install_debug_freeze(cx: &mut App) {
     .detach();
 }
 
-/// Whether the UI thread has been unresponsive for a few seconds — the
+/// Whether the UI thread has been unresponsive for a few seconds: the
 /// "should a kill also dump?" question.
 pub fn ui_thread_stalled() -> bool {
     STALLED.load(Ordering::Acquire)
@@ -176,7 +176,7 @@ fn start_heartbeat(cx: &mut App) {
             cx.background_executor().timer(BEAT_INTERVAL).await;
             // The update closure runs on the UI thread; *reaching it at
             // all* is the liveness signal the watchdog consumes. At quit
-            // the loop simply never resumes — `on_app_quit` above flags
+            // the loop simply never resumes: `on_app_quit` above flags
             // the watchdog before that can look like a stall.
             cx.update(|cx| {
                 BEAT.fetch_add(1, Ordering::Release);
@@ -189,7 +189,7 @@ fn start_heartbeat(cx: &mut App) {
 
 /// Runs on the UI thread once per beat: copy the live task registry into
 /// the cell the watchdog / signal threads can read. A few string formats
-/// per second — no I/O, no path resolution (Prime Directive-clean).
+/// per second, no I/O, no path resolution (Prime Directive-clean).
 fn publish_task_snapshot(cx: &mut App) {
     let Some(global) = cx.try_global::<crate::process_state::ProcessStateGlobal>() else {
         return;
@@ -248,7 +248,7 @@ fn start_watchdog_thread() {
 }
 
 /// Assemble the in-process half of a hang report: header, last task
-/// snapshot, breadcrumbs, activity trail. Pure string building — split
+/// snapshot, breadcrumbs, activity trail. Pure string building: split
 /// out so tests can exercise it without a frozen app.
 fn render_report_body(reason: &str) -> String {
     use std::fmt::Write as _;
@@ -308,7 +308,7 @@ fn render_report_body(reason: &str) -> String {
     }
     let _ = writeln!(r);
 
-    // Redaction-honoring render — a hang report must be as shareable as
+    // Redaction-honoring render: a hang report must be as shareable as
     // the issue bundle. Tail only: the freeze context is the recent past.
     const TRAIL_TAIL: usize = 40;
     let Some(trail) = crate::trail::try_render_lines_sanitized() else {
@@ -344,7 +344,7 @@ fn render_report_body(reason: &str) -> String {
 /// Write a hang report: persist the in-process half first (a report on
 /// disk beats a prettier one lost), then attempt the per-platform
 /// whole-process stack capture and append it. The console gets a short
-/// digest, not the report — a screenful of dyld image addresses scrolls
+/// digest, not the report: a screenful of dyld image addresses scrolls
 /// the one line that matters (where the report landed) out of view.
 /// Set `FERAIL_FULL_HANG_REPORT=1` to echo everything to stderr as well.
 /// Callable from any thread except the (presumably wedged) UI thread.
@@ -364,7 +364,7 @@ pub fn write_hang_report(reason: &str) {
     if verbose {
         crate::obs::stderr_line(&body);
     }
-    // AROS: stderr is console-bound and the config dir may not exist —
+    // AROS: stderr is console-bound and the config dir may not exist:
     // persist to the host-shared volume like the panic hook does.
     #[cfg(target_os = "aros")]
     {
@@ -391,7 +391,7 @@ pub fn write_hang_report(reason: &str) {
             }
         }
         None => {
-            let hint = format!("\nthread stacks : <unavailable> — {}\n", stack_hint());
+            let hint = format!("\nthread stacks : <unavailable>, {}\n", stack_hint());
             if let Some(path) = &path {
                 append_to_file(path, &hint);
             }
@@ -408,8 +408,8 @@ pub fn write_hang_report(reason: &str) {
 }
 
 /// The console half of a hang report: the few facts that identify the
-/// freeze — where the UI thread is stuck, what was running, what the
-/// user last did — plus the path to the file that holds the rest. Kept
+/// freeze: where the UI thread is stuck, what was running, what the
+/// user last did, plus the path to the file that holds the rest. Kept
 /// to well under a screenful on purpose.
 fn render_console_digest(stacks: Option<&str>, path: Option<&std::path::Path>) -> String {
     use std::fmt::Write as _;
@@ -443,10 +443,10 @@ fn render_console_digest(stacks: Option<&str>, path: Option<&std::path::Path>) -
             }
         }
         Some(_) => {
-            let _ = writeln!(d, "  ui stack: <captured — see the report>");
+            let _ = writeln!(d, "  ui stack: <captured: see the report>");
         }
         None => {
-            let _ = writeln!(d, "  ui stack: <unavailable> — {}", stack_hint());
+            let _ = writeln!(d, "  ui stack: <unavailable>, {}", stack_hint());
         }
     }
 
@@ -473,7 +473,7 @@ fn render_console_digest(stacks: Option<&str>, path: Option<&std::path::Path>) -
         Some(path) => {
             let _ = writeln!(
                 d,
-                "  report  : {} — attach it when reporting the freeze",
+                "  report  : {}: attach it when reporting the freeze",
                 path.display()
             );
             let _ = write!(
@@ -484,14 +484,14 @@ fn render_console_digest(stacks: Option<&str>, path: Option<&std::path::Path>) -
         None => {
             let _ = write!(
                 d,
-                "  report  : <could not be saved> — set FERAIL_FULL_HANG_REPORT=1 to get the details on stderr"
+                "  report  : <could not be saved>: set FERAIL_FULL_HANG_REPORT=1 to get the details on stderr"
             );
         }
     }
     d
 }
 
-/// First entry of a list plus a `(+N more)` tail — the digest names the
+/// First entry of a list plus a `(+N more)` tail: the digest names the
 /// likely culprit without turning into the list the report already has.
 fn summarize(lines: &[String], empty: &str) -> String {
     match lines.split_first() {
@@ -502,14 +502,14 @@ fn summarize(lines: &[String], empty: &str) -> String {
 }
 
 /// Innermost frames of the UI thread, pulled out of a whole-process
-/// stack capture for the console digest. Innermost first — the wedged
+/// stack capture for the console digest. Innermost first: the wedged
 /// call is what a reader wants on line one, the rest is context.
 ///
 /// macOS `sample` prints an indented call graph per thread; the UI
 /// thread's block starts at a header naming the main thread and its
 /// deepest (last) line is the call that is stuck. `gdb` / `eu-stack`
 /// print `#0`-numbered frames already innermost-first, the first block
-/// being the main thread. Anything unrecognized yields nothing — the
+/// being the main thread. Anything unrecognized yields nothing: the
 /// digest says so, and the file still has the raw capture.
 fn ui_thread_frames(stacks: &str, max: usize) -> Vec<String> {
     let sample = sample_main_thread_frames(stacks, max);
@@ -545,7 +545,7 @@ fn sample_main_thread_frames(text: &str, max: usize) -> Vec<String> {
                     continue;
                 }
                 if indent <= header {
-                    break; // next thread's header — this block is done
+                    break; // next thread's header: this block is done
                 }
                 frames.push(line);
             }
@@ -574,7 +574,7 @@ fn numbered_first_thread_frames(text: &str, max: usize) -> Vec<String> {
 /// per-frame sample count `sample` prefixes, the `#N` and raw pc of a
 /// numbered backtrace, and the trailing address, then bound the width so
 /// one deep C++ symbol cannot blow the digest back up to a screenful.
-/// Drop the `::h<16 hex>` rustc appends to legacy-mangled symbols —
+/// Drop the `::h<16 hex>` rustc appends to legacy-mangled symbols:
 /// pure noise in a three-line digest. Whatever `sample` printed after
 /// the symbol (`+ 44`, a source location) is kept.
 fn strip_symbol_hash(s: &str) -> String {
@@ -619,7 +619,7 @@ fn clean_frame(line: &str) -> String {
     s
 }
 
-/// `<config>/reports/ferail-hang-<pid>-<seq>.txt` — the same folder the
+/// `<config>/reports/ferail-hang-<pid>-<seq>.txt`: the same folder the
 /// issue bundle uses, so users find both in one place.
 fn report_file_path() -> Option<std::path::PathBuf> {
     let dir = crate::app_state::config_dir()?.join("reports");
@@ -661,7 +661,7 @@ fn stack_hint() -> &'static str {
 /// of a hung process, no root needed for our own pid.
 #[cfg(target_os = "macos")]
 fn capture_thread_stacks(_report_path: Option<&std::path::Path>) -> Option<(&'static str, String)> {
-    // Blocking child wait — allowed: this runs on the watchdog /
+    // Blocking child wait: allowed: this runs on the watchdog /
     // signal-dump thread, never the UI thread (which is wedged anyway;
     // sampling it is the point).
     #[allow(clippy::disallowed_methods)]
@@ -702,7 +702,7 @@ fn capture_thread_stacks(_report_path: Option<&std::path::Path>) -> Option<(&'st
 
 #[cfg(target_os = "linux")]
 fn run_stack_tool(tool: &str, args: &[&str]) -> Option<String> {
-    // Blocking child wait — allowed: watchdog / signal-dump thread only,
+    // Blocking child wait: allowed: watchdog / signal-dump thread only,
     // never the UI thread (which is wedged anyway).
     #[allow(clippy::disallowed_methods)]
     let out = std::process::Command::new(tool).args(args).output().ok()?;
@@ -752,7 +752,7 @@ fn capture_thread_stacks(_report_path: Option<&std::path::Path>) -> Option<(&'st
 
 /// POSIX kill interception via the self-pipe trick. A signal handler may
 /// only do async-signal-safe work; `write(2)` to a pipe is on that list,
-/// and everything else happens on the `signal-dump` thread — which stays
+/// and everything else happens on the `signal-dump` thread, which stays
 /// schedulable while the UI thread is frozen, because only the UI thread
 /// is stuck.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -805,7 +805,7 @@ mod unix_signals {
                 return;
             }
             if n == 0 {
-                return; // write end closed — process is tearing down
+                return; // write end closed: process is tearing down
             }
             let signo = byte as libc::c_int;
             match signo {
@@ -817,7 +817,7 @@ mod unix_signals {
                     std::process::exit(128 + libc::SIGQUIT);
                 }
                 // Ctrl+C / plain kill: dump only when the UI thread was
-                // already stalled — a healthy quit stays quiet — then exit
+                // already stalled, a healthy quit stays quiet, then exit
                 // like the default disposition would have.
                 libc::SIGINT | libc::SIGTERM => {
                     if super::ui_thread_stalled() {
@@ -841,7 +841,7 @@ mod unix_signals {
 /// Windows console-control interception. Unlike a POSIX signal handler,
 /// the system runs this on its own injected thread, so it may do real
 /// work directly. Returning FALSE afterwards hands the event to the
-/// default handler, which terminates the process — same exit-after-dump
+/// default handler, which terminates the process, same exit-after-dump
 /// shape as the Unix path. Only fires for console launches; a frozen
 /// GUI-launched app is covered by the automatic watchdog report.
 #[cfg(windows)]

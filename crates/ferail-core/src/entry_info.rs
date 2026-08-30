@@ -1,7 +1,7 @@
 //! Platform-neutral "Get Info" model.
 //!
 //! [`EntryInfo`] is the whole record the Get Info popup renders for one
-//! filesystem object — a file, a folder, or a volume. It is built off the
+//! filesystem object: a file, a folder, or a volume. It is built off the
 //! UI thread by the host's platform gather code (which calls the native
 //! crates) and consumed read-only by the renderer, in keeping with the
 //! Prime Directive: paint never touches I/O and never formats.
@@ -9,7 +9,7 @@
 //! Each platform fills the subset of fields it can read; the missing ones
 //! are simply absent rows. Editable values carry enough structured state
 //! for the UI to render a control and emit an [`EntryInfoEdit`] back to the
-//! native layer. This crate has zero platform and zero UI deps — the model
+//! native layer. This crate has zero platform and zero UI deps: the model
 //! is data only, plus small pure helpers.
 
 use crate::commands::TagColor;
@@ -32,7 +32,7 @@ pub struct EntryInfo {
     pub name: String,
     /// Friendly kind string, e.g. "Folder", "PNG image", "Volume".
     pub kind: String,
-    /// What this record is — file, folder, or volume.
+    /// What this record is: file, folder, or volume.
     pub target: InfoTarget,
     /// Ordered, titled groups of rows. Render order is this order.
     pub sections: Vec<InfoSection>,
@@ -54,7 +54,7 @@ impl EntryInfo {
     }
 
     /// True when the (first) Size row is still awaiting an on-demand
-    /// calculation — i.e. a folder/volume whose total we don't have yet.
+    /// calculation, i.e. a folder/volume whose total we don't have yet.
     pub fn size_is_calculable(&self) -> bool {
         self.sections
             .iter()
@@ -204,21 +204,21 @@ impl TimestampKind {
 }
 
 /// A togglable boolean attribute. The host routes each one to the right native
-/// writer — some are BSD flags (`chflags`), some are Finder/NSURL keys.
+/// writer: some are BSD flags (`chflags`), some are Finder/NSURL keys.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Attr {
-    /// `UF_IMMUTABLE` — Finder "Locked".
+    /// `UF_IMMUTABLE`: Finder "Locked".
     Locked,
-    /// `UF_HIDDEN` — Finder "Invisible".
+    /// `UF_HIDDEN`: Finder "Invisible".
     Invisible,
-    /// `NSURLHasHiddenExtensionKey` — Finder "Hide extension".
+    /// `NSURLHasHiddenExtensionKey`: Finder "Hide extension".
     HiddenExtension,
     /// Stationery pad bit (Finder info).
     Stationery,
 }
 
 impl Attr {
-    /// Stable label for the toggle row — a msgid; translate at the display
+    /// Stable label for the toggle row: a msgid; translate at the display
     /// site with `ferail_core::i18n::tr_raw`.
     pub fn label(self) -> &'static str {
         match self {

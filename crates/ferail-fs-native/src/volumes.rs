@@ -5,7 +5,7 @@
 //! classifies / measures each one via `GetDriveTypeW` +
 //! `GetVolumeInformationW` + `GetDiskFreeSpaceExW`.
 //!
-//! v1 is pure synchronous Win32 — fine because drive enumeration is
+//! v1 is pure synchronous Win32: fine because drive enumeration is
 //! a sidebar refresh operation, not a per-frame call. Per the prime
 //! directive, callers must not invoke this from the paint path.
 
@@ -25,7 +25,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
     };
 
     // GetDriveTypeW return codes. Hardcoded because the `windows`
-    // crate 0.58 doesn't re-export these constants — they've been
+    // crate 0.58 doesn't re-export these constants: they've been
     // stable since Win9x.
     const DRIVE_REMOVABLE: u32 = 2;
     const DRIVE_FIXED: u32 = 3;
@@ -50,7 +50,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
         let root_pcwstr = PCWSTR::from_raw(root_wide.as_ptr());
 
         let kind = unsafe { GetDriveTypeW(root_pcwstr) };
-        // Skip A: / B: floppy slots and unknown — they appear in the
+        // Skip A: / B: floppy slots and unknown: they appear in the
         // bitmask even when no media is inserted and probing them
         // spins up the drive or blocks. Keep CD/DVD, removable USB,
         // fixed disks, network shares, and RAM disks.
@@ -67,7 +67,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
         // volume name; we don't read the FS name or serial). Skipped
         // for network drives: GetVolumeInformationW on a mapped drive
         // whose server is unreachable blocks for the full SMB/DFS
-        // timeout (tens of seconds) — the bare letter is an honest
+        // timeout (tens of seconds): the bare letter is an honest
         // label, and the sidebar refresh picks up a nicer one when the
         // share is actually reachable via the capacity-free path.
         // Read-only detection rides along for free: 0x00080000 is
@@ -108,7 +108,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             }
         };
 
-        // Capacity. Only ask for it on local drives — network shares
+        // Capacity. Only ask for it on local drives: network shares
         // can issue a remote round-trip even for "cheap" queries.
         let (total_bytes, available_bytes) = if is_local {
             let mut free_to_caller: u64 = 0;
@@ -129,10 +129,10 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             (None, None)
         };
 
-        // Physical-device probe (skipped for network drives — no local
+        // Physical-device probe (skipped for network drives, no local
         // device to ask). Two things GetDriveTypeW can't tell us: which
         // physical disk backs the volume (the eject-all grouping key),
-        // and whether a DRIVE_FIXED disk actually hangs off USB — external
+        // and whether a DRIVE_FIXED disk actually hangs off USB: external
         // HDDs/SSDs report as fixed, but are ejectable like Finder's.
         let (device_id, usb_bus) = if kind == DRIVE_REMOTE {
             (None, false)
@@ -160,12 +160,12 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
 }
 
 /// Physical-device probe for the volume behind drive `letter`: the
-/// physical disk number(s) backing it (`Some("disk3")` — the eject-all
+/// physical disk number(s) backing it (`Some("disk3")`: the eject-all
 /// grouping key) and whether the disk hangs off the USB bus. The latter
 /// matters because `GetDriveTypeW` reports external USB HDDs/SSDs as
 /// `DRIVE_FIXED`, hiding that they're ejectable.
 ///
-/// Opens the volume with **zero** access rights — metadata-only queries,
+/// Opens the volume with **zero** access rights: metadata-only queries,
 /// no media I/O, no admin required. Best-effort: `(None, false)` on any
 /// failure (CD-ROM volumes and RAM disks have no disk extents).
 #[cfg(windows)]
@@ -293,7 +293,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
 
 /// Linux volumes from `/proc/self/mountinfo`: the root filesystem, `/home`,
 /// and removable / user mounts (`/media`, `/run/media`, `/mnt`) that sit on a
-/// real block device — skipping the pile of pseudo/virtual filesystems. Sizes
+/// real block device, skipping the pile of pseudo/virtual filesystems. Sizes
 /// come from `statvfs`. Mirrors the macOS `/Volumes` enumeration for the
 /// sidebar's Volumes section.
 #[cfg(target_os = "linux")]
@@ -475,7 +475,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             is_removable: false,
             format: None,
             // MacRO: is the host-folder assign mounted without write
-            // access — the name already says so; the flag makes the
+            // access: the name already says so; the flag makes the
             // status bar say it too.
             read_only: path == "MacRO:",
             bsd_device: None,
@@ -506,11 +506,11 @@ pub fn volume_info_for_path(_path: &Path) -> Option<VolumeInfo> {
 /// Whole-disk BSD name from a device node: "/dev/disk3s1s1" → "disk3".
 /// `None` when the name isn't `diskN…`-shaped (network sources, synthetic
 /// mounts). APFS note: volumes of one container share a *synthesized*
-/// whole disk, so they group together — exactly what the eject-all offer
+/// whole disk, so they group together, exactly what the eject-all offer
 /// wants. A mixed-scheme disk (APFS container next to a FAT partition)
 /// groups as two devices; acceptable miss, Finder-parity for the common
 /// case. Compiled on all hosts so the unit test runs everywhere (hence
-/// the allow — only macOS builds reach it outside tests).
+/// the allow, only macOS builds reach it outside tests).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn whole_disk_bsd(dev: &str) -> Option<String> {
     let name = dev.strip_prefix("/dev/").unwrap_or(dev);
@@ -525,9 +525,9 @@ pub(crate) fn whole_disk_bsd(dev: &str) -> Option<String> {
 /// Parent disk name for a Linux partition device name, by string shape
 /// alone: "sdb1" → "sdb", "nvme0n1p2" → "nvme0n1", "mmcblk0p1" →
 /// "mmcblk0". Returns `None` when the name doesn't look like a partition
-/// (whole disks, `dm-0`, `loop0` — safer to not group than to mis-group).
+/// (whole disks, `dm-0`, `loop0`: safer to not group than to mis-group).
 /// Fallback for when sysfs isn't available; compiled on all hosts so the
-/// unit test runs everywhere (hence the allow — only Linux builds reach
+/// unit test runs everywhere (hence the allow, only Linux builds reach
 /// it outside tests).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn linux_parent_disk_name(name: &str) -> Option<String> {
@@ -564,7 +564,7 @@ pub(crate) fn linux_parent_disk_name(name: &str) -> Option<String> {
 fn linux_device_group(source: &str) -> Option<String> {
     let name = source.strip_prefix("/dev/")?;
     if name.contains('/') {
-        return None; // /dev/mapper/… etc. — don't guess.
+        return None; // /dev/mapper/… etc.: don't guess.
     }
     let sys = std::path::Path::new("/sys/class/block").join(name);
     if sys.join("partition").exists() {

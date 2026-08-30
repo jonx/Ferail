@@ -6,7 +6,7 @@
 //! container; a `.tar.gz` is an append-only compressed stream with no central
 //! directory, so it cannot be edited in place; `.7z` we read but do not write
 //! in v1. This table is the single source of truth the UI reads to decide
-//! which affordances to enable — create/modify controls are gated on it, and a
+//! which affordances to enable: create/modify controls are gated on it, and a
 //! format that cannot be written shows a read-only breadcrumb.
 //!
 //! Keeping the decision here (data, not scattered `match` arms in view code)
@@ -20,7 +20,7 @@ use crate::format::Format;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
     /// List the table of contents without extracting. True for every format
-    /// we support — browsing is the floor.
+    /// we support, browsing is the floor.
     pub can_browse: bool,
     /// Extract all or a cherry-picked subset of entries.
     pub can_extract: bool,
@@ -40,7 +40,7 @@ pub struct Capabilities {
 
 impl Capabilities {
     /// True when entries cannot be added to or removed from an *existing*
-    /// archive of this format — the workbench presents it as read-only (its
+    /// archive of this format: the workbench presents it as read-only (its
     /// add/remove controls disabled, a read-only breadcrumb) even if the
     /// format can still be created fresh. Only zip is editable in place;
     /// tar-family and 7z are read-only here despite being creatable.
@@ -108,8 +108,8 @@ impl Format {
                 supports_levels: true,
             },
 
-            // LHA: browse and extract only. `delharc` is a decoder — it has
-            // no compressor — so this is the first format in the matrix that
+            // LHA: browse and extract only. `delharc` is a decoder: it has
+            // no compressor, so this is the first format in the matrix that
             // cannot be created at all. It is therefore absent from
             // `creatable_multi_file` below, which is what keeps it out of the
             // Create Archive picker.
@@ -124,7 +124,7 @@ impl Format {
         }
     }
 
-    /// Formats offered in the "Create Archive" picker — those that can be
+    /// Formats offered in the "Create Archive" picker: those that can be
     /// created. Single-member compressors are excluded from the multi-file
     /// create flow (they hold one file); they are reachable through a
     /// "Compress" single-file action instead.

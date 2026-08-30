@@ -137,7 +137,7 @@ where needed, a desktop-absolute parsing name. The parsing name is not copied
 into rows, persisted or emitted in default diagnostics. COM interfaces, raw
 PIDL pointers, `HWND`, and Windows crate types never enter `ferail-core` or the
 row renderer. PIDLs are stored only for namespace surfaces which require
-them—not on every ordinary filesystem row and never in the millions-of-rows
+them, not on every ordinary filesystem row and never in the millions-of-rows
 Flat View payload.
 
 Use small capability-oriented seams rather than one giant operating-system
@@ -199,7 +199,7 @@ Every phase preserves these invariants:
 
 ## Issue ledger
 
-### WIN-001 — reproducible Windows evidence and useful crash reports (P0)
+### WIN-001 - reproducible Windows evidence and useful crash reports (P0)
 
 **Observation.** The hang report has no thread stacks, breadcrumbs, activity,
 or registered task despite a ten-second heartbeat stall. The four “crash”
@@ -222,7 +222,7 @@ trigger.
   updaters up to 0.6.6 matched it as the Windows download.*
 - [x] Enable minidump capture for unhandled native exceptions and document the
   Task Manager full-dump fallback. *2026-08-24:
-  `ferail_shell_win32::install_crash_dump_handler` — a top-level exception
+  `ferail_shell_win32::install_crash_dump_handler`: a top-level exception
   filter writes `reports/ferail-<role>-<pid>.dmp` (threads, modules,
   unloaded modules, handles, exception) and appends the exception code and
   address to `ferail-crash-<pid>.txt`; installed in the GUI (OS handling
@@ -246,11 +246,11 @@ trigger.
   `PopupMenu`; a user session also leaked an `InputState` twice). Root
   cause was one bug class: subscription closures capturing a strong handle
   to the entity they subscribe to (context-menu `Rc<SharedState>`, the
-  filter/breadcrumb/shortcuts-help inputs) — an App→listener→entity cycle.
+  filter/breadcrumb/shortcuts-help inputs): an App→listener→entity cycle.
   Fixed by weak/parameter access; the scripted repro now exits 0. Second
   find, deterministic (`--screenshot --properties`): gpui-component's
   `Input` paint captures strong `InputState` handles per frame, which
-  accumulate whenever a second window (Get Info) is open — upstream, see
+  accumulate whenever a second window (Get Info) is open: upstream, see
   GPUI-UPSTREAM.md §12. The assert itself no longer ships: packaged builds
   strip gpui's `test-support`/`leak-detection` (dev + tests keep it), so
   users cannot hit the exit-101 report at all. A dev-only teardown guard now
@@ -272,7 +272,7 @@ trigger.
 activity; a forced broker crash identifies the provider and leaves Ferail
 alive; 100 open/close cycles end without an entity-handle assertion.
 
-### WIN-002 — PDF/third-party preview-handler crash containment (P0)
+### WIN-002 - PDF/third-party preview-handler crash containment (P0)
 
 **Observation.** WinDbg reports `c0000005` in an unloaded
 `pdfprevhndlr.dll`. Current `preview_handler.rs` loads in-process handlers on a
@@ -298,7 +298,7 @@ termination isolation. A handler may keep callbacks or worker state past
   *2026-08-24: grid/list/viewer thumbnails no longer fall back to the
   `IPreviewHandler` capture (it screenshots the handler's live viewer,
   scrollbars and all); only the preview pane's `fetch_preview_image` does.
-  PDFs — the crashing case — now render page 1 through `Windows.Data.Pdf`
+  PDFs, the crashing case, now render page 1 through `Windows.Data.Pdf`
   (`pdf_render.rs`): no window, no third-party DLL, no broker. Inside the
   broker the handler is activated in-proc first, deliberately: the broker is
   already disposable, so the parent owns and can terminate the provider.
@@ -334,7 +334,7 @@ through the broker end-to-end. Still pending: the same matrix inside the
 interactive GUI session and a reproduction against the tester's
 `pdfprevhndlr.dll`.*
 
-### WIN-003 — 10,000-image preview stability and scrollbar integrity (P0)
+### WIN-003 - 10,000-image preview stability and scrollbar integrity (P0)
 
 **Observation.** In a roughly 10,000-image folder, previews reset while
 scrolling, the scrollbar can disappear, and the app may crash. A changing
@@ -375,7 +375,7 @@ and no crash. *2026-08-25: the user reports that the real 10,000-image flow now
 works on Windows. Keep the adversarial provider, repeated-pass, cache/handle
 measurement and multi-DPI subcases open until separately recorded.*
 
-### WIN-004 — multi-selection crash and large-selection behavior (P0)
+### WIN-004 - multi-selection crash and large-selection behavior (P0)
 
 **Observation.** The tester reports crashes around multi-selection. The
 available files do not contain the triggering stack; some captured reports are
@@ -404,7 +404,7 @@ multi-selection now works on Windows, including the flow that previously
 failed. The stale-row mutation matrix and measured 1/100/10,000/symbolic-4M
 regression tests remain implementation/qualification work.*
 
-### WIN-005 — background file-detail scan consumes the machine (P0)
+### WIN-005 - background file-detail scan consumes the machine (P0)
 
 **Observation.** `Detect file types and tags` defaults on. A normal folder load
 currently snapshots every row and starts whole-list prefetch; the tester's log
@@ -433,7 +433,7 @@ fixing the architecture.
 the viewport, not 10,000 files; Format and Description populate as rows enter
 view; idle CPU and I/O settle without disabling the feature.
 
-### WIN-006 — CPU and `rps` figures are alarming or ambiguous (P0)
+### WIN-006 - CPU and `rps` figures are alarming or ambiguous (P0)
 
 **Observation.** Ferail showed CPU 37% while Task Manager showed 2.8% in the
 same screenshot, and users have seen values around 700%. Current CPU is
@@ -456,7 +456,7 @@ self-explanatory.
 Manager within a documented sampling tolerance; values above 100% cannot
 appear in the normal user-facing CPU field.
 
-### WIN-007 — native Windows context menu without the old prefetch (P1, design confirmed)
+### WIN-007 - native Windows context menu without the old prefetch (P1, design confirmed)
 
 **Observation.** Ferail's fast menu omits third-party Shell verbs. The old
 Ferail-Win32 implementation made those verbs available but paid for
@@ -524,7 +524,7 @@ user reports that the native Windows menu works in normal use. The hostile
 extension, Properties lifetime, 100-open handle soak and post-mutation
 targeted-refresh cases remain open.*
 
-### WIN-008 — default open/double-click uses the wrong verb or path (P0)
+### WIN-008 - default open/double-click uses the wrong verb or path (P0)
 
 **Observation.** Double-clicking `ski.jpg` sometimes opened Print Pictures and
 also produced an association error for `\\?\C:\files\ski.jpg`. The shared
@@ -552,7 +552,7 @@ Unicode, drive, UNC, and long paths; double-click never selects a non-default
 verb such as Print. *2026-08-25: the user reports that default Open works on
 Windows. Keep the exhaustive unusual-path and failure-message matrix open.*
 
-### WIN-009 — Reveal in Explorer fails on unusual paths (P0)
+### WIN-009 - Reveal in Explorer fails on unusual paths (P0)
 
 **Observation.** Revealing a folder named `paths#é #!` opened Documents rather
 than the actual parent. The current implementation launches
@@ -576,7 +576,7 @@ window with the intended item selected. *2026-08-25: the user reports that
 Reveal in Explorer works on Windows. Keep deleted-target messaging and the
 full difficult-path matrix open.*
 
-### WIN-010 — `.lnk` behavior, target metadata, and thumbnail identity (P1)
+### WIN-010 - `.lnk` behavior, target metadata, and thumbnail identity (P1)
 
 **Observation.** A shortcut is shown as a generic file in Ferail while Explorer
 shows the target's image with a shortcut overlay. Open and preview behavior is
@@ -598,7 +598,7 @@ inconsistent.
 - [~] Request the Shell-provided icon/thumbnail and preserve the shortcut
   overlay; fall back to the target type then a generic shortcut glyph.
   *2026-08-24: grid/list/sidebar icons for `.lnk` now composite the
-  shell-reported overlay (the shortcut arrow) over the target icon —
+  shell-reported overlay (the shortcut arrow) over the target icon:
   `ferail-fs-native::icons::win_shell::overlay_rgba`
   (`SHGetFileInfoW(SHGFI_OVERLAYINDEX)` → `SHGetImageList(SHIL_JUMBO)` →
   `IImageList::GetOverlayImage`/`GetIcon` → `DrawIconEx`). Overlay
@@ -619,7 +619,7 @@ diagnostics.
 **Exit gate.** File, folder, app, argument-bearing, relative, UNC, and broken
 shortcuts match Explorer's open semantics and remain responsive.
 
-### WIN-011 — icons and thumbnails disagree with Explorer (P1)
+### WIN-011 - icons and thumbnails disagree with Explorer (P1)
 
 **Observation.** `C:\Windows\Fonts` showed several red/error or generic icons
 where Explorer displayed Windows-managed font representations. Special Shell
@@ -642,11 +642,11 @@ folders and providers may not behave like ordinary extension-based files.
     parses fine), so both the thumbnail and the icon fetch failed there and
     the grid showed the blank placeholder. Fixed by retrying with a bind
     context carrying `STR_FILE_SYS_BIND_DATA` (`IFileSystemBindData`) to
-    force simple file-system parsing — in
+    force simple file-system parsing, in
     `ferail-shell-win32::shell_item_image_factory` (thumbnails/previews)
     and its twin `ferail-fs-native::icons::win_shell` (icons).*
   - *[x] The font thumbnail provider (“Abg” cards for `.ttf`/`.otf`)
-    returns its DIB **bottom-up** while image thumbnails arrive top-down —
+    returns its DIB **bottom-up** while image thumbnails arrive top-down,
     both with positive `biHeight`, so the sign is useless and the
     “THUMBNAILONLY = top-down” rule rendered font cards rotated 180°.
     Fixed with an extension-gated orientation exception
@@ -672,7 +672,7 @@ folders and providers may not behave like ordinary extension-based files.
 declines; visible icons remain stable while scrolling and match the correct
 Windows type/provider where available.
 
-### WIN-012 — Explorer clipboard and drag/drop interop is incomplete (P0/P1)
+### WIN-012 - Explorer clipboard and drag/drop interop is incomplete (P0/P1)
 
 **Observation.** Copy/paste from Explorer to Ferail does not work in every
 case. `CF_HDROP` support already ships, so the remaining failures need to be
@@ -703,7 +703,7 @@ classified rather than reimplementing the happy path.
 **Exit gate.** The matrix passes on Explorer and at least one third-party file
 manager; cut state, multi-file order, and collision handling remain correct.
 
-### WIN-013 — Desktop namespace, This PC, devices, OneDrive, and Recycle Bin (P1)
+### WIN-013 - Desktop namespace, This PC, devices, OneDrive, and Recycle Bin (P1)
 
 **Observation.** Ferail's Desktop is the filesystem folder, not the Shell
 namespace root. Therefore This PC, portable phones, provider roots, and the
@@ -742,7 +742,7 @@ filesystem path is known.
 Recycle Bin, OneDrive, an MTP phone, and a disconnected-device case navigate
 without pretending they are filesystem paths.
 
-### WIN-014 — metadata and Windows Properties (P1)
+### WIN-014 - metadata and Windows Properties (P1)
 
 **Observation.** Get Info lacks useful image metadata such as EXIF, while a
 Windows user also expects access to the native Properties surface.
@@ -754,7 +754,7 @@ Windows user also expects access to the native Properties surface.
   orientation, GPS-presence with an explicit privacy treatment). Parse on
   demand off-thread and cache by file identity/revision. *2026-08-24:
   `image_meta::read_image_meta` (header dimensions + kamadak-exif subset)
-  feeds Get Info's Image section on every platform; GPS is presence-only —
+  feeds Get Info's Image section on every platform; GPS is presence-only:
   coordinates are never parsed, shown, logged, or persisted. A reusable
   bounded, path-free identity/revision cache now exists; wiring it into Get
   Info remains (Get Info parses one file per open today). `ImageMeta::Debug`
@@ -782,7 +782,7 @@ Windows user also expects access to the native Properties surface.
 files fail safely, and Windows Properties opens for filesystem and supported
 namespace items without blocking the UI.
 
-### WIN-015 — VC++ runtime and genuinely portable release artifacts (P0)
+### WIN-015 - VC++ runtime and genuinely portable release artifacts (P0)
 
 **Observation.** The downloadable executable can fail before Ferail starts
 because `VCRUNTIME140.dll` is absent. An application that cannot launch cannot
@@ -798,7 +798,7 @@ offer to install its own prerequisite.
   renders headlessly on a real Windows 11 machine.*
 - [x] If static CRT is not viable, ship an installer/bootstrapper that checks
   and installs the official Microsoft redistributable before launching Ferail;
-  do not download it from inside the main executable. *n/a — static CRT is
+  do not download it from inside the main executable. *n/a: static CRT is
   viable, so no bootstrapper is needed.*
 - [x] Test the exact ZIP/installer in a fresh Windows Sandbox with no developer
   tools or preinstalled redistributable. *2026-08-25: the user reports that
@@ -821,7 +821,7 @@ offer to install its own prerequisite.
 **Exit gate.** A pristine supported Windows VM launches, previews a safe image,
 opens a file, and exits cleanly without installing Visual Studio tooling.
 
-### WIN-016 — stale command/keymap and artifact consistency (P0)
+### WIN-016 - stale command/keymap and artifact consistency (P0)
 
 **Observation.** The 0.6.5 log says `view.toggle_flat` is an unknown command and
 skips `secondary-shift-l`. The catalogue and action registration were present,
@@ -846,7 +846,7 @@ source consistency bug, not an upgraded-profile or initialization issue.
 **Exit gate.** A clean 0.6.5→next-version upgrade has no unknown bundled
 commands, and mismatched packaged resources fail CI.
 
-### WIN-017 — WSL distributions as path-backed Linux locations (P1)
+### WIN-017 - WSL distributions as path-backed Linux locations (P1)
 
 **Observation.** The current application has no entry point for installed WSL
 distributions, although Windows exposes their filesystems through
@@ -939,7 +939,7 @@ filesystem. It does not become a PIDL-backed Shell-namespace tab.
 - [~] Treat WSL as a slow/remote I/O class rather than disabling features.
   Format/Description, thumbnails, preview and magic detection remain
   viewport/on-demand, budgeted and cancellable. If richer Linux permissions or
-  symlink details are added, gather them in a bounded batch—never one
+  symlink details are added, gather them in a bounded batch, never one
   `wsl.exe` process per row. *Viewport details/thumbnails remain enabled; the
   current all-directory recursive folder-size pass is deliberately skipped
   for WSL until it has a viewport/on-demand mode.*
@@ -1036,7 +1036,7 @@ failure modes.
   property system. The native Properties sheet remains the escape hatch for
   provider-specific pages.
 
-### Phase A — make the current baseline reproducible
+### Phase A - make the current baseline reproducible
 
 This phase changes no user behavior. It prevents us from building the next
 features on an ambiguous baseline.
@@ -1062,7 +1062,7 @@ features on an ambiguous baseline.
 **Exit:** a second machine can recreate every required corpus and compare a
 future build with v0.6.8 without guessing what was tested.
 
-### Phase B — finish bounded previews, details and selection reliability
+### Phase B - finish bounded previews, details and selection reliability
 
 This closes WIN-001, WIN-003, WIN-004, WIN-005 and WIN-006 before adding broad
 new Windows surfaces.
@@ -1096,7 +1096,7 @@ new Windows surfaces.
 and caches settle, scrollbar geometry never changes from asset completion, and
 the original preview/selection crashes stay absent under repetition.
 
-### Phase C — complete path-based Shell actions
+### Phase C - complete path-based Shell actions
 
 This finishes WIN-007, WIN-008 and WIN-009 without introducing namespace
 browsing yet.
@@ -1126,7 +1126,7 @@ browsing yet.
 actions cannot crash Ferail, and successful mutations become visible without a
 whole-window or whole-model reload.
 
-### Phase D — shortcuts, icons and Explorer transfers
+### Phase D - shortcuts, icons and Explorer transfers
 
 This completes WIN-010, WIN-011 and WIN-012 while all items still have real
 filesystem paths.
@@ -1158,7 +1158,7 @@ filesystem paths.
 painting/menu construction, and transfer semantics are correct without
 unbounded path or data-object materialization.
 
-### Phase E — Windows platform locations: WSL bridge, then Shell namespace
+### Phase E - Windows platform locations: WSL bridge, then Shell namespace
 
 This implements WIN-017 and WIN-013 only after path-based actions and
 transfers have stable capability seams. WSL is the first slice because it
@@ -1206,7 +1206,7 @@ OneDrive/provider roots and MTP while local NTFS navigation and Flat 4M remain
 within their baseline. Merely displaying Linux locations starts no distro and
 no path-backed WSL row carries platform-provider state.
 
-### Phase F — metadata and native Properties
+### Phase F - metadata and native Properties
 
 This completes WIN-014 without turning file inspection into background
 indexing.
@@ -1236,7 +1236,7 @@ indexing.
 and WTEST-120 finds no retained preview pixels, personal paths or metadata
 values outside the documented policy.
 
-### Phase G — release qualification and distribution
+### Phase G - release qualification and distribution
 
 **On macOS/Linux**
 
@@ -1261,7 +1261,7 @@ cross-platform or four-million-row regression remains.
 
 ## Original campaign ledger and completion status
 
-### Phase 0 — Windows baseline and decision capture
+### Phase 0 - Windows baseline and decision capture
 
 - [~] Set up the real Windows development/test machine with Rust, debugger,
   symbol retention, Windows SDK tools, clean test profile, and release build.
@@ -1275,7 +1275,7 @@ cross-platform or four-million-row regression remains.
 - [ ] Confirm the now/later cut with the user before implementation expands
   beyond P0 containment and correctness.
 
-### Phase 1 — make failures diagnosable and non-fatal
+### Phase 1 - make failures diagnosable and non-fatal
 
 - [~] WIN-001 diagnostics, PDBs, dumps and breadcrumbs ship; measured
   multi-window/helper soaks remain.
@@ -1289,14 +1289,14 @@ cross-platform or four-million-row regression remains.
   symbol bundle and clean-Sandbox portable launch verified; signing and any
   future installer remain.
 
-### Phase 2 — restore the Prime Directive under Windows load
+### Phase 2 - restore the Prime Directive under Windows load
 
 - [~] WIN-005 viewport-only details complete; shared I/O budget remains.
 - [~] WIN-006 Task Manager-compatible metrics complete; idle redraw audit and
   expanded diagnostics remain.
 - [ ] Re-run the baseline and reject any navigation/scroll regression.
 
-### Phase 3 — filesystem interoperability
+### Phase 3 - filesystem interoperability
 
 - [~] WIN-008 Shell API/default open implemented; Windows matrix remains.
 - [~] WIN-009 PIDL-based Reveal implemented; Windows matrix remains.
@@ -1304,7 +1304,7 @@ cross-platform or four-million-row regression remains.
   provider and virtual-item matrix remains.
 - [~] WIN-016 missing keymap dispatch fixed; artifact consistency remains.
 
-### Phase 4 — native compatibility on demand
+### Phase 4 - native compatibility on demand
 
 - [~] WIN-007 isolated native Windows context menu, with no prefetch; UI and
   third-party-extension manual matrix remains.
@@ -1317,7 +1317,7 @@ cross-platform or four-million-row regression remains.
   exist; GPUI cache wiring, Windows property values and direct native
   Properties remain.
 
-### Phase 5 — Windows platform locations
+### Phase 5 - Windows platform locations
 
 - [~] WIN-017 cached WSL discovery, explicit activation and path-backed
   `NativeFs` handoff implemented in source; WTEST-130–139 remain on Windows.
@@ -1328,7 +1328,7 @@ cross-platform or four-million-row regression remains.
 - [ ] Prove again that ordinary filesystem browsing never enters the namespace
   scanner.
 
-### Phase 6 — release qualification
+### Phase 6 - release qualification
 
 - [ ] Execute every required case in the
   [Windows Reliability Test Plan](../testing/WINDOWS_RELIABILITY_TEST_PLAN.md),

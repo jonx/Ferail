@@ -24,7 +24,7 @@ pub fn parse_breadcrumb_path(raw: &str) -> PathBuf {
     }
 }
 
-/// Parse a *pasted* path — the Go to Folder (Cmd+G) prompt's input.
+/// Parse a *pasted* path: the Go to Folder (Cmd+G) prompt's input.
 /// Same contract as [`parse_breadcrumb_path`] (no stat, no
 /// canonicalisation on the UI thread) but tolerant of the shapes a
 /// path arrives in when it comes off the clipboard rather than the
@@ -34,7 +34,7 @@ pub fn parse_breadcrumb_path(raw: &str) -> PathBuf {
 ///   line, `'…'` from a shell prompt),
 /// - a `file://` URL with percent-escapes (what a browser, a chat
 ///   client, or "Copy as Pathname" from some apps hands over),
-/// - backslash-escaped spaces (unix only — the form a Finder drag
+/// - backslash-escaped spaces (unix only: the form a Finder drag
 ///   into Terminal produces; on Windows `\` is the separator so it is
 ///   left alone),
 /// - a leading `~`, via [`parse_breadcrumb_path`].
@@ -55,7 +55,7 @@ pub fn parse_pasted_path(raw: &str) -> PathBuf {
     if let Some(rest) = strip_file_url(s) {
         return PathBuf::from(rest);
     }
-    // Terminal-style escapes: `/Users/me/My\ Folder`. Only unix — a
+    // Terminal-style escapes: `/Users/me/My\ Folder`. Only unix: a
     // Windows path is full of meaningful backslashes.
     #[cfg(unix)]
     let unescaped = s.replace("\\ ", " ");
@@ -75,7 +75,7 @@ fn strip_file_url(s: &str) -> Option<String> {
         .or_else(|| s.strip_prefix("file:///"))?;
     let decoded = percent_decode(rest);
     // `file:///C:/Users/me` carries the drive letter in the first
-    // segment — that IS the root, so it keeps no leading slash. Every
+    // segment: that IS the root, so it keeps no leading slash. Every
     // other form is an absolute unix path whose leading `/` the
     // prefix strip consumed.
     let mut chars = decoded.chars();
@@ -89,7 +89,7 @@ fn strip_file_url(s: &str) -> Option<String> {
 }
 
 /// Minimal `%XX` decoder for `file://` URLs. Invalid escapes (a lone
-/// `%`, non-hex digits) pass through literally — a path that really
+/// `%`, non-hex digits) pass through literally: a path that really
 /// contains a `%` still resolves. Decoded bytes are reassembled as
 /// UTF-8; a non-UTF-8 sequence falls back to the undecoded input
 /// rather than producing replacement characters.
@@ -117,17 +117,17 @@ fn percent_decode(s: &str) -> String {
 
 /// Canonicalize an external path for identity registration (the
 /// ARCHITECTURE.md path-identity contract: paths from outside the app
-/// — typed input, persisted state, external drops — are canonicalized
+///, typed input, persisted state, external drops, are canonicalized
 /// once at their entry boundary). Falls back to the input unchanged
 /// when canonicalization fails (nonexistent path, permission error):
 /// navigation's background enumeration owns the error reporting.
 ///
-/// This STATS THE FILESYSTEM — never call it on a render or input
+/// This STATS THE FILESYSTEM, never call it on a render or input
 /// path; run it at init, on the background executor, or inside an
 /// already-async load.
 pub fn canonicalize_for_identity(path: PathBuf) -> PathBuf {
     // The one sanctioned wrapper around the raw canonicalize the lint
-    // bans — every other call site goes through this fn, off-thread.
+    // bans: every other call site goes through this fn, off-thread.
     #[allow(clippy::disallowed_methods)]
     std::fs::canonicalize(&path).unwrap_or(path)
 }
@@ -135,10 +135,10 @@ pub fn canonicalize_for_identity(path: PathBuf) -> PathBuf {
 /// Resolve a Go to Folder (Cmd+G) entry to the directory to open:
 /// canonicalize for identity, then fall back to the enclosing folder
 /// when the path names a file. A path that resolves to nothing comes
-/// back unchanged — navigation's enumeration reports the failure in
+/// back unchanged: navigation's enumeration reports the failure in
 /// the pane, the same as a bad breadcrumb entry.
 ///
-/// This STATS THE FILESYSTEM (canonicalize + one `is_dir`) — call it
+/// This STATS THE FILESYSTEM (canonicalize + one `is_dir`): call it
 /// only from a background task, never from a handler.
 pub fn resolve_go_to_target(typed: PathBuf) -> PathBuf {
     let canonical = canonicalize_for_identity(typed);
@@ -156,11 +156,11 @@ pub fn resolve_go_to_target(typed: PathBuf) -> PathBuf {
 
 /// Split `path` into clickable breadcrumb segments. Each entry is
 /// `(visible_label, path_to_navigate_to_on_click)`. The first entry
-/// represents the filesystem root — on macOS/Linux always `/`; on
+/// represents the filesystem root, on macOS/Linux always `/`; on
 /// Windows the drive root (e.g. `C:\`) when the path carries a
 /// `Prefix` component, or `\` for current-drive-relative paths.
 ///
-/// Public for the integration test in `tests/path_segments.rs` —
+/// Public for the integration test in `tests/path_segments.rs`,
 /// keeping it private and using an inline `#[cfg(test)] mod tests`
 /// crashes the compiler (gpui's type graph plus the macro recursion
 /// from `#[test]` overflows syn's parser).

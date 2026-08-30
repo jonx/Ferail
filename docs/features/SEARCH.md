@@ -5,7 +5,7 @@ match over the rows already loaded for the current folder
 ([file_list.rs](../../crates/ferail-gpui/src/file_list.rs), applied in the
 streaming load at [shell/loading.rs](../../crates/ferail-gpui/src/shell/loading.rs)).
 That is the right behavior for "narrow what I'm looking at" but it is not
-*search* — it never leaves the current directory and never consults an index.
+*search*: it never leaves the current directory and never consults an index.
 
 This note specifies real search, built in tiers, all behind the
 [prime directive](../ARCHITECTURE.md#prime-directive): the UI never blocks on
@@ -15,8 +15,8 @@ cancellable.
 ## Status
 
 - Tier 0 (in-directory filter): **shipped**.
-- Tier 1 (recursive subtree walk): **shipped** — built-in walker, cancellable.
-- Tier 2 (global / indexed): **shipped on macOS** — Spotlight via `mdfind`,
+- Tier 1 (recursive subtree walk): **shipped**: built-in walker, cancellable.
+- Tier 2 (global / indexed): **shipped on macOS**: Spotlight via `mdfind`,
   with Tier 1 as the automatic fallback; Windows MFT + Linux Tracker land with
   those ports.
 
@@ -27,7 +27,7 @@ Search & Duplicates. A result file's **Open in New Tab** context command opens
 its containing folder in a new tab and selects the exact result; a result
 folder opens directly.
 
-**Honest scope — this is the mechanism, not Finder-grade search UX.** What
+**Honest scope: this is the mechanism, not Finder-grade search UX.** What
 ships is a *single query box*: free text (substring/name via the walker, or
 Spotlight's natural-language name+content query) plus the structured
 [filter tokens](#filter-tokens) below, streamed into the list with the hit's
@@ -38,7 +38,7 @@ follow-ups.
 
 A pinned, live "smart folder" tab is the highest-value next step, and it's
 cheap *if Spotlight-backed*: a live `MDQuery` (or a debounced `mdfind` re-run on
-an FSEvents tick) gets deltas from the OS index without us walking the disk —
+an FSEvents tick) gets deltas from the OS index without us walking the disk,
 which is exactly how Finder keeps its smart folders fresh. Walker-backed views
 and duplicate results are expensive to keep live and should stay snapshots
 (re-run on demand). So the model is: ephemeral results tabs by default; opt-in
@@ -69,17 +69,17 @@ Grammar rules, all deliberate:
   space-containing substring). `"quoted phrase"` restores exact-phrase
   matching.
 - A token that fails to parse (`size:banana`, unknown key) degrades to a
-  literal substring term — typing never silently changes meaning.
+  literal substring term, typing never silently changes meaning.
 - Metadata predicates read only cached `FileEntry` fields captured at
   enumerate time (`size`, `mtime_unix`, `created_unix`, `locked`, kind,
-  name) — never fresh I/O, per the prime directive. A value the
+  name), never fresh I/O, per the prime directive. A value the
   filesystem didn't provide (`created` on some network volumes) fails the
   predicate quietly.
 - Dates resolve against a `DateCtx` (now + local zone offset) built per
   load on the worker, so parsing is pure and testable.
 
 **Autocomplete** (`filter_complete.rs`): the compact filter input renders a
-small completion menu over `filter_expr::TOKEN_HELP` — typing a key prefix
+small completion menu over `filter_expr::TOKEN_HELP`: typing a key prefix
 offers keys with a one-line description, accepting a key chains into its
 example values, and an empty field lists the whole token set as a cheat-sheet.
 After a plain-name term the menu stays available and appends a chosen token,
@@ -89,12 +89,12 @@ advertise syntax the parser rejects.
 
 **Cheat sheet** (`filter_help.rs`): a (?) button to the right of the filter
 field opens a `Dialog` listing every `TOKEN_HELP` entry with its examples
-plus the date/size grammar — the stopgap discoverability surface until the
+plus the date/size grammar: the stopgap discoverability surface until the
 filter grows chips. Same static table; `--filter-help` captures it
 headlessly.
 
 A token-only query (`mod:week` with no text) routes subtree search to the
-walker even when Spotlight is preferred — Spotlight needs a query string;
+walker even when Spotlight is preferred: Spotlight needs a query string;
 the walker runs a pure metadata scan.
 
 ## The three tiers
@@ -117,22 +117,22 @@ maintain a whole-disk index if the OS already keeps one fresh.** Windows'
 "Everything" had to reverse-engineer the NTFS MFT only because the OS gave it
 nothing usable; macOS already ships Spotlight, kept live by FSEvents.
 
-- **macOS — Spotlight.** Query `MDQuery` (or `mdfind` as a first spike) for
-  name *and* content matches against an index the OS maintains for us — instant
+- **macOS: Spotlight.** Query `MDQuery` (or `mdfind` as a first spike) for
+  name *and* content matches against an index the OS maintains for us: instant
   whole-disk search at ~zero ongoing CPU, nothing for us to build, store, or
   keep warm. **This is the default Tier 2 engine and the one to rely on
   whenever it is available.** Fall back to a Tier 1 live walk only for paths
   Spotlight excludes (some external/network volumes, `mdutil`-disabled trees).
-- **Windows — NTFS MFT + USN journal.** Read the Master File Table directly for
+- **Windows: NTFS MFT + USN journal.** Read the Master File Table directly for
   an instant whole-volume name index, and tail the USN change journal to keep
   it live. This is how "Everything" achieves its speed. It typically requires
   **elevation / admin rights** (raw volume handle access). The plan: ship our
   **own recursive walker as the always-available fallback** (no privileges
   needed), offer the MFT engine when we can elevate, and **let the user choose
   which engine to use** rather than forcing elevation. The same MFT reader is
-  also the fast path for Windows disk usage — build it once, use it for both.
+  also the fast path for Windows disk usage: build it once, use it for both.
   See [windows-port.md](windows-port.md).
-- **Linux — Tracker / Baloo, else own walk.** Query the desktop index via
+- **Linux: Tracker / Baloo, else own walk.** Query the desktop index via
   D-Bus when present; otherwise the Tier 1 walker. See
   [linux-port.md](linux-port.md).
 
@@ -157,7 +157,7 @@ enum SearchEngine {
 A platform exposes the engines it supports; `SubtreeWalk` is always one of
 them. The GPUI layer picks a default and honors a user override.
 
-## Tier 1 — recursive subtree walk (build first)
+## Tier 1 - recursive subtree walk (build first)
 
 A pure-function walker in `ferail-fs-native`, modeled directly on
 [`scan_disk_usage`](../../crates/ferail-fs-native/src/disk_usage_scanner.rs):
@@ -193,11 +193,11 @@ impl NativeFs {
 
 Mac-safe behavior (mirrors the disk-usage walker):
 
-- **Skip dataless / cloud placeholders** — test the dataless flag and
+- **Skip dataless / cloud placeholders**: test the dataless flag and
   `is_icloud_path`; never trigger an iCloud download just to match a name.
 - **Bundles opaque by default** (`descend_packages = false`): `*.app`,
   `*.bundle`, `*.framework` match as units, not exploded into inner files.
-- **Symlinks** walked via `symlink_metadata`, never followed — cycle-safe.
+- **Symlinks** walked via `symlink_metadata`, never followed: cycle-safe.
 - Per-directory permission errors are absorbed; the scan reports
   partial-but-complete.
 

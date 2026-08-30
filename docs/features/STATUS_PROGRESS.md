@@ -73,17 +73,17 @@ The status bar shows:
 - active folder item count,
 - selected count/size when a selection exists,
 - total visible size,
-- free space when available — swapped for "{volume} is read-only" when the
+- free space when available: swapped for "{volume} is read-only" when the
   tab's volume is mounted read-only (CD/DVD, locked card, `ro` mount):
   "0 B free" on a CD is true but buries the actual story. The macOS boot
-  volume is exempt — its sealed snapshot statfs's read-only, but the
+  volume is exempt: its sealed snapshot statfs's read-only, but the
   Macintosh HD the user sees is writable via the firmlinked Data volume,
 - an "N filtered out · X B" companion beside the count whenever the filter
   field is holding entries back, so a filtered listing never passes its
   count and size off as the whole folder. Fed the same way as the hidden
-  chip — the enumeration's `Done` message (`loading::FilterSummary`, counted
+  chip: the enumeration's `Done` message (`loading::FilterSummary`, counted
   *after* the hidden partition so nothing is reported twice, zeroed at load
-  start and when a search replaces the listing) — and suppressed in archive
+  start and when a search replaces the listing), and suppressed in archive
   mode. When the filter matches nothing, the count itself becomes
   "All N items filtered out · X B" (never "Empty folder"), and the table's
   empty state says "All N items filtered out." for the same reason:
@@ -91,24 +91,24 @@ The status bar shows:
 - task label or "N tasks running",
 - progress strip,
 - a passive "N hidden · X B" chip when *show hidden* is off and the folder
-  has hidden entries — count + summed sizes of what the listing skipped, so
+  has hidden entries: count + summed sizes of what the listing skipped, so
   hidden content is discoverable without unhiding it. Fed per-tab by the
   enumeration's `Done` message (`loading::HiddenSummary`; counted before the
   text filter, zeroed at load start; hidden *folders* count at their dirent
   size, like the item total). Suppressed in archive mode. Its sibling
   affordance: with *show hidden* on, hidden rows render dimmed
   (`opacity(0.6)`, list + grid; a cut row's `0.45` wins),
-- Show Hidden toggle — always present at every window width (see
+- Show Hidden toggle, always present at every window width (see
   [Fitting It All In A Narrow Window](#fitting-it-all-in-a-narrow-window)).
 
 Clicking the task label or progress strip toggles the task popover.
 
 ### Fitting It All In A Narrow Window
 
-That is a lot of readouts for one row, and translation swells them unevenly —
+That is a lot of readouts for one row, and translation swells them unevenly:
 English "up 3m" is French "en service depuis 3m". The bar is a single row of
 `flex_shrink_0` children, so an overflow does not compress: it pushes its own
-tail — the Show Hidden switch — off the window edge. `status_bar::plan` decides
+tail, the Show Hidden switch, off the window edge. `status_bar::plan` decides
 what fits *before* anything is built, from the window's logical width, the
 strings that will actually be painted, and a character-count estimate (no text
 measurement, no I/O). It is pure, so the ladder is unit-tested without a window.
@@ -129,7 +129,7 @@ Each wordy segment has three wordings (`status_bar::Density`):
 The minimal uptime token is deliberately **not** translated: the bar already
 ships `CPU` / `MEM` / `rps` unlocalized, and a universal two-letter code beats a
 truncated word. The number-and-separator forms (`12 · 3.0 MB`, `3/12`) are built
-with `format!` rather than `tr!` for the same reason — there is nothing in them
+with `format!` rather than `tr!` for the same reason, there is nothing in them
 to translate.
 
 The ladder, widest first: **Full → Short → Minimal → one type tier smaller
@@ -139,7 +139,7 @@ the hidden chip, the filtered chip, free space, and last of all the task label.
 Gaps and the progress strip tighten with the density; nobody reads whitespace.
 
 **Two things are not on the ladder**: the item count, and the Show Hidden
-switch — at minimal density the switch loses its word and keeps a tooltip, but
+switch, at minimal density the switch loses its word and keeps a tooltip, but
 it is always there to click. A `density_ladder_tests` case walks the width down
 20 px at a time and asserts the ladder never runs backwards, so a slow resize
 can't flap between two rungs.

@@ -3,7 +3,7 @@
 //! Pulls bytes from `NSWorkspace iconForFile:` via the existing
 //! `ferail_fs_native::fetch_icon_rgba` bridge, swaps the channel
 //! order from RGBA → BGRA (gpui's `RenderImage` wants BGRA even
-//! though the wrapping type is named `RgbaImage` — see
+//! though the wrapping type is named `RgbaImage`: see
 //! `gpui::assets::RenderImage` docs), and caches the result.
 //!
 //! Cache key is the file's kind for files (extension lowercased,
@@ -113,7 +113,7 @@ impl IconCache {
         size_px.unwrap_or(ICON_PX)
     }
 
-    /// Does this path icon still need a background fetch — neither
+    /// Does this path icon still need a background fetch, neither
     /// cached (warmed *or* failed-and-blanked) nor already in flight?
     /// Non-mutating: safe from `render`, which is where the collectors
     /// run.
@@ -214,7 +214,7 @@ impl IconCache {
     /// Read-only lookup of a path-keyed icon cached at a specific pixel
     /// size (the icon grid fetches folder icons large so they stay crisp
     /// at 128–256 px, where the 32 px list icon would upscale to mush).
-    /// `None` when not yet warmed — the caller falls back to the small
+    /// `None` when not yet warmed: the caller falls back to the small
     /// icon as a placeholder. Non-mutating: safe from `render`.
     pub fn get_folder_icon_sized(&self, path: &Path, size_px: u32) -> Option<Arc<RenderImage>> {
         self.by_path
@@ -223,7 +223,7 @@ impl IconCache {
             .cloned()
     }
 
-    /// Whether `img` is the shared blank placeholder — i.e. the platform
+    /// Whether `img` is the shared blank placeholder, i.e. the platform
     /// couldn't produce an icon (either a transient failure, or a platform
     /// whose `fetch_icon_rgba` is still a stub: Linux scaffold, AROS).
     /// Render paths use this to fall back to the Lucide type glyph instead
@@ -236,7 +236,7 @@ impl IconCache {
         if let Some(b) = &self.blank {
             return b.clone();
         }
-        // A single transparent pixel — drawn at any size will still
+        // A single transparent pixel: drawn at any size will still
         // hold the row's icon slot so layout doesn't jitter when a
         // real icon is missing.
         let arc = Arc::new(build_render_image(vec![0, 0, 0, 0], 1, 1));
@@ -263,7 +263,7 @@ fn cache_key(entry: &FileEntry, path: &Path) -> String {
 //
 // Strategy: the macOS NSWorkspace path above stays the default for
 // folders + volumes (users customise folder icons, sync overlays look
-// nice). Files use the bundle-shipped Lucide SVGs below — outlined
+// nice). Files use the bundle-shipped Lucide SVGs below: outlined
 // glyphs that tint via theme tokens, give the file list a scannable
 // visual rhythm without relying on extension-specific raster icons.
 
@@ -289,7 +289,7 @@ pub struct FileTypeIcon {
 }
 
 /// Classify a file entry into a tinted icon. Pure function over the
-/// already-stored display fields — does no I/O, no extension parsing
+/// already-stored display fields: does no I/O, no extension parsing
 /// at paint time beyond a small ASCII match on the existing name.
 pub fn file_type_icon(entry: &FileEntry) -> FileTypeIcon {
     match entry.kind {
@@ -313,7 +313,7 @@ pub fn file_type_icon(entry: &FileEntry) -> FileTypeIcon {
         .map(|(_, e)| e.to_ascii_lowercase())
         .unwrap_or_default();
     let tint = classify_file(&entry.name, &entry.display_magic);
-    // Extension-specific SVG overrides — keep the category tint, swap
+    // Extension-specific SVG overrides: keep the category tint, swap
     // the asset path for richer differentiation at row scale. Falls
     // through to the tint's default icon when the extension doesn't
     // earn a bespoke glyph.
@@ -343,7 +343,7 @@ fn classify_file(name: &str, magic: &str) -> FileTypeTint {
         .rsplit_once('.')
         .map(|(_, e)| e.to_ascii_lowercase())
         .unwrap_or_default();
-    // Extension is the primary signal — users renaming files
+    // Extension is the primary signal: users renaming files
     // deliberately get the look they expect from the name.
     let by_ext = match ext.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "ico" | "heic"
@@ -363,7 +363,7 @@ fn classify_file(name: &str, magic: &str) -> FileTypeTint {
         | "fish" | "vim" | "lua" | "sql" | "graphql" | "proto" | "ml" | "hs" | "ex" | "exs"
         | "erl" | "scala" | "clj" | "el" | "asm" | "dart" => Some(FileTypeTint::Code),
         // `lha`/`lzh` are the Amiga/Aminet archive format (and `lzx` its
-        // successor, which we recognise but do not decode) — worth listing
+        // successor, which we recognise but do not decode): worth listing
         // here so the icon is right from the name alone, without waiting on a
         // magic sniff.
         "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "zst" | "lz" | "lzma"
@@ -394,7 +394,7 @@ fn classify_file(name: &str, magic: &str) -> FileTypeTint {
         return FileTypeTint::Disk;
     }
     // Workbench `.info` files are pictures (the icon bitmap), and a tracker
-    // module is audio — neither says so in its own label.
+    // module is audio, neither says so in its own label.
     if m.contains("image") || m.contains("icon") {
         return FileTypeTint::Image;
     }
@@ -427,7 +427,7 @@ fn classify_file(name: &str, magic: &str) -> FileTypeTint {
 /// Resolve a tint to a concrete `Hsla` using theme tokens. Uses the
 /// theme's chart palette (5 visually distinct hues by design) plus
 /// `primary` / `danger` / `muted_foreground` for the semantic slots.
-/// No hard-coded HSLA values — every colour rides the active theme.
+/// No hard-coded HSLA values: every colour rides the active theme.
 pub fn tint_color(tint: FileTypeTint, cx: &App) -> Hsla {
     let theme = cx.theme();
     match tint {

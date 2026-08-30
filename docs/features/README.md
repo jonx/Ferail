@@ -2,7 +2,7 @@
 
 Deeper design notes and specifications for individual features. These complement
 the [architecture source of truth](../ARCHITECTURE.md) and the
-[open-work list](../../TODO.md) — they capture *why* a feature is shaped the way
+[open-work list](../../TODO.md): they capture *why* a feature is shaped the way
 it is, not the current crate structure.
 
 ← Back to the [project README](../../README.md) ·
@@ -67,102 +67,102 @@ the primary user-facing feature exists and the remaining work is tracked in
 Everything here serves the [prime directive](../ARCHITECTURE.md#prime-directive):
 keep the UI off the I/O path.
 
-- [STREAMING_ENUMERATION.md](STREAMING_ENUMERATION.md) — stream directory
+- [STREAMING_ENUMERATION.md](STREAMING_ENUMERATION.md): stream directory
   contents so large folders stay responsive.
-- [LAZY_METADATA.md](LAZY_METADATA.md) — defer expensive metadata out of the
+- [LAZY_METADATA.md](LAZY_METADATA.md): defer expensive metadata out of the
   render path.
-- [FRESHNESS.md](FRESHNESS.md) — keep subtree-derived caches (folder sizes, Get
+- [FRESHNESS.md](FRESHNESS.md): keep subtree-derived caches (folder sizes, Get
   Info size) fresh through mtime + TTL, ancestor invalidation, and an
   activation refresh, without a recursive watcher.
-- [MOUSE_PREDICTOR.md](MOUSE_PREDICTOR.md) — prewarm metadata ahead of hover.
-- [STATUS_PROGRESS.md](STATUS_PROGRESS.md) — status bar and task progress with
+- [MOUSE_PREDICTOR.md](MOUSE_PREDICTOR.md): prewarm metadata ahead of hover.
+- [STATUS_PROGRESS.md](STATUS_PROGRESS.md): status bar and task progress with
   cancellation.
 
 ## File identity & metadata
 
-- [MAGIC_SNIFFING.md](MAGIC_SNIFFING.md) — magic-byte content detection.
-- [MAGIC_DESCRIPTION.md](MAGIC_DESCRIPTION.md) — the magic-first `Format`
+- [MAGIC_SNIFFING.md](MAGIC_SNIFFING.md): magic-byte content detection.
+- [MAGIC_DESCRIPTION.md](MAGIC_DESCRIPTION.md): the magic-first `Format`
   column, mismatch cues, and quarantine badges.
-- [METADATA_DB.md](METADATA_DB.md) — SQLite-backed persistent metadata store and
+- [METADATA_DB.md](METADATA_DB.md): SQLite-backed persistent metadata store and
   schema versioning.
-- [DUPLICATES.md](DUPLICATES.md) — duplicate finder (size → partial-hash →
+- [DUPLICATES.md](DUPLICATES.md): duplicate finder (size → partial-hash →
   full-hash stages).
-- [CHECKSUMS.md](CHECKSUMS.md) — streaming SHA-256 generation and optional
+- [CHECKSUMS.md](CHECKSUMS.md), streaming SHA-256 generation and optional
   comparison with a checksum copied from a trusted source.
-- [SIDECARS.md](SIDECARS.md) — NFO/DIZ recognition and preview, safe
+- [SIDECARS.md](SIDECARS.md): NFO/DIZ recognition and preview, safe
   multi-file SFV/checksum verification and generation, and release-folder
   awareness.
-- [SEARCH.md](SEARCH.md) — file search in tiers: in-directory filter, recursive
+- [SEARCH.md](SEARCH.md): file search in tiers: in-directory filter, recursive
   subtree walk, and OS-index-backed global search (Spotlight / MFT / Tracker).
-- [FLAT_VIEW.md](FLAT_VIEW.md) — an uncapped recursive list with a relative
+- [FLAT_VIEW.md](FLAT_VIEW.md): an uncapped recursive list with a relative
   Path column, surface-local storage, progress and cancellation.
 
 ## Navigation & interaction
 
-- [FAVORITES.md](FAVORITES.md) — sidebar favorites/bookmarks model, drag-and-drop,
+- [FAVORITES.md](FAVORITES.md): sidebar favorites/bookmarks model, drag-and-drop,
   and acceptance checklist.
-- [ferail-selection-dnd-spec.md](ferail-selection-dnd-spec.md) — node
+- [ferail-selection-dnd-spec.md](ferail-selection-dnd-spec.md): node
   selection and drag-and-drop spec.
 - [ferail-windows-instances-tabs-spec.md](ferail-windows-instances-tabs-spec.md)
-  — windows, instances, tabs, and closed-tab undo.
-- [ANT_TRAIL.md](ANT_TRAIL.md) — navigation history ("ant trail").
-- [CONTEXT_MENU.md](CONTEXT_MENU.md) — context menus and native action
+ : windows, instances, tabs, and closed-tab undo.
+- [ANT_TRAIL.md](ANT_TRAIL.md): navigation history ("ant trail").
+- [CONTEXT_MENU.md](CONTEXT_MENU.md): context menus and native action
   delegation.
-- [OPEN_WITH.md](OPEN_WITH.md) — the Open With submenu: how each OS registers
+- [OPEN_WITH.md](OPEN_WITH.md): the Open With submenu: how each OS registers
   file-type handlers, what ships, and a *study* for user-defined custom tools.
 
 ## Panels & tools
 
-- [PREVIEW.md](PREVIEW.md) — preview pane with async text/image rendering.
-- [TOOL_RESULTS.md](TOOL_RESULTS.md) — shared tab-local result surfaces for
+- [PREVIEW.md](PREVIEW.md): preview pane with async text/image rendering.
+- [TOOL_RESULTS.md](TOOL_RESULTS.md): shared tab-local result surfaces for
   Search, Duplicate Finder, and docked Disk Usage.
-- [TARGET_PANEL.md](TARGET_PANEL.md) — "Pick as Target": a pinned, frozen
+- [TARGET_PANEL.md](TARGET_PANEL.md): "Pick as Target": a pinned, frozen
   second listing used as a source or destination for file operations, and the
   batched-transfer queue it makes possible. Design note only.
-- [VIEWER.md](VIEWER.md) — viewer window: big preview, slideshow, sticky
+- [VIEWER.md](VIEWER.md): viewer window: big preview, slideshow, sticky
   zoom across entries.
-- [VIDEO-MPV.md](VIDEO-MPV.md) — replacing the mpv video backend with libmpv,
+- [VIDEO-MPV.md](VIDEO-MPV.md), replacing the mpv video backend with libmpv,
   and the N-layer transparent-colour (chroma-key) compositor it enables.
-- [FILE_OPS.md](FILE_OPS.md) — copy/paste/move engine: progress,
+- [FILE_OPS.md](FILE_OPS.md): copy/paste/move engine: progress,
   cancellation, collision policy, clipboard verbs.
-- [BULK_RENAME.md](BULK_RENAME.md) — pattern-rule bulk rename modal with
+- [BULK_RENAME.md](BULK_RENAME.md): pattern-rule bulk rename modal with
   live before→after preview and batch undo.
-- [TEXT_EDITOR.md](TEXT_EDITOR.md) — built-in lightweight text editor:
-  open, fix, save, close — with safe in-place saves and refusal states.
-- [IMAGE_EDITOR.md](IMAGE_EDITOR.md) — built-in image redaction/annotation
+- [TEXT_EDITOR.md](TEXT_EDITOR.md): built-in lightweight text editor:
+  open, fix, save, close, with safe in-place saves and refusal states.
+- [IMAGE_EDITOR.md](IMAGE_EDITOR.md): built-in image redaction/annotation
   editor: rectangle + brush, save-copy or confirmed overwrite.
-- [DISK_USAGE.md](DISK_USAGE.md) — disk-usage window: scanning, treemap, and
+- [DISK_USAGE.md](DISK_USAGE.md): disk-usage window: scanning, treemap, and
   top-list views.
 
 ## Look & feel
 
-- [ICONS.md](ICONS.md) — every icon's source, attribution, and command mapping,
+- [ICONS.md](ICONS.md): every icon's source, attribution, and command mapping,
   plus the process for adding new ones. **Update it whenever you add, move, or
   repurpose an icon.**
-- [PRIVATE_MODE.md](PRIVATE_MODE.md) — capture-safe presentation and a
+- [PRIVATE_MODE.md](PRIVATE_MODE.md): capture-safe presentation and a
   process-global interaction lock for screenshots of real sessions.
 
 ## Porting & verification
 
-- [WINDOWS_COMPATIBILITY_PLAN.md](WINDOWS_COMPATIBILITY_PLAN.md) — the tracked
+- [WINDOWS_COMPATIBILITY_PLAN.md](WINDOWS_COMPATIBILITY_PLAN.md): the tracked
   Windows reliability and compatibility campaign, including a per-report issue
   ledger and Windows-only acceptance gates.
-- [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) — the detailed Windows-only
+- [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md): the detailed Windows-only
   implementation and validation contract for Fast NTFS Disk Usage.
-- [../testing/WINDOWS_HANDOVER.md](../testing/WINDOWS_HANDOVER.md) — the live
+- [../testing/WINDOWS_HANDOVER.md](../testing/WINDOWS_HANDOVER.md): the live
   operational handover: starting revision, completed commits, first Windows
   commands, implementation order, evidence locations, and session handback.
 - [../testing/WINDOWS_RELIABILITY_TEST_PLAN.md](../testing/WINDOWS_RELIABILITY_TEST_PLAN.md)
-  — the exact Windows environments, corpora, measurements, interactive cases,
+ : the exact Windows environments, corpora, measurements, interactive cases,
   evidence, and release sign-off procedure for that campaign, including the
   four-million-row regression gate.
-- [windows-port.md](windows-port.md) — handoff notes and lessons from the
+- [windows-port.md](windows-port.md): handoff notes and lessons from the
   Windows `Ferail-Win32` predecessor.
-- [linux-port.md](linux-port.md) — orientation for starting a Linux port:
+- [linux-port.md](linux-port.md): orientation for starting a Linux port:
   freedesktop/D-Bus/XDG mapping of the shell surface, and the first change that
   makes the app compile on Linux.
-- [mac_port.md](mac_port.md) — Mac-side verification checklist after the port.
-- [SCREENSHOTS.md](SCREENSHOTS.md) — the headless screenshot CLI and the
+- [mac_port.md](mac_port.md): Mac-side verification checklist after the port.
+- [SCREENSHOTS.md](SCREENSHOTS.md): the headless screenshot CLI and the
   visual dev loop: render any UI state to a PNG off-screen for verification.
-- [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md) — debug overlays for frame time,
+- [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md): debug overlays for frame time,
   task queue, and metadata visibility.

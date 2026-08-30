@@ -1,7 +1,7 @@
 # Freeze Diagnostics
 
-What happens when the Prime Directive fails in the field — the app stops
-responding on a user's machine, far from a debugger — and how Ferail turns
+What happens when the Prime Directive fails in the field: the app stops
+responding on a user's machine, far from a debugger, and how Ferail turns
 that into a report worth attaching to an issue. Code: `ferail-gpui/src/
 watchdog.rs` (watchdog + hang reports), `ferail-gpui/src/safe_mode.rs`
 (safe mode). Sibling surfaces: `obs.rs` (breadcrumbs, panic hook),
@@ -30,15 +30,15 @@ A plain-text file written to the same folder as the issue bundle:
 `<config>/reports/ferail-hang-<pid>-<seq>.txt` (AROS: also appended to
 `MacRW:ferail-hang.txt`). It contains:
 
-- header — version, OS/arch, pid, uptime, what triggered the report,
+- header: version, OS/arch, pid, uptime, what triggered the report,
   whether the session ran in safe mode;
-- **background tasks** — the last per-second snapshot of the task registry
+- **background tasks**: the last per-second snapshot of the task registry
   before the stall (kind, age, scrubbed label). A freeze on a network
   mount usually names its culprit right here;
-- **breadcrumbs** — the `obs` ring;
-- **activity trail** — the last ~40 user actions, path-redacted under the
+- **breadcrumbs**: the `obs` ring;
+- **activity trail**: the last ~40 user actions, path-redacted under the
   same privacy toggle as the issue bundle;
-- **thread stacks or dump location** — where a platform capture tier exists
+- **thread stacks or dump location**: where a platform capture tier exists
   (tier list below). Windows writes a sibling `.dmp` rather than embedding
   binary stack memory in the text file.
 
@@ -47,11 +47,11 @@ so a misbehaving capture tool can never lose the report.
 
 ### What the terminal shows
 
-The report itself is *not* echoed to stderr — a full one is thousands of
+The report itself is *not* echoed to stderr: a full one is thousands of
 lines (`sample` alone lists every loaded dyld image), which scrolls the
 one line that matters, where the file landed, past the top of the window.
 A terminal launch gets a digest instead: one line as soon as the freeze is
-noticed, and after the stack capture the few facts that identify it —
+noticed, and after the stack capture the few facts that identify it:
 build/pid/uptime, the innermost UI-thread frames (parsed out of the
 capture, tree glyphs, sample counts and symbol hashes stripped), the
 longest-running background task, the last activity-trail entry, and the
@@ -65,20 +65,20 @@ report path.
           ← std::thread::sleep  (in ferail-gpui) + 64
   tasks   : FolderSize · running 2.0s · Sizing 36 folders…
   last    : navigate → …
-  report  : …/reports/ferail-hang-70089-0.txt — attach it when reporting the freeze
+  report  : …/reports/ferail-hang-70089-0.txt: attach it when reporting the freeze
 ```
 
 `FERAIL_FULL_HANG_REPORT=1` restores the old behaviour and echoes the
-whole report, stacks included, to stderr as well — for a session where
+whole report, stacks included, to stderr as well, for a session where
 piping stderr is easier than fetching the file.
 
-## Trigger 1: the watchdog (automatic — all platforms)
+## Trigger 1: the watchdog (automatic - all platforms)
 
 A foreground-executor loop bumps an atomic heartbeat once a second; the
 continuation only runs while the UI thread pumps its event loop, so a
 stopped counter *is* a wedged UI thread. A plain `std::thread` watchdog
 (not the GPUI pool, which the bug under diagnosis could starve) checks the
-counter and writes a hang report after ~10 s of silence — no user action
+counter and writes a hang report after ~10 s of silence, no user action
 needed, which covers Finder/desktop launches where nobody can press a key
 in a terminal. It re-arms if the UI recovers, logs the recovery, and
 debounces system sleep (a check gap far past the interval re-baselines
@@ -88,17 +88,17 @@ still written.
 
 ## Trigger 2: kill interception (terminal launches)
 
-- **macOS / Linux** — `Ctrl+\` (SIGQUIT) always writes a report and exits
+- **macOS / Linux**: `Ctrl+\` (SIGQUIT) always writes a report and exits
   `128+3`. `Ctrl+C` (SIGINT) and `kill` (SIGTERM) write one only if the UI
-  thread was already stalled for ~3 s, then exit as usual — a healthy quit
+  thread was already stalled for ~3 s, then exit as usual: a healthy quit
   stays quiet. The signal handler itself only `write(2)`s a byte to a
   self-pipe (the only async-signal-safe part); a dedicated `signal-dump`
-  thread — schedulable even while the UI thread is frozen — does the rest.
-- **Windows** — a console-control handler gives `Ctrl+Break` the
+  thread, schedulable even while the UI thread is frozen, does the rest.
+- **Windows**: a console-control handler gives `Ctrl+Break` the
   always-dump role and `Ctrl+C` the dump-if-stalled role, then lets the
   default handler terminate. Console launches only; GUI launches rely on
   the automatic watchdog.
-- **AROS** — no signal layer; the watchdog covers it.
+- **AROS**: no signal layer; the watchdog covers it.
 
 ## Thread-stack tiers
 
@@ -110,7 +110,7 @@ still written.
 | AROS | none | In-process sections only. |
 
 When no tool produces stacks/dump, the report says so and names the manual
-alternative — users on macOS can always run `sample Ferail 3` (or Activity
+alternative: users on macOS can always run `sample Ferail 3` (or Activity
 Monitor → Sample Process) against a frozen app themselves, even on builds
 predating this feature.
 
@@ -121,13 +121,13 @@ work?". One relaunch halves the search space. For the session it disables:
 the filesystem watcher (no notify backend, no fs-watcher thread), the
 folder-size walker, thumbnails, the per-row file-detail scan (magic sniff
 + Finder tags), the metadata SQLite DB (favorites / Ant Trail / recents
-stay cold — expected), per-navigation volume-info refreshes (the free-
+stay cold: expected), per-navigation volume-info refreshes (the free-
 space segment stays empty), the volume/power/system-stats watchers, and
 the startup scratch sweep.
 
 Persisted settings are untouched; a normal relaunch restores everything.
 The env spelling exists for launches that never see a command line. The
-watchdog stays **on** in safe mode — it is the diagnostic layer safe mode
+watchdog stays **on** in safe mode: it is the diagnostic layer safe mode
 exists to serve. The AROS port's `FERAIL_FOLDER_SIZES` gate predates this
 and remains the finer-grained switch for that one walker.
 
@@ -144,7 +144,7 @@ busy render loop of its own.
 ## Testing the machinery
 
 `FERAIL_DEBUG_FREEZE=<secs>` deliberately wedges the UI thread for that
-many seconds, three seconds after boot — the one sanctioned Prime
+many seconds, three seconds after boot: the one sanctioned Prime
 Directive violation, kept so the whole pipeline can be verified
 end-to-end: `FERAIL_DEBUG_FREEZE=20 ferail-gpui` produces the automatic
 watchdog report at ~10 s, logs the recovery at 20 s, and the report's

@@ -10,7 +10,7 @@
 /// A coarse power/session transition reported by the platform shell.
 ///
 /// Display sleep (`ScreensDidSleep`) fires far more often than true
-/// system sleep (`WillSleep`) — a user walking away long enough for the
+/// system sleep (`WillSleep`): a user walking away long enough for the
 /// display to dim is the common case. Both warrant pausing playback;
 /// only a true `DidWake` warrants re-listing volumes (a drive may have
 /// been unplugged while the lid was closed).
@@ -28,7 +28,7 @@ pub enum PowerEvent {
 }
 
 impl PowerEvent {
-    /// True for transitions into a low-power state — the cue to pause
+    /// True for transitions into a low-power state: the cue to pause
     /// video and the slideshow timer.
     pub fn is_sleep(self) -> bool {
         matches!(self, PowerEvent::WillSleep | PowerEvent::ScreensDidSleep)

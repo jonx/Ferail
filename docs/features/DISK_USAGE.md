@@ -16,7 +16,7 @@ Top-N panel, package handling, category filtering, allocated/apparent size
 modes, screenshot path, CLI, native batched APFS enumeration, bounded directory
 parallelism and scan-local identity storage all ship. APFS-clone-aware sizing,
 the privileged Fast NTFS preview on Windows, richer iCloud download-state
-handling, and explicit dock/pop-out state migration are tracked separately —
+handling, and explicit dock/pop-out state migration are tracked separately:
 see [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) and "Still open" below.
 
 ## Surface
@@ -64,7 +64,7 @@ see [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) and "Still open" below.
   `.app`, `.bundle`, `.framework`, `.plugin`, `.kext`, `.xcodeproj`
   are treated as opaque leaves, matching Finder. Toggling re-scans.
 - **Right-click a rect** (shipped): the file-list verbs on the resolved
-  selection — Open, Open in New Tab for a single item (a file opens its
+  selection: Open, Open in New Tab for a single item (a file opens its
   containing folder and is selected), Reveal in Finder,
   Get Info (when opened from a
   shell), Copy (real file URLs), Copy Path(s), an **Export as HTML**
@@ -78,12 +78,12 @@ see [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md) and "Still open" below.
   HTML for the whole current focus.
 - **One menu layer by design**: rects record themselves as the target
   on right-mouse-down and the treemap's single context menu routes on
-  it — per-rect ContextMenu layers stacked (their overlay hitboxes
+  it, per-rect ContextMenu layers stacked (their overlay hitboxes
   paint above the rects and don't stop propagation), opening two
   colliding menus and wiping the selection.
 - **HTML export** (shipped): `ferail_disk_usage::treemap_html_*`
   renders the same tree through the same layout pipeline into
-  self-contained HTML (inline styles, no JS) — "Copy as HTML" puts a
+  self-contained HTML (inline styles, no JS): "Copy as HTML" puts a
   paste-anywhere `<figure>` fragment on the clipboard; "Save as
   HTML…" writes a standalone page to `~/Downloads` and reveals it.
   The category palette is canonical in that crate
@@ -103,7 +103,7 @@ the treemap): `Enter` zooms into the selected folder, `Backspace` zooms
 out, `Escape` clears the selection (and a second Escape with no selection
 closes the DU surface), and `Cmd+C` / `Cmd+I` /
 `Cmd+Backspace` mirror Copy / Get Info / Move to Trash on the treemap
-selection. (User-remappable command ids for these are a follow-up —
+selection. (User-remappable command ids for these are a follow-up:
 the `disk_usage.*` ids in keymap.rs are still placeholders.)
 
 ## Architecture
@@ -133,7 +133,7 @@ the `disk_usage.*` ids in keymap.rs are still placeholders.)
 |---|---|
 | `ferail-disk-usage` | Pure data model + squarified treemap. No I/O, no platform deps. Houses `DiskUsageTree`, `DiskUsageNode`, `DiskUsageLayoutNode`, `DiskUsageFact`, `compute_treemap`, `hit_test`, `build_layout_node`, `FileCategory`. |
 | `ferail-fs-native` | `NativeFs::scan_disk_usage` worker plus the shared native directory reader. macOS uses `getattrlistbulk`; other filesystems/platforms safely fall back to `read_dir` and cached `DirEntry` metadata. A bounded coordinator parallelizes local, non-removable APFS directory reads and keeps all descent policy and fact creation on one thread. |
-| `ferail-gpui` | `disk_usage.rs` — the Disk Usage view: squarified treemap + top-list views, hover/selection state, and worker orchestration, all as GPUI elements. |
+| `ferail-gpui` | `disk_usage.rs`: the Disk Usage view: squarified treemap + top-list views, hover/selection state, and worker orchestration, all as GPUI elements. |
 
 ### Data flow
 
@@ -149,7 +149,7 @@ the `disk_usage.*` ids in keymap.rs are still placeholders.)
 4. Layout is re-laid (and the Top-N heap re-sorted) on bounds change,
    zoom-in/out, or tree epoch advance. A results-only filter builds a
    cancellable projection off-thread and swaps only the latest generation into
-   the view. Hover/selection do not recompute layout — only repaint with
+   the view. Hover/selection do not recompute layout, only repaint with
    different overlays.
 
 ### Worker contract
@@ -233,36 +233,36 @@ against a temp-dir fixture, with permission and cancellation cases).
 
 ## Iter-7 polish (shipped)
 
-- **Bundle rolled-up size** — when `descend_packages=false` the
+- **Bundle rolled-up size**: when `descend_packages=false` the
   scanner walks inside `.app`/`.framework`/etc. to compute a
   Finder-style total instead of reporting the inode-stat size.
 - **Allocated vs apparent size** (`SizeMode::{Apparent, Allocated}`)
-  — `MetadataExt::blocks() * 512` is read at scan time and stored on
+ : `MetadataExt::blocks() * 512` is read at scan time and stored on
   every `DiskUsageNode`. Toggle via View → Size: Apparent / Allocated;
   re-aggregation is cheap.
-- **Age-heatmap coloring** (`TreemapColoring::AgeHeat`) — leaves are
+- **Age-heatmap coloring** (`TreemapColoring::AgeHeat`): leaves are
   tinted on a cool→warm gradient by `mtime`. Two-year-old files land
   deep in the warm zone.
-- **Category legend chips** — click "Image"/"Video"/etc. above the
+- **Category legend chips**: click "Image"/"Video"/etc. above the
   treemap to dim everything else. Click again or "All" to clear. The toolbar
   projection toggle can instead remove non-matching tiles from the layout.
-- **Top-N panel polish** — scrollable, click-to-sort by Size / Name /
+- **Top-N panel polish**: scrollable, click-to-sort by Size / Name /
   Age, with the parent folder as a subtitle row.
-- **iCloud cloud glyph** — files under
+- **iCloud cloud glyph**: files under
   `~/Library/Mobile Documents/` get a ☁ overlay in the top-right of
   their cells. Coarse path-prefix detection; doesn't yet
   distinguish downloaded vs placeholder.
-- **Right-click on multi-selection** — when the click target is part
+- **Right-click on multi-selection**: when the click target is part
   of the existing selection, the menu acts on the whole set
   ("Move 3 Items to Trash", "Reveal 3 in Finder", "Copy 3 Paths").
-- **Docked host sizing** — the GPUI view measures its host element so the
+- **Docked host sizing**: the GPUI view measures its host element so the
   treemap fits either the active tab or a standalone window.
-- **Cmd+R refresh** — refreshes the active DU view when focus is inside it.
-- **Menu checkmarks** — toggle states for Top-N / packages /
+- **Cmd+R refresh**: refreshes the active DU view when focus is inside it.
+- **Menu checkmarks**: toggle states for Top-N / packages /
   follow-navigation / coloring / size-mode reflect live values.
 - **Refresh button** has hover + pressed visual states matching the
   main window's button styling.
-- **DU toast surface** — Move-to-Trash failures surface through the GPUI
+- **DU toast surface**: Move-to-Trash failures surface through the GPUI
   notification layer instead of only stderr.
 
 ## Still open
@@ -285,7 +285,7 @@ against a temp-dir fixture, with permission and cancellation cases).
   ```
 
   Until this lands, the **Allocated** size mode is the closest
-  available proxy — it doesn't dedupe but does reflect real block
+  available proxy: it doesn't dedupe but does reflect real block
   occupancy.
 
 - **iCloud download status**: the cloud glyph is currently

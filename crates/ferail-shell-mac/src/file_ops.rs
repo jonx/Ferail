@@ -2,7 +2,7 @@
 //! with " copy" / " copy 2" name resolution, matching Finder) and
 //! Make Alias (write a macOS bookmark file Finder will resolve).
 //!
-//! Both are synchronous on the calling thread — callers dispatch
+//! Both are synchronous on the calling thread: callers dispatch
 //! from a worker per [`docs/UI_NONBLOCKING.md`]. Failures return an
 //! error string the host can surface as a toast.
 
@@ -99,7 +99,7 @@ pub fn make_alias(target: &Path) -> Result<PathBuf, String> {
 }
 
 /// Like [`make_alias`] but writes the alias into `dest_dir` instead of
-/// next to `target` — used by Cmd+Option alias-drop, where the alias
+/// next to `target`: used by Cmd+Option alias-drop, where the alias
 /// belongs in the folder it was dropped on.
 #[cfg(target_os = "macos")]
 pub fn make_alias_in(target: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
@@ -173,7 +173,7 @@ pub fn make_alias_in(_target: &Path, _dest_dir: &Path) -> Result<PathBuf, String
 
 /// Unmount and eject the volume mounted at `path`. macOS:
 /// `-[NSWorkspace unmountAndEjectDeviceAtURL:error:]`, which handles
-/// removable media, external disks, and disk images. Synchronous —
+/// removable media, external disks, and disk images. Synchronous:
 /// callers dispatch from a worker. Returns an error string on failure
 /// (e.g. a busy volume with open files), suitable for a toast.
 #[cfg(target_os = "macos")]
@@ -207,18 +207,18 @@ pub fn eject_volume(path: &Path) -> Result<(), String> {
 }
 
 /// Unmount **every** volume on the physical device backing
-/// `volume_paths[0]`, then eject the device — Finder's "Eject All".
+/// `volume_paths[0]`, then eject the device: Finder's "Eject All".
 /// macOS: `-[NSFileManager unmountVolumeAtURL:options:completionHandler:]`
 /// with `NSFileManagerUnmountAllPartitionsAndEjectDisk`, the one
 /// primitive that handles sibling partitions atomically. (Looping
 /// `unmountAndEjectDeviceAtURL` per volume does NOT work: it returns
 /// OSStatus -36 for every partition except the last one still mounted,
-/// verified on-device.) The extra paths are unused on macOS — the
-/// option ejects the whole device from any one of its volumes — but the
+/// verified on-device.) The extra paths are unused on macOS: the
+/// option ejects the whole device from any one of its volumes, but the
 /// slice keeps the cross-platform signature, since Windows/Linux
 /// dismount each volume individually.
 ///
-/// Synchronous — blocks on the completion handler (which fires on a
+/// Synchronous: blocks on the completion handler (which fires on a
 /// dispatch queue, not the caller's thread), so callers dispatch from
 /// a worker. A generous timeout guards against a completion that never
 /// arrives; the flush of a slow device can take a while, so it errs
@@ -273,7 +273,7 @@ pub fn eject_device(volume_paths: &[&Path]) -> Result<(), String> {
 }
 
 /// Names of processes holding files open on the volume mounted at
-/// `path` — the "why won't it eject" answer for a failed eject.
+/// `path`: the "why won't it eject" answer for a failed eject.
 ///
 /// Uses libproc's `proc_listpidspath` (public since 10.5; the same
 /// machinery `lsof -- /Volumes/X` rides), so no subprocess and no
@@ -281,7 +281,7 @@ pub fn eject_device(volume_paths: &[&Path]) -> Result<(), String> {
 /// volume; `EXCLUDE_EVTONLY` skips event-only watchers (Spotlight/FSEvents
 /// kqueue fds) that don't actually block an unmount, so we don't accuse
 /// innocent daemons. Best-effort: empty on any failure. Sorted, deduped,
-/// capped at 5. Synchronous — callers run this on a worker.
+/// capped at 5. Synchronous: callers run this on a worker.
 #[cfg(target_os = "macos")]
 pub fn volume_busy_processes(path: &Path) -> Vec<ferail_core::BusyApp> {
     use std::os::raw::{c_char, c_int, c_void};
@@ -292,7 +292,7 @@ pub fn volume_busy_processes(path: &Path) -> Vec<ferail_core::BusyApp> {
     const PROC_LISTPIDSPATH_EXCLUDE_EVTONLY: u32 = 2;
 
     extern "C" {
-        // libproc.h — exported by libSystem, no extra link flags needed.
+        // libproc.h: exported by libSystem, no extra link flags needed.
         fn proc_listpidspath(
             r#type: u32,
             typeinfo: u32,

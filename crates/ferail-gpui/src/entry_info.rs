@@ -6,7 +6,7 @@
 //! place that legitimately touches every layer at once: POSIX stat
 //! (`ferail-fs-native`), AppKit resource values (`ferail-shell-mac`),
 //! volume info, magic, and tags. The gather runs on the background executor
-//! — never the paint path — and the result is a fully-formatted, neutral
+//!, never the paint path, and the result is a fully-formatted, neutral
 //! record the view paints without any further I/O.
 //!
 //! The popup is a gpui-component `Dialog` hosting this view, so ESC /
@@ -46,7 +46,7 @@ use gpui_component::{
 use crate::file_list::tag_color_rgba;
 use crate::shell::Shell;
 
-/// Key-binding context for the standalone Get Info window — Esc dismisses it
+/// Key-binding context for the standalone Get Info window: Esc dismisses it
 /// (bound in `keymap::install_extras`). The embedded-in-preview instance
 /// doesn't set this context, so Esc there belongs to the shell.
 pub const ENTRY_INFO_CONTEXT: &str = "GetInfo";
@@ -73,7 +73,7 @@ const TAG_COLORS: [TagColor; 7] = [
 /// Number of standalone Get Info windows currently open. Drives the spiral
 /// cascade (see [`crate::window_cascade`]) so a fan-out over many files
 /// spreads its windows out instead of stacking them on the same centred
-/// spot. A [`CascadeGuard`] held by each window keeps this in sync — once
+/// spot. A [`CascadeGuard`] held by each window keeps this in sync, once
 /// they all close, the next one re-centres.
 static OPEN_GET_INFO_WINDOWS: AtomicUsize = AtomicUsize::new(0);
 
@@ -98,7 +98,7 @@ impl Drop for CascadeGuard {
 }
 
 /// Open a Get Info window for `path`. A standalone, resizable, movable OS
-/// window — not tied to the main window — so several can be open at once for
+/// window, not tied to the main window, so several can be open at once for
 /// different files. Opening more than one (e.g. Get Info over a selection)
 /// cascades them along a spiral so they don't stack. `name`/`target` are the
 /// caller's best guess (from the selected row) for the loading header; the
@@ -137,7 +137,7 @@ fn open_impl(
     cx: &mut App,
 ) {
     let title: SharedString = tr!(
-        "Get Info \u{2014} {name}",
+        "Get Info: {name}",
         name = crate::private_mode::present_leaf_str(&name, false)
     );
     // Claim the next spiral slot; the guard rides along in the view and
@@ -180,7 +180,7 @@ fn open_impl(
 }
 
 /// Classify a path for the size/volume behavior. Touches the filesystem
-/// (`is_dir`) — only ever called on the gather worker.
+/// (`is_dir`), only ever called on the gather worker.
 fn classify(path: &Path) -> InfoTarget {
     if path == Path::new("/") || path.parent() == Some(Path::new("/Volumes")) {
         InfoTarget::Volume
@@ -211,7 +211,7 @@ fn display_name(path: &Path, target: InfoTarget, vol_name: Option<&str>) -> Stri
 /// Build the full Get Info record. Runs on the background executor: every
 /// call here is a native read, none of it is allowed on the paint path.
 /// `known_size` is the caller's already-computed recursive size for a
-/// folder/volume (from the file list's Size column) — reused so we don't
+/// folder/volume (from the file list's Size column): reused so we don't
 /// rescan, shown with a refresh affordance.
 pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     use ferail_fs_native as fsn;
@@ -337,7 +337,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     );
 
     // ---- Media (audio tags + properties) ----
-    // Files only, and only when lofty recognizes the container as audio — the
+    // Files only, and only when lofty recognizes the container as audio: the
     // reader returns `None` for everything else, so this section simply doesn't
     // appear for non-media files (the `filter(!rows.is_empty())` below drops an
     // empty section). Reading tags is native I/O, which is fine here: `gather`
@@ -368,7 +368,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     // ---- Image (header dimensions + curated EXIF) ----
     // Same contract as Media above: the reader returns `None` for anything
     // that isn't a readable image, so the section silently doesn't appear.
-    // GPS is presence-only by design (WIN-014 privacy treatment) — the
+    // GPS is presence-only by design (WIN-014 privacy treatment): the
     // coordinates are never parsed, shown, logged, or persisted.
     let mut image = InfoSection::new(tr!("Image").to_string());
     if target == InfoTarget::File {
@@ -379,7 +379,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
                 .private_text_if(tr!("Lens").to_string(), m.lens_model.clone())
                 .private_text_if(tr!("Date taken").to_string(), m.taken.clone())
                 .text_if(tr!("Exposure").to_string(), m.exposure_label());
-            // "Normal" is the unremarkable default — only a stored rotation
+            // "Normal" is the unremarkable default, only a stored rotation
             // is worth a row (the volume section's read-only precedent).
             if let Some(code) = m.orientation.filter(|&c| c != 1) {
                 image = image.text_if(
@@ -465,7 +465,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         if let Some(a) = v.available_bytes {
             volume = volume.row(tr!("Available").to_string(), InfoValue::Bytes(a));
         }
-        // Finder parity: Capacity / Available / Used. Used is derived —
+        // Finder parity: Capacity / Available / Used. Used is derived:
         // statfs reports total and free, not a used counter.
         if let (Some(t), Some(a)) = (v.total_bytes, v.available_bytes) {
             volume = volume.row(
@@ -502,7 +502,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
 
 /// Human wording for a stored EXIF orientation (codes 2–8; 1 = normal is
 /// filtered out by the caller). The label describes the correction a viewer
-/// applies to display the photo upright — the convention cameras write.
+/// applies to display the photo upright: the convention cameras write.
 fn orientation_label(code: u16) -> SharedString {
     match code {
         2 => tr!("Flipped horizontally"),
@@ -705,7 +705,7 @@ impl EntryInfoView {
         cx: &mut Context<Self>,
     ) {
         if self.path == path {
-            // Same entry — but a folder size may have just landed from the
+            // Same entry, but a folder size may have just landed from the
             // async worker after we first showed "Calculate". Upgrade in
             // place rather than rescanning.
             if self.known_size != known_size {
@@ -844,8 +844,8 @@ impl EntryInfoView {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 // Staleness guard: the panel may have been retargeted
-                // (preview-pane embedded mode) while a slow gather —
-                // e.g. a network mount — was in flight. Applying it
+                // (preview-pane embedded mode) while a slow gather
+                // (e.g. a network mount) was in flight. Applying it
                 // would show file A's size/permissions under file B.
                 if this.path != apply_path || cancel.load(Ordering::Relaxed) {
                     return;
@@ -879,7 +879,7 @@ impl EntryInfoView {
 
     /// Apply an edit result: surface failures as a toast, and on success
     /// reload the file list for the affected directory and re-gather so the
-    /// panel reflects the new state. Success is silent — the refreshed rows
+    /// panel reflects the new state. Success is silent: the refreshed rows
     /// are the feedback.
     fn after_write(
         &mut self,
@@ -907,7 +907,7 @@ impl EntryInfoView {
     }
 
     /// Kick a recursive size scan for a folder/volume's "Calculate" button.
-    /// Read-only work (no mutation) — streams the total back into the open
+    /// Read-only work (no mutation): streams the total back into the open
     /// record when it finishes.
     fn calculate_size(&mut self, cx: &mut Context<Self>) {
         if let GatherState::Ready(info) = &mut self.state {
@@ -921,7 +921,7 @@ impl EntryInfoView {
         // Share the file list's folder-size cache so a folder already
         // sized in the Size column answers instantly, and a value
         // computed here feeds that column too (one source of truth,
-        // one invalidation path — see docs/features/FRESHNESS.md).
+        // one invalidation path: see docs/features/FRESHNESS.md).
         let db = crate::process_state::process_state(cx).db_snapshot();
         cx.spawn(async move |this, cx| {
             let bytes = cx
@@ -933,7 +933,7 @@ impl EntryInfoView {
             let _ = this.update(cx, |this, cx| {
                 // Drop stale/cancelled results: a cancelled walk
                 // returns an invalid partial sum, and a retarget swaps
-                // both the path and the cancel handle — presenting
+                // both the path and the cancel handle, presenting
                 // either as a confident size would be wrong (and
                 // would clobber the newer scan's cancel handle).
                 if this.path != apply_path
@@ -964,7 +964,7 @@ impl EntryInfoView {
     /// Run a native write on the background executor, then route its
     /// result through [`Self::after_write`] with the window available
     /// for the failure toast. `chflags`/`chmod`/xattr writes are
-    /// filesystem I/O — inline in a click listener they'd block the UI
+    /// filesystem I/O: inline in a click listener they'd block the UI
     /// for the full mount timeout on a dead network volume or a
     /// dataless placeholder (Prime Directive).
     fn spawn_write(
@@ -1076,7 +1076,7 @@ impl EntryInfoView {
         );
     }
 
-    /// Rewrite the permission mode after a single rwx box flipped. Unix only —
+    /// Rewrite the permission mode after a single rwx box flipped. Unix only:
     /// Windows shows a read-only summary instead of the editable rwx grid.
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn apply_permissions(&mut self, mode: u32, window: &mut Window, cx: &mut Context<Self>) {
@@ -1090,7 +1090,7 @@ impl EntryInfoView {
 }
 
 impl EntryInfoView {
-    /// Esc — close the standalone Get Info window.
+    /// Esc: close the standalone Get Info window.
     fn on_dismiss(&mut self, _: &EntryInfoDismiss, window: &mut Window, _cx: &mut Context<Self>) {
         window.remove_window();
     }
@@ -1105,7 +1105,7 @@ impl Focusable for EntryInfoView {
 impl Drop for EntryInfoView {
     fn drop(&mut self) {
         // If a recursive size scan is still running when the popup closes,
-        // tell it to stop — its result has nowhere to land.
+        // tell it to stop: its result has nowhere to land.
         if let Some(c) = &self.size_cancel {
             c.store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -1119,7 +1119,7 @@ impl Render for EntryInfoView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.embedded {
             window.set_window_title(&tr!(
-                "Get Info — {name}",
+                "Get Info: {name}",
                 name = crate::private_mode::present_leaf_str(&self.name, false)
             ));
         }
@@ -1206,7 +1206,7 @@ impl Render for EntryInfoView {
                     .child(sections),
             )
             // This window's own Root holds the notification state but doesn't
-            // render the layer — do it here so edit-error toasts appear.
+            // render the layer: do it here so edit-error toasts appear.
             .when(!crate::private_mode::enabled(), |this| {
                 this.children(Root::render_notification_layer(window, cx))
             })
@@ -1392,7 +1392,7 @@ impl EntryInfoView {
                     };
                     let row = h_flex().gap_1().items_center().child(div().child(shown));
                     if *refreshable {
-                        // A cached folder/volume total — let the user recompute.
+                        // A cached folder/volume total: let the user recompute.
                         row.child(
                             Button::new("entry-info-recalc-size")
                                 .label("\u{21BB}")
@@ -1425,7 +1425,7 @@ impl EntryInfoView {
     fn render_permissions(&self, m: &PermMatrix, cx: &mut Context<Self>) -> AnyElement {
         // Windows files are governed by NTFS ACLs, not Unix owner/group/other
         // rwx bits, so the synthesized 3×3 grid + octal would only mislead.
-        // Surface the one concept that maps cleanly — writable vs read-only —
+        // Surface the one concept that maps cleanly: writable vs read-only,
         // and leave the editable read-only/hidden toggles to the Attributes
         // section above.
         #[cfg(target_os = "windows")]

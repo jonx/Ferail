@@ -4,11 +4,11 @@
 //! its embedded tags and decoded audio properties. It is filled off the UI
 //! thread by the native reader (`ferail_fs_native::media`, which owns the
 //! `lofty` dependency) and consumed read-only by the Get Info panel, the
-//! preview, and the file-list Description column — in keeping with the Prime
+//! preview, and the file-list Description column, in keeping with the Prime
 //! Directive: paint never touches I/O and never parses a container.
 //!
 //! This crate has zero platform and zero UI deps: the model is data plus small
-//! pure formatting helpers. The bytes of embedded cover art never live here —
+//! pure formatting helpers. The bytes of embedded cover art never live here:
 //! they ride a separate channel (`ferail_fs_native::media::read_cover_art`)
 //! straight into the host's image cache, so a multi-megabyte APIC frame never
 //! sits in a struct the file list clones per row. Cover *presence* isn't
@@ -23,7 +23,7 @@ use std::fmt;
 /// fields stay raw so the formatting helpers below can compose different
 /// summaries (Get Info rows vs. the one-line Description) without re-reading.
 ///
-/// Absent facts are empty strings / `None` — a file with no tag at all still
+/// Absent facts are empty strings / `None`: a file with no tag at all still
 /// yields a `MediaTags` carrying just the audio properties (duration, bitrate,
 /// …), which is exactly what a freshly-ripped-but-untagged file should show.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -58,7 +58,7 @@ pub struct MediaTags {
 }
 
 impl MediaTags {
-    /// True when there is nothing worth showing — no codec label and no audio
+    /// True when there is nothing worth showing, no codec label and no audio
     /// properties. A reader that failed to open the file returns this so the
     /// host can skip the whole Media section rather than render an empty box.
     pub fn is_empty(&self) -> bool {
@@ -78,17 +78,17 @@ impl MediaTags {
     }
 
     /// `"MM:SS"`, or `"H:MM:SS"` past an hour. Empty when the duration is
-    /// unknown (`0`). Pure integer arithmetic — safe anywhere.
+    /// unknown (`0`). Pure integer arithmetic: safe anywhere.
     pub fn duration_label(&self) -> String {
         format_duration(self.duration_secs)
     }
 
-    /// `"3 of 12"`, `"3"`, or empty — the track position for a Get Info row.
+    /// `"3 of 12"`, `"3"`, or empty: the track position for a Get Info row.
     pub fn track_label(&self) -> String {
         number_of(self.track, self.track_total)
     }
 
-    /// `"1 of 2"`, `"1"`, or empty — the disc position for a Get Info row.
+    /// `"1 of 2"`, `"1"`, or empty: the disc position for a Get Info row.
     pub fn disc_label(&self) -> String {
         number_of(self.disc, self.disc_total)
     }
@@ -133,7 +133,7 @@ impl MediaTags {
     /// The one-line ` · `-joined fact string for the file-list Description
     /// column, e.g. `"MP3 · stereo · 44.1 kHz · 192 kbps · 03:24"` or
     /// `"FLAC · stereo · 44.1 kHz · 16-bit · 882 kbps · 03:24"`. Every segment
-    /// is dropped when absent, with no lossy/lossless branching — whatever the
+    /// is dropped when absent, with no lossy/lossless branching: whatever the
     /// decoder reported is shown, so an untagged WAV still reads cleanly as
     /// `"WAV · stereo · 44.1 kHz · 16-bit"`. Same contract as the magic-derived
     /// descriptions in [`crate::FileEntry::display_description`].
@@ -175,15 +175,15 @@ fn number_of(n: Option<u32>, total: Option<u32>) -> String {
     }
 }
 
-/// Portable still-image metadata for Get Info (WIN-014) — dimensions from
+/// Portable still-image metadata for Get Info (WIN-014): dimensions from
 /// the image header plus a curated EXIF subset. Filled by
 /// `ferail_fs_native::image_meta::read_image_meta` off the UI thread and
 /// rendered read-only, like [`MediaTags`].
 ///
 /// String fields are display-ready but deliberately unlocalized here (the
 /// `"192 kbps"` precedent above): units and numbers only. Words that need
-/// translating — the row labels, the orientation wording, the GPS-presence
-/// phrase — belong to the UI layer.
+/// translating: the row labels, the orientation wording, the GPS-presence
+/// phrase: belong to the UI layer.
 #[derive(Clone, Default, PartialEq)]
 pub struct ImageMeta {
     /// Pixel dimensions from the image *header* (never a full decode).
@@ -196,7 +196,7 @@ pub struct ImageMeta {
     pub lens_model: String,
     /// `DateTimeOriginal` (falling back to `DateTime`), normalized from
     /// EXIF's `"2023:04:01 12:30:00"` to `"2023-04-01 12:30:00"`. EXIF
-    /// datetimes are naive local time — shown as-is, never converted.
+    /// datetimes are naive local time: shown as-is, never converted.
     pub taken: String,
     /// Raw EXIF orientation code `1..=8`; `None` when absent or invalid.
     pub orientation: Option<u16>,
@@ -243,7 +243,7 @@ impl fmt::Debug for ImageMeta {
 }
 
 impl ImageMeta {
-    /// True when nothing at all was read — the caller then skips the whole
+    /// True when nothing at all was read: the caller then skips the whole
     /// Image section instead of rendering an empty box.
     pub fn is_empty(&self) -> bool {
         self.width.is_none()
@@ -268,7 +268,7 @@ impl ImageMeta {
         }
     }
 
-    /// `"Canon EOS R5"` — make + model, deduplicated when the model already
+    /// `"Canon EOS R5"`: make + model, deduplicated when the model already
     /// repeats the make (most vendors do). Empty when neither is known.
     pub fn camera_label(&self) -> String {
         let make = self.camera_make.trim();
@@ -328,7 +328,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(m.dimensions_label(), "4032 \u{00D7} 3024");
-        // Model already repeats the make — no "Canon Canon EOS R5".
+        // Model already repeats the make, no "Canon Canon EOS R5".
         assert_eq!(m.camera_label(), "Canon EOS R5");
         assert_eq!(
             m.exposure_label(),
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn description_untagged_wav_no_bitrate() {
-        // A bare WAV: bit depth but no bitrate — the bitrate slot drops out.
+        // A bare WAV: bit depth but no bitrate: the bitrate slot drops out.
         let t = MediaTags {
             codec: "WAV".into(),
             channels: Some(2),

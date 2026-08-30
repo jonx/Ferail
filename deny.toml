@@ -1,12 +1,12 @@
 # cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/).
 #
 # Purpose (TODO.md → Open-Source Release): catch license / advisory drift
-# mechanically — in particular a future `gpui` rev bump that changes the
+# mechanically - in particular a future `gpui` rev bump that changes the
 # transitive license surface. Run with:
 #
 #   cargo deny check licenses advisories
 #
-# There is currently NO copyleft in the graph — by active severance, not
+# There is currently NO copyleft in the graph - by active severance, not
 # upstream accident. gpui depends on GPL-3.0 `ztracing` directly (since
 # zed 00cba838a), and `sum_tree` does too; both resolve to the clean-room
 # MIT/Apache no-op stub `vendor/ztracing` via the `[patch]` in the root
@@ -14,7 +14,7 @@
 # graph entirely. So: a `ztracing` row in Cargo.lock pointing at
 # `vendor/ztracing` is CORRECT; ztracing from the zed git source, or any
 # appearance of ztracing_macro / zlog, means the severance broke. The
-# exception list below is EMPTY on purpose — any GPL crate that appears
+# exception list below is EMPTY on purpose - any GPL crate that appears
 # after a gpui/gpui-component rev bump must fail this check rather than
 # inherit a stale allowance. See THIRD-PARTY-NOTICES.md (and upstream
 # zed#55470, still open) before re-adding anything here.
@@ -40,14 +40,14 @@ allow = [
     "MPL-2.0",
     "OFL-1.1",
 ]
-# Intentionally empty — see the header. Do not add a copyleft exception
+# Intentionally empty - see the header. Do not add a copyleft exception
 # without also updating THIRD-PARTY-NOTICES.md.
 exceptions = []
 
 [advisories]
 yanked = "warn"
 # Every entry below arrives transitively through the PINNED upstream
-# revs (gpui / gpui-component) and cannot be fixed from this workspace —
+# revs (gpui / gpui-component) and cannot be fixed from this workspace,
 # they clear only when the upstream pins bump. Listed individually (not
 # blanket-silenced) so anything NEW still fails the check. Re-audit
 # this list on every gpui/gpui-component rev bump.

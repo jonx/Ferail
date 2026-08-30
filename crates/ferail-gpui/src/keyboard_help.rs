@@ -21,7 +21,7 @@ use crate::text::TextScale as _;
 /// command palette) so clicking a row fires the corresponding
 /// action. Returns the boxed action when we know how to dispatch it;
 /// `None` for commands that don't have a Shell-level handler yet
-/// (e.g. tag colours / open-with slots — context-only).
+/// (e.g. tag colours / open-with slots: context-only).
 fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gpui::Action>> {
     use crate::shell::*;
     Some(match id.0 {
@@ -239,7 +239,7 @@ fn category_title(category: Category) -> SharedString {
 ///
 /// macOS uses the native modifier glyphs with no separators, exactly as Finder
 /// shows them in its menus: `\u{2318}\u{21E7}H` (Cmd+Shift+H). Windows and Linux
-/// use conventional `Ctrl+Shift+H` text — the catalogue's `primary` modifier
+/// use conventional `Ctrl+Shift+H` text: the catalogue's `primary` modifier
 /// binds to **Ctrl** there (gpui maps `cmd-` to Ctrl off macOS), and the Apple
 /// `\u{2318}`/`\u{2325}` glyphs would be both wrong and unreadable on those
 /// platforms. The key label (arrows, `\u{232B}`, …) is shared.

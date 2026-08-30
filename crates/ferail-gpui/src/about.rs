@@ -1,13 +1,13 @@
-//! About dialog — a modal popup hosted by gpui-component's `Dialog`
+//! About dialog: a modal popup hosted by gpui-component's `Dialog`
 //! primitive. The Dialog ships ESC-to-dismiss, click-outside-to-
 //! dismiss (overlay click), a close button, and an open/close
-//! animation — wiring all of that by hand on a stand-alone OS
+//! animation, wiring all of that by hand on a stand-alone OS
 //! window would mean reimplementing focus traps + activation
 //! observers from scratch. The earlier separate-window version
 //! is gone for that reason; if About should ever be detachable
 //! we can promote `AboutBody` to a stand-alone view.
 //!
-//! Surface: [`open_about_dialog`] — call from any App-level handler
+//! Surface: [`open_about_dialog`]: call from any App-level handler
 //! (menu / accelerator). It defers the actual open until the next app
 //! tick so app-menu dispatch has finished unwinding, then resolves a
 //! host window and routes `window.open_dialog(...)`.
@@ -37,7 +37,7 @@ use smallvec::SmallVec;
 
 /// Process-wide flag: is an About dialog currently visible? Cheap
 /// guard against the menu item being clicked twice in quick
-/// succession (gpui-component allows stacking dialogs by default —
+/// succession (gpui-component allows stacking dialogs by default,
 /// for About that would look like a bug). Stored as a Global so the
 /// open and close call sites read from the same source of truth.
 #[derive(Default)]
@@ -49,9 +49,9 @@ impl Global for AboutOpenFlag {}
 /// no-op while one is already open or queued to open.
 ///
 /// Host-window resolution falls back through three sources:
-///  1. `cx.active_window()` — normal case (key-equivalent fired,
+///  1. `cx.active_window()`: normal case (key-equivalent fired,
 ///     or menu raised from a focused window on Mac).
-///  2. First open window — on Windows, the menu's action dispatch
+///  2. First open window, on Windows, the menu's action dispatch
 ///     can leave `active_window()` returning `None` mid-flight;
 ///     any open window has a Root with the dialog layer, so this
 ///     covers the menu-click path.
@@ -98,7 +98,7 @@ fn build_dialog(dialog: Dialog) -> Dialog {
         .keyboard(true)
         .close_button(true)
         .button_props(
-            // No OK/Cancel buttons in the footer — Close button in the
+            // No OK/Cancel buttons in the footer: Close button in the
             // corner + ESC + overlay click cover dismissal. An empty
             // `show_cancel(false)` keeps both buttons hidden.
             DialogButtonProps::default().show_cancel(false),
@@ -112,7 +112,7 @@ fn build_dialog(dialog: Dialog) -> Dialog {
 }
 
 /// The dialog's body, rendered fresh on each open. Static content,
-/// so we don't need a View — a plain `IntoElement` is enough.
+/// so we don't need a View: a plain `IntoElement` is enough.
 fn about_body() -> impl IntoElement {
     let os_label: &str = match std::env::consts::OS {
         "windows" => "Windows",
@@ -169,12 +169,12 @@ fn icon_element(icon: &Option<Arc<RenderImage>>) -> AnyElement {
 }
 
 /// Theme-coloured text helpers. Wrapped in a struct purely to keep
-/// the call sites in `about_body` readable — the parent uses
+/// the call sites in `about_body` readable: the parent uses
 /// `cx.theme()`, but we don't have a `Context` here, so each helper
 /// closes over the renderer at draw time via `div().text_color(...)`
 /// resolved against `cx.theme()` in the parent. Concretely: we use
 /// the inline closure `|cx| ...` style accepted by gpui's text
-/// builders. Here it's simpler — read theme inline from `cx` at
+/// builders. Here it's simpler: read theme inline from `cx` at
 /// render time by capturing in `div().text_color(cx.theme().foreground)`.
 struct WithTheme;
 impl WithTheme {
@@ -221,7 +221,7 @@ fn website_row(url: &'static str) -> impl IntoElement {
                 .child(url)
                 .on_click(move |_: &ClickEvent, _window, cx| {
                     let target = format!("https://{url}");
-                    // LaunchServices resolution can stall — worker, not
+                    // LaunchServices resolution can stall: worker, not
                     // UI thread (Prime Directive).
                     cx.background_spawn(async move {
                         crate::platform_shell::open_url(&target);
@@ -255,7 +255,7 @@ fn privacy_row() -> impl IntoElement {
 }
 
 /// Decode the embedded PNG into a `RenderImage`. Returns `None` on
-/// any decode failure so the caller can fall back to a blank box —
+/// any decode failure so the caller can fall back to a blank box:
 /// a missing About icon shouldn't crash the app.
 ///
 /// Same channel swap as `preview::build_render_image`: gpui's

@@ -6,7 +6,7 @@
 //! between dirents and level boundaries, same throttled `on_progress`.
 //! The host owns the thread spawn + event-loop dispatch.
 //!
-//! Matches are emitted as [`SearchHit`]s — a [`FileEntry`] (ready to drop
+//! Matches are emitted as [`SearchHit`]s: a [`FileEntry`] (ready to drop
 //! into the file list) plus its absolute path (search results live
 //! outside the current directory, so the host must register the path in
 //! its own node store). The walker reuses the same `FileEntry` builder
@@ -44,7 +44,7 @@ pub struct SearchQuery {
     /// Structured query (`size:>10mb mod:week …`). When set it replaces
     /// `needle`: its text terms match the name/path haystack, its
     /// metadata terms test the built row's cached fields. An
-    /// expression with only metadata terms matches every name — the
+    /// expression with only metadata terms matches every name: the
     /// walk is then a pure metadata scan.
     pub expr: Option<ferail_core::filter_expr::FilterExpr>,
 }
@@ -77,7 +77,7 @@ impl NativeFs {
     /// Mac-safe, matching the disk-usage walker:
     /// - dataless / iCloud placeholders are skipped (never downloaded);
     /// - `descend_packages = false` treats `*.app` / `*.bundle` etc. as
-    ///   opaque leaves — they can match by name but are not descended;
+    ///   opaque leaves: they can match by name but are not descended;
     /// - symlinks are inspected via `symlink_metadata` and never
     ///   followed, keeping the walk cycle-safe;
     /// - per-directory read failures are absorbed (partial-but-complete).
@@ -272,10 +272,10 @@ impl NativeFs {
 
 /// True when the file is an undownloaded cloud placeholder (APFS
 /// dataless / `SF_DATALESS`). Reading it would trigger a network
-/// download — the prime directive forbids that off a semantic event.
+/// download: the prime directive forbids that off a semantic event.
 #[cfg(target_os = "macos")]
 fn is_dataless_flags(flags: u32) -> bool {
-    // <sys/stat.h>: SF_DATALESS — "file is dataless object" (the
+    // <sys/stat.h>: SF_DATALESS: "file is dataless object" (the
     // placeholder for a not-yet-materialized iCloud / FileProvider file).
     const SF_DATALESS: u32 = 0x4000_0000;
     flags & SF_DATALESS != 0

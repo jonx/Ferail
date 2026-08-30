@@ -20,7 +20,7 @@ use ferail_meta::{FileMetaRecord, MetadataDb};
 
 /// `DupeHashCache` over the shared metadata DB. Cheap to construct; holds
 /// only the shared handle. `indexed_at_unix` is stamped at construction
-/// so the worker — which can't read the clock cheaply on the hot path —
+/// so the worker, which can't read the clock cheaply on the hot path:
 /// writes a consistent timestamp for the whole scan.
 pub struct DbHashCache {
     db: Arc<Mutex<MetadataDb>>,
@@ -41,7 +41,7 @@ impl DupeHashCache for DbHashCache {
         let path_str = path.to_str()?;
         let guard = self.db.lock().ok()?;
         let rec = guard.get_file(path_str).ok().flatten()?;
-        // Only trust the stored hash when size *and* mtime still match —
+        // Only trust the stored hash when size *and* mtime still match:
         // a renamed-in-place or rewritten file at the same path must be
         // re-hashed. (upsert_file also guards mtime, this is belt-and-
         // suspenders against partial rows.)

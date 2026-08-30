@@ -3,8 +3,8 @@
 //! A Quick Look thumbnail of a source file is a tiny unreadable
 //! image, so text files get their actual content rendered monospaced
 //! instead (docs/features/PREVIEW.md). Detection happens in the
-//! worker — read a bounded prefix, then use the shared UTF/CP437/Latin-1
-//! decoder (with an inert ANSI layout pass for scene art) — so
+//! worker: read a bounded prefix, then use the shared UTF/CP437/Latin-1
+//! decoder (with an inert ANSI layout pass for scene art), so
 //! there's no dependency on magic having been sniffed yet, and the UI
 //! thread never reads the file.
 //!
@@ -29,10 +29,10 @@ use crate::shell::Shell;
 /// rarely needs more on screen, and it bounds the cost for a huge
 /// file that happens to be text (logs, CSVs).
 const MAX_BYTES: usize = 128 * 1024;
-/// Lines kept after decoding — the pane scrolls, but an enormous
+/// Lines kept after decoding: the pane scrolls, but an enormous
 /// single-line minified file shouldn't balloon the render tree.
 const MAX_LINES: usize = 500;
-/// Per-path cache cap — the pane shows one at a time, so small is fine.
+/// Per-path cache cap: the pane shows one at a time, so small is fine.
 const CACHE_CAP: usize = 16;
 
 #[derive(Clone, Debug)]
@@ -49,7 +49,7 @@ pub enum TextPreviewState {
     /// Decoded text (already line-capped), ready to render.
     Loaded(Arc<TextPreviewDocument>),
     /// Read succeeded but the content isn't text (binary / image /
-    /// etc.) — the thumbnail provider covers those.
+    /// etc.): the thumbnail provider covers those.
     NotText,
     /// The read itself failed (permissions, gone).
     Failed,
@@ -145,7 +145,7 @@ impl TextPreviewCache {
 }
 
 /// Kick the background text read for `path` unless the cache already
-/// has it (in any state — `Pending` dedups, `NotText`/`Failed` stop
+/// has it (in any state: `Pending` dedups, `NotText`/`Failed` stop
 /// retry storms). Mirrors `preview::request`; call sites already hold
 /// `&mut Shell`.
 pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) {
@@ -217,7 +217,7 @@ fn read_text_preview_cancellable(
     Ok(decode_text_preview_document(buf))
 }
 
-/// The decode half of [`read_text_preview`], over bytes we already hold —
+/// The decode half of [`read_text_preview`], over bytes we already hold:
 /// archive entries are read into memory rather than written out, so they need
 /// the same text-vs-binary decision without a file to point at.
 pub(crate) fn decode_text_preview(buf: Vec<u8>) -> Option<String> {
@@ -397,7 +397,7 @@ pub fn loaded_document(state: Option<TextPreviewState>) -> Option<Arc<TextPrevie
 ///   TextView renders them formatted.
 /// - Everything else is wrapped in a fenced code block tagged with the
 ///   file extension (the highlighter accepts extensions as language
-///   aliases — `rs`, `py`, `ts`, …), so source files render
+///   aliases: `rs`, `py`, `ts`, …), so source files render
 ///   syntax-highlighted and unknown kinds fall back to plain mono.
 ///
 /// The fence is made longer than any backtick run in the content so a
@@ -485,7 +485,7 @@ mod tests {
     #[test]
     fn reads_latin1_text() {
         let p = scratch("readme-latin1.txt");
-        // ISO-8859-1 "Café © Digita" — 0xE9 (é) and 0xA9 (©) are
+        // ISO-8859-1 "Café © Digita", 0xE9 (é) and 0xA9 (©) are
         // invalid UTF-8 lead bytes, but this is text and previews as
         // such via the Latin-1 fallback (Amiga/DOS-era readmes).
         std::fs::write(

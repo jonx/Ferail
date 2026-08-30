@@ -181,11 +181,11 @@ impl ChecksumView {
                 cx.theme().warning,
             ),
             (HashPhase::Ready(actual), ParsedChecksum::Valid(expected)) if *actual == expected => (
-                tr!("MATCH — the file checksum is identical."),
+                tr!("MATCH: the file checksum is identical."),
                 cx.theme().success,
             ),
             (HashPhase::Ready(_), ParsedChecksum::Valid(_)) => (
-                tr!("DOES NOT MATCH — the checksums are different."),
+                tr!("DOES NOT MATCH: the checksums are different."),
                 cx.theme().danger,
             ),
             (HashPhase::Computing { .. }, ParsedChecksum::Valid(_)) => (
