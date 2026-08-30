@@ -405,7 +405,7 @@ fn read_field(input: &mut impl Read) -> Result<Vec<u8>, ()> {
 }
 
 fn bytes_to_utf16(bytes: &[u8]) -> Option<Vec<u16>> {
-    (bytes.len() % 2 == 0).then(|| {
+    bytes.len().is_multiple_of(2).then(|| {
         bytes
             .chunks_exact(2)
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
@@ -515,7 +515,7 @@ fn namespace_broker_run() -> Result<(), ()> {
             if count > 1_000_000 {
                 return Err(());
             }
-            if count % 128 == 0 {
+            if count.is_multiple_of(128) {
                 output.flush().map_err(|_| ())?;
             }
         }
