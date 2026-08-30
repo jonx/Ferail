@@ -76,7 +76,12 @@ impl GoToFolderPrompt {
                     })
                     .detach();
                 }
-                InputEvent::PressEnter { .. } if !this.accept(None, window, cx) => {
+                // Enter commits the path that is actually in the field.
+                // Completion is opt-in through Tab: a suggestion list must
+                // never rewrite what the user typed (or pasted) at the moment
+                // they say "go" (docs/features/NAVIGATION.md).
+                InputEvent::PressEnter { .. } => {
+                    this.suggestions.clear();
                     this.commit(window, cx);
                 }
                 _ => {}
@@ -215,6 +220,21 @@ impl Render for GoToFolderPrompt {
                 move |_: &gpui_component::input::MoveDown, _window, cx| {
                     let handled = weak
                         .update(cx, |this, cx| this.move_selection(1, cx))
+                        .unwrap_or(false);
+                    if handled {
+                        cx.stop_propagation();
+                    }
+                }
+            })
+            // Tab accepts the highlighted completion, the shell convention.
+            // `IndentInline` is what the input widget binds Tab to; a
+            // single-line field has nothing to indent, so taking it here
+            // costs nothing.
+            .on_action({
+                let weak = cx.weak_entity();
+                move |_: &gpui_component::input::IndentInline, window, cx| {
+                    let handled = weak
+                        .update(cx, |this, cx| this.accept(None, window, cx))
                         .unwrap_or(false);
                     if handled {
                         cx.stop_propagation();

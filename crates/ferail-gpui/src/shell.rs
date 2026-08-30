@@ -2030,7 +2030,7 @@ impl Shell {
         let breadcrumb_subscription = cx.subscribe_in(
             &breadcrumb_input,
             window,
-            move |this, state, ev: &InputEvent, window, cx| match ev {
+            move |this, state, ev: &InputEvent, _window, cx| match ev {
                 InputEvent::Change if this.breadcrumb_edit.is_active() => {
                     let value = state.read(cx).value().to_string();
                     let cursor = state.read(cx).selected_range().end;
@@ -2061,9 +2061,10 @@ impl Shell {
                     if !this.breadcrumb_edit.is_active() {
                         return;
                     }
-                    if this.accept_breadcrumb_completion(None, window, cx) {
-                        return;
-                    }
+                    // Enter navigates to what the field holds. Accepting a
+                    // completion is Tab's job, so pasting a path and pressing
+                    // Enter cannot append a subfolder the user never asked for.
+                    this.breadcrumb_suggestions.clear();
                     let raw = state.read(cx).value().to_string();
                     crate::log_info!(90, "breadcrumb: commit {raw:?}");
                     let path = parse_breadcrumb_path(&raw);
@@ -2850,8 +2851,11 @@ impl Shell {
                     // recursive / global search of the current folder
                     // and below (docs/features/SEARCH.md).
                     InputEvent::PressEnter { .. } => {
-                        if this.accept_filter_completion(tab_id, None, window, cx) {
-                            return;
+                        // Same contract as the path fields: Enter runs the
+                        // query as typed, Tab is what accepts a token
+                        // suggestion.
+                        if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
+                            this.tabs[idx].filter_suggestions.clear();
                         }
                         let value = state.read(cx).value().to_string();
                         // Disk Usage owns a complete recursive snapshot

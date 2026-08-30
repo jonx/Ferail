@@ -2838,6 +2838,24 @@ impl Shell {
                                         }
                                     }
                                 })
+                                // Tab accepts the highlighted token suggestion;
+                                // Enter runs the filter exactly as typed.
+                                .on_action({
+                                    let weak = cx.weak_entity();
+                                    move |_: &gpui_component::input::IndentInline, window, cx| {
+                                        let handled = weak
+                                            .update(cx, |this, cx| {
+                                                let tab_id = this.active_tab().id;
+                                                this.accept_filter_completion(
+                                                    tab_id, None, window, cx,
+                                                )
+                                            })
+                                            .unwrap_or(false);
+                                        if handled {
+                                            cx.stop_propagation();
+                                        }
+                                    }
+                                })
                                 .on_action(move |_: &gpui_component::input::Escape, window, cx| {
                                     let _ = weak_filter_escape.update(cx, |this, cx| {
                                         this.on_clear_filter(
@@ -3637,6 +3655,22 @@ impl Shell {
                     move |_: &gpui_component::input::MoveDown, _window, cx| {
                         let handled = weak
                             .update(cx, |this, cx| this.move_breadcrumb_completion(1, cx))
+                            .unwrap_or(false);
+                        if handled {
+                            cx.stop_propagation();
+                        }
+                    }
+                })
+                // Tab accepts the highlighted completion; Enter (below) is
+                // left to the input's own PressEnter, which navigates to the
+                // typed path verbatim.
+                .on_action({
+                    let weak = cx.weak_entity();
+                    move |_: &gpui_component::input::IndentInline, window, cx| {
+                        let handled = weak
+                            .update(cx, |this, cx| {
+                                this.accept_breadcrumb_completion(None, window, cx)
+                            })
                             .unwrap_or(false);
                         if handled {
                             cx.stop_propagation();

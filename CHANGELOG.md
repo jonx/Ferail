@@ -8,6 +8,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Enter in a path or filter field now uses exactly what you typed.**
+  Pasting a folder path that contains subfolders and pressing Enter used
+  to append the first suggested subfolder, landing you somewhere you
+  never asked for. Suggestions are now opt-in: Up/Down move the
+  highlight, **Tab** accepts it, and Enter always goes to (or searches
+  for) what the field actually holds. Applies to the breadcrumb path
+  editor, the Go to Folder prompt, and the filter box.
+
 - **Escape now unwinds Ferail's transient UI consistently.** It closes filter
   suggestions before clearing a query, cancels inline name/path edits, exits
   archive and other docked result surfaces, hides the preview pane, and closes

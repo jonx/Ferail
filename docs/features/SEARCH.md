@@ -48,11 +48,28 @@ pin → a Spotlight-backed live tab.
 
 The filter box (and, via Enter, subtree search) understands `key:value`
 tokens alongside free text. The language lives in
-`ferail_core::filter_expr` — one parser, three consumers: the Tier 0
+`ferail_core::filter_expr`: one parser, three consumers: the Tier 0
 in-directory filter (`shell/loading.rs`), the Tier 1 walker
 (`SearchQuery::expr`), and the Spotlight path (text terms feed the
-`mdfind` query, metadata terms post-filter the hits) — so every surface
+`mdfind` query, metadata terms post-filter the hits), so every surface
 enforces identical semantics.
+
+### Autocomplete keys
+
+Every field with a suggestion list (the filter box, the breadcrumb path
+editor, and the Go to Folder prompt) follows one contract:
+
+| Key | Does |
+|---|---|
+| Up / Down | move the highlight inside the suggestion list |
+| Tab | accept the highlighted suggestion into the field |
+| Enter | run / navigate to **exactly what the field holds** |
+| Escape | close the suggestion list, then leave the field |
+
+Enter never silently accepts a suggestion. Pasting a folder path that has
+subfolders used to append the first one on Enter, so the user landed
+somewhere they never typed; completion is opt-in through Tab precisely so
+that cannot happen.
 
 | Token | Values | Notes |
 |---|---|---|
