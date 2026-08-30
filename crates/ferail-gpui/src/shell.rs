@@ -1019,6 +1019,14 @@ pub struct Shell {
     pub inline_name_edit:
         crate::inline_edit::InlineEditModel<crate::inline_edit::FileNameEditTarget>,
     pub inline_name_input: Entity<InputState>,
+    /// Click-to-rename on an already-selected row waits out the
+    /// double-click interval before it commits, because the first click of
+    /// a double-click is indistinguishable from a lone rename click until
+    /// the interval has passed. Holds the armed row and the generation that
+    /// authorises it; a double-click (or any other row gesture) bumps the
+    /// generation so the pending rename is dropped when its timer fires.
+    pending_click_rename: Option<(usize, u64)>,
+    click_rename_generation: u64,
     /// Stage 9.b: keyboard-shortcuts help overlay. `Some(filter)`
     /// while visible: the string is the live filter text shown in
     /// the modal's search input.
@@ -2232,6 +2240,8 @@ impl Shell {
             breadcrumb_completion_generation: 0,
             inline_name_edit,
             inline_name_input,
+            pending_click_rename: None,
+            click_rename_generation: 0,
             shortcuts_help_filter: None,
             shortcuts_help_command,
             // Default off: the preview pane eats ~250-300px on the
@@ -2640,7 +2650,7 @@ impl Shell {
                         this.apply_row_click_gesture(*row_ix, *modifiers, cx);
                     }
                     TableEvent::RenameRequested(row_ix) => {
-                        this.begin_inline_name_edit_at_row(*row_ix, window, cx);
+                        this.arm_click_rename(*row_ix, window.window_handle(), cx);
                     }
                     // Column layout is a process-wide preference: a
                     // reorder or resize on any tab writes through and
@@ -2739,6 +2749,9 @@ impl Shell {
                         this.apply_row_keyboard_gesture(*row_ix, *modifiers, cx);
                     }
                     TableEvent::DoubleClickedRow(row_ix) => {
+                        // The first click of this double-click may have armed
+                        // a rename on an already-selected row; opening wins.
+                        this.cancel_click_rename();
                         this.activate_row(*row_ix, Some(window.window_handle()), cx);
                     }
                     TableEvent::RightClickedRow(row_ix) => {
@@ -4889,6 +4902,9 @@ impl Shell {
     /// background path that wants to retarget an inactive tab,
     /// e.g. the cross-window reload fan-out in Phase E.
     pub fn load_path_for_tab(&mut self, tab_id: TabId, path: PathBuf, cx: &mut Context<Self>) {
+        // A pending click-rename is armed against row indices that this
+        // load invalidates.
+        self.cancel_click_rename();
         let Some(tab_index) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
         };

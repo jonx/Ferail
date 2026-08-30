@@ -3496,6 +3496,70 @@ impl Shell {
     /// Start inline rename for an explicit visible row. Used by the delayed
     /// second-click gesture; unlike `target_row`, this does not consume a
     /// context-menu target left by an unrelated operation.
+    /// Delay a click-to-rename on an already-selected row by the
+    /// double-click interval.
+    ///
+    /// The first click of a double-click is byte-identical to a lone
+    /// rename click: `click_count` is 1 for both, and only the passage of
+    /// the interval tells them apart. Starting the edit immediately meant
+    /// double-clicking a selected folder mounted the name editor, which
+    /// then swallowed the second click, so the folder never opened
+    /// (docs/features/FILE_OPS.md).
+    ///
+    /// Opening is the safer default, so a double-click cancels the armed
+    /// rename rather than the reverse, and the fire path re-checks that the
+    /// row is still the same entry in the same tab.
+    pub(super) fn arm_click_rename(
+        &mut self,
+        row: usize,
+        window: gpui::AnyWindowHandle,
+        cx: &mut Context<Self>,
+    ) {
+        // macOS's default double-click interval. Erring long keeps a slow
+        // double-click opening the folder instead of renaming it.
+        const CLICK_RENAME_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+        self.click_rename_generation = self.click_rename_generation.wrapping_add(1);
+        let generation = self.click_rename_generation;
+        self.pending_click_rename = Some((row, generation));
+        let tab_id = self.active_tab().id;
+        let node = self.node_id_at_row(row, cx);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(CLICK_RENAME_DELAY).await;
+            let ok = this.update(cx, |this: &mut Self, cx| {
+                if this.pending_click_rename != Some((row, generation))
+                    || this.click_rename_generation != generation
+                {
+                    return false;
+                }
+                this.pending_click_rename = None;
+                // The listing can reload under a pending rename, so refuse
+                // unless the row still resolves to the entry that was clicked.
+                if this.active_tab().id != tab_id || this.node_id_at_row(row, cx) != node {
+                    return false;
+                }
+                true
+            });
+            // Mounting the editor needs a Window: re-enter through the
+            // window handle, the same shape the built-in editors use.
+            if matches!(ok, Ok(true)) {
+                let _ = window.update(cx, |_, window, cx| {
+                    let _ = this.update(cx, |this: &mut Self, cx| {
+                        this.begin_inline_name_edit_at_row(row, window, cx);
+                    });
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Drop an armed click-rename: a double-click, another row gesture, or
+    /// a navigation happened first.
+    pub(super) fn cancel_click_rename(&mut self) {
+        self.click_rename_generation = self.click_rename_generation.wrapping_add(1);
+        self.pending_click_rename = None;
+    }
+
     pub(super) fn begin_inline_name_edit_at_row(
         &mut self,
         row: usize,

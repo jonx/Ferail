@@ -1463,8 +1463,9 @@ impl Shell {
                                         modified,
                                     ) {
                                         app.stop_propagation();
+                                        let handle = window.window_handle();
                                         let _ = weak_label_rename.update(app, |this, cx| {
-                                            this.begin_inline_name_edit_at_row(i, window, cx);
+                                            this.arm_click_rename(i, handle, cx);
                                         });
                                     }
                                 })

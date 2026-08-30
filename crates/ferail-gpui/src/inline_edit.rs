@@ -128,8 +128,15 @@ pub enum InlineEditLayout {
 }
 
 /// Explorer-style rename gesture: the item was already selected, then its
-/// label received a later plain single click. A real double-click keeps its
-/// normal Open behavior because GPUI reports that gesture with count >= 2.
+/// label received a later plain single click.
+///
+/// This decides only that the gesture *qualifies*, never that the editor
+/// should mount now. The first click of a double-click is reported with
+/// count 1 too, so the caller arms the rename and waits out the
+/// double-click interval (`Shell::arm_click_rename`); a count >= 2 event
+/// cancels it and Open wins. Mounting the editor on the count-1 click made
+/// double-clicking a selected folder open the name editor instead, because
+/// the freshly mounted input swallowed the second click.
 pub fn should_begin_click_rename(
     already_selected: bool,
     editing: bool,
@@ -270,7 +277,9 @@ mod tests {
         assert!(should_begin_click_rename(true, false, 1, false));
         assert!(!should_begin_click_rename(false, false, 1, false));
         assert!(!should_begin_click_rename(true, true, 1, false));
+        // A real double-click never qualifies: Open wins outright.
         assert!(!should_begin_click_rename(true, false, 2, false));
+        assert!(!should_begin_click_rename(true, false, 3, false));
         assert!(!should_begin_click_rename(true, false, 1, true));
     }
 

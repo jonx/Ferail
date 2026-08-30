@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Double-clicking a selected folder opens it again instead of renaming
+  it.** Clicking the name of an already-selected item starts a rename, and
+  that gesture was firing on the first click of a double-click, so the name
+  editor appeared and swallowed the second click. The rename now waits out
+  the double-click interval before it starts, and a double-click cancels it.
+  Click, pause, click still renames, as before.
+
 ## 0.7.6 - 2026-08-30
 
 - **Enter in a path or filter field now uses exactly what you typed.**

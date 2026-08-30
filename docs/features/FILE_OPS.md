@@ -149,6 +149,26 @@ processes with no GUI (daemons, shells) and on Linux/Windows, where
 `activate_app` is unimplemented. The toast is pinned (no autohide) so it
 survives the app switch; the hover ✕ dismisses it.
 
+## Rename gestures
+
+Renaming starts from F2, the context menu, or Explorer-style click-to-rename:
+a plain click on the label of an already-selected row or grid cell.
+
+That last gesture cannot be decided on the click alone. The first click of a
+double-click carries `click_count == 1` too, so the two are identical until
+the double-click interval has passed. Ferail therefore **arms** the rename
+(`Shell::arm_click_rename`) and mounts the editor only once the interval
+elapses with no second click; a double-click cancels the armed rename and
+Open wins. Any other row gesture, and a directory load, cancel it as well,
+and the fire path re-checks that the row still resolves to the same entry in
+the same tab before mounting.
+
+Opening is the safer outcome of the two, so ties go to Open. Mounting the
+editor immediately was a real bug: the freshly mounted input swallowed the
+second click, so double-clicking a selected folder renamed it instead of
+opening it. `--click-rows` in the screenshot harness drives the gesture for
+real (`0,0:2` expects Open, `0,pause,0` expects rename).
+
 ## Feedback UX Policy
 
 Ferail's mutation feedback should stay calm. The UI itself is the confirmation

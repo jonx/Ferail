@@ -216,6 +216,14 @@ pub struct Args {
     /// exists outside a live drag). Uses placeholder coloured tiles
     /// for the item images.
     pub drag_ghost: Option<usize>,
+    /// Left-click rows for real: a comma-separated gesture list, each
+    /// `row[:count]`, with the literal `pause` inserting a wait longer than
+    /// the click-to-rename delay. Gestures otherwise follow each other
+    /// closely, the way a hand produces a double-click. So `0,0:2` is
+    /// "select then double-click" (expects Open) while `0,pause,0` is
+    /// "select, wait, click again" (expects rename). Dispatched as real
+    /// MouseDown/MouseUp through the window's event path.
+    pub click_rows: Vec<ClickGesture>,
     /// Right-click row N in the active tab's file list: a real
     /// `MouseDown` through the window's event path, so the row context
     /// menu builds exactly as it does for a user and can be captured.
@@ -238,6 +246,15 @@ pub struct Args {
     /// freeze-bisection switch (docs/features/FREEZE_DIAGNOSTICS.md);
     /// `FERAIL_SAFE_MODE=1` is the flagless spelling.
     pub safe_mode: bool,
+}
+
+/// One scripted mouse gesture for `--click-rows`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClickGesture {
+    Click { row: usize, count: usize },
+    /// Wait past the click-to-rename delay, so the next click is judged as
+    /// a fresh gesture rather than half of a double-click.
+    Pause,
 }
 
 pub fn parse_args() -> Args {
@@ -282,6 +299,29 @@ pub fn parse_args() -> Args {
             "--view" => args.view = iter.next().map(|s| crate::grid::ViewMode::from_str(&s)),
             "--select-row" => args.select_row = iter.next().and_then(|s| s.parse().ok()),
             "--select-name" => args.select_name = iter.next(),
+            "--click-rows" => {
+                args.click_rows = iter
+                    .next()
+                    .map(|raw| {
+                        raw.split(',')
+                            .filter_map(|part| {
+                                let part = part.trim();
+                                if part == "pause" {
+                                    return Some(ClickGesture::Pause);
+                                }
+                                let (row, count) = match part.split_once(':') {
+                                    Some((r, c)) => (r, c.parse().unwrap_or(1)),
+                                    None => (part, 1),
+                                };
+                                row.trim()
+                                    .parse()
+                                    .ok()
+                                    .map(|row| ClickGesture::Click { row, count })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
             "--context-menu-row" => {
                 args.context_menu_row = iter.next().and_then(|s| s.parse().ok())
             }
@@ -465,6 +505,10 @@ OPTIONS
   --viewer-adjust          Open the viewer's colour/enhance panel for capture.
   --viewer-rotate <n>      Rotate the viewer n clockwise quarter-turns.
   --viewer-step <n>        Advance n items in the viewer (after --viewer-rotate).
+  --click-rows <list>      Real left clicks on rows: `row[:count]` items
+                           separated by commas, `pause` waits past the
+                           click-to-rename delay. `0,0:2` double-clicks row 0
+                           (expects Open); `0,pause,0` expects rename.
   --text-editor <path>     Render the built-in text-editor window for <path>.
   --image-editor <path>    Render the built-in image-editor window for <path>
                            with demo redaction/annotation strokes.
@@ -977,6 +1021,7 @@ struct ShellArgs {
     select_name: Option<String>,
     select_rows: Vec<usize>,
     context_menu_row: Option<usize>,
+    click_rows: Vec<ClickGesture>,
     context_menu_background: bool,
     view: Option<crate::grid::ViewMode>,
     breadcrumb: Option<String>,
@@ -1030,6 +1075,7 @@ impl From<&Args> for ShellArgs {
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
             context_menu_row: a.context_menu_row,
+            click_rows: a.click_rows.clone(),
             context_menu_background: a.context_menu_background,
             view: a.view,
             breadcrumb: a.breadcrumb.clone(),
@@ -1372,6 +1418,62 @@ impl ShellArgs {
         if let Some((col, asc)) = self.sort.clone() {
             shell.update(cx, |s, cx| {
                 crate::file_list::apply_sort(&s.active_tab().table, &col, asc, cx);
+            });
+        }
+        let mut first_click = true;
+        for gesture in self.click_rows.iter().copied() {
+            let (row, count) = match gesture {
+                ClickGesture::Pause => {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(800))
+                        .await;
+                    continue;
+                }
+                ClickGesture::Click { row, count } => (row, count),
+            };
+            // Real left clicks through the window's event path. Only the
+            // first one waits for the streamed enumeration; the rest follow
+            // closely, so `0,0:2` is a genuine double-click rather than two
+            // separate clicks. Insert `pause` for the latter.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(if first_click { 700 } else { 60 }))
+                .await;
+            first_click = false;
+            let point = shell.read_with(cx, |s, cx| s.active_tab().table.read(cx).row_center(row));
+            let Some(position) = point else {
+                crate::log_warn!(90, "--click-rows {row}: row not laid out / out of view");
+                continue;
+            };
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                let _ = window.dispatch_event(
+                    gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                        position,
+                        modifiers: gpui::Modifiers::default(),
+                        pressed_button: None,
+                    }),
+                    cx,
+                );
+            });
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                let _ = window.dispatch_event(
+                    gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                        button: gpui::MouseButton::Left,
+                        position,
+                        modifiers: gpui::Modifiers::default(),
+                        click_count: count,
+                        first_mouse: false,
+                    }),
+                    cx,
+                );
+                let _ = window.dispatch_event(
+                    gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                        button: gpui::MouseButton::Left,
+                        position,
+                        modifiers: gpui::Modifiers::default(),
+                        click_count: count,
+                    }),
+                    cx,
+                );
             });
         }
         if let Some(row) = self.context_menu_row {

@@ -64,6 +64,10 @@ impl Shell {
         modifiers: gpui::Modifiers,
         cx: &mut Context<Self>,
     ) {
+        // Any row gesture that reaches the row itself supersedes a rename
+        // armed by an earlier click on a selected name (the arming click
+        // stops propagation, so it never lands here).
+        self.cancel_click_rename();
         let Some(id) = self.node_id_at_row(row_ix, cx) else {
             return;
         };
