@@ -185,6 +185,7 @@ pub fn start_sampler(cx: &mut App) {
             let Some(snapshot) = snapshot else { continue };
             cx.update(|cx| {
                 let process = crate::process_state::process_state(cx);
+                report_intern_growth(&process.fs);
                 *process.system_stats.borrow_mut() = Some(snapshot);
                 // The segment lives in each window's status bar; the
                 // shells repaint from the cached snapshot.
@@ -265,6 +266,38 @@ fn status_cpu_divisor() -> f32 {
     #[cfg(not(windows))]
     {
         1.0
+    }
+}
+
+/// Log the identity maps' footprint the first time it crosses each
+/// threshold.
+///
+/// `NativeFs`'s `NodeId <-> PathBuf` maps are add-only for the life of the
+/// process, so a long browsing session or one recursive tool run over a big
+/// tree grows them without bound (TODO.md, "NodeId intern-map lifecycle").
+/// Until that lifecycle exists, the growth should at least be visible: these
+/// lines land in the activity trail, so an issue report from a session that
+/// went sluggish carries the evidence. `intern_stats` is O(1), so sampling it
+/// on this timer costs nothing.
+fn report_intern_growth(fs: &ferail_fs_native::NativeFs) {
+    /// Entry counts worth a line. A few hundred thousand paths is an
+    /// ordinary heavy session; millions means a recursive tool pinned a
+    /// whole tree.
+    const THRESHOLDS: &[usize] = &[250_000, 500_000, 1_000_000, 2_000_000, 4_000_000];
+    static REPORTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    let stats = fs.intern_stats();
+    let reached = THRESHOLDS
+        .iter()
+        .filter(|threshold| stats.entries >= **threshold)
+        .count();
+    if reached > REPORTED.swap(reached, std::sync::atomic::Ordering::Relaxed) {
+        crate::log_warn!(
+            90,
+            "identity maps hold {} paths (~{} MB) and are never pruned",
+            ferail_core::counts::format_count(stats.entries as u64),
+            stats.approx_bytes / (1024 * 1024)
+        );
     }
 }
 

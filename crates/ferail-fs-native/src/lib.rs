@@ -74,8 +74,26 @@ pub struct NativeFs {
 
 struct Inner {
     next_id: u64,
-    paths: BTreeMap<NodeId, PathBuf>,
-    by_path: HashMap<PathBuf, NodeId>,
+    /// Both directions share one `Arc<Path>` allocation per path. Storing
+    /// a `PathBuf` in each map meant every interned path was held twice,
+    /// which doubled the cost of a map that only ever grows (see
+    /// `intern_stats` and the lifecycle item in TODO.md).
+    paths: BTreeMap<NodeId, Arc<Path>>,
+    by_path: HashMap<Arc<Path>, NodeId>,
+    /// Running total of interned path bytes, so `intern_stats` stays O(1)
+    /// and can be sampled on a timer without walking the whole map.
+    path_bytes: usize,
+}
+
+/// Footprint of the process-lifetime identity maps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InternStats {
+    /// Interned paths, one per distinct path this process has ever seen.
+    pub entries: usize,
+    /// Approximate heap bytes held: the path bytes plus the per-entry
+    /// overhead of the two maps and the shared allocation. Deliberately an
+    /// estimate, it exists to make growth visible, not to be exact.
+    pub approx_bytes: usize,
 }
 
 impl NativeFs {
@@ -84,13 +102,16 @@ impl NativeFs {
         let root = NodeId::from_raw(ROOT_NODE_RAW).expect("nonzero");
         let mut paths = BTreeMap::new();
         let mut by_path = HashMap::new();
-        paths.insert(root, home.clone());
+        let home: Arc<Path> = Arc::from(home.as_path());
+        let path_bytes = home.as_os_str().len();
+        paths.insert(root, Arc::clone(&home));
         by_path.insert(home, root);
         Self {
             inner: Mutex::new(Inner {
                 next_id: ROOT_NODE_RAW + 1,
                 paths,
                 by_path,
+                path_bytes,
             }),
         }
     }
@@ -101,7 +122,12 @@ impl NativeFs {
 
     pub fn path_for(&self, id: NodeId) -> Option<PathBuf> {
         ferail_core::path_guard::assert_path_resolution_allowed("NativeFs::path_for");
-        self.inner.lock().ok()?.paths.get(&id).cloned()
+        self.inner
+            .lock()
+            .ok()?
+            .paths
+            .get(&id)
+            .map(|path| path.to_path_buf())
     }
 
     pub fn id_for_path(&self, path: &Path) -> NodeId {
@@ -112,14 +138,42 @@ impl NativeFs {
         // `normalize_path_key`'s doc for the boundary rules.
         let path = ferail_core::node_store::normalize_path_key(path);
         let mut inner = self.inner.lock().expect("fs lock");
-        if let Some(id) = inner.by_path.get(&path) {
+        if let Some(id) = inner.by_path.get(path.as_path()) {
             return *id;
         }
         let id = NodeId::from_raw(inner.next_id).expect("nonzero");
         inner.next_id += 1;
-        inner.paths.insert(id, path.clone());
+        let path: Arc<Path> = Arc::from(path.as_path());
+        inner.path_bytes += path.as_os_str().len();
+        inner.paths.insert(id, Arc::clone(&path));
         inner.by_path.insert(path, id);
         id
+    }
+
+    /// What the identity maps currently hold.
+    ///
+    /// These maps are add-only for the life of the process: every path this
+    /// process resolves stays pinned, so a long browsing session or one
+    /// recursive tool run over a large tree grows them without bound. This
+    /// makes that growth observable (TODO.md, "NodeId intern-map
+    /// lifecycle"); it is the measurement, not the fix.
+    pub fn intern_stats(&self) -> InternStats {
+        let Ok(inner) = self.inner.lock() else {
+            return InternStats {
+                entries: 0,
+                approx_bytes: 0,
+            };
+        };
+        // One Arc allocation per path (strong+weak counts, then the bytes),
+        // a BTreeMap slot and a HashMap slot, both holding a fat pointer.
+        const ARC_HEADER: usize = 16;
+        const BTREE_SLOT: usize = std::mem::size_of::<NodeId>() + 16 + 8;
+        const HASH_SLOT: usize = 16 + std::mem::size_of::<NodeId>() + 8;
+        let entries = inner.paths.len();
+        InternStats {
+            entries,
+            approx_bytes: inner.path_bytes + entries * (ARC_HEADER + BTREE_SLOT + HASH_SLOT),
+        }
     }
 }
 
@@ -1219,6 +1273,94 @@ mod tests {
             assert!(!e.name.is_empty());
             assert!(!e.name.contains('/'));
         }
+    }
+
+    #[test]
+    #[ignore = "measurement, not a gate: run with --ignored to print the footprint"]
+    fn intern_footprint_for_a_million_paths() {
+        // The shape this replaced: a PathBuf in each direction, so every
+        // path was allocated and copied twice.
+        let mut old_paths: BTreeMap<NodeId, PathBuf> = BTreeMap::new();
+        let mut old_by_path: HashMap<PathBuf, NodeId> = HashMap::new();
+        for i in 0..1_000_000u32 {
+            let path = PathBuf::from(format!(
+                "/Users/jkn/Source/project/crates/module/src/dir{}/file{}.rs",
+                i / 100,
+                i
+            ));
+            let id = NodeId::from_raw(u64::from(i) + 2).expect("nonzero");
+            old_paths.insert(id, path.clone());
+            old_by_path.insert(path, id);
+        }
+        let old_bytes: usize = old_paths
+            .values()
+            .map(|path| path.as_os_str().len() * 2 + 32)
+            .sum::<usize>()
+            + old_paths.len() * (std::mem::size_of::<NodeId>() + 24 + 8)
+            + old_by_path.len() * (24 + std::mem::size_of::<NodeId>() + 8);
+        println!(
+            "before: {} paths, approx {:.1} MB ({} bytes/path)",
+            old_paths.len(),
+            old_bytes as f64 / (1024.0 * 1024.0),
+            old_bytes / old_paths.len().max(1)
+        );
+        drop(old_paths);
+        drop(old_by_path);
+
+        let fs = NativeFs::new();
+        for i in 0..1_000_000u32 {
+            fs.id_for_path(Path::new(&format!(
+                "/Users/jkn/Source/project/crates/module/src/dir{}/file{}.rs",
+                i / 100,
+                i
+            )));
+        }
+        let stats = fs.intern_stats();
+        println!(
+            "interned {} paths, approx {:.1} MB ({} bytes/path)",
+            stats.entries,
+            stats.approx_bytes as f64 / (1024.0 * 1024.0),
+            stats.approx_bytes / stats.entries.max(1)
+        );
+    }
+
+    #[test]
+    fn intern_stats_track_every_path_the_process_resolved() {
+        let fs = NativeFs::new();
+        let before = fs.intern_stats();
+        for i in 0..1_000 {
+            fs.id_for_path(Path::new(&format!("/tmp/ferail-intern/{i}/file.txt")));
+        }
+        let after = fs.intern_stats();
+        assert_eq!(after.entries, before.entries + 1_000);
+        // Re-resolving costs nothing: the maps are keyed by path, so the
+        // growth above is one slot per *distinct* path, not per lookup.
+        for i in 0..1_000 {
+            fs.id_for_path(Path::new(&format!("/tmp/ferail-intern/{i}/file.txt")));
+        }
+        assert_eq!(fs.intern_stats().entries, after.entries);
+        assert!(after.approx_bytes > before.approx_bytes);
+    }
+
+    #[test]
+    fn interned_paths_are_stored_once_for_both_directions() {
+        let fs = NativeFs::new();
+        let path = Path::new("/tmp/ferail-intern/shared/name.txt");
+        let id = fs.id_for_path(path);
+        // Round-trips through both maps, which now share one allocation.
+        assert_eq!(fs.path_for(id).as_deref(), Some(path));
+        assert_eq!(fs.id_for_path(path), id);
+        let inner = fs.inner.lock().expect("fs lock");
+        let stored = inner.paths.get(&id).expect("id maps to a path");
+        let keyed = inner
+            .by_path
+            .get_key_value(path)
+            .expect("path maps to an id")
+            .0;
+        assert!(
+            std::sync::Arc::ptr_eq(stored, keyed),
+            "both directions must point at the same allocation"
+        );
     }
 
     #[test]

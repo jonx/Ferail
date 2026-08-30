@@ -8,6 +8,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Ferail holds noticeably less memory over a long session.** The internal
+  table that gives every file a stable identity stored each path twice; it
+  now shares one copy, which cuts it from 241 to 144 bytes per path (about
+  90 MB less per million files seen). The table still grows for the life of
+  the process, so a very long session or a recursive scan of a huge tree can
+  still accumulate: that groundwork is tracked, and Ferail now records the
+  size in its issue reports so the growth is visible.
+
 - **Double-clicking a selected folder opens it again instead of renaming
   it.** Clicking the name of an already-selected item starts a rename, and
   that gesture was firing on the first click of a double-click, so the name

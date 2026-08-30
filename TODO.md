@@ -416,18 +416,30 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 - Finish the stable **NodeStore identity** model for rename, move, mount
   changes, Ant Trail, selection, watcher events, and metadata cache keys.
-- **NodeId intern-map lifecycle**: `NativeFs`'s `NodeId ↔ PathBuf` maps (and
-  `NodeStore`'s) are add-only: a duplicate sweep or ordinary recursive search of a
-  multi-million-file volume permanently pins one `PathBuf` per file for the
-  process lifetime (GB-scale RSS surviving window close). Disk Usage and Flat
-  View now use drop-with-surface scan-local arenas. The remaining tools need an
-  id *lifecycle*, not an eviction hack: scan-minted ids interleave with ids
-  live tabs/selections/history hold (the path-keyed map returns the same id to
-  both), so range- or ownership-based forgetting can misdirect a later
-  trash/rename through a stale `path_for`. Design: either refcount ids per
-  holding surface, or give tool results (DU, dupes, search) a per-scan arena
-  id namespace that drops with the surface, keeping the global map for
-  navigation identity only.
+- **NodeId intern-map lifecycle**: `NativeFs`'s identity maps are add-only
+  for the life of the process, so every path the app resolves stays pinned:
+  an ordinary browsing session grows them one entry per file *seen*, and one
+  recursive tool run over a large tree pins the whole tree. Observed on a
+  released 0.7.6 after nine hours of normal use: 1.38 GB RSS, with a sample
+  showing `getattrlistbulk`/`open` still walking at idle.
+  - Both directions now share one `Arc<Path>` allocation instead of holding
+    a `PathBuf` each, measured at **241 → 144 bytes per path** (230 → 138 MB
+    per million; see the ignored `intern_footprint_for_a_million_paths`
+    measurement). That halves the slope; it does not stop the growth.
+  - `NativeFs::intern_stats` reports the footprint in O(1), and the stats
+    sampler logs a line the first time the count crosses 250k / 500k / 1M /
+    2M / 4M, so an issue report from a session that went sluggish carries
+    the evidence.
+  - The remaining work is the lifecycle itself. Disk Usage and Flat View
+    already use drop-with-surface scan-local arenas
+    (`file_list.rs`'s flat path arena is the template); duplicate finding,
+    recursive search and *ordinary listings* still mint global ids. Careful:
+    scan-minted ids interleave with ids live tabs/selections/history hold
+    (the path-keyed map returns the same id to both), so range- or
+    ownership-based forgetting can misdirect a later trash/rename through a
+    stale `path_for`. Either refcount ids per holding surface, or give each
+    surface an arena id namespace that drops with it, keeping the global map
+    for navigation identity only.
 - **Cache freshness follow-ups** ([docs/features/FRESHNESS.md](docs/features/FRESHNESS.md)).
   Subtree-derived caches now stay honest via mtime + TTL validity, exact
   ancestor invalidation on in-app mutations, and a forced size refresh when the
