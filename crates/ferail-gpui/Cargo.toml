@@ -97,6 +97,9 @@ smallvec = "1"
 # loader (docs/features/VIEWER.md); non-raster formats fall back to
 # Quick Look thumbnails.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+# Blurry placeholder hashes (docs/features/PRIVATE_MODE.md). Evan Wallace's
+# own crate: 332 lines, MIT, and no dependencies of its own.
+thumbhash = "0.1"
 # SIMD-accelerated resampler for the viewer's still upscale (x2/x4). The
 # `image` crate's `imageops::resize` is single-threaded with no SIMD, so a
 # Lanczos3 enlargement to the 8192 px cap stalled the UI for seconds; this

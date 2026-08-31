@@ -13,6 +13,16 @@ copy that exact rev; when it leaves gpui unpinned (the style since ~2026-07),
 leave ours unpinned too and let the committed `Cargo.lock` carry the actual
 zed rev: bumped deliberately with `cargo update -p gpui`.
 
+## 2026-09-01 - add `thumbhash` for Private Mode stand-in thumbnails
+
+`thumbhash` 0.1 (MIT) is Evan Wallace's own crate for the compact
+placeholder format of the same name: 332 lines and no dependencies of its
+own, so it adds one leaf to the graph and nothing else. Private Mode uses it
+to render a blurred stand-in synthesised from the session key rather than a
+flat grey box (docs/features/PRIVATE_MODE.md). The same decoder is what a
+real cached placeholder would use later, which is why the synthetic pixels
+are encoded and decoded rather than drawn directly: one renderer, one look.
+
 ## 2026-08-26 - promote checksum implementations to direct dependencies
 
 Sidecar verification now directly uses `crc32fast` 1.x, `md-5` 0.10 and

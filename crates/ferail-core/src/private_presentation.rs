@@ -50,7 +50,7 @@ impl PrivateSession {
         }
     }
 
-    #[cfg(test)]
+#[cfg(test)]
     fn with_key(key: [u8; 16]) -> Self {
         Self { key }
     }
@@ -189,6 +189,45 @@ impl PrivateSession {
         }
     }
 
+    /// Stable, plausible pixels for a private stand-in thumbnail: a tiny
+    /// `size`x`size` RGBA image derived from the session key and `identity`,
+    /// with no input from the file it stands for.
+    ///
+    /// The point of Private Mode is to publish a capture, so the grid has to
+    /// look alive without any of it being real. This is the same trick as
+    /// [`Self::bytes`], [`Self::timestamp`] and [`Self::dimensions`], one
+    /// layer down: stable per identity so a row does not flicker between
+    /// frames, plausible enough to read as a photo at thumbnail size, and
+    /// carrying nothing back to the original.
+    ///
+    /// Colours come from a keyed hue with a soft vertical gradient, because
+    /// blurred photographs are mostly that: two or three related tones, lighter
+    /// at one end. Pure noise would read as television static, not as content.
+    pub fn thumb_pixels(&self, identity: u64, size: usize) -> Vec<u8> {
+        let seed = self.hash(identity ^ 0x5448_554d, &identity.to_le_bytes());
+        // One base hue per file, plus a second one nearby: enough variation
+        // between neighbouring rows to look like different pictures.
+        let hue = (seed % 360) as f32;
+        let drift = 18.0 + ((seed >> 16) % 60) as f32;
+        let saturation = 0.25 + ((seed >> 8) % 40) as f32 / 100.0;
+        let mut rgba = Vec::with_capacity(size * size * 4);
+        for y in 0..size {
+            for x in 0..size {
+                let across = x as f32 / (size.max(2) - 1) as f32;
+                let down = y as f32 / (size.max(2) - 1) as f32;
+                // A diagonal light falloff, then a per-cell nudge so the
+                // result is not a flat gradient.
+                let cell = self.hash(seed ^ (y as u64) << 8 ^ x as u64, &[]);
+                let jitter = ((cell % 100) as f32 / 100.0 - 0.5) * 0.18;
+                let value = (0.72 - 0.34 * down - 0.08 * across + jitter).clamp(0.05, 0.98);
+                let (red, green, blue) =
+                    hsv_to_rgb(hue + drift * across, saturation, value);
+                rgba.extend_from_slice(&[red, green, blue, 255]);
+            }
+        }
+        rgba
+    }
+
     fn hash(&self, domain: u64, bytes: &[u8]) -> u64 {
         // Keyed FNV-style diffusion is deliberately local and dependency-free.
         // Private Mode is a presentation boundary, not a memory-inspection
@@ -226,8 +265,48 @@ fn safe_extension(name: &str) -> Option<&str> {
     Some(ext)
 }
 
+/// Minimal HSV to RGB, so the stand-in colours stay in one family instead of
+/// landing anywhere in the cube. Local rather than a dependency: this is the
+/// only place in the workspace that needs it.
+fn hsv_to_rgb(hue: f32, saturation: f32, value: f32) -> (u8, u8, u8) {
+    let hue = hue.rem_euclid(360.0) / 60.0;
+    let chroma = value * saturation;
+    let second = chroma * (1.0 - (hue % 2.0 - 1.0).abs());
+    let (red, green, blue) = match hue as u32 {
+        0 => (chroma, second, 0.0),
+        1 => (second, chroma, 0.0),
+        2 => (0.0, chroma, second),
+        3 => (0.0, second, chroma),
+        4 => (second, 0.0, chroma),
+        _ => (chroma, 0.0, second),
+    };
+    let base = value - chroma;
+    let to_byte = |channel: f32| (((channel + base) * 255.0).round().clamp(0.0, 255.0)) as u8;
+    (to_byte(red), to_byte(green), to_byte(blue))
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn stand_in_pixels_are_stable_keyed_and_carry_nothing_real() {
+        let session = PrivateSession::new();
+        let one = session.thumb_pixels(11, 6);
+        // Stable: a row must not flicker between frames.
+        assert_eq!(one, session.thumb_pixels(11, 6));
+        assert_eq!(one.len(), 6 * 6 * 4);
+        // Different files look like different pictures.
+        assert_ne!(one, session.thumb_pixels(12, 6));
+        // Keyed per session: the same identity in another session is another
+        // picture, so nothing can be correlated across captures.
+        assert_ne!(one, PrivateSession::new().thumb_pixels(11, 6));
+        // Opaque, and never fully black or fully white: a stand-in has to
+        // read as content, not as a broken image.
+        assert!(one.chunks(4).all(|pixel| pixel[3] == 255));
+        let luma = |p: &[u8]| p[0] as u32 + p[1] as u32 + p[2] as u32;
+        assert!(one.chunks(4).any(|pixel| luma(pixel) > 120));
+        assert!(one.chunks(4).all(|pixel| luma(pixel) < 750));
+    }
     use super::*;
 
     fn session() -> PrivateSession {

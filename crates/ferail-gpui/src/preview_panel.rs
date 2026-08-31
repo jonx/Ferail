@@ -733,12 +733,24 @@ impl PreviewPanel {
                     }
                 }
                 if private && !is_dir {
+                    // Same blur the list and grid paint, invented from the
+                    // session key and never from the file, so a Private Mode
+                    // capture still shows what the preview pane is for
+                    // (docs/features/PRIVATE_MODE.md).
+                    let stand_in = crate::private_thumb::stand_in(entry.id.as_raw());
                     col = col.child(
                         div()
                             .w_full()
                             .h(px(self.thumb_h))
                             .rounded(cx.theme().radius)
-                            .bg(cx.theme().secondary.opacity(0.5)),
+                            .overflow_hidden()
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .children(stand_in.map(|image| {
+                                gpui::img(image)
+                                    .w_full()
+                                    .h(px(self.thumb_h))
+                                    .object_fit(gpui::ObjectFit::Cover)
+                            })),
                     );
                 } else if let Some(document) = text_document {
                     // Render through gpui-component's TextView:

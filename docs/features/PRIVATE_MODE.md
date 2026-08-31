@@ -376,6 +376,31 @@ Use generic type icons and a reusable private-content placeholder. Existing
 memory-only caches need not be destroyed, but new content requests should stop
 while private and cached pixels must not survive one stale paint.
 
+**Stand-in blurs are not an exception to any of that.** Thumbnail surfaces (the
+list, the icon grid, the preview pane's image box) paint a blurred picture
+instead of a flat grey box, and every pixel of it is invented:
+`PrivateSession::thumb_pixels` synthesises a tiny image from the session key
+and the row's identity, which `private_thumb` pushes through the same ThumbHash
+round trip a real placeholder takes. No byte of the file is read, so this is
+not a content provider result and §4.2 holds unchanged.
+
+Why bother: Private Mode exists to *publish* a capture. A grid of identical
+grey boxes protects the data by deleting the feature, and a screenshot meant to
+show what the grid looks like then shows nothing. A blur that came from
+nowhere keeps the shape of the answer without any of the answer.
+
+Three properties make it safe to publish, and the third is the one that
+matters: it is stable within a session (a row does not flicker between
+frames), it is different per row (neighbouring files look like different
+pictures), and it is **keyed per session**, so the same file captured twice is
+two unrelated blurs. Nothing can be correlated between two screenshots, and
+nothing can be matched back to a file. The cache is dropped on leaving the
+mode.
+
+Scope is deliberate: surfaces that paint *nothing* while private, the text
+editor's document stage among them, stay that way. A stand-in belongs only
+where a picture belongs.
+
 ### 4.3 Identifying metadata
 
 Replace real values while preserving enough shape to demonstrate the UI:

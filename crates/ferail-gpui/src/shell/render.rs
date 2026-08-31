@@ -1300,10 +1300,9 @@ impl Shell {
                             }
                         }
                         EntryKind::File | EntryKind::Symlink => {
-                            let thumb = if show_thumbs
-                                && !crate::private_mode::enabled()
-                                && crate::thumbnails::is_thumbnailable(entry)
-                            {
+                            let private = crate::private_mode::enabled();
+                            let thumbnailable = crate::thumbnails::is_thumbnailable(entry);
+                            let thumb = if show_thumbs && !private && thumbnailable {
                                 // `get_best`: show the crisp bucket once ready,
                                 // else a smaller cached tier (the low-res
                                 // preview, or a size warmed at another zoom) as
@@ -1312,7 +1311,15 @@ impl Shell {
                             } else {
                                 None
                             };
-                            if let Some(t) = thumb {
+                            // Private Mode blurs a picture invented from the
+                            // session key rather than painting a grey box: the
+                            // mode exists to publish a capture, and a grid of
+                            // identical boxes protects the data by deleting the
+                            // feature (docs/features/PRIVATE_MODE.md).
+                            let stand_in = (private && show_thumbs && thumbnailable)
+                                .then(|| crate::private_thumb::stand_in(entry.id.as_raw()))
+                                .flatten();
+                            if let Some(t) = thumb.or(stand_in) {
                                 // Always paint a full slot-sized element and
                                 // let gpui's object-fit letterbox or crop
                                 // inside it. Sizing the element to the scaled

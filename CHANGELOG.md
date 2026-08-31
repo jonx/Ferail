@@ -8,6 +8,15 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Private Mode shows blurred stand-in thumbnails instead of grey boxes.**
+  The mode exists so you can publish a screenshot of a real session, and a
+  grid of identical grey rectangles protected the data by deleting the very
+  thing the screenshot was meant to show. Files now get a soft blur in the
+  list, the icon grid and the preview pane. **None of it comes from your
+  files**: every pixel is invented from a key created when Private Mode
+  starts, so the same photo captured twice gives two unrelated blurs, and
+  nothing in the picture can be traced back to anything on your disk.
+
 - **Ferail speaks Polish.** A complete Polish translation now ships inside the
   app, contributed by **Bohun** and reviewed by a Polish speaker. Pick it in
   Settings, or let Ferail follow your system language. One rough edge, worth

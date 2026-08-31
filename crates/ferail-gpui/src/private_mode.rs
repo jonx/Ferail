@@ -95,6 +95,10 @@ pub fn exit(cx: &mut App) {
         return;
     }
     STATE.store(OFF, Ordering::Release);
+    // The stand-in blurs were invented for this session's screen: drop them
+    // rather than let synthesised pixels sit in memory after the mode that
+    // needed them is gone.
+    crate::private_thumb::clear();
     crate::boot::install_app_menus(cx);
     crate::log_info!(90, "private mode: off");
     cx.refresh_windows();

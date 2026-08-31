@@ -2962,12 +2962,20 @@ impl TableDelegate for FileListDelegate {
                         // `get` is a non-mutating HashMap read: the
                         // fetch itself happens off the render path in
                         // `visible_rows_changed`.
-                        let thumb = if thumbs_on && !crate::private_mode::enabled() {
+                        let private = crate::private_mode::enabled();
+                        let thumb = if thumbs_on && !private {
                             self.thumbnails.borrow().get(&path, THUMB_PX)
                         } else {
                             None
                         };
-                        let inner = if let Some(image) = thumb {
+                        // Private Mode paints a blur invented from the session
+                        // key, never from the file: a grid of identical grey
+                        // boxes protects the data and ruins the screenshot the
+                        // mode exists to produce (docs/features/PRIVATE_MODE.md).
+                        let stand_in = (private && thumbs_on)
+                            .then(|| crate::private_thumb::stand_in(entry.id.as_raw()))
+                            .flatten();
+                        let inner = if let Some(image) = thumb.or(stand_in) {
                             // `img` defaults to ObjectFit::Contain, so a
                             // non-square photo fits the square slot
                             // without distortion.
