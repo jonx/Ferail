@@ -180,9 +180,21 @@ line estimate (`PREVIEW_CODE_*`) so horizontal scrolling remains available.
 Rendered Markdown uses a fixed reading column (`PREVIEW_MD_MIN_W`) because
 gpui-component wraps Markdown prose.
 
+The box carries its own vertical scrollbar (`scrolled_preview_box`), set to
+`ScrollbarMode::Always` rather than the theme's fade-out default: because the
+box is deliberately capped, the bar is the only thing telling the reader the
+file continues past the last visible line. It draws nothing when the content
+fits, and it rides a 16px strip on the right edge instead of covering the box,
+since the scrollbar element claims the hitbox of whatever bounds it is given
+and the text underneath has to stay selectable. The folder sidecar box has its
+own handle for the same treatment.
+
 ## Provider Rules
 
-- Selection change schedules preview work.
+- Selection change schedules preview work. That includes the automatic
+  selection of the first row when a listing completes: it is not a gesture, so
+  no click or keyboard handler runs, and the request is issued next to the
+  selection itself (active tab only).
 - At most one selection preview runs per provider; only the newest waiting
   request survives.
 - Worker returns compact preview data.

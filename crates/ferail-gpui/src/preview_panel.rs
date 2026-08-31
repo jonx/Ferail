@@ -43,6 +43,38 @@ fn terminal_font_family() -> &'static str {
     }
 }
 
+/// Wrap a bounded, self-scrolling preview box in a vertical scrollbar.
+///
+/// The inner text boxes are capped at `max_h(280)` so a long file cannot bury
+/// the Get Info details below them, which means a `.nfo` or a source file
+/// usually has more content than the box shows and nothing on screen said so.
+/// The bar rides a strip on the right edge instead of covering the box: the
+/// scrollbar element takes the hitbox of whatever bounds it is given, and the
+/// text underneath has to stay selectable.
+fn scrolled_preview_box(body: impl IntoElement, scroll: &ScrollHandle) -> Div {
+    div()
+        .relative()
+        .w_full()
+        .child(body)
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .right_0()
+                .bottom_0()
+                .w(px(16.0))
+                .child(
+                    gpui_component::scroll::Scrollbar::vertical(scroll)
+                        // The theme default fades the bar out when idle, which
+                        // is right for a pane you already know scrolls. Here
+                        // the bar IS the "there is more below" signal for a
+                        // box that stops at 280px, so it stays up. It still
+                        // draws nothing when the content fits.
+                        .mode(gpui_component::scroll::ScrollbarMode::Always),
+                ),
+        )
+}
+
 fn ansi_color(color: AnsiColor) -> Hsla {
     let rgb = match color {
         AnsiColor::Standard(index) => [
@@ -172,7 +204,11 @@ pub struct PreviewPanel {
     shell: WeakEntity<Shell>,
     scroll: ScrollHandle,
     text_scroll: ScrollHandle,
-    /// Resets both scrolls when the target changes.
+    /// Own handle for the folder sidecar box, which is a sibling of the file
+    /// text box and never on screen at the same time, but needs a handle of
+    /// its own so its scrollbar reports that box's extent, not the file one's.
+    sidecar_scroll: ScrollHandle,
+    /// Resets every scroll when the target changes.
     scroll_path: Option<PathBuf>,
     thumb_h: f32,
     /// While the thumbnail resize grip is dragged: (pointer y at press,
@@ -192,6 +228,7 @@ impl PreviewPanel {
             shell,
             scroll: ScrollHandle::new(),
             text_scroll: ScrollHandle::new(),
+            sidecar_scroll: ScrollHandle::new(),
             scroll_path: None,
             thumb_h,
             thumb_drag: None,
@@ -483,6 +520,7 @@ impl PreviewPanel {
             self.scroll_path = scroll_key;
             self.scroll.set_offset(gpui::Point::default());
             self.text_scroll.set_offset(gpui::Point::default());
+            self.sidecar_scroll.set_offset(gpui::Point::default());
         }
 
         let header = h_flex()
@@ -678,6 +716,7 @@ impl PreviewPanel {
                                 .w_full()
                                 .max_h(px(280.))
                                 .overflow_scroll()
+                                .track_scroll(&self.sidecar_scroll)
                                 .p_2()
                                 .rounded(cx.theme().radius)
                                 .bg(cx.theme().secondary.opacity(0.5))
@@ -693,7 +732,7 @@ impl PreviewPanel {
                                     .font_family(cx.theme().mono_font_family.clone())
                                     .child(document.text.clone())
                             };
-                            col = col.child(preview);
+                            col = col.child(scrolled_preview_box(preview, &self.sidecar_scroll));
                         }
                     }
                 }
@@ -820,7 +859,7 @@ impl PreviewPanel {
                         };
                         block.child(div().w_full().min_w(px(min_w)).child(view))
                     };
-                    col = col.child(block);
+                    col = col.child(scrolled_preview_box(block, &self.text_scroll));
                 } else if let Some(img) = thumb_img {
                     // Clicking the thumbnail opens the big viewer
                     // window (docs/features/VIEWER.md) on the current

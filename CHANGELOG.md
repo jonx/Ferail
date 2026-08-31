@@ -8,6 +8,18 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Entering a folder now previews the item it selected for you.** Ferail
+  selects the first row when you open a folder, but nothing asked for that
+  row's preview, so the pane showed the file's details next to an empty
+  thumbnail well until you clicked the row that was already selected. The
+  preview is now requested with the selection.
+
+- **Long text previews show a scrollbar.** The preview pane's text box stops
+  at a fixed height so a long `.nfo`, log, or source file cannot bury the
+  file details underneath it, but nothing on screen said the file continued
+  past the last visible line. A vertical scrollbar now sits on the box
+  whenever its content overflows, and stays visible rather than fading out.
+
 - **Ferail holds noticeably less memory over a long session.** The internal
   table that gives every file a stable identity stored each path twice; it
   now shares one copy, which cuts it from 241 to 144 bytes per path (about

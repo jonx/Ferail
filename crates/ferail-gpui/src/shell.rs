@@ -5465,6 +5465,17 @@ impl Shell {
                 self.tabs[idx].anchor = Some(first);
                 self.tabs[idx].lead = Some(first);
                 self.refresh_file_list_selection_in_tab(idx, cx);
+                // Auto-selection is not a gesture, so none of the click or
+                // keyboard handlers run and nothing else asks for this row's
+                // preview: the pane rendered its Get Info block with an empty
+                // thumbnail well until the user clicked the row that was
+                // already selected. Request it here, exactly as
+                // `apply_row_click_gesture` does. Active tab only:
+                // `request_preview_for_row` resolves its path through
+                // `active_tab`, and a background tab has no pane to fill.
+                if idx == self.active {
+                    self.request_preview_for_row(0, cx);
+                }
             }
         }
         // Tell the table how many rows the filter took away, so its
