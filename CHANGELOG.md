@@ -6,7 +6,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
-## Unreleased
+## 0.7.7 - 2026-09-01
 
 - **Private Mode shows blurred stand-in thumbnails instead of grey boxes.**
   The mode exists so you can publish a screenshot of a real session, and a
