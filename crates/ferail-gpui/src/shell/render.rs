@@ -790,13 +790,29 @@ impl Shell {
                         let can_restore = item.capabilities.contains(
                             ferail_core::platform_namespace::PlatformCapabilities::RESTORE,
                         );
+                        // `icons/folder.svg` does not exist: the asset is
+                        // `icons/nav/folder.svg`, and the wrong path painted
+                        // nothing at all. Nobody could see it, because this
+                        // surface has no provider outside Windows and had no
+                        // screenshot coverage until `--platform-namespace`.
                         let icon = match item.kind {
-                            PlatformItemKind::Container => "icons/folder.svg",
+                            PlatformItemKind::Container => "icons/nav/folder.svg",
                             PlatformItemKind::Link => "icons/file/symlink.svg",
                             PlatformItemKind::File => "icons/file/generic.svg",
                         };
                         let label: SharedString = item.label.to_string().into();
-                        let tooltip = label.clone();
+                        // The Recycle Bin's own record of where the item came
+                        // from (docs/features/CONTEXT_MENU.md). Display text:
+                        // it is never navigated to or acted on, which is why it
+                        // is not a `LocationTarget`.
+                        let detail: Option<SharedString> =
+                            item.detail.as_ref().map(|detail| detail.to_string().into());
+                        let tooltip = match &detail {
+                            // One tooltip carrying both, since either can be
+                            // truncated in a narrow pane.
+                            Some(detail) => SharedString::from(format!("{label}\n{detail}")),
+                            None => label.clone(),
+                        };
                         let row_shell = weak.clone();
                         let menu_shell = weak.clone();
                         Some(
@@ -811,8 +827,29 @@ impl Shell {
                                 .when(hidden, |row| row.opacity(0.65))
                                 .when(selected, |row| row.bg(selected_bg))
                                 .when(!selected, |row| row.hover(|hover| hover.bg(hover_bg)))
-                                .child(svg().path(icon).icon_px(18.0).flex_shrink_0())
-                                .child(div().min_w_0().truncate().child(label))
+                                .child(
+                                    svg()
+                                        .path(icon)
+                                        .icon_px(18.0)
+                                        .flex_shrink_0()
+                                        // An svg does not inherit the row's
+                                        // text colour: without this it draws
+                                        // in nothing and the row looks
+                                        // iconless.
+                                        .text_color(if hidden { muted } else { foreground }),
+                                )
+                                .child(div().min_w_0().flex_1().truncate().child(label))
+                                .children(detail.map(|detail| {
+                                    // Second column, muted, and given at most
+                                    // half the row: a deep original path must
+                                    // not squeeze the name it belongs to.
+                                    div()
+                                        .min_w_0()
+                                        .max_w(relative(0.5))
+                                        .truncate()
+                                        .text_color(muted)
+                                        .child(detail)
+                                }))
                                 .tooltip(move |window, cx| {
                                     gpui_component::tooltip::Tooltip::new(tooltip.clone())
                                         .build(window, cx)

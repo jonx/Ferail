@@ -84,6 +84,12 @@ look more interesting.
   (Software Update dialog seeded with `checking` / `uptodate` / `available` /
   `elsewhere` / `noasset` / `downloading` / `done` / `failed`: no network;
   `live` runs the real GitHub check, the one networked capture).
+- **Shell namespace**: `--platform-namespace` points the active tab at a demo
+  provider (a fixed, obviously-fake Recycle Bin, with and without an original
+  location per row). The real providers are Windows-only, so this is the only
+  way to capture that surface anywhere else; it runs after the boot listing
+  settles, since opening it first only to have the startup load replace it is
+  a race, not a capture.
 - **Alternate windows**: `--settings <page>`, `--disk-usage <path>`
   (`--du-depth`, `--du-coloring`), `--viewer <path>` (`--viewer-adjust`),
   `--drag-ghost N`.

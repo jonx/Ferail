@@ -299,6 +299,13 @@ pub struct PlatformItem {
     /// Opaque, non-personal cache identity such as a stock icon kind. Raw
     /// PIDLs, paths and provider object addresses are forbidden here.
     pub icon_key: Option<Arc<str>>,
+    /// One line of provider-supplied detail to show beside the label: the
+    /// Recycle Bin's original location, today.
+    ///
+    /// Display text, not identity: nothing may navigate to it, resolve it, or
+    /// hand it to a file operation. It is personal (it is usually a path), so
+    /// it is redacted from `Debug` exactly like the label.
+    pub detail: Option<Arc<str>>,
 }
 
 impl fmt::Debug for PlatformItem {
@@ -312,6 +319,7 @@ impl fmt::Debug for PlatformItem {
             .field("capabilities", &self.capabilities)
             .field("flags", &self.flags)
             .field("icon_key", &self.icon_key)
+            .field("detail", &"<redacted>")
             .finish()
     }
 }
@@ -588,6 +596,7 @@ mod tests {
             capabilities: PlatformCapabilities::OPEN.union(PlatformCapabilities::ENUMERATE),
             flags: PlatformItemFlags::default(),
             icon_key: Some(Arc::from("stock:folder")),
+            detail: None,
         }
     }
 
@@ -616,11 +625,15 @@ mod tests {
             capabilities: PlatformCapabilities::OPEN,
             flags: PlatformItemFlags::default(),
             icon_key: Some(Arc::from("stock:folder")),
+            // The Recycle Bin's original location is a path, and a path is
+            // personal: it names folders, projects and people.
+            detail: Some(Arc::from(r"C:\Users\Private\Holiday 2019")),
         };
         let debug = format!("{private_item:?}");
         assert!(!debug.contains("Private"));
         assert!(!debug.contains("Family Photos"));
         assert!(!debug.contains("iPhone"));
+        assert!(!debug.contains("Holiday"));
     }
 
     #[test]

@@ -13,6 +13,11 @@ use ferail_core::platform_namespace::{
     PlatformLocation, PlatformLocationErrorKind, PlatformLocationHistory,
     PlatformNamespaceProvider, PlatformSurfacePhase, PlatformSurfaceStore,
 };
+#[cfg(feature = "screenshot-harness")]
+use ferail_core::platform_namespace::{
+    LocationTarget, PlatformBreadcrumb, PlatformCapabilities, PlatformItem, PlatformItemFlags,
+    PlatformItemKind, PlatformProviderId,
+};
 
 /// A small number of pending batches provides backpressure without starving
 /// a fast provider. At 512 rows per batch this caps the cross-thread queue at
@@ -337,6 +342,91 @@ impl Drop for PlatformNamespaceSession {
     }
 }
 
+/// A stand-in namespace provider for the screenshot harness.
+///
+/// The real providers are Windows-only, so this surface could not be captured
+/// on any other machine: its rows, its detail column and its empty states had
+/// no visual test at all. This one enumerates a fixed, obviously-fake Recycle
+/// Bin so the layout can be looked at anywhere. Dev builds only, and never
+/// reachable from the UI: the packaged build drops the harness feature.
+#[cfg(feature = "screenshot-harness")]
+pub struct DemoNamespaceProvider {
+    id: PlatformProviderId,
+}
+
+#[cfg(feature = "screenshot-harness")]
+impl DemoNamespaceProvider {
+    pub fn new() -> (std::sync::Arc<Self>, PlatformLocation) {
+        let provider = std::sync::Arc::new(Self {
+            id: PlatformProviderId::new("demo-namespace".to_string()),
+        });
+        let root = PlatformItemId::from_raw(1).expect("one is non-zero");
+        let location = PlatformLocation::new(provider.id.clone(), root);
+        (provider, location)
+    }
+}
+
+#[cfg(feature = "screenshot-harness")]
+impl PlatformNamespaceProvider for DemoNamespaceProvider {
+    fn id(&self) -> PlatformProviderId {
+        self.id.clone()
+    }
+
+    fn enumerate(
+        &self,
+        request: PlatformListingRequest,
+        _cancel: &std::sync::atomic::AtomicBool,
+        emit: &mut dyn FnMut(PlatformListingBatch) -> bool,
+    ) -> Result<(), PlatformLocationErrorKind> {
+        // Deliberately mixed: a deep original location that has to truncate, a
+        // short one, and an item with none at all, which is what an entry
+        // outside the Recycle Bin looks like.
+        let rows: [(&str, Option<&str>); 5] = [
+            ("Quarterly report.docx", Some(r"C:\Users\Demo\Documents\Finance\2026")),
+            ("holiday.jpg", Some(r"C:\Users\Demo\Pictures")),
+            (
+                "build-log.txt",
+                Some(r"C:\Users\Demo\Source\very deep project\target\debug\logs"),
+            ),
+            ("Old project", Some(r"C:\Users\Demo\Desktop")),
+            ("Unknown origin.bin", None),
+        ];
+        let items = rows
+            .iter()
+            .enumerate()
+            .map(|(index, (label, detail))| PlatformItem {
+                id: PlatformItemId::from_raw(index as u64 + 2).expect("non-zero"),
+                label: std::sync::Arc::from(*label),
+                kind: if *label == "Old project" {
+                    PlatformItemKind::Container
+                } else {
+                    PlatformItemKind::File
+                },
+                target: LocationTarget::Platform(PlatformLocation::new(
+                    self.id.clone(),
+                    PlatformItemId::from_raw(index as u64 + 2).expect("non-zero"),
+                )),
+                capabilities: PlatformCapabilities::OPEN
+                    .union(PlatformCapabilities::NATIVE_MENU)
+                    .union(PlatformCapabilities::RESTORE),
+                flags: PlatformItemFlags::default(),
+                icon_key: None,
+                detail: detail.map(std::sync::Arc::from),
+            })
+            .collect();
+        emit(PlatformListingBatch {
+            token: request.token.clone(),
+            breadcrumbs: Some(vec![PlatformBreadcrumb {
+                location: request.token.location().clone(),
+                label: std::sync::Arc::from("Recycle Bin"),
+            }]),
+            items,
+            is_last: true,
+        });
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +453,7 @@ mod tests {
                 capabilities: PlatformCapabilities::OPEN.union(PlatformCapabilities::ENUMERATE),
                 flags: PlatformItemFlags::default(),
                 icon_key: Some(Arc::from("stock:folder")),
+                detail: None,
             }
         }
     }

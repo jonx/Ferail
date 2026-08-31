@@ -445,9 +445,29 @@ selection that cannot be restored reports a failure instead of doing nothing.
 The broker accepts verbs from a fixed list, so the flag cannot turn it into a
 general Shell command runner.
 
-macOS has no equivalent yet: Put Back is a Finder record, not a filesystem
-operation, so the Trash folder there is an ordinary directory and offers no
-Restore.
+**Rows show where the item was deleted from.** Windows keeps this itself: the
+bin writes a `$I…` record beside each deleted item holding its original full
+path, and the Shell surfaces it as `System.Recycle.DeletedFrom`. The broker
+reads that property per item and ships it as `PlatformItem::detail`, which the
+row draws as a second, muted column. It is display text and nothing else:
+never a `LocationTarget`, never navigated to, never handed to a file
+operation, and redacted from `Debug` like the label, because a path names
+folders, projects and people.
+
+macOS is the opposite case, and the asymmetry is the platform's, not Ferail's.
+There, put-back is a Finder record rather than a filesystem fact: an item
+Finder trashed carries no such property, no sidecar and no extended attribute
+(verified on a scratch volume), so the Trash is an ordinary folder and Ferail
+can only put back what it trashed itself, from its own record
+([FILE_OPS.md](FILE_OPS.md#put-back)).
+
+The namespace surface has no provider outside Windows, so it could not be
+looked at anywhere else. `--platform-namespace` in the screenshot harness
+opens a fixed, obviously-fake Recycle Bin so the rows, the detail column and
+their truncation can be captured on any machine. It earned its keep
+immediately: the first capture showed every row iconless, from a dead asset
+path (`icons/folder.svg`, which does not exist) and an `svg()` that never
+received a colour, since it does not inherit the row's.
 
 Ferail-Win32's old selection-change `menu_preload.rs` and interleaved
 `shell_pump.rs` were behavioral references only. They are intentionally not

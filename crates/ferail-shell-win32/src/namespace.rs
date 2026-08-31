@@ -171,6 +171,7 @@ impl PlatformNamespaceProvider for WindowsNamespaceProvider {
                 capabilities,
                 flags,
                 icon_key: None,
+                detail: record.detail.map(Into::into),
             });
             if batch.len() >= batch_size
                 && !emit(PlatformListingBatch {
@@ -273,6 +274,9 @@ struct BrokerRecord {
     pidl: Arc<[u8]>,
     label: String,
     path: Option<PathBuf>,
+    /// Where the Recycle Bin says this item was deleted from. Display text
+    /// only: nothing navigates to it or acts on it.
+    detail: Option<String>,
 }
 
 enum BrokerEvent {
@@ -407,11 +411,26 @@ fn read_broker_stream(
                         &bytes_to_utf16(&bytes).ok_or(())?,
                     )))
                 };
+                // Optional, and absent for every namespace that is not the
+                // Recycle Bin, so it rides the same present/absent convention
+                // as the path above rather than costing an empty field per row.
+                let detail_len = read_u32(&mut input)? as usize;
+                let detail = if detail_len == u32::MAX as usize {
+                    None
+                } else {
+                    if detail_len > MAX_RECORD_FIELD {
+                        return Err(());
+                    }
+                    let mut bytes = vec![0u8; detail_len];
+                    input.read_exact(&mut bytes).map_err(|_| ())?;
+                    Some(decode_utf16(&bytes).ok_or(())?)
+                };
                 BrokerEvent::Record(BrokerRecord {
                     attributes,
                     pidl,
                     label,
                     path,
+                    detail,
                 })
             }
             2 => BrokerEvent::Label(decode_utf16(&read_field(&mut input)?).ok_or(())?),
@@ -533,6 +552,7 @@ fn namespace_broker_run() -> Result<(), ()> {
             CoTaskMemFree(Some(absolute.cast::<c_void>()));
             let label = shell_item_name(&item, SIGDN_NORMALDISPLAY).ok_or(())?;
             let path = shell_item_name(&item, SIGDN_FILESYSPATH);
+            let detail = recycle_deleted_from(&item);
             output.write_all(&[1]).map_err(|_| ())?;
             output
                 .write_all(&attributes.to_le_bytes())
@@ -541,6 +561,11 @@ fn namespace_broker_run() -> Result<(), ()> {
             write_field(&mut output, &utf16_bytes(&label))?;
             if let Some(path) = path {
                 write_field(&mut output, &utf16_bytes(&path))?;
+            } else {
+                output.write_all(&u32::MAX.to_le_bytes()).map_err(|_| ())?;
+            }
+            if let Some(detail) = detail {
+                write_field(&mut output, &utf16_bytes(&detail))?;
             } else {
                 output.write_all(&u32::MAX.to_le_bytes()).map_err(|_| ())?;
             }
@@ -571,6 +596,48 @@ fn write_field(output: &mut impl std::io::Write, bytes: &[u8]) -> Result<(), ()>
 
 fn utf16_bytes(value: &[u16]) -> Vec<u8> {
     value.iter().flat_map(|unit| unit.to_le_bytes()).collect()
+}
+
+/// Where the Recycle Bin says an item was deleted from.
+///
+/// Windows keeps this itself: the bin writes a `$I…` record beside each
+/// deleted item holding its original full path, and the Shell surfaces it as
+/// `System.Recycle.DeletedFrom`. Nothing here reconstructs or guesses a path;
+/// an item that has no such property (everything outside the Recycle Bin)
+/// simply answers `None`.
+///
+/// The key is spelled out because the `windows` crate does not export the
+/// `PKEY_Recycle_*` constants. Values are propkey.h's:
+/// `{9B174B33-40FF-11D2-A27E-00C04FC30871}`, property 3.
+fn recycle_deleted_from(item: &windows::Win32::UI::Shell::IShellItem) -> Option<Vec<u16>> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::IShellItem2;
+    use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
+    use windows::core::{GUID, Interface};
+
+    const PKEY_RECYCLE_DELETED_FROM: PROPERTYKEY = PROPERTYKEY {
+        fmtid: GUID::from_u128(0x9b174b33_40ff_11d2_a27e_00c04fc30871),
+        pid: 3,
+    };
+
+    let item2: IShellItem2 = item.cast().ok()?;
+    let value = unsafe { item2.GetString(&PKEY_RECYCLE_DELETED_FROM) }.ok()?;
+    if value.is_null() {
+        return None;
+    }
+    let mut len = 0usize;
+    unsafe {
+        while *value.0.add(len) != 0 {
+            len += 1;
+            if len > MAX_RECORD_FIELD / 2 {
+                CoTaskMemFree(Some(value.0.cast::<c_void>()));
+                return None;
+            }
+        }
+        let owned = std::slice::from_raw_parts(value.0, len).to_vec();
+        CoTaskMemFree(Some(value.0.cast::<c_void>()));
+        (!owned.is_empty()).then_some(owned)
+    }
 }
 
 fn shell_item_name(

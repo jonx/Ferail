@@ -238,6 +238,10 @@ pub struct Args {
     pub menu_hidden: Option<String>,
     /// Same, for the arrangement (`AppState::menu_layout`).
     pub menu_layout: Option<String>,
+    /// Point the active tab at the demo platform-namespace surface. The real
+    /// providers are Windows-only, so this is the only way to capture that
+    /// surface (its rows, its detail column) on any other machine.
+    pub platform_namespace: bool,
     /// Right-click the middle of the file-list body: the background, not
     /// a row, so the empty-space context menu (New Folder / Paste / …)
     /// builds and can be captured. Point the harness at an empty folder
@@ -339,6 +343,7 @@ pub fn parse_args() -> Args {
             "--context-menu-background" => args.context_menu_background = true,
             "--menu-hidden" => args.menu_hidden = iter.next(),
             "--menu-layout" => args.menu_layout = iter.next(),
+            "--platform-namespace" => args.platform_namespace = true,
             "--breadcrumb" => args.breadcrumb = iter.next(),
             "--keys" => args.keys = iter.next(),
             "--paste-source" => {
@@ -523,6 +528,8 @@ OPTIONS
                            The user's own preference is never read here.
   --menu-layout <spec>     Context-menu arrangement for this run, as
                            `surface:token,token` with `-` for a separator.
+  --platform-namespace     Show the demo Shell-namespace surface (a fake
+                           Recycle Bin). The real ones are Windows-only.
   --click-rows <list>      Real left clicks on rows: `row[:count]` items
                            separated by commas, `pause` waits past the
                            click-to-rename delay. `0,0:2` double-clicks row 0
@@ -1046,6 +1053,7 @@ struct ShellArgs {
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
+    platform_namespace: bool,
     context_menu_row: Option<usize>,
     click_rows: Vec<ClickGesture>,
     context_menu_background: bool,
@@ -1100,6 +1108,7 @@ impl From<&Args> for ShellArgs {
             select_row: a.select_row,
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
+            platform_namespace: a.platform_namespace,
             context_menu_row: a.context_menu_row,
             click_rows: a.click_rows.clone(),
             context_menu_background: a.context_menu_background,
@@ -1322,6 +1331,26 @@ impl ShellArgs {
                     s.open_go_to_folder_prompt(true, window, cx);
                 });
             });
+        }
+        if self.platform_namespace {
+            // After the boot listing has settled, not before: opening the
+            // surface first only to have the startup load replace it is
+            // exactly the race that made this flag look broken. It still runs
+            // before any selection or menu step, which resolve against
+            // whatever surface the tab ends up showing.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
+            shell.update(cx, |shell, cx| {
+                let (provider, initial) =
+                    crate::platform_namespace::DemoNamespaceProvider::new();
+                if let Err(kind) = shell.open_platform_namespace(provider, initial, cx) {
+                    crate::log_warn!(90, "--platform-namespace: {kind:?}");
+                }
+            });
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(300))
+                .await;
         }
         if let Some(state) = self.update_dialog.clone() {
             let _ = cx.update_window((*handle).into(), |_, _window, cx| {

@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The Windows Recycle Bin shows where each item was deleted from.** A second
+  column on every row gives the original folder, the way Explorer does, so you
+  can tell two files with the same name apart before restoring either. Windows
+  records this itself, so it works for everything in the bin whatever put it
+  there. Rows in that view also had no icon at all, from a wrong asset path;
+  they do now.
+
 - **The Trash has its own right-click menu, with Put Back.** Browsing the
   Trash used to offer the ordinary file menu, which made no sense there: it
   proposed renaming, duplicating, compressing and tagging things you had
