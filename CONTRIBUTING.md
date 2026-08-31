@@ -60,6 +60,13 @@ Setting up from a clean machine (prerequisites, per-platform system tools,
 first-build expectations, troubleshooting) is covered end-to-end in
 [GETTING_STARTED.md](GETTING_STARTED.md).
 
+## How contributions are credited
+
+Contributors are listed in the README's
+[Acknowledgements](README.md#acknowledgements) section, with what they
+contributed and a link to the PR. Not in the app's About dialog. Say so in the
+pull request if you would rather be credited under a handle, or not at all.
+
 ## License of contributions
 
 Unless you state otherwise, any contribution you submit is licensed under the

@@ -18,7 +18,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   nothing in the picture can be traced back to anything on your disk.
 
 - **Ferail speaks Polish.** A complete Polish translation now ships inside the
-  app, contributed by **Bohun** and reviewed by a Polish speaker. Pick it in
+  app, contributed by **Bohun**. Pick it in
   Settings, or let Ferail follow your system language. One rough edge, worth
   knowing: counts of two, three and four items currently use the same wording
   as five and above, so a few labels read slightly off until the pack gains

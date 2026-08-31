@@ -150,11 +150,8 @@ fn about_body() -> impl IntoElement {
                     format!("{os_label} \u{00B7} {arch}"),
                 ))
                 .child(meta_row(tr!("Author"), "John Knipper".to_string()))
-                // Translators are credited by name here, not only in the
-                // README: a language pack is the part of the app a user reads
-                // every single day, and whoever wrote it should be visible
-                // from inside the app that ships it.
-                .child(meta_row(tr!("Polish translation"), "Bohun".to_string()))
+                // Contributors go in the README's Acknowledgements section,
+                // not here (CONTRIBUTING.md).
                 .child(website_row("github.com/jonx/Ferail"))
                 .child(privacy_row()),
         )
