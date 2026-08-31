@@ -136,9 +136,18 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   longer hides that fact. The toolbar's new overflow menu turns line
   wrapping and line numbers on and off.
 
+- **The command palette no longer leaks the file list underneath it.** With
+  the shortcuts palette open (Cmd+/), hovering it showed the tooltip of
+  whatever file row sat behind it, and the scroll wheel could go to that row
+  instead of the palette. The palette now blocks the window beneath it, so
+  hover, tooltips and the wheel all belong to the palette while it is up.
+  Scrolling the command list itself with the wheel still stops short of the
+  end; use the arrow keys to reach the last commands until that is fixed.
+
 - **The Edit menu is no longer almost empty.** Cut, Copy, Paste and Move
   Items Here were on the keyboard and in the right-click menu but nowhere in
   the menu bar, which listed only Copy Path.
+
 ## 0.7.6 - 2026-08-30
 
 - **Enter in a path or filter field now uses exactly what you typed.**

@@ -207,13 +207,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .flex()
             .items_center()
             .justify_center()
-            // Swallow scroll while the modal is up. The overlay is a
-            // sibling subtree of the file list, painted on top; GPUI
-            // still dispatches the wheel to the list's scroll hitbox
-            // underneath unless we consume it here. The inner
-            // overflow-scroll fires first (top-most), so the command
-            // list still scrolls; this only stops the leak-through.
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            // The overlay is a sibling subtree of the file list, painted on
+            // top, but painting on top is not hit-testing on top: without
+            // this the rows underneath stay hovered, so they show their
+            // tooltips over the palette and still claim the scroll wheel.
+            // `occlude` marks every hitbox behind this one unhovered and
+            // non-scrolling; the palette's own hitboxes are in front of it.
+            .occlude()
             .child(backdrop)
             .child(card)
             .into_any_element(),
