@@ -47,16 +47,38 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
 
 ## Architecture
 
-Right-click sites build a [`MenuPlan`] of [`MenuPlanItem::Action`] /
-`Separator` / `Submenu` entries. Each `Action` carries a `CommandId` and
-optional `CommandPayload` (tag colour, Open With bundle path).
-[`ferail_shell_mac::show_context_menu`] turns the plan into an `NSMenu`,
-runs it modally via `popUpMenuPositioningItem:`, and returns a `MenuPick`
-combining the chosen `CommandId` with whatever payload was attached.
+Every menu is built imperatively, entry by entry, into a
+`gpui_component::menu::PopupMenu`: `menu.menu(label, action)` for a command,
+`.separator()`, and `PopupMenuItem::submenu(label, entity)` for a nested menu
+built through `PopupMenu::build`. Which entries appear is decided inline by
+`Availability` rules over the resolved target set (see
+[Command availability over a group](#command-availability-over-a-group-gpui),
+computed once per open by `resolve_menu_targets_with_mode`). Choosing an entry dispatches a `gpui::Action`
+through the window's normal dispatch path, anchored to the Shell's focus handle
+so keyboard-shortcut hints resolve on the first frame.
 
-Commands fan out to host methods via a match on `CommandId.0` at each
-site; multi-selection is honoured by `App::resolve_selected_paths` which
-reads the `SelectionSet` once per right-click.
+An entry's identity is therefore its **Rust action type**. There is no
+action to `CommandId` bridge at the menu site, and labels are written twice:
+once as the catalogue's `msgid!` and again as the menu's `tr!`.
+`ferail_core::commands` carries 17 `Category::Context` specs against roughly
+50 entries in the row menu alone. `keyboard_help::action_for_command` maps ids
+to actions for the palette, but only in that direction, and only for commands
+that have a catalogue spec.
+
+This is what blocks user-customizable menus: there is nothing stable to key a
+preference on. The refactor that unblocks it is described under
+[Customizing Which Entries Appear](#customizing-which-entries-appear-planned).
+
+> **Historical note.** This section previously described a `MenuPlan` of
+> `MenuPlanItem::Action` / `Separator` / `Submenu` entries, each carrying a
+> `CommandId` and an optional `CommandPayload`, rendered by
+> `ferail_shell_mac::show_context_menu` into an `NSMenu` and answered with a
+> `MenuPick`. None of that exists in this codebase: it was the pre-GPUI Cocoa
+> app's design, and the port to gpui-component's builder chains dropped it.
+> The description survived the code by a long way, which matters here because
+> the planned work below cites `MenuPlanItem` as if it were live. Worth
+> keeping in view while reading that plan: the refactor it asks for largely
+> **restores** the shape the old app already had.
 
 Slow operations run on workers and report back through
 `AppEvent::FileOpComplete`:
@@ -431,6 +453,7 @@ ported: the normal menu never pays the Shell-extension cost.
   [Customizing Which Entries Appear](#customizing-which-entries-appear-planned)
   above. Blocked on giving every entry a stable `CommandId` and building
   the menus from a table.
-- Per-target enable/disable rules (read-only volumes, missing
-  files, permission-denied). `MenuPlanItem` already supports
-  `enabled: bool`: call sites just don't compute it yet.
+- Per-target enable/disable rules (read-only volumes, missing files,
+  permission-denied): today an unavailable entry is hidden, never shown
+  greyed out. Needs an `enabled` flag on each entry, which the table-driven
+  refactor above is the natural place to introduce.
