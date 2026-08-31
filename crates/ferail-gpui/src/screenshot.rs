@@ -238,6 +238,11 @@ pub struct Args {
     pub menu_hidden: Option<String>,
     /// Same, for the arrangement (`AppState::menu_layout`).
     pub menu_layout: Option<String>,
+    /// Synthesise N downward scroll-wheel notches at the window centre, after
+    /// every other step. Real `PlatformInput::ScrollWheel` events through the
+    /// window's own path, so whatever is under the pointer scrolls exactly as
+    /// it would for a user: the only way to test a scroll extent headlessly.
+    pub scroll_wheel: Option<i32>,
     /// Point the active tab at the demo platform-namespace surface. The real
     /// providers are Windows-only, so this is the only way to capture that
     /// surface (its rows, its detail column) on any other machine.
@@ -343,6 +348,7 @@ pub fn parse_args() -> Args {
             "--context-menu-background" => args.context_menu_background = true,
             "--menu-hidden" => args.menu_hidden = iter.next(),
             "--menu-layout" => args.menu_layout = iter.next(),
+            "--scroll-wheel" => args.scroll_wheel = iter.next().and_then(|n| n.parse().ok()),
             "--platform-namespace" => args.platform_namespace = true,
             "--breadcrumb" => args.breadcrumb = iter.next(),
             "--keys" => args.keys = iter.next(),
@@ -528,6 +534,8 @@ OPTIONS
                            The user's own preference is never read here.
   --menu-layout <spec>     Context-menu arrangement for this run, as
                            `surface:token,token` with `-` for a separator.
+  --scroll-wheel <n>       Synthesise n downward wheel notches at the window
+                           centre, after every other step.
   --platform-namespace     Show the demo Shell-namespace surface (a fake
                            Recycle Bin). The real ones are Windows-only.
   --click-rows <list>      Real left clicks on rows: `row[:count]` items
@@ -1054,6 +1062,7 @@ struct ShellArgs {
     select_name: Option<String>,
     select_rows: Vec<usize>,
     platform_namespace: bool,
+    scroll_wheel: Option<i32>,
     context_menu_row: Option<usize>,
     click_rows: Vec<ClickGesture>,
     context_menu_background: bool,
@@ -1109,6 +1118,7 @@ impl From<&Args> for ShellArgs {
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
             platform_namespace: a.platform_namespace,
+            scroll_wheel: a.scroll_wheel,
             context_menu_row: a.context_menu_row,
             click_rows: a.click_rows.clone(),
             context_menu_background: a.context_menu_background,
@@ -1444,6 +1454,39 @@ impl ShellArgs {
                     s.trigger_rename(window, cx);
                 });
             });
+        }
+        if let Some(notches) = self.scroll_wheel {
+            // After the keys below would have run, so a capture can open a
+            // surface with --keys and then scroll it. Real ScrollWheel input
+            // through the window: nothing else exercises a scroll extent, and
+            // an extent that stops short is invisible to any other probe.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
+            for _ in 0..notches.max(0) {
+                let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                    let bounds = window.bounds();
+                    let position = gpui::point(
+                        bounds.size.width / 2.0,
+                        bounds.size.height / 2.0,
+                    );
+                    let _ = window.dispatch_event(
+                        gpui::PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+                            position,
+                            delta: gpui::ScrollDelta::Pixels(gpui::point(
+                                gpui::px(0.0),
+                                gpui::px(-120.0),
+                            )),
+                            modifiers: gpui::Modifiers::default(),
+                            touch_phase: gpui::TouchPhase::Moved,
+                        }),
+                        cx,
+                    );
+                });
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(16))
+                    .await;
+            }
         }
         if let Some(keys) = self.keys.clone() {
             // Let async UI (for example a completion worker) land before

@@ -84,6 +84,13 @@ look more interesting.
   (Software Update dialog seeded with `checking` / `uptodate` / `available` /
   `elsewhere` / `noasset` / `downloading` / `done` / `failed`: no network;
   `live` runs the real GitHub check, the one networked capture).
+- **Scrolling**: `--scroll-wheel <n>` synthesises n downward wheel notches at
+  the window centre, after every other step. Real `PlatformInput::ScrollWheel`
+  through the window's own path, so whatever is under the pointer scrolls as it
+  would for a user. It is the only way to test a **scroll extent** headlessly:
+  a list that stops short of its end looks identical to a correct one in a
+  static capture, and comparing two runs at different notch counts is what
+  distinguishes "slow" from "walled".
 - **Shell namespace**: `--platform-namespace` points the active tab at a demo
   provider (a fixed, obviously-fake Recycle Bin, with and without an original
   location per row). The real providers are Windows-only, so this is the only
