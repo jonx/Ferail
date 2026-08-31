@@ -22,63 +22,106 @@ use ferail_core::commands::CommandId;
 
 use super::{MenuSurface, ids};
 
+/// One position in a built-in menu: an entry, or the separator the menu is
+/// written with.
+///
+/// The separators belong here rather than only in the builder because they are
+/// part of what a user starts from. An editor that showed the entries without
+/// them would silently drop every group boundary the first time anyone moved
+/// anything.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Item {
+    Entry(CommandId),
+    Separator,
+}
+
+impl Item {
+    pub(crate) fn id(self) -> Option<CommandId> {
+        match self {
+            Self::Entry(id) => Some(id),
+            Self::Separator => None,
+        }
+    }
+}
+
+use Item::Entry as E;
+use Item::Separator as S;
+
 /// The file-list row and icon-grid cell menu, in the order it is built.
-const FILE_ROW: &[CommandId] = &[
-    ids::OPEN,
-    ids::OPEN_IN_NEW_TAB,
-    ids::EDIT,
-    ids::EDIT_IMAGE,
-    ids::EDIT_IN_SYSTEM_EDITOR,
-    ids::GET_INFO,
-    ids::QUICK_LOOK,
-    ids::SLIDESHOW_FROM_HERE,
-    ids::REVEAL,
-    ids::COPY_PATH,
-    ids::GENERATE_SHA256,
-    ids::VERIFY_CHECKSUMS,
-    ids::CREATE_CHECKSUM_FILE,
-    ids::SHOW_LOCK_HOLDERS,
-    ids::OPEN_TERMINAL_HERE,
-    ids::RENAME,
-    ids::BULK_RENAME,
-    ids::DUPLICATE,
-    ids::MAKE_ALIAS,
-    ids::COMPRESS,
-    ids::EXTRACT,
-    ids::CONVERT_ARCHIVE,
-    ids::OPEN_AS_ARCHIVE,
-    ids::CLEAR_QUARANTINE,
-    ids::TOGGLE_FAVORITE,
-    ids::OPEN_WITH,
-    ids::TAGS,
-    ids::MOVE_TO_TRASH,
-    ids::DELETE_IMMEDIATELY,
+const FILE_ROW: &[Item] = &[
+    E(ids::OPEN),
+    E(ids::OPEN_IN_NEW_TAB),
+    E(ids::EDIT),
+    E(ids::EDIT_IMAGE),
+    E(ids::EDIT_IN_SYSTEM_EDITOR),
+    S,
+    E(ids::GET_INFO),
+    E(ids::QUICK_LOOK),
+    E(ids::SLIDESHOW_FROM_HERE),
+    S,
+    E(ids::REVEAL),
+    E(ids::COPY_PATH),
+    E(ids::GENERATE_SHA256),
+    E(ids::VERIFY_CHECKSUMS),
+    E(ids::CREATE_CHECKSUM_FILE),
+    E(ids::SHOW_LOCK_HOLDERS),
+    E(ids::OPEN_TERMINAL_HERE),
+    S,
+    E(ids::RENAME),
+    E(ids::BULK_RENAME),
+    E(ids::DUPLICATE),
+    E(ids::MAKE_ALIAS),
+    E(ids::COMPRESS),
+    E(ids::EXTRACT),
+    E(ids::CONVERT_ARCHIVE),
+    E(ids::OPEN_AS_ARCHIVE),
+    S,
+    E(ids::CLEAR_QUARANTINE),
+    S,
+    E(ids::TOGGLE_FAVORITE),
+    E(ids::OPEN_WITH),
+    E(ids::TAGS),
+    S,
+    E(ids::MOVE_TO_TRASH),
+    E(ids::DELETE_IMMEDIATELY),
     #[cfg(windows)]
-    ids::WINDOWS_CONTEXT_MENU,
+    S,
+    #[cfg(windows)]
+    E(ids::WINDOWS_CONTEXT_MENU),
 ];
 
 /// The empty-space menu, which targets the folder being browsed.
-const FILE_BACKGROUND: &[CommandId] = &[
-    ids::NEW_FOLDER,
-    ids::PASTE,
-    ids::SELECT_ALL,
-    ids::GET_INFO,
-    ids::REVEAL,
-    ids::COPY_PATH,
-    ids::OPEN_TERMINAL_HERE,
-    ids::PIN_TO_FAVORITES,
-    ids::REFRESH,
+const FILE_BACKGROUND: &[Item] = &[
+    E(ids::NEW_FOLDER),
+    S,
+    E(ids::PASTE),
+    E(ids::SELECT_ALL),
+    S,
+    E(ids::GET_INFO),
+    E(ids::REVEAL),
+    E(ids::COPY_PATH),
+    E(ids::OPEN_TERMINAL_HERE),
+    S,
+    E(ids::PIN_TO_FAVORITES),
+    S,
+    E(ids::REFRESH),
 ];
 
-pub(crate) fn entries(surface: MenuSurface) -> &'static [CommandId] {
+/// Everything a surface can show, separators included, in menu order.
+pub(crate) fn items(surface: MenuSurface) -> &'static [Item] {
     match surface {
         MenuSurface::FileRow => FILE_ROW,
         MenuSurface::FileBackground => FILE_BACKGROUND,
     }
 }
 
+/// The commands a surface can show, without the separators.
+pub(crate) fn entries(surface: MenuSurface) -> impl Iterator<Item = CommandId> {
+    items(surface).iter().filter_map(|item| item.id())
+}
+
 pub(crate) fn lists(surface: MenuSurface, id: CommandId) -> bool {
-    entries(surface).contains(&id)
+    entries(surface).any(|known| known == id)
 }
 
 /// Display name for the settings list.
@@ -112,23 +155,36 @@ pub(crate) fn label(id: CommandId) -> SharedString {
 
 #[cfg(test)]
 mod tests {
-    use super::{FILE_BACKGROUND, FILE_ROW, entries, label, lists};
-    use crate::menu_plan::{MenuSurface, ids, prefs::ALWAYS_VISIBLE};
+    use super::{entries, items, label, lists, Item};
+    use crate::menu_plan::{ids, prefs::ALWAYS_VISIBLE, MenuSurface};
 
     #[test]
     fn every_surface_lists_something_and_lists_it_once() {
         for surface in MenuSurface::ALL {
-            let list = entries(surface);
+            let list: Vec<_> = entries(surface).collect();
             assert!(!list.is_empty(), "{} lists nothing", surface.key());
             let mut seen = Vec::new();
             for id in list {
-                assert!(
-                    !seen.contains(&id.0),
-                    "{} lists {} twice",
-                    surface.key(),
-                    id.0
-                );
+                assert!(!seen.contains(&id.0), "{} lists {} twice", surface.key(), id.0);
                 seen.push(id.0);
+            }
+        }
+    }
+
+    #[test]
+    fn built_in_separators_never_bookend_a_menu_or_run_two_deep() {
+        // The inventory is what an editor hands the user as a starting point,
+        // so a stray separator here would be one they have to clean up.
+        for surface in MenuSurface::ALL {
+            let list = items(surface);
+            assert!(!list.first().is_some_and(|item| *item == Item::Separator));
+            assert!(!list.last().is_some_and(|item| *item == Item::Separator));
+            for pair in list.windows(2) {
+                assert!(
+                    pair != [Item::Separator, Item::Separator],
+                    "{} has a doubled separator",
+                    surface.key()
+                );
             }
         }
     }
@@ -150,7 +206,7 @@ mod tests {
     fn every_listed_entry_has_a_display_name() {
         for surface in MenuSurface::ALL {
             for id in entries(surface) {
-                let label = label(*id);
+                let label = label(id);
                 assert!(!label.is_empty(), "{} has no label", id.0);
                 // The fallback returns the raw id: fine for an unknown id from
                 // a newer build, wrong for one this build lists itself.
@@ -161,12 +217,11 @@ mod tests {
 
     #[test]
     fn the_two_menus_are_not_the_same_menu() {
-        assert_ne!(FILE_ROW.len(), 0);
-        assert_ne!(FILE_BACKGROUND.len(), 0);
-        assert!(FILE_ROW.contains(&ids::MOVE_TO_TRASH));
-        assert!(!FILE_BACKGROUND.contains(&ids::MOVE_TO_TRASH));
+        assert!(lists(MenuSurface::FileRow, ids::MOVE_TO_TRASH));
+        assert!(!lists(MenuSurface::FileBackground, ids::MOVE_TO_TRASH));
         // Get Info and Copy Path are in both, which is the whole reason a
         // preference is keyed on (surface, command) and not on command alone.
-        assert!(FILE_ROW.contains(&ids::GET_INFO) && FILE_BACKGROUND.contains(&ids::GET_INFO));
+        assert!(lists(MenuSurface::FileRow, ids::GET_INFO));
+        assert!(lists(MenuSurface::FileBackground, ids::GET_INFO));
     }
 }

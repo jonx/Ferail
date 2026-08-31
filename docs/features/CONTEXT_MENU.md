@@ -273,8 +273,10 @@ a hot-path saving (see [OPEN_WITH.md](OPEN_WITH.md) §3).
 ## Customizing Which Entries Appear
 
 **Shipped for the two file-pane menus.** Settings ▸ Menus lists every entry the
-row menu and the empty-space menu can show, with a switch each, the way the
-table header already lets a user hide columns. The eight other surfaces are not
+row menu and the empty-space menu can show, in the order they will show them,
+with a switch each; rows are dragged to reorder, and separators are rows too.
+The switch half follows the precedent the table header already set for
+columns. The eight other surfaces are not
 customizable yet: they need the [plan refactor](#architecture) first.
 
 ### Storage
@@ -337,20 +339,53 @@ neutral form: the row menu says "Edit in TextEdit" or "Edit in Notepad", the
 settings list says "Edit in the system text editor", because one preference
 governs the entry on every platform.
 
-Each group ends with **Show All Entries**, disabled while that surface has
-nothing hidden.
+Each group ends with **Add Separator** and **Reset This Menu**, the latter
+disabled while that surface matches the built-in menu. One Reset covers both
+hiding and order: two buttons would make the user guess which is which.
+
+### Reordering and separators
+
+Rows are dragged into whatever order the user wants, and separators are theirs
+to place: each is a row, draggable like any other, with a **Remove**, and
+**Add Separator** puts a fresh one at the end of the list.
+
+The hard part was never the dragging. A hidden set is order-free, so nothing
+has to be decided about an entry it does not name; an ordered list has to
+answer **where a command added in a later version lands for someone who
+rearranged the menu a year ago**. Storing the arrangement as a replacement list
+makes "at the end" the only possible answer, which buries every new command
+under whatever the user happened to leave last.
+
+So the saved arrangement is an override *anchored to the built-in one*.
+`layout::merge` reinserts every entry the saved list does not name **after the
+built-in entry that precedes it and is present**, wherever that neighbour ended
+up. A command added between two others reappears between those two others.
+Nothing can vanish either: a test drives the merge over hand-built
+arrangements, including reversed and near-empty ones, and asserts every
+built-in entry survives.
+
+Two smaller rules fall out of it:
+
+- **Separators become the user's the moment they arrange anything.** Until then
+  the arrangement is the built-in one, separators included, which is why
+  `inventory` carries them rather than only the menu builder: an editor that
+  showed the entries without them would silently drop every group boundary the
+  first time anyone moved a row.
+- **An id this build does not have is dropped from the rendered menu and kept
+  in storage.** A downgrade shows the menu it can, and the arrangement comes
+  back intact on the way up.
+
+An arrangement is tidied when it is saved, not only when the menu is drawn, so
+the editor cannot show a leading or doubled separator that the real menu would
+drop. What the list shows is what the menu will be.
 
 ### Still open
 
-- **Reordering and user-placed separators.** The design question is not the
-  drag and drop, it is the merge: hidden-set storage is order-free, but an
-  ordered list has to answer where a command added in a later version lands for
-  a user who rearranged everything. Appending to the end is the lazy answer and
-  it buries new work. The order override should be anchored to the built-in
-  list rather than replacing it.
 - **The eight other surfaces**, each needing its plan conversion first.
 - **Per-target enable/disable** (greyed rather than hidden), which needs an
   `enabled` flag on `PlanItem`.
+- **Keyboard reordering.** The rows are drag-only today, so the editor is not
+  usable without a pointer.
 
 ## Windows Native Menu
 

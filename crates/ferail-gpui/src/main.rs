@@ -53,7 +53,10 @@ fn main() -> Result<()> {
     // Parse the context-menu customization once, here, so opening a menu
     // never parses anything: menu building is a read-only, I/O-free path and
     // has to stay that way (docs/features/CONTEXT_MENU.md).
-    ferail_gpui::menu_plan::prefs::init(startup_state.menu_hidden.as_deref());
+    ferail_gpui::menu_plan::prefs::init(
+        startup_state.menu_hidden.as_deref(),
+        startup_state.menu_layout.as_deref(),
+    );
     // Dev-only probe for the shutdown watchdog (dev builds strip nothing else
     // from this binary; the packaged build drops the harness feature). A quit
     // that hangs cannot be reproduced on demand, so this arms the watchdog and

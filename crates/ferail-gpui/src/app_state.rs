@@ -139,6 +139,14 @@ pub struct AppState {
     /// one has never heard of. Parsed once by
     /// [`crate::menu_plan::prefs`], never at menu-open time.
     pub menu_hidden: Option<String>,
+    /// The order the user arranged those menus in, plus the separators they
+    /// placed, as `surface:token,token;surface:token` where a token is a
+    /// command id or `-`. `None` == the built-in order. A saved arrangement is
+    /// an override anchored to the built-in one, never a replacement: an entry
+    /// it does not name is reinserted beside its built-in neighbour by
+    /// [`crate::menu_plan::layout::merge`], so a command added in a later
+    /// version cannot end up buried at the bottom of a customized menu.
+    pub menu_layout: Option<String>,
     /// "light", "dark", or "system". `None` = follow the system
     /// detection done at startup (Stage 9.a default).
     pub theme_pref: Option<String>,
@@ -395,6 +403,9 @@ fn load_from_disk() -> AppState {
             "menu_hidden" if !val.trim().is_empty() => {
                 out.menu_hidden = Some(val.trim().to_string());
             }
+            "menu_layout" if !val.trim().is_empty() => {
+                out.menu_layout = Some(val.trim().to_string());
+            }
             "list_columns" if !val.trim().is_empty() => {
                 out.list_columns = Some(val.trim().to_string());
             }
@@ -606,6 +617,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(m) = &state.menu_hidden {
         s.push_str(&format!("menu_hidden={m}\n"));
+    }
+    if let Some(m) = &state.menu_layout {
+        s.push_str(&format!("menu_layout={m}\n"));
     }
     if let Some(c) = &state.list_columns {
         s.push_str(&format!("list_columns={c}\n"));

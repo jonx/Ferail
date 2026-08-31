@@ -2050,8 +2050,36 @@ fn persist_mpv_path(value: &str) {
     });
 }
 
-/// The Menus page: one group per customizable context menu, one switch per
-/// entry it can show.
+/// Drag payload for the menu editor: which row of which surface is moving.
+///
+/// The surface travels with it so a drop gap can refuse a row dragged out of
+/// the other menu, which would otherwise silently move an entry between two
+/// menus that merely look alike.
+#[derive(Clone)]
+pub struct MenuSlotDrag {
+    surface: crate::menu_plan::MenuSurface,
+    index: usize,
+    label: SharedString,
+}
+
+impl Render for MenuSlotDrag {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .px_2()
+            .py_1()
+            .bg(theme.background)
+            .border_1()
+            .border_color(theme.border)
+            .rounded(theme.radius)
+            .text_scale_sm()
+            .text_color(theme.foreground)
+            .child(self.label.clone())
+    }
+}
+
+/// The Menus page: one group per customizable context menu, listing every
+/// entry that menu can show, in the order it will show them.
 ///
 /// Every entry is listed whether or not it would appear on a given
 /// right-click, because the preference is about the command, not about the
@@ -2060,7 +2088,7 @@ fn persist_mpv_path(value: &str) {
 /// never OR, so a user cannot re-enable a command onto a target it cannot act
 /// on.
 fn menus_page() -> SettingPage {
-    use crate::menu_plan::{MenuSurface, inventory, prefs};
+    use crate::menu_plan::{MenuSurface, prefs};
     use gpui_component::{Disableable as _, Sizable as _, button::Button};
 
     let mut page = SettingPage::new(tr!("Menus")).icon(Icon::empty().path("icons/list.svg"));
@@ -2070,36 +2098,219 @@ fn menus_page() -> SettingPage {
                 .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(tr!(
-                    "Turn off the entries you never use. Hiding an entry never changes what Ferail can do: the command keeps its keyboard shortcut and stays in the command palette. Entries still appear only where they apply, so turning one on does not make it show up on files it cannot act on."
+                    "Turn off the entries you never use, and drag them into the order you want. Hiding an entry never changes what Ferail can do: the command keeps its keyboard shortcut and stays in the command palette. Entries still appear only where they apply, so turning one on does not make it show up on files it cannot act on."
                 ))
                 .into_any_element()
         }),
     ));
 
     for surface in MenuSurface::ALL {
-        let mut group = SettingGroup::new().title(surface_title(surface));
-        for id in inventory::entries(surface) {
-            group = group.item(menu_entry_switch(surface, *id));
-        }
-        group = group.item(SettingItem::render(move |_options, _window, _cx| {
-            let customized = prefs::surface_is_customized(surface);
-            gpui_component::h_flex()
-                .justify_end()
-                .child(
-                    Button::new(SharedString::from(format!("reset-menu-{}", surface.key())))
-                        .label(tr!("Show All Entries"))
-                        .small()
-                        .disabled(!customized)
-                        .on_click(move |_event, _window, cx: &mut App| {
-                            persist_menu_hidden(prefs::reset(surface));
-                            cx.refresh_windows();
-                        }),
-                )
-                .into_any_element()
-        }));
+        let group = SettingGroup::new()
+            .title(surface_title(surface))
+            // One item for the whole list rather than one per entry: the drop
+            // gaps between rows are part of the list, and an editor whose rows
+            // could not see each other could not have them.
+            .item(SettingItem::render(move |_options, _window, cx| {
+                menu_editor(surface, cx)
+            }))
+            .item(SettingItem::render(move |_options, _window, _cx| {
+                let customized = prefs::surface_is_customized(surface);
+                gpui_component::h_flex()
+                    .justify_between()
+                    .child(
+                        Button::new(SharedString::from(format!("add-sep-{}", surface.key())))
+                            .label(tr!("Add Separator"))
+                            .small()
+                            .on_click(move |_event, _window, cx: &mut App| {
+                                let mut slots = prefs::arrangement(surface);
+                                slots.push(crate::menu_plan::layout::Slot::Separator);
+                                persist_menu_customization(prefs::set_arrangement(surface, slots));
+                                cx.refresh_windows();
+                            }),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("reset-menu-{}", surface.key())))
+                            .label(tr!("Reset This Menu"))
+                            .small()
+                            .disabled(!customized)
+                            .on_click(move |_event, _window, cx: &mut App| {
+                                persist_menu_customization(prefs::reset_surface(surface));
+                                cx.refresh_windows();
+                            }),
+                    )
+                    .into_any_element()
+            }));
         page = page.group(group);
     }
     page
+}
+
+/// The editable list for one menu: its rows in menu order, with a drop gap
+/// above each one and after the last.
+fn menu_editor(surface: crate::menu_plan::MenuSurface, cx: &App) -> AnyElement {
+    use crate::menu_plan::prefs;
+
+    let slots = prefs::arrangement(surface);
+    let mut list = gpui_component::v_flex().w_full();
+    for (index, slot) in slots.iter().enumerate() {
+        list = list.child(menu_drop_gap(surface, index, cx));
+        list = list.child(menu_editor_row(surface, index, slot, cx));
+    }
+    list = list.child(menu_drop_gap(surface, slots.len(), cx));
+    list.into_any_element()
+}
+
+/// Insertion point between two rows: a thin strip that paints an accent line
+/// while a row from this same menu is over it, and moves that row here on
+/// drop. Same shape as the Favorites reorder gap.
+fn menu_drop_gap(surface: crate::menu_plan::MenuSurface, index: usize, cx: &App) -> AnyElement {
+    let accent = cx.theme().primary;
+    div()
+        .id(SharedString::from(format!(
+            "menu-gap-{}-{index}",
+            surface.key()
+        )))
+        .w_full()
+        .h(px(6.0))
+        .drag_over::<MenuSlotDrag>(move |style, drag, _window, _cx| {
+            if drag.surface == surface {
+                style.border_t_2().border_color(accent)
+            } else {
+                style
+            }
+        })
+        .on_drop(move |drag: &MenuSlotDrag, _window, cx: &mut App| {
+            if drag.surface != surface {
+                return;
+            }
+            move_menu_slot(surface, drag.index, index);
+            cx.refresh_windows();
+        })
+        .into_any_element()
+}
+
+/// One row: an entry with its switch, or a separator with a remove button.
+fn menu_editor_row(
+    surface: crate::menu_plan::MenuSurface,
+    index: usize,
+    slot: &crate::menu_plan::layout::Slot,
+    cx: &App,
+) -> AnyElement {
+    use crate::menu_plan::{inventory, prefs};
+    use gpui_component::{Disableable as _, Sizable as _, button::Button, switch::Switch};
+
+    let theme = cx.theme();
+    let key = surface.key();
+    let row = gpui_component::h_flex()
+        .id(SharedString::from(format!("menu-row-{key}-{index}")))
+        .w_full()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .py_1()
+        .cursor_pointer();
+
+    // Resolve the row's id back to the inventory's `'static` one rather than
+    // minting a new one from the saved string: `CommandId` borrows for
+    // `'static`, and leaking a `String` per row per frame to satisfy that would
+    // be a leak on the paint path. An id the inventory does not know cannot
+    // happen (merge drops those), and if it ever did, drawing nothing beats
+    // drawing a row whose switch governs nothing.
+    let entry = slot
+        .id()
+        .and_then(|id| inventory::entries(surface).find(|known| known.0 == id));
+    if slot.id().is_some() && entry.is_none() {
+        return div().into_any_element();
+    }
+    let Some(id) = entry else {
+        // A separator: a rule across the row, with the affordance to take it
+        // out again. Draggable like any other row, since where a separator
+        // sits is the whole point of having one.
+        return row
+            .on_drag(
+                MenuSlotDrag {
+                    surface,
+                    index,
+                    label: tr!("Separator"),
+                },
+                |payload, _offset, _window, cx| cx.new(|_| payload.clone()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .h(px(1.0))
+                    .mx_2()
+                    .bg(theme.border),
+            )
+            .child(
+                Button::new(SharedString::from(format!("menu-sep-remove-{key}-{index}")))
+                    .label(tr!("Remove"))
+                    .xsmall()
+                    .on_click(move |_event, _window, cx: &mut App| {
+                        let mut slots = prefs::arrangement(surface);
+                        if index < slots.len() {
+                            slots.remove(index);
+                            persist_menu_customization(prefs::set_arrangement(surface, slots));
+                            cx.refresh_windows();
+                        }
+                    }),
+            )
+            .into_any_element();
+    };
+
+    let label = inventory::label(id);
+    let protected = prefs::ALWAYS_VISIBLE.contains(&id);
+    let shown = !prefs::is_hidden(surface, id);
+    row.on_drag(
+        MenuSlotDrag {
+            surface,
+            index,
+            label: label.clone(),
+        },
+        |payload, _offset, _window, cx| cx.new(|_| payload.clone()),
+    )
+    .child(
+        div()
+            .text_scale_sm()
+            .text_color(if protected {
+                theme.muted_foreground
+            } else {
+                theme.foreground
+            })
+            .child(label),
+    )
+    .child(
+        Switch::new(SharedString::from(format!("menu-{key}-{}", id.0)))
+            .checked(shown)
+            .small()
+            // Open and Get Info are the menu's reason to exist. The switch
+            // stays visible and on rather than disappearing, so the list still
+            // reads as the whole menu.
+            .disabled(protected)
+            .on_click(move |checked: &bool, _window: &mut Window, cx: &mut App| {
+                persist_menu_customization(prefs::set_hidden(surface, id, !*checked));
+                cx.refresh_windows();
+            }),
+    )
+    .into_any_element()
+}
+
+/// Move the row at `from` to the gap at `to`.
+///
+/// Gap `n` sits above row `n`, so removing the dragged row first shifts every
+/// later gap down by one: dropping a row into the gap just below itself has to
+/// be a no-op, not a move past its neighbour.
+fn move_menu_slot(surface: crate::menu_plan::MenuSurface, from: usize, to: usize) {
+    use crate::menu_plan::prefs;
+
+    let mut slots = prefs::arrangement(surface);
+    if from >= slots.len() || to > slots.len() {
+        return;
+    }
+    let slot = slots.remove(from);
+    let at = if to > from { to - 1 } else { to };
+    slots.insert(at.min(slots.len()), slot);
+    persist_menu_customization(prefs::set_arrangement(surface, slots));
 }
 
 fn surface_title(surface: crate::menu_plan::MenuSurface) -> SharedString {
@@ -2110,65 +2321,17 @@ fn surface_title(surface: crate::menu_plan::MenuSurface) -> SharedString {
     }
 }
 
-/// One entry's on/off switch.
+/// Persist both context-menu specs together.
 ///
-/// Modelled on [`switch_setting`] but keyed on `(surface, id)` rather than on
-/// the label: the same command appears in more than one menu, and two switches
-/// sharing an element id would share state.
-fn menu_entry_switch(
-    surface: crate::menu_plan::MenuSurface,
-    id: ferail_core::commands::CommandId,
-) -> SettingItem {
-    use crate::menu_plan::{inventory, prefs};
-    use gpui_component::{Disableable as _, Sizable as _, switch::Switch};
-
-    let label = inventory::label(id);
-    let protected = prefs::ALWAYS_VISIBLE.contains(&id);
-    SettingItem::render(move |_options, _window, cx| {
-        let shown = !prefs::is_hidden(surface, id);
-        let label = label.clone();
-        gpui_component::h_flex()
-            .w_full()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .child(
-                div()
-                    .text_scale_sm()
-                    .text_color(if protected {
-                        cx.theme().muted_foreground
-                    } else {
-                        cx.theme().foreground
-                    })
-                    .child(label),
-            )
-            .child(
-                Switch::new(SharedString::from(format!(
-                    "menu-{}-{}",
-                    surface.key(),
-                    id.0
-                )))
-                .checked(shown)
-                .small()
-                // Open and Get Info are the menu's reason to exist. The
-                // switch stays visible and on rather than disappearing, so
-                // the list still reads as the whole menu.
-                .disabled(protected)
-                .on_click(
-                    move |checked: &bool, _window: &mut Window, cx: &mut App| {
-                        persist_menu_hidden(prefs::set_hidden(surface, id, !*checked));
-                        cx.refresh_windows();
-                    },
-                ),
-            )
-            .into_any_element()
-    })
-}
-
-fn persist_menu_hidden(spec: Option<String>) {
+/// They are edited through one API and saved in one write: two writes would
+/// leave a window where an arrangement referred to a hidden set that had not
+/// landed yet, and `AppState::save` coalesces anyway.
+fn persist_menu_customization(specs: (Option<String>, Option<String>)) {
+    let (hidden, layout) = specs;
     let existing = app_state::load();
     app_state::save(&AppState {
-        menu_hidden: spec,
+        menu_hidden: hidden,
+        menu_layout: layout,
         ..existing
     });
 }

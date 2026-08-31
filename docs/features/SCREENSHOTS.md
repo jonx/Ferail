@@ -73,10 +73,11 @@ look more interesting.
   `--context-menu-background` (same synthesis aimed at the file-list body's
   midpoint, capturing the empty-space folder menu; point it at an empty
   folder, or one whose rows stop above the midpoint), `--menu-hidden <spec>`
-  (adopt a context-menu customization for this run only, in the
-  `surface:id,id;surface:id` form the settings file uses: a capture must
-  neither read nor write the user's own preference, and this is how the
-  hidden-entry path gets exercised against a real menu).
+  and `--menu-layout <spec>` (adopt a context-menu customization for this run
+  only, in the `surface:id,id` / `surface:token,token` forms the settings file
+  uses, `-` being a separator: a capture must neither read nor write the user's
+  own preference, and this is how the hidden-entry and arrangement paths get
+  exercised against a real menu rather than only in unit tests).
 - **Panels & overlays**: `--preview`, `--properties` (Get Info),
   `--rename`, `--new-folder`, `--shortcuts-help[-filter]`, `--simulate-toast`,
   `--simulate-progress`, `--simulate-task-panel`, `--update-dialog <state>`

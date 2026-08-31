@@ -22,6 +22,7 @@ use ferail_core::commands::CommandId;
 
 pub(crate) mod ids;
 pub(crate) mod inventory;
+pub(crate) mod layout;
 pub mod prefs;
 
 /// Which menu an entry belongs to. Visibility is stored per
@@ -180,6 +181,9 @@ impl MenuPlan {
                     .is_none_or(|id| !prefs::is_hidden(surface, CommandId(id)))
             });
         }
+        if prefs::surface_is_arranged(self.surface) {
+            self.items = arrange(self.items, &prefs::arrangement(self.surface));
+        }
         for item in tidy(self.items) {
             menu = match item {
                 PlanItem::Action { label, action, .. } => menu.menu(label, action),
@@ -212,6 +216,34 @@ fn tidy<T: PlanShape>(items: Vec<T>) -> Vec<T> {
         out.pop();
     }
     out
+}
+
+/// Reorder a plan to the user's arrangement.
+///
+/// The arrangement names every entry the surface can ever show; a plan holds
+/// only the ones `Availability` allowed for this particular right-click, so
+/// most slots find nothing and are skipped. The separators come from the
+/// arrangement rather than from the plan: once a user has moved anything, the
+/// group boundaries are theirs, and re-adding the built-in ones would put back
+/// exactly what they removed. `tidy` still runs afterwards, so a group that
+/// emptied out for this click does not leave its separators behind.
+fn arrange(mut items: Vec<PlanItem>, arrangement: &[layout::Slot]) -> Vec<PlanItem> {
+    let mut ordered = Vec::with_capacity(items.len());
+    for slot in arrangement {
+        match slot.id() {
+            None => ordered.push(PlanItem::Separator),
+            Some(id) => {
+                if let Some(at) = items.iter().position(|item| item.entry_id() == Some(id)) {
+                    ordered.push(items.remove(at));
+                }
+            }
+        }
+    }
+    // An entry the arrangement did not name keeps its place at the end instead
+    // of disappearing. `merge` should make this unreachable, but a menu entry
+    // silently vanishing is not a failure mode worth risking on that.
+    ordered.extend(items.into_iter().filter(|item| !item.is_separator()));
+    ordered
 }
 
 /// Ids appearing more than once in the same plan.

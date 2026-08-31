@@ -21,6 +21,7 @@ use std::sync::{Arc, RwLock};
 
 use ferail_core::commands::CommandId;
 
+use super::layout::{self, Slot};
 use super::{MenuSurface, ids};
 
 /// Entries no preference may hide.
@@ -138,74 +139,138 @@ pub(crate) fn serialize(hidden: &Hidden) -> Option<String> {
     )
 }
 
-/// The live spec. `Arc` so a menu build takes a clone of the pointer and
-/// releases the lock immediately, rather than holding a read guard across the
-/// whole render.
-fn current() -> &'static RwLock<Arc<Hidden>> {
-    static CURRENT: std::sync::OnceLock<RwLock<Arc<Hidden>>> = std::sync::OnceLock::new();
-    CURRENT.get_or_init(|| RwLock::new(Arc::new(Hidden::default())))
+/// Everything a menu build needs to know about the user's customization.
+#[derive(Debug, Default)]
+pub(crate) struct Customization {
+    hidden: Hidden,
+    /// Saved arrangements, exactly as persisted: merging them with the
+    /// built-in order happens per read, because the built-in order is what a
+    /// newer build changes.
+    layouts: Vec<(String, Vec<Slot>)>,
 }
 
-/// Adopt the persisted spec. Called once at startup and after every change:
+/// The live customization. `Arc` so a menu build takes a clone of the pointer
+/// and releases the lock immediately, rather than holding a read guard across
+/// the whole render.
+fn current() -> &'static RwLock<Arc<Customization>> {
+    static CURRENT: std::sync::OnceLock<RwLock<Arc<Customization>>> = std::sync::OnceLock::new();
+    CURRENT.get_or_init(|| RwLock::new(Arc::new(Customization::default())))
+}
+
+/// Adopt the persisted specs. Called once at startup and after every change:
 /// never from menu building.
-pub fn init(spec: Option<&str>) {
-    let parsed = spec.map(parse).unwrap_or_default();
+pub fn init(hidden_spec: Option<&str>, layout_spec: Option<&str>) {
+    let parsed = Customization {
+        hidden: hidden_spec.map(parse).unwrap_or_default(),
+        layouts: layout_spec.map(layout::parse).unwrap_or_default(),
+    };
     if let Ok(mut slot) = current().write() {
         *slot = Arc::new(parsed);
     }
 }
 
-/// The parsed spec, for one menu build. One `Arc` clone, no parsing, no I/O.
-fn snapshot() -> Arc<Hidden> {
+/// The parsed customization, for one menu build. One `Arc` clone, no parsing,
+/// no I/O.
+fn snapshot() -> Arc<Customization> {
     // A poisoned lock means a panic while someone held it. The preference is
-    // not worth propagating that: fall back to "nothing hidden", which is the
-    // behaviour with no customization at all.
+    // not worth propagating that: fall back to no customization at all, which
+    // is the behaviour of a fresh install.
     current()
         .read()
         .map(|slot| Arc::clone(&slot))
-        .unwrap_or_else(|_| Arc::new(Hidden::default()))
+        .unwrap_or_else(|_| Arc::new(Customization::default()))
+}
+
+/// Replace the live customization and hand back both persisted forms.
+fn update(edit: impl FnOnce(&mut Customization)) -> (Option<String>, Option<String>) {
+    let base = snapshot();
+    let mut next = Customization {
+        hidden: Hidden {
+            surfaces: base.hidden.surfaces.clone(),
+        },
+        layouts: base.layouts.clone(),
+    };
+    edit(&mut next);
+    let specs = (serialize(&next.hidden), layout::serialize(&next.layouts));
+    if let Ok(mut slot) = current().write() {
+        *slot = Arc::new(next);
+    }
+    specs
+}
+
+/// The arrangement a menu is drawn in: the saved one merged with this build's
+/// own, so an entry the user never moved keeps its designed place.
+pub(crate) fn arrangement(surface: MenuSurface) -> Vec<Slot> {
+    let state = snapshot();
+    let saved = state
+        .layouts
+        .iter()
+        .find(|(key, _)| key == surface.key())
+        .map(|(_, slots)| slots.as_slice())
+        .unwrap_or(&[]);
+    layout::merge(super::inventory::items(surface), saved)
+}
+
+/// Whether this surface has a saved arrangement at all.
+pub(crate) fn surface_is_arranged(surface: MenuSurface) -> bool {
+    snapshot()
+        .layouts
+        .iter()
+        .any(|(key, slots)| key == surface.key() && !slots.is_empty())
+}
+
+/// Save an arrangement, tidied so the editor cannot show a leading or doubled
+/// separator that the drawn menu would drop.
+pub(crate) fn set_arrangement(
+    surface: MenuSurface,
+    slots: Vec<Slot>,
+) -> (Option<String>, Option<String>) {
+    let slots = layout::tidy(slots);
+    update(|state| {
+        state.layouts.retain(|(key, _)| key != surface.key());
+        if !slots.is_empty() {
+            state.layouts.push((surface.key().to_string(), slots));
+        }
+    })
 }
 
 /// Whether anything at all is hidden. The fast path: with no customization
 /// (the overwhelmingly common case) menu rendering skips the check entirely.
 pub(crate) fn any_hidden() -> bool {
-    !snapshot().is_empty()
+    !snapshot().hidden.is_empty()
 }
 
 pub(crate) fn is_hidden(surface: MenuSurface, id: CommandId) -> bool {
-    snapshot().contains(surface, id)
+    snapshot().hidden.contains(surface, id)
 }
 
-/// Change one entry and persist. Returns the new spec so the caller can write
-/// it into `AppState` without re-reading the memo.
-pub(crate) fn set_hidden(surface: MenuSurface, id: CommandId, hidden: bool) -> Option<String> {
-    let mut next = Hidden {
-        surfaces: snapshot().surfaces.clone(),
-    };
-    next.set(surface, id, hidden);
-    let spec = serialize(&next);
-    if let Ok(mut slot) = current().write() {
-        *slot = Arc::new(next);
-    }
-    spec
+/// Change one entry and persist. Returns the new specs so the caller can write
+/// them into `AppState` without re-reading the memo.
+pub(crate) fn set_hidden(
+    surface: MenuSurface,
+    id: CommandId,
+    hidden: bool,
+) -> (Option<String>, Option<String>) {
+    update(|state| state.hidden.set(surface, id, hidden))
 }
 
-/// Show every entry of one surface again.
-pub(crate) fn reset(surface: MenuSurface) -> Option<String> {
-    let mut next = Hidden {
-        surfaces: snapshot().surfaces.clone(),
-    };
-    next.clear(surface);
-    let spec = serialize(&next);
-    if let Ok(mut slot) = current().write() {
-        *slot = Arc::new(next);
-    }
-    spec
+/// Show every entry of one surface again and put it back in its built-in
+/// order: one Reset, because two would make the user guess which is which.
+pub(crate) fn reset_surface(surface: MenuSurface) -> (Option<String>, Option<String>) {
+    update(|state| {
+        state.hidden.clear(surface);
+        state.layouts.retain(|(key, _)| key != surface.key());
+    })
 }
 
-/// Whether this surface has any hidden entry, for the settings UI's Reset.
+/// Whether this surface differs from the built-in menu at all.
 pub(crate) fn surface_is_customized(surface: MenuSurface) -> bool {
-    !snapshot().ids(surface).is_empty()
+    let state = snapshot();
+    !state.hidden.ids(surface).is_empty()
+        || state
+            .layouts
+            .iter()
+            .any(|(key, slots)| key == surface.key() && !slots.is_empty())
 }
 
 #[cfg(test)]

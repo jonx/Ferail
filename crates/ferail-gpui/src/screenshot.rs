@@ -236,6 +236,8 @@ pub struct Args {
     /// capture must not read or write, so this is how the hidden-entry path
     /// gets exercised for real rather than only in unit tests.
     pub menu_hidden: Option<String>,
+    /// Same, for the arrangement (`AppState::menu_layout`).
+    pub menu_layout: Option<String>,
     /// Right-click the middle of the file-list body: the background, not
     /// a row, so the empty-space context menu (New Folder / Paste / …)
     /// builds and can be captured. Point the harness at an empty folder
@@ -336,6 +338,7 @@ pub fn parse_args() -> Args {
             }
             "--context-menu-background" => args.context_menu_background = true,
             "--menu-hidden" => args.menu_hidden = iter.next(),
+            "--menu-layout" => args.menu_layout = iter.next(),
             "--breadcrumb" => args.breadcrumb = iter.next(),
             "--keys" => args.keys = iter.next(),
             "--paste-source" => {
@@ -518,6 +521,8 @@ OPTIONS
   --menu-hidden <spec>     Context-menu entries to hide for this run, as
                            `surface:id,id;surface:id` (the AppState form).
                            The user's own preference is never read here.
+  --menu-layout <spec>     Context-menu arrangement for this run, as
+                           `surface:token,token` with `-` for a separator.
   --click-rows <list>      Real left clicks on rows: `row[:count]` items
                            separated by commas, `pause` waits past the
                            click-to-rename delay. `0,0:2` double-clicks row 0
@@ -553,8 +558,11 @@ pub fn run(args: Args) -> Result<()> {
     );
     // Before any menu is built, and only when asked: a capture never reads or
     // writes the user's own menu customization.
-    if let Some(spec) = args.menu_hidden.as_deref() {
-        crate::menu_plan::prefs::init(Some(spec));
+    if args.menu_hidden.is_some() || args.menu_layout.is_some() {
+        crate::menu_plan::prefs::init(
+            args.menu_hidden.as_deref(),
+            args.menu_layout.as_deref(),
+        );
     }
     let path = args
         .screenshot

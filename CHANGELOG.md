@@ -8,14 +8,19 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
-- **You can turn off the context-menu entries you never use.** Settings ▸
-  Menus lists every entry the right-click menu shows on a file or folder, and
-  the one on empty space, with a switch each. Hiding an entry changes nothing
-  about what Ferail can do: the command keeps its keyboard shortcut and stays
-  in the command palette, and entries still appear only where they apply, so
-  turning one back on does not make it show up on files it cannot act on. Open
-  and Get Info cannot be hidden, each menu has a **Show All Entries** button,
-  and the separators around a group close up when you empty it.
+- **You can rearrange the context menus and turn off the entries you never
+  use.** Settings ▸ Menus lists every entry the right-click menu shows on a
+  file or folder, and the one on empty space, in the order they appear. Each
+  has a switch, rows can be dragged into whatever order you like, and
+  separators are rows too: drag them where you want a gap, remove the ones you
+  do not, and **Add Separator** makes a new one. Hiding an entry changes
+  nothing about what Ferail can do: the command keeps its keyboard shortcut and
+  stays in the command palette, and entries still appear only where they apply,
+  so turning one back on does not make it show up on files it cannot act on.
+  Open and Get Info cannot be hidden, and **Reset This Menu** puts a menu back
+  the way it shipped. A command added in a future version lands next to the
+  entry it was designed to follow rather than at the bottom of your
+  arrangement.
 
 - **Closing Ferail now actually ends it, and says why when it does not.**
   Some closes left the process running with no window and no taskbar icon, so
