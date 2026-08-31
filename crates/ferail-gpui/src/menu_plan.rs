@@ -34,11 +34,26 @@ pub(crate) enum MenuSurface {
     FileRow,
     /// Empty space in the file pane, targeting the browsed folder.
     FileBackground,
+    /// A row in a trash folder. Its own surface rather than a variant of
+    /// [`Self::FileRow`], because a deleted item answers to a different set of
+    /// verbs: most of the ordinary ones are meaningless on it (renaming,
+    /// compressing, tagging, trashing something already in the trash) and the
+    /// ones that matter, putting it back and deleting it for good, exist
+    /// nowhere else. A separate surface also means a user's preferences for
+    /// the two cannot collide.
+    TrashRow,
+    /// Empty space in a trash folder.
+    TrashBackground,
 }
 
 impl MenuSurface {
     /// Every surface, in the order the settings UI lists them.
-    pub(crate) const ALL: [MenuSurface; 2] = [Self::FileRow, Self::FileBackground];
+    pub(crate) const ALL: [MenuSurface; 4] = [
+        Self::FileRow,
+        Self::FileBackground,
+        Self::TrashRow,
+        Self::TrashBackground,
+    ];
 
     /// Stable key for persistence. Never derived from the variant name, so
     /// renaming the variant cannot silently orphan a user's saved preference.
@@ -46,6 +61,8 @@ impl MenuSurface {
         match self {
             Self::FileRow => "file.row",
             Self::FileBackground => "file.background",
+            Self::TrashRow => "trash.row",
+            Self::TrashBackground => "trash.background",
         }
     }
 }

@@ -4973,6 +4973,14 @@ impl Shell {
         let tab = &mut self.tabs[tab_index];
         tab.nav.replace_current(node_id);
         tab.current_dir = path.clone();
+        // Lexical, so it is free, and settled before the first row lands:
+        // a right-click during a slow load still gets the trash menu.
+        let browsing_trash = ferail_fs_native::is_in_trash(&path);
+        let table = tab.table.clone();
+        table.update(cx, |state, _cx| {
+            state.delegate_mut().browsing_trash = browsing_trash;
+        });
+        let tab = &mut self.tabs[tab_index];
         // Selection is preserved across `load_path` calls so
         // filter/refresh/show-hidden/watcher reloads can reconcile
         // against the new model (spec §2.6). `navigate`, which

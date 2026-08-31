@@ -91,9 +91,15 @@ pub(crate) const WINDOWS_CONTEXT_MENU: CommandId = CommandId("file.windows_conte
 /// Select every row in the current listing.
 pub(crate) const SELECT_ALL: CommandId = CommandId("selection.select_all");
 
+/// Put a trashed item back where it came from.
+pub(crate) const RESTORE_FROM_TRASH: CommandId = CommandId("file.restore_from_trash");
+
+/// Empty the trash. A catalogue command, unlike the one above.
+pub(crate) const EMPTY_TRASH: CommandId = CommandId("file.empty_trash");
+
 /// Every id above that is deliberately not a catalogue command.
 #[cfg(test)]
-const MENU_ONLY: [CommandId; 9] = [
+const MENU_ONLY: [CommandId; 10] = [
     EDIT_IN_SYSTEM_EDITOR,
     SLIDESHOW_FROM_HERE,
     SHOW_LOCK_HOLDERS,
@@ -103,11 +109,12 @@ const MENU_ONLY: [CommandId; 9] = [
     TOGGLE_FAVORITE,
     WINDOWS_CONTEXT_MENU,
     SELECT_ALL,
+    RESTORE_FROM_TRASH,
 ];
 
 /// Every id this module declares, for the checks below.
 #[cfg(test)]
-const ALL: [CommandId; 35] = [
+const ALL: [CommandId; 37] = [
     OPEN,
     OPEN_IN_NEW_TAB,
     EDIT,
@@ -143,6 +150,8 @@ const ALL: [CommandId; 35] = [
     TOGGLE_FAVORITE,
     WINDOWS_CONTEXT_MENU,
     SELECT_ALL,
+    RESTORE_FROM_TRASH,
+    EMPTY_TRASH,
 ];
 
 #[cfg(test)]

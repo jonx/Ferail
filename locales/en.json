@@ -243,6 +243,7 @@
     },
     "Could not parse manifest: {detail}": "Could not parse manifest: {detail}",
     "Could not pop out Disk Usage: {detail}": "Could not pop out Disk Usage: {detail}",
+    "Could not put everything back: {detail}": "Could not put everything back: {detail}",
     "Could not read manifest: {detail}": "Could not read manifest: {detail}",
     "Could not read the file: {error}": "Could not read the file: {error}",
     "Could not read the image: {error}": "Could not read the image: {error}",
@@ -492,6 +493,7 @@
     "Fast, focused file operations at any scale.": "Fast, focused file operations at any scale.",
     "Favorite can’t be found": "Favorite can’t be found",
     "Favorites": "Favorites",
+    "Ferail cannot reach its database to restore items.": "Ferail cannot reach its database to restore items.",
     "Ferail needs permission to read this folder. The link below opens Full Disk Access and copies Ferail's path so you can add it with the \"+\" button.": "Ferail needs permission to read this folder. The link below opens Full Disk Access and copies Ferail's path so you can add it with the \"+\" button.",
     "Ferail on GitHub": "Ferail on GitHub",
     "Ferail uptime, CPU, memory, and window redraws per second.": "Ferail uptime, CPU, memory, and window redraws per second.",
@@ -857,6 +859,11 @@
     "Private Mode": "Private Mode",
     "Problems only": "Problems only",
     "Purple": "Purple",
+    "Put Back": "Put Back",
+    "Put {n} item back": {
+      "one": "Put {n} item back",
+      "other": "Put {n} items back"
+    },
     "Quarantined · Mark of the Web": "Quarantined · Mark of the Web",
     "Quick Look": "Quick Look",
     "Quit Ferail": "Quit Ferail",
@@ -949,6 +956,10 @@
     "Restore": "Restore",
     "Restored Favorite": "Restored Favorite",
     "Restored from Trash": "Restored from Trash",
+    "Restoring {n} item": {
+      "one": "Restoring {n} item",
+      "other": "Restoring {n} items"
+    },
     "Results view": "Results view",
     "Retry": "Retry",
     "Retry as administrator failed: {detail}": "Retry as administrator failed: {detail}",
@@ -968,8 +979,10 @@
       "other": "Reveal {n} items in {app}?"
     },
     "Revert": "Revert",
+    "Right-click in the Trash": "Right-click in the Trash",
     "Right-click on a file or folder": "Right-click on a file or folder",
     "Right-click on empty space": "Right-click on empty space",
+    "Right-click on empty space in the Trash": "Right-click on empty space in the Trash",
     "Rotate Clockwise": "Rotate Clockwise",
     "Rotated 180°": "Rotated 180°",
     "Rotated 90° clockwise": "Rotated 90° clockwise",
@@ -1463,6 +1476,10 @@
     "{n} item was already in the archive and was left alone: {names}": {
       "one": "{n} item was already in the archive and was left alone: {names}",
       "other": "{n} items were already in the archive and were left alone: {names}"
+    },
+    "{n} item was not put in the Trash by Ferail, so its original location is unknown.": {
+      "one": "{n} item was not put in the Trash by Ferail, so its original location is unknown.",
+      "other": "{n} items were not put in the Trash by Ferail, so their original locations are unknown."
     },
     "{n} item will be added.": {
       "one": "{n} item will be added.",

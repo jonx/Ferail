@@ -8,6 +8,25 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The Trash has its own right-click menu, with Put Back.** Browsing the
+  Trash used to offer the ordinary file menu, which made no sense there: it
+  proposed renaming, duplicating, compressing and tagging things you had
+  thrown away, and *Move to Trash* on items already in it. The menu is now
+  short and about deleted items: Open, **Put Back**, Get Info, Quick Look,
+  Reveal in Finder, Copy Path, Delete Immediately and Empty Trash. Right-click
+  on empty space there offers Select All, Empty Trash and Refresh, and no
+  longer offers to create a folder in your Trash.
+
+- **Put Back returns an item to where it came from.** Ferail remembers the
+  original location of everything it moves to the Trash, and puts it back
+  there, recreating the folder if it has gone since. It never overwrites: if
+  something else took the name, it says so instead of replacing it. One limit,
+  stated plainly: Ferail can only put back what *it* trashed. macOS keeps the
+  Finder's own put-back information in a private store that Ferail does not
+  read, so an item trashed by Finder reports that its original location is
+  unknown rather than guessing. (On Windows the Recycle Bin restores through
+  Windows' own command, which needs no such record.)
+
 - **You can rearrange the context menus and turn off the entries you never
   use.** Settings ▸ Menus lists every entry the right-click menu shows on a
   file or folder, and the one on empty space, in the order they appear. Each

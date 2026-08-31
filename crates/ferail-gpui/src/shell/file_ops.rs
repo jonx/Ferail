@@ -2630,6 +2630,10 @@ impl Shell {
         );
         let weak = cx.weak_entity();
         let win = window.window_handle();
+        // Where each item came from, so Put Back can work later from the
+        // trash view. Snapshotted here rather than read on the worker: the
+        // handle is a `RefCell` on process state, which is UI-thread-only.
+        let put_back_db = self.process.db_snapshot();
         cx.spawn(async move |_this, cx| {
             // Don't bail on the first failure: trash every item we can, and
             // collect the rest as classified `FileOpError`s so a permission
@@ -2645,6 +2649,21 @@ impl Shell {
                         match ferail_fs_native::move_to_trash(path) {
                             Ok(Some(trashed)) => {
                                 done += 1;
+                                // Best effort, and deliberately not fatal: a
+                                // database that will not write must never fail
+                                // the deletion the user actually asked for.
+                                // The cost of losing it is one item that
+                                // cannot be put back, not a lost file.
+                                if let Some(db) = &put_back_db {
+                                    if let Ok(db) = db.lock() {
+                                        if let Err(error) = db.record_put_back(&trashed, path) {
+                                            crate::log_warn!(
+                                                90,
+                                                "put-back record failed: {error}"
+                                            );
+                                        }
+                                    }
+                                }
                                 pairs.push((path.clone(), trashed));
                             }
                             // Trashed, but the resulting URL wasn't
@@ -3000,6 +3019,151 @@ impl Shell {
         .detach();
     }
 
+    /// Put the selected trashed items back where they came from.
+    ///
+    /// The original location comes from the put-back record Ferail wrote when
+    /// it trashed the item. Nothing else knows it: on macOS the Finder keeps
+    /// its own put-back information in a private store, so an item Ferail did
+    /// not trash cannot be restored and says so rather than guessing at a
+    /// destination. Restoring never overwrites: a name taken since is a
+    /// refusal, not a replacement.
+    pub(super) fn on_restore_from_trash(
+        &mut self,
+        _: &RestoreFromTrash,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        crate::trail::command("Restore from Trash");
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let Some(db) = self.process.db_snapshot() else {
+            window.push_notification(
+                Notification::error(tr!("Ferail cannot reach its database to restore items.")),
+                cx,
+            );
+            return;
+        };
+        let process = self.process.clone();
+        let win = window.window_handle();
+        let count = paths.len();
+        let task_id = process.tasks.borrow_mut().begin(
+            crate::tasks::TaskKind::FileOp,
+            trn!("Restoring {n} item", "Restoring {n} items", count),
+            false,
+        );
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut restored: Vec<PathBuf> = Vec::new();
+                    let mut unknown = 0usize;
+                    let mut failures: Vec<ferail_fs_native::file_ops::FileOpError> = Vec::new();
+                    let mut touched: Vec<PathBuf> = Vec::new();
+                    for path in &paths {
+                        let target = db
+                            .lock()
+                            .ok()
+                            .and_then(|db| db.put_back_target(path).ok().flatten());
+                        let Some(target) = target else {
+                            unknown += 1;
+                            continue;
+                        };
+                        // The folder it came from may itself be gone, or its
+                        // name may have been taken since. Recreate the folder;
+                        // refuse the name.
+                        if let Some(parent) = target.parent() {
+                            if let Err(error) = std::fs::create_dir_all(parent) {
+                                failures.push(ferail_fs_native::file_ops::FileOpError::from_io(
+                                    &error, path,
+                                ));
+                                continue;
+                            }
+                        }
+                        if target.symlink_metadata().is_ok() {
+                            failures.push(ferail_fs_native::file_ops::FileOpError::from_io(
+                                &std::io::Error::new(
+                                    std::io::ErrorKind::AlreadyExists,
+                                    "something else is there now",
+                                ),
+                                &target,
+                            ));
+                            continue;
+                        }
+                        match std::fs::rename(path, &target) {
+                            Ok(()) => {
+                                if let Ok(db) = db.lock() {
+                                    let _ = db.forget_put_back(path);
+                                }
+                                if let Some(parent) = path.parent() {
+                                    touched.push(parent.to_path_buf());
+                                }
+                                if let Some(parent) = target.parent() {
+                                    touched.push(parent.to_path_buf());
+                                }
+                                restored.push(target);
+                            }
+                            Err(error) => failures.push(
+                                ferail_fs_native::file_ops::FileOpError::from_io(&error, path),
+                            ),
+                        }
+                    }
+                    (restored, unknown, failures, touched)
+                })
+                .await;
+            let (restored, unknown, failures, touched) = result;
+            match failures.first() {
+                Some(failure) => process
+                    .tasks
+                    .borrow_mut()
+                    .end_failed(task_id, failure.to_string()),
+                None => process.tasks.borrow_mut().end(task_id),
+            }
+            Shell::broadcast_reload_for_process(&process, touched, cx);
+            let _ = win.update(cx, move |_, window, cx| {
+                if !restored.is_empty() {
+                    window.push_notification(
+                        Notification::success(trn!(
+                            "Put {n} item back",
+                            "Put {n} items back",
+                            restored.len()
+                        )),
+                        cx,
+                    );
+                }
+                // Said separately from a failure: not knowing where something
+                // came from is not the same as failing to move it, and the
+                // user can do nothing about the first.
+                if unknown > 0 {
+                    window.push_notification(
+                        Notification::info(trn!(
+                            "{n} item was not put in the Trash by Ferail, so its original location is unknown.",
+                            "{n} items were not put in the Trash by Ferail, so their original locations are unknown.",
+                            unknown
+                        )),
+                        cx,
+                    );
+                }
+                if let Some(failure) = failures.first() {
+                    window.push_notification(
+                        Notification::error(tr!(
+                            "Could not put everything back: {detail}",
+                            detail = failure.to_string()
+                        )),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Empty every trash this user can reach (`~/.Trash` + mounted
     /// volumes' `.Trashes/<uid>` [mac]) after an explicit, counted
     /// confirmation. Permanently destructive: the one file operation
@@ -3014,6 +3178,10 @@ impl Shell {
         use gpui_component::button::ButtonVariants as _;
         use gpui_component::notification::Notification;
         let process = self.process.clone();
+        // Nothing emptied can be put back, so the records go with it. A
+        // stale one would eventually make a reused trash path resolve to
+        // some long-gone original.
+        let put_back_db = self.process.db_snapshot();
         let win = window.window_handle();
         cx.spawn(async move |this, cx| {
             // Count first (background) so the confirmation says what
@@ -3117,6 +3285,15 @@ impl Shell {
                                 Ok(()) => deleted += 1,
                                 Err(e) => failures
                                     .push(ferail_fs_native::file_ops::FileOpError::from_io(&e, &p)),
+                            }
+                        }
+                    }
+                    if let Some(db) = &put_back_db {
+                        if let Ok(db) = db.lock() {
+                            for dir in &dirs {
+                                if let Err(error) = db.forget_put_back_under(dir) {
+                                    crate::log_warn!(90, "put-back cleanup failed: {error}");
+                                }
                             }
                         }
                     }

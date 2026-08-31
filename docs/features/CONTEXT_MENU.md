@@ -87,6 +87,16 @@ to mean anything. A test pins that split, so an id that is neither a catalogue
 command nor a declared menu-only entry (a typo, most likely) fails the build's
 tests instead of silently becoming a third kind of id.
 
+A trash folder gets **its own two surfaces** rather than a variant of these:
+`TrashRow` and `TrashBackground`. A deleted item answers to a different set of
+verbs, most of the file menu is meaningless on it, and the two that matter
+(**Put Back**, **Empty Trash**) exist nowhere else. Separate surfaces also mean
+a user's preferences for the two cannot collide. Membership is a lexical test
+(`ferail_fs_native::is_in_trash`), flagged on the listing when a load starts,
+so nothing touches the disk while a menu is being built. See
+[FILE_OPS.md](FILE_OPS.md#inside-the-trash) for Put Back and what it can and
+cannot restore.
+
 The remaining eight surfaces (breadcrumb, the three sidebar sections, browse
 tree, disk-usage treemap, table header, duplicates panel) are still imperative
 chains. They convert the same way, one at a time, whenever their customization

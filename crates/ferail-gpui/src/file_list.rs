@@ -611,6 +611,10 @@ pub struct FileListDelegate {
     /// previous-frame fallback, which left shortcuts blank for the
     /// first frame or two after the menu opened.
     pub shell_focus: gpui::FocusHandle,
+    /// Whether this listing is a trash folder. Set by the Shell when it starts
+    /// a load, from a lexical test on the path, so the context menu can branch
+    /// on it without asking the filesystem anything at menu-open time.
+    pub browsing_trash: bool,
     /// Lazily-built drag payload for the CURRENT selection, shared by
     /// every selected row's `on_drag`. Built once on the first
     /// selected-row render after a selection/model change; without it
@@ -1204,6 +1208,7 @@ impl FileListDelegate {
             current_sort,
             sort_state,
             shell_focus,
+            browsing_trash: false,
             drag_snapshot: RefCell::new(None),
             cached_total_size: std::cell::Cell::new(None),
             cached_selected_size: std::cell::Cell::new(None),
@@ -2238,6 +2243,86 @@ impl FileListDelegate {
                 .entries
                 .get(row_ix)
                 .is_some_and(|entry| entry.id == node)
+    }
+}
+
+impl FileListDelegate {
+    /// The row menu inside a trash folder.
+    ///
+    /// A deleted item answers to a different set of verbs. Most of the file
+    /// menu is meaningless on it: renaming, duplicating, compressing, tagging
+    /// or favouriting something the user threw away, and "Move to Trash" on an
+    /// item already there. What is left is looking at it, finding out what it
+    /// is, putting it back, and getting rid of it for good.
+    ///
+    /// Availability still applies on top: `Open in New Tab` only for a folder,
+    /// and Put Back only where an original location is known.
+    fn trash_context_menu(
+        &mut self,
+        row_ix: usize,
+        menu: PopupMenu,
+        cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        use crate::menu_plan::{MenuPlan, MenuSurface, ids};
+        use crate::shell::{
+            CopyPath, DeleteImmediately, EmptyTrash, GetInfo, OpenInNewTab, OpenSelected,
+            QuickLook, RestoreFromTrash, RevealInFinder,
+        };
+
+        let targets = resolve_menu_targets_with_mode(
+            &self.entries,
+            &self.selected_set,
+            self.selection_all,
+            row_ix,
+            self.all_menu_caps,
+        );
+        let anchor_is_dir = self
+            .entries
+            .get(row_ix)
+            .is_some_and(|entry| matches!(entry.kind, EntryKind::Directory));
+        let _ = (&targets, cx);
+
+        let mut plan = MenuPlan::new(MenuSurface::TrashRow).action(
+            ids::OPEN,
+            tr!("Open"),
+            Box::new(OpenSelected),
+        );
+        if anchor_is_dir {
+            plan = plan.action(
+                ids::OPEN_IN_NEW_TAB,
+                tr!("Open in New Tab"),
+                Box::new(OpenInNewTab),
+            );
+        }
+        plan.separator()
+            // Finder calls this "Put Back", and so does everyone who has ever
+            // used it. Restore is what Windows calls the same thing.
+            .action(
+                ids::RESTORE_FROM_TRASH,
+                tr!("Put Back"),
+                Box::new(RestoreFromTrash),
+            )
+            .separator()
+            .action(ids::GET_INFO, tr!("Get Info"), Box::new(GetInfo))
+            .action(ids::QUICK_LOOK, tr!("Quick Look"), Box::new(QuickLook))
+            .action(
+                ids::REVEAL,
+                crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
+                Box::new(RevealInFinder),
+            )
+            .action(ids::COPY_PATH, tr!("Copy Path"), Box::new(CopyPath))
+            .separator()
+            .action(
+                ids::DELETE_IMMEDIATELY,
+                tr!("Delete Immediately\u{2026}"),
+                Box::new(DeleteImmediately),
+            )
+            .action(
+                ids::EMPTY_TRASH,
+                tr!("Empty Trash\u{2026}"),
+                Box::new(EmptyTrash),
+            )
+            .render(menu.action_context(self.shell_focus.clone()))
     }
 }
 
@@ -3360,6 +3445,9 @@ impl TableDelegate for FileListDelegate {
                     },
                 ));
         }
+        if self.browsing_trash {
+            return self.trash_context_menu(row_ix, menu, cx);
+        }
         #[cfg(windows)]
         use crate::shell::ShowWindowsContextMenu;
         use crate::shell::{
@@ -3771,9 +3859,32 @@ impl TableDelegate for FileListDelegate {
             return menu;
         }
         use crate::shell::{
-            AddCurrentFolderToFavorites, CopyContextPath, GetInfoAtContext, NewFolder,
+            AddCurrentFolderToFavorites, CopyContextPath, EmptyTrash, GetInfoAtContext, NewFolder,
             OpenTerminalAtContext, PasteFiles, Refresh, RevealContextPath, SelectAll,
         };
+        if self.browsing_trash {
+            // No New Folder and no Paste: the trash is not somewhere you put
+            // things on purpose, and offering to would be offering to create
+            // something already deleted.
+            use crate::menu_plan::{MenuPlan, MenuSurface, ids};
+            return MenuPlan::new(MenuSurface::TrashBackground)
+                .action(ids::SELECT_ALL, tr!("Select All"), Box::new(SelectAll))
+                .separator()
+                .action(
+                    ids::REVEAL,
+                    crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
+                    Box::new(RevealContextPath),
+                )
+                .action(ids::COPY_PATH, tr!("Copy Path"), Box::new(CopyContextPath))
+                .separator()
+                .action(
+                    ids::EMPTY_TRASH,
+                    tr!("Empty Trash\u{2026}"),
+                    Box::new(EmptyTrash),
+                )
+                .action(ids::REFRESH, tr!("Refresh"), Box::new(Refresh))
+                .render(menu.action_context(self.shell_focus.clone()));
+        }
 
         // Empty-space right-click: the menu targets the folder being
         // browsed, never the selection. `NewFolder` / `PasteFiles` /

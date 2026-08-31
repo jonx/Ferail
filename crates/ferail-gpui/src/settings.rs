@@ -2318,6 +2318,8 @@ fn surface_title(surface: crate::menu_plan::MenuSurface) -> SharedString {
     match surface {
         MenuSurface::FileRow => tr!("Right-click on a file or folder"),
         MenuSurface::FileBackground => tr!("Right-click on empty space"),
+        MenuSurface::TrashRow => tr!("Right-click in the Trash"),
+        MenuSurface::TrashBackground => tr!("Right-click on empty space in the Trash"),
     }
 }
 

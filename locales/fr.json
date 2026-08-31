@@ -243,6 +243,7 @@
     },
     "Could not parse manifest: {detail}": "Impossible d’analyser le manifeste : {detail}",
     "Could not pop out Disk Usage: {detail}": "Impossible de détacher Utilisation du disque : {detail}",
+    "Could not put everything back: {detail}": "Impossible de tout remettre : {detail}",
     "Could not read manifest: {detail}": "Impossible de lire le manifeste : {detail}",
     "Could not read the file: {error}": "Impossible de lire le fichier : {error}",
     "Could not read the image: {error}": "Impossible de lire l’image : {error}",
@@ -492,6 +493,7 @@
     "Fast, focused file operations at any scale.": "Des opérations rapides et précises, quelle que soit l’échelle.",
     "Favorite can’t be found": "Le favori est introuvable",
     "Favorites": "Favoris",
+    "Ferail cannot reach its database to restore items.": "Ferail n’a pas accès à sa base de données pour restaurer des éléments.",
     "Ferail needs permission to read this folder. The link below opens Full Disk Access and copies Ferail's path so you can add it with the \"+\" button.": "Ferail a besoin d'une autorisation pour lire ce dossier. Le lien ci-dessous ouvre l'accès complet au disque et copie le chemin de Ferail afin que vous puissiez l'ajouter avec le bouton \"+\".",
     "Ferail on GitHub": "Ferail sur GitHub",
     "Ferail uptime, CPU, memory, and window redraws per second.": "Durée d’exécution, processeur, mémoire et redessins de fenêtre par seconde de Ferail.",
@@ -857,6 +859,11 @@
     "Private Mode": "Mode privé",
     "Problems only": "Problèmes uniquement",
     "Purple": "Violet",
+    "Put Back": "Remettre",
+    "Put {n} item back": {
+      "one": "{n} élément remis en place",
+      "other": "{n} éléments remis en place"
+    },
     "Quarantined · Mark of the Web": "Mis en quarantaine · Marque du Web",
     "Quick Look": "Quick Look",
     "Quit Ferail": "Quitter Ferail",
@@ -949,6 +956,10 @@
     "Restore": "Restaurer",
     "Restored Favorite": "Favoris restauré",
     "Restored from Trash": "Restauré à partir de la corbeille",
+    "Restoring {n} item": {
+      "one": "Remise en place de {n} élément",
+      "other": "Remise en place de {n} éléments"
+    },
     "Results view": "Vue des résultats",
     "Retry": "Réessayer",
     "Retry as administrator failed: {detail}": "Échec de la nouvelle tentative en tant qu'administrateur : {detail}",
@@ -968,8 +979,10 @@
       "other": "Afficher {n} éléments dans {app} ?"
     },
     "Revert": "Annuler les modifications",
+    "Right-click in the Trash": "Clic droit dans la corbeille",
     "Right-click on a file or folder": "Clic droit sur un fichier ou un dossier",
     "Right-click on empty space": "Clic droit sur une zone vide",
+    "Right-click on empty space in the Trash": "Clic droit sur une zone vide de la corbeille",
     "Rotate Clockwise": "Tourner dans le sens des aiguilles d'une montre",
     "Rotated 180°": "Pivotée de 180°",
     "Rotated 90° clockwise": "Pivotée de 90° dans le sens horaire",
@@ -1463,6 +1476,10 @@
     "{n} item was already in the archive and was left alone: {names}": {
       "one": "{n} élément était déjà dans l'archive et n'a pas été modifié : {names}",
       "other": "{n} éléments étaient déjà dans l'archive et n'ont pas été modifiés : {names}"
+    },
+    "{n} item was not put in the Trash by Ferail, so its original location is unknown.": {
+      "one": "{n} élément n’a pas été mis à la corbeille par Ferail, son emplacement d’origine est donc inconnu.",
+      "other": "{n} éléments n’ont pas été mis à la corbeille par Ferail, leurs emplacements d’origine sont donc inconnus."
     },
     "{n} item will be added.": {
       "one": "L’élément {n} sera ajouté.",

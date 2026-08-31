@@ -243,6 +243,7 @@
     },
     "Could not parse manifest: {detail}": "Manifest konnte nicht analysiert werden: {detail}",
     "Could not pop out Disk Usage: {detail}": "Speicherbelegung konnte nicht ausgekoppelt werden: {detail}",
+    "Could not put everything back: {detail}": "Es konnte nicht alles zurückgelegt werden: {detail}",
     "Could not read manifest: {detail}": "Manifest konnte nicht gelesen werden: {detail}",
     "Could not read the file: {error}": "Datei konnte nicht gelesen werden: {error}",
     "Could not read the image: {error}": "Bild konnte nicht gelesen werden: {error}",
@@ -492,6 +493,7 @@
     "Fast, focused file operations at any scale.": "Schnelle, gezielte Dateioperationen in jeder Größenordnung.",
     "Favorite can’t be found": "Favorit nicht gefunden",
     "Favorites": "Favoriten",
+    "Ferail cannot reach its database to restore items.": "Ferail erreicht seine Datenbank nicht, um Objekte wiederherzustellen.",
     "Ferail needs permission to read this folder. The link below opens Full Disk Access and copies Ferail's path so you can add it with the \"+\" button.": "Ferail braucht die Berechtigung, diesen Ordner zu lesen. Der Link unten öffnet „Festplattenvollzugriff“ und kopiert den Pfad von Ferail, damit du ihn mit der Taste „+“ hinzufügen kannst.",
     "Ferail on GitHub": "Ferail auf GitHub",
     "Ferail uptime, CPU, memory, and window redraws per second.": "Ferail-Laufzeit, CPU, Speicher und Fenster-Neuzeichnungen pro Sekunde.",
@@ -857,6 +859,11 @@
     "Private Mode": "Privater Modus",
     "Problems only": "Nur Probleme",
     "Purple": "Lila",
+    "Put Back": "Zurücklegen",
+    "Put {n} item back": {
+      "one": "{n} Objekt zurückgelegt",
+      "other": "{n} Objekte zurückgelegt"
+    },
     "Quarantined · Mark of the Web": "In Quarantäne · Mark of the Web",
     "Quick Look": "Quick Look",
     "Quit Ferail": "Ferail beenden",
@@ -949,6 +956,10 @@
     "Restore": "Wiederherstellen",
     "Restored Favorite": "Favorit wiederhergestellt",
     "Restored from Trash": "Aus dem Papierkorb wiederhergestellt",
+    "Restoring {n} item": {
+      "one": "{n} Objekt wird zurückgelegt",
+      "other": "{n} Objekte werden zurückgelegt"
+    },
     "Results view": "Ergebnisansicht",
     "Retry": "Erneut versuchen",
     "Retry as administrator failed: {detail}": "Erneuter Versuch als Administrator fehlgeschlagen: {detail}",
@@ -968,8 +979,10 @@
       "other": "{n} Objekte im {app} anzeigen?"
     },
     "Revert": "Verwerfen",
+    "Right-click in the Trash": "Rechtsklick im Papierkorb",
     "Right-click on a file or folder": "Rechtsklick auf eine Datei oder einen Ordner",
     "Right-click on empty space": "Rechtsklick auf eine leere Fläche",
+    "Right-click on empty space in the Trash": "Rechtsklick auf eine leere Fläche im Papierkorb",
     "Rotate Clockwise": "Im Uhrzeigersinn drehen",
     "Rotated 180°": "Um 180° gedreht",
     "Rotated 90° clockwise": "Um 90° im Uhrzeigersinn gedreht",
@@ -1463,6 +1476,10 @@
     "{n} item was already in the archive and was left alone: {names}": {
       "one": "{n} Objekt war bereits im Archiv und blieb unverändert: {names}",
       "other": "{n} Objekte waren bereits im Archiv und blieben unverändert: {names}"
+    },
+    "{n} item was not put in the Trash by Ferail, so its original location is unknown.": {
+      "one": "{n} Objekt wurde nicht von Ferail in den Papierkorb gelegt, sein ursprünglicher Ort ist daher unbekannt.",
+      "other": "{n} Objekte wurden nicht von Ferail in den Papierkorb gelegt, ihre ursprünglichen Orte sind daher unbekannt."
     },
     "{n} item will be added.": {
       "one": "{n} Objekt wird hinzugefügt.",

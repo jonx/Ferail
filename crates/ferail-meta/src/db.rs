@@ -9,7 +9,7 @@
 //! it, same hard-reset policy as Ferail. Caches built on top are
 //! all derived data, so a recreate is cheap.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ferail_core::favorites::{Favorite, FavoriteIcon, FavoriteId, FavoriteKind, FavoriteTarget};
 use rusqlite::{params, Connection};
@@ -398,6 +398,19 @@ impl MetadataDb {
                 sort_ascending INTEGER NOT NULL DEFAULT 1
             );
 
+            -- Where a trashed item came from, so it can be put back.
+            -- Written when Ferail trashes something and read when the
+            -- user asks to restore it. Keyed on the path inside the
+            -- trash, which is unique while the item is there; the row is
+            -- deleted on restore. An item Ferail did not trash has no
+            -- row, and no way to be put back: only Finder knows where
+            -- those came from, in a private store of its own.
+            CREATE TABLE IF NOT EXISTS put_back (
+                trashed_path TEXT PRIMARY KEY,
+                original_path TEXT NOT NULL,
+                trashed_at INTEGER NOT NULL
+            );
+
             -- Pinned sidebar items (ordered). Legacy placeholder kept
             -- around for one schema cycle; superseded by `favorites`.
             CREATE TABLE IF NOT EXISTS pinned_items (
@@ -481,6 +494,69 @@ impl MetadataDb {
             .ok()
             .flatten()
             .unwrap_or_else(|| default.to_string())
+    }
+
+    // ---- put back ----
+
+    /// Remember where a trashed item came from.
+    ///
+    /// Called once per item Ferail moves to the trash, with the path the
+    /// trash gave it. Best effort by design: failing to record a put-back
+    /// must never fail the deletion the user actually asked for, so callers
+    /// log and continue.
+    pub fn record_put_back(&self, trashed: &Path, original: &Path) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_secs() as i64)
+            .unwrap_or_default();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO put_back (trashed_path, original_path, trashed_at) \
+             VALUES (?1, ?2, ?3)",
+            params![
+                trashed.to_string_lossy(),
+                original.to_string_lossy(),
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Where a trashed item came from, if Ferail is the one that trashed it.
+    pub fn put_back_target(&self, trashed: &Path) -> Result<Option<PathBuf>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT original_path FROM put_back WHERE trashed_path = ?1")?;
+        match stmt.query_row(params![trashed.to_string_lossy()], |row| {
+            row.get::<_, String>(0)
+        }) {
+            Ok(path) => Ok(Some(PathBuf::from(path))),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Drop a record: the item was put back, deleted for good, or the trash
+    /// was emptied. Leaving stale rows would eventually make a reused trash
+    /// path resolve to some long-gone original.
+    pub fn forget_put_back(&self, trashed: &Path) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM put_back WHERE trashed_path = ?1",
+            params![trashed.to_string_lossy()],
+        )?;
+        Ok(())
+    }
+
+    /// Drop every record under a trash directory, for Empty Trash.
+    pub fn forget_put_back_under(&self, root: &Path) -> Result<()> {
+        let mut prefix = root.to_string_lossy().to_string();
+        if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
+            prefix.push(std::path::MAIN_SEPARATOR);
+        }
+        self.conn.execute(
+            "DELETE FROM put_back WHERE trashed_path = ?1 OR trashed_path LIKE ?2 || '%'",
+            params![root.to_string_lossy(), prefix],
+        )?;
+        Ok(())
     }
 
     // ---- ant trail ----
@@ -1145,6 +1221,52 @@ mod tests {
         assert_eq!(db.get_preference("k").unwrap().as_deref(), Some("v"));
         assert!(db.get_preference("missing").unwrap().is_none());
         assert_eq!(db.get_preference_or("missing", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn put_back_records_survive_only_until_the_item_leaves_the_trash() {
+        let db = MetadataDb::in_memory().unwrap();
+        let trashed = Path::new("/Users/x/.Trash/report.pdf");
+        let original = Path::new("/Users/x/Documents/report.pdf");
+        db.record_put_back(trashed, original).unwrap();
+        assert_eq!(
+            db.put_back_target(trashed).unwrap().as_deref(),
+            Some(original)
+        );
+        // An item Ferail did not trash has no record, which is the honest
+        // answer rather than a guess at where it came from.
+        assert!(
+            db.put_back_target(Path::new("/Users/x/.Trash/mystery.txt"))
+                .unwrap()
+                .is_none()
+        );
+
+        db.forget_put_back(trashed).unwrap();
+        assert!(db.put_back_target(trashed).unwrap().is_none());
+    }
+
+    #[test]
+    fn emptying_a_trash_forgets_everything_under_it_and_nothing_beside_it() {
+        let db = MetadataDb::in_memory().unwrap();
+        let trash = Path::new("/Users/x/.Trash");
+        db.record_put_back(&trash.join("a.txt"), Path::new("/Users/x/a.txt"))
+            .unwrap();
+        db.record_put_back(&trash.join("deep/b.txt"), Path::new("/Users/x/b.txt"))
+            .unwrap();
+        // A sibling path that merely starts with the same characters must
+        // survive: `/Users/x/.Trash-old` is not inside `/Users/x/.Trash`.
+        let sibling = Path::new("/Users/x/.Trash-old/c.txt");
+        db.record_put_back(sibling, Path::new("/Users/x/c.txt"))
+            .unwrap();
+
+        db.forget_put_back_under(trash).unwrap();
+        assert!(db.put_back_target(&trash.join("a.txt")).unwrap().is_none());
+        assert!(
+            db.put_back_target(&trash.join("deep/b.txt"))
+                .unwrap()
+                .is_none()
+        );
+        assert!(db.put_back_target(sibling).unwrap().is_some());
     }
 
     #[test]

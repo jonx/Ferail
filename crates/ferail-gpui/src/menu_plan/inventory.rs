@@ -107,11 +107,47 @@ const FILE_BACKGROUND: &[Item] = &[
     E(ids::REFRESH),
 ];
 
+/// A row in a trash folder.
+///
+/// Deliberately short. Most of the file menu is meaningless on something the
+/// user already threw away: renaming, duplicating, compressing, tagging or
+/// favouriting a deleted item, and "Move to Trash" on an item that is in the
+/// trash. What is left is looking at it, finding out what it is, putting it
+/// back, and getting rid of it for good.
+const TRASH_ROW: &[Item] = &[
+    E(ids::OPEN),
+    E(ids::OPEN_IN_NEW_TAB),
+    S,
+    E(ids::RESTORE_FROM_TRASH),
+    S,
+    E(ids::GET_INFO),
+    E(ids::QUICK_LOOK),
+    E(ids::REVEAL),
+    E(ids::COPY_PATH),
+    S,
+    E(ids::DELETE_IMMEDIATELY),
+    E(ids::EMPTY_TRASH),
+];
+
+/// Empty space in a trash folder. No New Folder, no Paste: the trash is not
+/// somewhere you put things on purpose.
+const TRASH_BACKGROUND: &[Item] = &[
+    E(ids::SELECT_ALL),
+    S,
+    E(ids::REVEAL),
+    E(ids::COPY_PATH),
+    S,
+    E(ids::EMPTY_TRASH),
+    E(ids::REFRESH),
+];
+
 /// Everything a surface can show, separators included, in menu order.
 pub(crate) fn items(surface: MenuSurface) -> &'static [Item] {
     match surface {
         MenuSurface::FileRow => FILE_ROW,
         MenuSurface::FileBackground => FILE_BACKGROUND,
+        MenuSurface::TrashRow => TRASH_ROW,
+        MenuSurface::TrashBackground => TRASH_BACKGROUND,
     }
 }
 
@@ -146,6 +182,7 @@ pub(crate) fn label(id: CommandId) -> SharedString {
         "file.toggle_favorite" => tr!("Add to / Remove from Favorites"),
         "file.windows_context_menu" => tr!("More options from Windows…"),
         "selection.select_all" => tr!("Select All"),
+        "file.restore_from_trash" => tr!("Put Back"),
         // An id in the spec but not in this build: shown as itself rather
         // than dropped, so a preference from a newer version stays visible and
         // reversible instead of looking like it was lost.

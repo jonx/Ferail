@@ -611,6 +611,106 @@ pub fn trash_dirs() -> Vec<PathBuf> {
     Vec::new()
 }
 
+/// Whether `path` is a trash directory, or something inside one.
+///
+/// Lexical on purpose: this answers while a context menu is being built, and
+/// menu building may not touch the disk (Prime Directive). Every form it
+/// recognizes is a fixed layout, so nothing has to be probed:
+///
+/// - macOS: `~/.Trash`, and each volume's `.Trashes/<uid>`;
+/// - Linux: `$XDG_DATA_HOME/Trash` (or `~/.local/share/Trash`), and each
+///   volume's `.Trash-<uid>`;
+/// - AROS: a volume's `Trashcan` drawer.
+///
+/// The Windows Recycle Bin is deliberately absent: it has no filesystem path a
+/// user browses to, and Ferail reaches it through the Shell namespace provider
+/// instead ([`crate::platform_namespace`] on the GUI side).
+pub fn is_in_trash(path: &Path) -> bool {
+    trash_root_of(path).is_some()
+}
+
+/// The trash directory `path` belongs to, if any. `path` may be the trash
+/// directory itself.
+pub fn trash_root_of(path: &Path) -> Option<PathBuf> {
+    let under = |root: PathBuf| -> Option<PathBuf> {
+        (path == root || path.starts_with(&root)).then_some(root)
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(root) = under(paths::home_dir().join(".Trash")) {
+            return Some(root);
+        }
+        // /Volumes/<name>/.Trashes/<uid>, matched by shape rather than by
+        // listing /Volumes, so a spun-down or disconnected volume costs
+        // nothing here.
+        volume_trash(path, ".Trashes", true)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| paths::home_dir().join(".local/share"));
+        if let Some(root) = under(data_home.join("Trash")) {
+            return Some(root);
+        }
+        // The freedesktop per-volume form is `.Trash-<uid>` at the mount root.
+        let uid = unsafe { libc::getuid() };
+        let name = format!(".Trash-{uid}");
+        let mut walk = path;
+        loop {
+            if walk.file_name().is_some_and(|component| component == name.as_str()) {
+                return Some(walk.to_path_buf());
+            }
+            walk = walk.parent()?;
+        }
+    }
+
+    #[cfg(target_os = "aros")]
+    {
+        let mut walk = path;
+        loop {
+            if walk
+                .file_name()
+                .is_some_and(|component| component.eq_ignore_ascii_case("Trashcan"))
+            {
+                return Some(walk.to_path_buf());
+            }
+            walk = walk.parent()?;
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "aros")))]
+    {
+        let _ = under;
+        None
+    }
+}
+
+/// Walk up from `path` looking for `<mount>/<container>/<uid>`.
+#[cfg(target_os = "macos")]
+fn volume_trash(path: &Path, container: &str, per_uid: bool) -> Option<PathBuf> {
+    let uid = unsafe { libc::getuid() }.to_string();
+    let mut walk = Some(path);
+    while let Some(current) = walk {
+        let matches = if per_uid {
+            current.file_name().is_some_and(|name| name == uid.as_str())
+                && current
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name == container)
+        } else {
+            current.file_name().is_some_and(|name| name == container)
+        };
+        if matches {
+            return Some(current.to_path_buf());
+        }
+        walk = current.parent();
+    }
+    None
+}
+
 /// Send `path` to the Windows Recycle Bin via `IFileOperation`.
 ///
 /// `SHFileOperationW` rejects the `\\?\` extended-length prefix that
@@ -1203,6 +1303,31 @@ pub fn folder_contents_summary(file_count: u64, dir_count: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn trash_membership_is_lexical_and_covers_volume_trashes() {
+        let uid = unsafe { libc::getuid() };
+        let home_trash = paths::home_dir().join(".Trash");
+        assert!(is_in_trash(&home_trash));
+        assert!(is_in_trash(&home_trash.join("victim.txt")));
+        assert_eq!(trash_root_of(&home_trash.join("deep/victim.txt")), Some(home_trash.clone()));
+
+        // A volume trash is `<mount>/.Trashes/<uid>`: recognized by shape, so
+        // an unplugged or sleeping volume costs nothing to answer about.
+        let volume = PathBuf::from(format!("/Volumes/Backup/.Trashes/{uid}"));
+        assert!(is_in_trash(&volume));
+        assert!(is_in_trash(&volume.join("old/report.pdf")));
+        assert_eq!(trash_root_of(&volume.join("old")), Some(volume));
+
+        // Another user's trash on the same volume is not ours, and neither is
+        // a folder that merely sits next to one or is named like one.
+        assert!(!is_in_trash(Path::new("/Volumes/Backup/.Trashes/99")));
+        assert!(!is_in_trash(Path::new("/Volumes/Backup/.Trashes")));
+        assert!(!is_in_trash(&paths::home_dir().join(".Trash-notes")));
+        assert!(!is_in_trash(&paths::home_dir().join("Documents/Trash")));
+        assert!(!is_in_trash(Path::new("/Users/someone-else/.Trash")));
+    }
 
     /// Trashing must work on the `\\?\`-prefixed paths the file list uses
     /// (std::fs::canonicalize yields them on Windows). The Windows path now

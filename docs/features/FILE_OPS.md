@@ -149,6 +149,51 @@ processes with no GUI (daemons, shells) and on Linux/Windows, where
 `activate_app` is unimplemented. The toast is pinned (no autohide) so it
 survives the app switch; the hover ✕ dismisses it.
 
+## Inside the Trash
+
+A trash folder is browsed like any other folder, but a deleted item answers to
+a different set of verbs, so it gets its own context menus
+([CONTEXT_MENU.md](CONTEXT_MENU.md)): most of the file menu is meaningless on
+something the user threw away (renaming, duplicating, compressing, tagging,
+favouriting, and **Move to Trash** on an item already in the trash), and the
+two that matter, putting it back and deleting it for good, exist nowhere else.
+
+Membership is decided by `ferail_fs_native::is_in_trash`, a **lexical** test
+over the fixed layouts (`~/.Trash`, a volume's `.Trashes/<uid>`, freedesktop's
+`Trash` and `.Trash-<uid>`, AROS's `Trashcan`). It has to be lexical: the
+answer is needed while a context menu is being built, where nothing may touch
+the disk, and a volume's trash must be recognizable while the volume itself is
+asleep. The Shell sets the flag on the listing when a load starts, so a
+right-click during a slow load still gets the right menu.
+
+### Put Back
+
+**Ferail can put back what Ferail trashed.** When it moves something to the
+trash it records `(trashed path → original path)` in the metadata database, and
+**Put Back** renames the item back, recreating the original folder if it has
+since gone. It never overwrites: a name taken since is refused, not replaced.
+The record is dropped when the item is restored, and every record under a trash
+is dropped when that trash is emptied, so a reused trash path can never resolve
+to some long-gone original.
+
+**It cannot put back what something else trashed**, and says so rather than
+guessing: on macOS the Finder keeps its own put-back information in a private
+store of its own, which Ferail does not read. Restoring a mixed selection
+restores what it can and reports the rest separately, because "I do not know
+where this came from" is not the same failure as "I could not move it", and the
+user can do nothing about the first.
+
+The menu entry is always offered rather than enabled per row: knowing whether a
+record exists means a database query, and a context menu may not do I/O while
+it is being built. Recording is best effort in the other direction too, a
+database that will not write must never fail the deletion the user actually
+asked for; the cost is one item that cannot be put back, not a lost file.
+
+Windows is a separate path entirely: its Recycle Bin has no filesystem folder
+to browse, so Ferail reaches it through the Shell namespace provider and
+restores through the Shell's own `undelete` verb, which needs no record of ours
+([CONTEXT_MENU.md](CONTEXT_MENU.md#shell-namespace-rows-this-pc-recycle-bin)).
+
 ## Rename gestures
 
 Renaming starts from F2, the context menu, or Explorer-style click-to-rename:

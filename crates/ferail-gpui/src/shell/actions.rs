@@ -63,6 +63,12 @@ actions!(
         /// reachable trash, after a counted confirmation dialog. The
         /// one file operation with no undo (docs/features/FILE_OPS.md).
         EmptyTrash,
+        /// Put the selected trashed items back where they came from.
+        /// Offered only in a trash folder, and only able to act on items
+        /// Ferail itself trashed: the original location comes from the
+        /// put-back record written at that moment, and nothing else knows
+        /// it (docs/features/FILE_OPS.md).
+        RestoreFromTrash,
         /// Cmd+C: selection's file URLs onto the general pasteboard
         /// (cross-app: Finder pastes what we copy). FILE_OPS.md.
         CopyFiles,
