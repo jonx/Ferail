@@ -1,7 +1,7 @@
 # Localization
 
 Ferail's UI can be shown in any language for which a **language pack** exists.
-Packs are plain JSON files; two (French, German) ship inside the app, and
+Packs are plain JSON files; three (French, German, Polish) ship inside the app, and
 anyone can create another one without touching the code, typically by
 handing a generated template to a translator or to an AI assistant (Claude,
 ChatGPT, a local model…) and importing the result. Ferail itself never calls
@@ -96,12 +96,35 @@ NSString::from_str(&tr!("Open With"));
 const CATALOGUE: &[CommandSpec] = &[CommandSpec { title: msgid!("New Window"), … }];
 ```
 
+## Who wrote the packs
+
+French and German are the maintainer's. **Polish is Bohun's**
+([github.com/bohunamiga](https://github.com/bohunamiga)), contributed in
+[PR #1](https://github.com/jonx/Ferail/pull/1) and reviewed by a Polish
+speaker. Translators are credited by name in the About window, not only here:
+a language pack is the part of the app a user reads every day.
+
+### Known gap: Polish plurals need a `few` form
+
+`i18n/plural.rs` implements Polish properly, `one` for 1, `few` for 2 to 4
+(excluding 12 to 14), `many` for everything else. The contributed pack gives
+`one` and `other` for all 105 plural entries, with `other` holding the
+genitive (`many`) form. Lookup falls back to `other` when the wanted category
+is absent, so 2, 3 and 4 currently read `3 elementów` where Polish wants
+`3 elementy`. The entries are correct for 1 and for 5 and above.
+
+Filling in `few` is 105 judgement calls in Polish, and not all of them are
+mechanical: a phrase whose head is itself genitive (`Klonowanie 2
+duplikatów`) does not take the nominative plural the bare rule would suggest.
+It is a question for the pack's author rather than a search and replace.
+
+
 Rules:
 
 - **New or changed user-visible text ships translated.** In the same change,
   regenerate `locales/en.json` and add or update the corresponding entries in
-  both bundled packs (`locales/de.json` and `locales/fr.json`). Do not leave
-  new strings to fall back to English.
+  every bundled pack (`locales/de.json`, `locales/fr.json`, `locales/pl.json`).
+  Do not leave new strings to fall back to English.
 - **Arguments must be string literals.** The extractor (see below) only sees
   literals; a dynamic `tr!(x)` does not compile. For a `&'static str` that
   came from a `msgid!` table, call `tr_raw` / `tr_static`.

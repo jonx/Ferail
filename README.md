@@ -283,6 +283,11 @@ merge.
 
 ## Acknowledgements
 
+The **Polish** language pack is the work of **Bohun**
+([bohunamiga](https://github.com/bohunamiga)), contributed in
+[PR #1](https://github.com/jonx/Ferail/pull/1) and reviewed by a Polish
+speaker. It ships inside the app.
+
 The Windows shell-integration work leans on the excellent open-source
 explorations of **Simon Mourier**: studied as reference implementations for
 preview hosting, shell namespace identity, and native context menus:

@@ -41,6 +41,8 @@ pub const EN_JSON: &str = include_str!("../../../../locales/en.json");
 pub const BUNDLED: &[(&str, &str)] = &[
     ("fr", include_str!("../../../../locales/fr.json")),
     ("de", include_str!("../../../../locales/de.json")),
+    // Contributed by Bohun (github.com/bohunamiga).
+    ("pl", include_str!("../../../../locales/pl.json")),
 ];
 
 /// Current value of [`LanguagePack::format`].

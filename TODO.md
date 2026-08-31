@@ -508,6 +508,16 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 ## Settings, Commands & Accessibility
 
+- **Polish plurals need their `few` form.** The bundled Polish pack has
+  `one` + `other` for all 105 plural entries, with `other` holding the
+  genitive (`many`) form, so counts of 2 to 4 fall back to it and read
+  `3 elementów` where Polish wants `3 elementy`. `i18n/plural.rs` already
+  computes `one`/`few`/`many` correctly, so only the pack is missing forms.
+  Ask the pack's author (Bohun) rather than search-and-replacing: a phrase
+  whose head is itself genitive does not take the nominative plural the bare
+  rule suggests. See
+  [LOCALIZATION.md](docs/features/LOCALIZATION.md#known-gap-polish-plurals-need-a-few-form).
+
 - **Localization follow-ups** (docs/features/LOCALIZATION.md: the catalog,
   packs, Settings UI and the export → translate → import flow ship):
   - Translate backend error text (`ferail-fs-native`, `ferail-archive`) and

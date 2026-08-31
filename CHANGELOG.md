@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Ferail speaks Polish.** A complete Polish translation now ships inside the
+  app, contributed by **Bohun** and reviewed by a Polish speaker. Pick it in
+  Settings, or let Ferail follow your system language. One rough edge, worth
+  knowing: counts of two, three and four items currently use the same wording
+  as five and above, so a few labels read slightly off until the pack gains
+  its `few` forms.
+
 - **The Windows Recycle Bin shows where each item was deleted from.** A second
   column on every row gives the original folder, the way Explorer does, so you
   can tell two files with the same name apart before restoring either. Windows

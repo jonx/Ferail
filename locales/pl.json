@@ -543,7 +543,7 @@
     "Full Disk Access": "Pełny dostęp do dysku",
     "Fullwidth": "Pełna szerokość",
     "Gamma": "Gamma",
-    "Gap between the selection highlights in icon view. Wider spacing lets the boxes breathe; None packs them edge-to-edge.",
+    "Gap between the selection highlights in icon view. Wider spacing lets the boxes breathe; None packs them edge-to-edge.": "Odstęp między podświetleniami zaznaczenia w widoku ikon. Większy odstęp daje ramkom więcej przestrzeni; Brak zestawia je jedna przy drugiej.",
     "Gathering details…": "Zbieranie szczegółów…",
     "General": "Ogólne",
     "Generate SHA-256…": "Generuj SHA-256…",
@@ -788,7 +788,7 @@
     },
     "Opening {path}": "Otwieranie {path}",
     "Optional": "Opcjonalnie",
-    "Optional. Besides enabling Disk Usage to include folders protected by macOS (fast directory reading works without it; Ferail asks only when a scan encounters protected folders).": "Opcjonalnie. Pozwala na uwzględnienie przez Użycie dysku folderów chronionych przez system macOS (szybkie odczytywanie katalogów działa bez tego; Ferail pyta tylko wtedy, gdy skan natrafi na chronione foldery).",
+    "Optional. Lets Disk Usage include folders protected by macOS. Fast directory reading works without it; Ferail asks only when a scan encounters protected folders.": "Opcjonalnie. Pozwala na uwzględnienie przez Użycie dysku folderów chronionych przez system macOS. Szybkie odczytywanie katalogów działa bez tego; Ferail pyta tylko wtedy, gdy skan natrafi na chronione foldery.",
     "Orange": "Pomarańczowy",
     "Orientation": "Orientacja",
     "Original title": "Oryginalny tytuł",
@@ -835,6 +835,7 @@
     "Player": "Odtwarzacz",
     "Plot": "Fabuła",
     "Plugins": "Wtyczki",
+    "Polish translation": "Tłumaczenie polskie",
     "Portable": "Przenośny",
     "Portable engine": "Silnik przenośny",
     "Portable fallback: Fast NTFS could not finish safely": "Tryb awaryjny (Portable): Szybki NTFS nie mógł zakończyć pracy w bezpieczny sposób",
@@ -1496,10 +1497,7 @@
       "other": "zaznaczono {n} z {total} · {size}"
     },
     "{n} of {t}": "{n} z {t}",
-    "{n} other": {
-      "one": "{n} inny",
-      "other": "{n} inne"
-    },
+    "{n} other": "{n} innych",
     "{n} path copied to clipboard": {
       "one": "Skopiowano {n} ścieżkę do schowka",
       "other": "Skopiowano {n} ścieżek do schowka"
