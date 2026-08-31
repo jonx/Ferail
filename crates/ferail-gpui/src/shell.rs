@@ -1353,6 +1353,44 @@ impl Shell {
         window: AnyWindowHandle,
         cx: &mut Context<Self>,
     ) {
+        self.perform_platform_item_action(
+            tab_id,
+            item_id,
+            PlatformAction::NativeMenu { extended },
+            window,
+            cx,
+        );
+    }
+
+    /// Put the selected Recycle Bin items back where they came from.
+    ///
+    /// Ferail does not reconstruct the original location: the Shell owns that
+    /// record, and only its own `undelete` restores the name, timestamps and
+    /// permissions the item had. Capability-gated like every provider action,
+    /// so a namespace that cannot restore never offers it.
+    fn restore_platform_items(
+        &mut self,
+        tab_id: TabId,
+        item_id: PlatformItemId,
+        window: AnyWindowHandle,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Restore from trash");
+        self.perform_platform_item_action(tab_id, item_id, PlatformAction::Restore, window, cx);
+    }
+
+    /// Run one provider action over the namespace selection, anchored on
+    /// `item_id`: a right-click on an unselected row acts on that row alone,
+    /// exactly like the file list.
+    fn perform_platform_item_action(
+        &mut self,
+        tab_id: TabId,
+        item_id: PlatformItemId,
+        action: PlatformAction,
+        window: AnyWindowHandle,
+        cx: &mut Context<Self>,
+    ) {
+        let restoring = matches!(action, PlatformAction::Restore);
         let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
             return;
         };
@@ -1364,10 +1402,7 @@ impl Shell {
             .items()
             .iter()
             .find(|item| item.id == item_id)
-            .is_some_and(|item| {
-                item.capabilities
-                    .contains(PlatformCapabilities::NATIVE_MENU)
-            });
+            .is_some_and(|item| item.capabilities.supports(action));
         if !supported {
             return;
         }
@@ -1377,7 +1412,7 @@ impl Shell {
         let request = PlatformActionRequest {
             location: session.current().clone(),
             selection: session.selection().descriptor(),
-            action: PlatformAction::NativeMenu { extended },
+            action,
         };
         if request
             .selection
@@ -1386,9 +1421,11 @@ impl Shell {
         {
             let _ = window.update(cx, |_, window, cx| {
                 window.push_notification(
-                    gpui_component::notification::Notification::error(tr!(
-                        "Too many items selected for the Windows context menu"
-                    )),
+                    gpui_component::notification::Notification::error(if restoring {
+                        tr!("Too many items selected to restore at once")
+                    } else {
+                        tr!("Too many items selected for the Windows context menu")
+                    }),
                     cx,
                 );
             });
@@ -1419,9 +1456,11 @@ impl Shell {
                 Err(_) => {
                     let _ = window.update(cx, |_, window, cx| {
                         window.push_notification(
-                            gpui_component::notification::Notification::error(tr!(
-                                "Windows context menu unavailable for this item"
-                            )),
+                            gpui_component::notification::Notification::error(if restoring {
+                                tr!("Could not restore the selected items")
+                            } else {
+                                tr!("Windows context menu unavailable for this item")
+                            }),
                             cx,
                         );
                     });

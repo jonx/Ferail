@@ -8,6 +8,16 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The Windows Recycle Bin can restore again, and right-click works there
+  at all.** Browsing the Recycle Bin showed its contents but the context menu
+  came up empty, so the only thing you could do with it was empty it: Ferail
+  offered the Shell menu only to rows without a file path, and a deleted item
+  has one. Every namespace row now gets the native menu, and a **Restore**
+  entry sits above it, which puts the selection back where it came from with
+  its original name, dates and permissions. Restoring uses Windows' own
+  restore command, so an item it refuses to put back says so instead of
+  failing silently.
+
 - **Double-clicking a checksum file now runs the check.** Opening an `.sfv`,
   `.md5`, `SHA256SUMS` or similar list in a text editor shows a column of
   hashes, which is rarely what you wanted from it: the verification report

@@ -385,6 +385,35 @@ dialogs cannot inherit an off-screen placement. Shift+right-click is filtered
 inside Ferail's live-menu listener as well as routed to the Shell; GPUI window
 listeners do not honor element `stop_propagation()` by themselves.
 
+### Shell Namespace Rows (This PC, Recycle Bin)
+
+Rows that have no filesystem identity of their own get the same treatment
+through the tab's namespace provider, with two rules worth stating because both
+were once wrong.
+
+**Every namespace row offers the native menu.** The capability used to be
+granted only to items *without* a filesystem path, which quietly emptied the
+Recycle Bin's menu: a recycled item does report a path, so it lost the
+capability and right-click produced a popup with nothing in it. The Shell's own
+menu is the right menu for any namespace row.
+
+**Restore is Ferail's own entry, above the Shell's.** It is the one thing
+people open the Recycle Bin to do, so it does not live two clicks deep under
+*More…*. It carries its own capability (`RESTORE`), granted by a provider whose
+root is the Recycle Bin; it is never implied by `TRASH_RECOVERABLE`, which is
+the opposite direction. The work itself is the Shell's `undelete` verb, invoked
+by the same disposable broker with no menu on screen: only the Shell knows
+where a recycled item came from, and only it can put it back with the original
+name, timestamps and permissions. The verb is resolved against the selection's
+real menu offsets rather than passed to `InvokeCommand` as a string, so a
+selection that cannot be restored reports a failure instead of doing nothing.
+The broker accepts verbs from a fixed list, so the flag cannot turn it into a
+general Shell command runner.
+
+macOS has no equivalent yet: Put Back is a Finder record, not a filesystem
+operation, so the Trash folder there is an ordinary directory and offers no
+Restore.
+
 Ferail-Win32's old selection-change `menu_preload.rs` and interleaved
 `shell_pump.rs` were behavioral references only. They are intentionally not
 ported: the normal menu never pays the Shell-extension cost.

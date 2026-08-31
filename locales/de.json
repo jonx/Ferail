@@ -244,6 +244,7 @@
     "Could not read the file: {error}": "Datei konnte nicht gelesen werden: {error}",
     "Could not read the image: {error}": "Bild konnte nicht gelesen werden: {error}",
     "Could not resolve the shortcut": "Die Verknüpfung konnte nicht aufgelöst werden",
+    "Could not restore the selected items": "Die ausgewählten Objekte konnten nicht wiederhergestellt werden",
     "Could not reveal {n} item": {
       "one": "{n} Objekt konnte nicht im Explorer angezeigt werden",
       "other": "{n} Objekte konnten nicht im Explorer angezeigt werden"
@@ -937,6 +938,7 @@
     "Reset icon size": "Symbolgröße zurücksetzen",
     "Reset to Original Name": "Auf ursprünglichen Namen zurücksetzen",
     "Reset to recommended": "Auf empfohlene Werte zurücksetzen",
+    "Restore": "Wiederherstellen",
     "Restored Favorite": "Favorit wiederhergestellt",
     "Restored from Trash": "Aus dem Papierkorb wiederhergestellt",
     "Results view": "Ergebnisansicht",
@@ -1179,6 +1181,7 @@
     "Toggle Sidebar": "Seitenleiste umschalten",
     "Too many edited copies of this image already exist here.": "Es existieren bereits zu viele bearbeitete Kopien dieses Bildes.",
     "Too many items selected for the Windows context menu": "Zu viele Objekte für das Windows-Kontextmenü ausgewählt",
+    "Too many items selected to restore at once": "Zu viele Objekte für eine Wiederherstellung auf einmal ausgewählt",
     "Track": "Titelnummer",
     "Trailing whitespace": "Abschließender Leerraum",
     "Transferring failed: {detail}": "Übertragen fehlgeschlagen: {detail}",

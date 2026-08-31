@@ -37,7 +37,8 @@ use windows::{
                 CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
                 DispatchMessageW, EnumWindows, GetCursorPos, GetWindow, IsWindow,
                 MsgWaitForMultipleObjectsEx, PeekMessageW, PostMessageW, RegisterClassExW,
-                SetForegroundWindow, ShowWindow, TrackPopupMenuEx, TranslateMessage, GW_OWNER,
+                GetMenuItemCount, GetMenuItemID, SetForegroundWindow, ShowWindow, TrackPopupMenuEx,
+                TranslateMessage, GW_OWNER,
                 HMENU, MSG, MWMO_INPUTAVAILABLE, PM_REMOVE, QS_ALLINPUT, SW_SHOWNORMAL,
                 TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM,
                 WM_MENUCHAR, WM_NULL, WM_QUIT, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
@@ -52,6 +53,8 @@ const FIRST_COMMAND_ID: u32 = 1;
 const LAST_COMMAND_ID: u32 = 0x7fff;
 const BROKER_ARG: &str = "--windows-context-menu-broker";
 const PATHS_STDIN_ARG: &str = "--paths-stdin";
+const PIDL_STDIN_ARG: &str = "--pidl-stdin";
+const VERB_ARG: &str = "--verb";
 const READY_MARKER: &str = "FERAIL_CONTEXT_MENU_READY";
 const MAX_FILESYSTEM_MENU_TARGETS: usize = 20_000;
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(8);
@@ -426,6 +429,48 @@ pub(crate) fn show_windows_namespace_context_menu(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .creation_flags(CREATE_NO_WINDOW);
+    send_pidls_to_broker(command, pidls)
+}
+
+/// Verbs Ferail will invoke with no menu on screen.
+///
+/// Deliberately a list rather than a validation rule: the broker reads this
+/// string off its own command line, and an open-ended verb would turn a
+/// narrow, gesture-triggered helper into a general Shell command runner.
+fn is_supported_verb(verb: &str) -> bool {
+    matches!(verb, "undelete")
+}
+
+/// Invoke one canonical Shell verb on a namespace selection, with no menu.
+///
+/// Restoring a recycled item is the Shell's own `undelete`: only the Shell
+/// knows where the item came from, and only it can put it back with the
+/// original name, timestamps and permissions. The verb is resolved against the
+/// selection's real context menu instead of being handed to `InvokeCommand` as
+/// a string, so a selection that cannot be restored fails here and the caller
+/// can say so, rather than silently doing nothing.
+pub(crate) fn invoke_windows_namespace_verb(pidls: &[Arc<[u8]>], verb: &str) -> Result<(), String> {
+    if pidls.is_empty() || pidls.len() > 128 || pidls.iter().any(|pidl| !valid_pidl(pidl)) {
+        return Err("invalid Windows namespace selection".into());
+    }
+    if !is_supported_verb(verb) {
+        return Err(format!("unsupported Shell verb: {verb}"));
+    }
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let mut command = Command::new(exe);
+    command
+        .arg(BROKER_ARG)
+        .arg(PIDL_STDIN_ARG)
+        .arg(VERB_ARG)
+        .arg(verb);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW);
+    send_pidls_to_broker(command, pidls)
+}
+
+fn send_pidls_to_broker(mut command: Command, pidls: &[Arc<[u8]>]) -> Result<(), String> {
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let mut stdin = child
         .stdin
@@ -464,16 +509,37 @@ fn valid_pidl(bytes: &[u8]) -> bool {
 /// Entry point for the `--windows-context-menu-broker` process role.
 pub fn context_menu_broker_main(args: &[OsString]) -> i32 {
     let extended = args.iter().any(|arg| arg == "--extended");
-    let pidl_stdin = args.iter().any(|arg| arg == "--pidl-stdin");
+    let pidl_stdin = args.iter().any(|arg| arg == PIDL_STDIN_ARG);
     let paths_stdin = args.iter().any(|arg| arg == PATHS_STDIN_ARG);
-    let path_args = args
-        .iter()
-        .filter(|arg| arg != &"--extended" && arg != &"--pidl-stdin" && arg != &PATHS_STDIN_ARG)
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut verb: Option<String> = None;
+    let mut path_args = Vec::new();
+    let mut remaining = args.iter();
+    while let Some(arg) = remaining.next() {
+        if arg == "--extended" || arg == PIDL_STDIN_ARG || arg == PATHS_STDIN_ARG {
+            continue;
+        }
+        if arg == VERB_ARG {
+            let Some(value) = remaining.next().and_then(|value| value.to_str()) else {
+                eprintln!("ferail: Windows Shell verb missing its value");
+                return 2;
+            };
+            verb = Some(value.to_string());
+            continue;
+        }
+        path_args.push(arg.clone());
+    }
     if pidl_stdin == paths_stdin || !path_args.is_empty() {
         eprintln!("ferail: Windows context menu requires exactly one private input mode");
         return 2;
+    }
+    // A verb runs with no menu on screen, so it never has a filesystem-path
+    // input mode and never carries the extended-verbs modifier: reject both
+    // rather than quietly ignoring them.
+    if let Some(verb) = verb.as_deref() {
+        if !pidl_stdin || extended || !is_supported_verb(verb) {
+            eprintln!("ferail: unsupported Windows Shell verb request");
+            return 2;
+        }
     }
     let paths = if paths_stdin {
         match crate::private_wire::read_paths(
@@ -498,7 +564,9 @@ pub fn context_menu_broker_main(args: &[OsString]) -> i32 {
         eprintln!("ferail: unable to initialize OLE for context menu: {error}");
         return 1;
     }
-    let result = if pidl_stdin {
+    let result = if let Some(verb) = verb.as_deref() {
+        read_namespace_pidls().and_then(|pidls| invoke_verb_from_pidls(&pidls, verb))
+    } else if pidl_stdin {
         read_namespace_pidls().and_then(|pidls| show_menu_from_pidls(&pidls, extended))
     } else {
         show_menu(&paths, extended)
@@ -562,6 +630,92 @@ fn show_menu_from_pidls(pidls: &[Vec<u8>], extended: bool) -> Result<(), String>
         .map(|pidl| pidl.as_ptr().cast::<ITEMIDLIST>())
         .collect::<Vec<_>>();
     show_menu_raw(&raw, extended)
+}
+
+fn invoke_verb_from_pidls(pidls: &[Vec<u8>], verb: &str) -> Result<(), String> {
+    let raw = pidls
+        .iter()
+        .map(|pidl| pidl.as_ptr().cast::<ITEMIDLIST>())
+        .collect::<Vec<_>>();
+    invoke_verb_raw(&raw, verb)
+}
+
+/// Find the menu offset whose canonical verb is `verb`.
+///
+/// The Shell hands out command *offsets*, not names, and only the items it
+/// actually put in the menu are invocable: asking for a verb the selection does
+/// not offer has to fail, not invoke offset zero.
+fn menu_offset_for_verb(context_menu: &IContextMenu, menu: HMENU, verb: &str) -> Option<u32> {
+    let count = unsafe { GetMenuItemCount(menu) };
+    for index in 0..count.max(0) {
+        let id = unsafe { GetMenuItemID(menu, index) };
+        // -1 marks a separator or a submenu parent, neither of which is a
+        // command; ids below the base we asked for are not ours.
+        if id == u32::MAX {
+            continue;
+        }
+        let Some(offset) = id.checked_sub(FIRST_COMMAND_ID) else {
+            continue;
+        };
+        if canonical_verb(context_menu, offset)
+            .is_some_and(|found| found.eq_ignore_ascii_case(verb))
+        {
+            return Some(offset);
+        }
+    }
+    None
+}
+
+fn invoke_verb_raw(pidls: &[*const ITEMIDLIST], verb: &str) -> Result<(), String> {
+    // No popup is tracked here, but the invoked verb may still parent a dialog
+    // (a name collision on restore, or a UAC consent) to the supplied HWND, so
+    // the broker keeps the same 1px owner window at the cursor rather than
+    // letting Windows place those dialogs off-screen.
+    let mut point = POINT::default();
+    unsafe { GetCursorPos(&mut point).map_err(|error| error.to_string())? };
+    let owner = OwnerWindow::new(point).map_err(|error| error.to_string())?;
+    let mut first_child = std::ptr::null_mut();
+    let folder: IShellFolder = unsafe { SHBindToParent(pidls[0], Some(&mut first_child)) }
+        .map_err(|error| format!("could not bind the selected items' parent: {error}"))?;
+    let children = pidls
+        .iter()
+        .map(|pidl| unsafe { windows::Win32::UI::Shell::ILFindLastID(*pidl) }.cast_const())
+        .collect::<Vec<_>>();
+    let context_menu: IContextMenu = unsafe { folder.GetUIObjectOf(owner.0, &children, None) }
+        .map_err(|error| format!("could not obtain the Shell context menu: {error}"))?;
+
+    // The menu is built and thrown away: it exists only to learn which offset
+    // carries the verb, since QueryContextMenu is what assigns those offsets.
+    let popup = OwnedMenu(unsafe { CreatePopupMenu() }.map_err(|error| error.to_string())?);
+    let query = unsafe {
+        context_menu.QueryContextMenu(popup.0, 0, FIRST_COMMAND_ID, LAST_COMMAND_ID, CMF_NORMAL)
+    };
+    query.map_err(|error| format!("Shell extension menu enumeration failed: {error}"))?;
+    let offset = menu_offset_for_verb(&context_menu, popup.0, verb)
+        .ok_or_else(|| format!("the Shell offers no `{verb}` command for this selection"))?;
+
+    // Same readiness contract as the menu path: everything that can hang on a
+    // third-party handler is done, so the caller stops applying its build
+    // timeout. Anything after this may be user-modal.
+    println!("{READY_MARKER}");
+    std::io::stdout()
+        .flush()
+        .map_err(|error| format!("could not signal broker readiness: {error}"))?;
+
+    let info = CMINVOKECOMMANDINFOEX {
+        cbSize: std::mem::size_of::<CMINVOKECOMMANDINFOEX>() as u32,
+        fMask: SEE_MASK_UNICODE | SEE_MASK_NO_CONSOLE | SEE_MASK_NOASYNC,
+        hwnd: owner.0,
+        lpVerb: PCSTR(offset as usize as *const u8),
+        lpVerbW: PCWSTR(offset as usize as *const u16),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    unsafe {
+        context_menu.InvokeCommand(&info as *const CMINVOKECOMMANDINFOEX as *const CMINVOKECOMMANDINFO)
+    }
+    .map_err(|error| format!("Shell command failed: {error}"))?;
+    Ok(())
 }
 
 fn show_menu_raw(pidls: &[*const ITEMIDLIST], extended: bool) -> Result<(), String> {

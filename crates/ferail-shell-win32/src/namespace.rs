@@ -34,6 +34,11 @@ enum ShellIdentity {
 
 pub struct WindowsNamespaceProvider {
     id: PlatformProviderId,
+    /// The namespace this provider was opened on. Item capabilities that
+    /// belong to the *container* rather than to the item, Restore being the
+    /// only one today, are decided from here: everything a Recycle Bin
+    /// provider enumerates is a deleted item, nested browsing included.
+    root: WindowsNamespaceRoot,
     arena: Mutex<IdentityArena>,
 }
 
@@ -48,6 +53,7 @@ impl WindowsNamespaceProvider {
         let serial = NEXT_PROVIDER.fetch_add(1, Ordering::Relaxed);
         let provider = Arc::new(Self {
             id: PlatformProviderId::new(format!("windows-namespace-{serial}")),
+            root,
             arena: Mutex::new(IdentityArena {
                 entries: vec![ShellIdentity::Root(root)],
                 pidl_ids: HashMap::new(),
@@ -132,8 +138,14 @@ impl PlatformNamespaceProvider for WindowsNamespaceProvider {
             if folder && !filesystem {
                 capabilities = capabilities.union(PlatformCapabilities::ENUMERATE);
             }
-            if !filesystem {
-                capabilities = capabilities.union(PlatformCapabilities::NATIVE_MENU);
+            // The Shell's own menu is the right menu for every namespace row,
+            // including the ones that do have a path. Gating it on `!filesystem`
+            // silently emptied the Recycle Bin's context menu, because a
+            // recycled item reports a filesystem path: the user got a popup with
+            // nothing in it and no way to restore anything.
+            capabilities = capabilities.union(PlatformCapabilities::NATIVE_MENU);
+            if matches!(self.root, WindowsNamespaceRoot::RecycleBin) {
+                capabilities = capabilities.union(PlatformCapabilities::RESTORE);
             }
             let mut flags = PlatformItemFlags::default();
             if record.attributes & ATTR_HIDDEN != 0 {
@@ -191,9 +203,17 @@ impl PlatformNamespaceProvider for WindowsNamespaceProvider {
         request: PlatformActionRequest,
         cancel: &AtomicBool,
     ) -> Result<PlatformActionOutcome, PlatformLocationErrorKind> {
-        let PlatformAction::NativeMenu { extended } = request.action else {
+        if !matches!(
+            request.action,
+            PlatformAction::NativeMenu { .. } | PlatformAction::Restore
+        ) {
             return Err(PlatformLocationErrorKind::Unsupported);
-        };
+        }
+        if matches!(request.action, PlatformAction::Restore)
+            && !matches!(self.root, WindowsNamespaceRoot::RecycleBin)
+        {
+            return Err(PlatformLocationErrorKind::Unsupported);
+        }
         if request.selection.all || request.selection.ids.is_empty() {
             return Err(PlatformLocationErrorKind::Unsupported);
         }
@@ -217,8 +237,21 @@ impl PlatformNamespaceProvider for WindowsNamespaceProvider {
             pidls.push(bytes.clone());
         }
         drop(arena);
-        super::context_menu::show_windows_namespace_context_menu(&pidls, extended)
-            .map_err(|_| PlatformLocationErrorKind::Failed)?;
+        match request.action {
+            PlatformAction::NativeMenu { extended } => {
+                super::context_menu::show_windows_namespace_context_menu(&pidls, extended)
+                    .map_err(|_| PlatformLocationErrorKind::Failed)?;
+            }
+            // Restore is the Shell's own `undelete` verb, invoked with no menu
+            // on screen. Ferail never rebuilds where a recycled item came from:
+            // only the Shell knows that, and only it can put the item back with
+            // its original name, timestamps and permissions.
+            PlatformAction::Restore => {
+                super::context_menu::invoke_windows_namespace_verb(&pidls, "undelete")
+                    .map_err(|_| PlatformLocationErrorKind::Failed)?;
+            }
+            _ => return Err(PlatformLocationErrorKind::Unsupported),
+        }
         Ok(PlatformActionOutcome::Changed)
     }
 }

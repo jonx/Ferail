@@ -134,6 +134,10 @@ impl PlatformCapabilities {
     pub const CREATE_CHILD: Self = Self(1 << 12);
     pub const READ_STREAM: Self = Self(1 << 13);
     pub const THUMBNAIL: Self = Self(1 << 14);
+    /// Put a deleted item back where it came from. Only a provider that
+    /// actually knows the original location can offer this: it is never
+    /// implied by TRASH_RECOVERABLE, which is the opposite direction.
+    pub const RESTORE: Self = Self(1 << 15);
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -166,6 +170,7 @@ pub enum PlatformAction {
     Thumbnail,
     TrashRecoverable,
     DeletePermanent,
+    Restore,
 }
 
 impl PlatformAction {
@@ -185,6 +190,7 @@ impl PlatformAction {
             Self::Thumbnail => PlatformCapabilities::THUMBNAIL,
             Self::TrashRecoverable => PlatformCapabilities::TRASH_RECOVERABLE,
             Self::DeletePermanent => PlatformCapabilities::DELETE_PERMANENT,
+            Self::Restore => PlatformCapabilities::RESTORE,
         }
     }
 }
@@ -716,6 +722,20 @@ mod tests {
         assert!(!caps.supports(PlatformAction::Move));
         assert!(!caps.supports(PlatformAction::Rename));
         assert!(!caps.supports(PlatformAction::TrashRecoverable));
+        assert!(!caps.supports(PlatformAction::Restore));
+    }
+
+    #[test]
+    fn restore_is_its_own_capability_not_a_side_effect_of_trash() {
+        // A provider that can put an item back is not the same as one that
+        // can put an item in the trash, and neither implies the other. The
+        // Recycle Bin offers the first and not the second.
+        let bin = PlatformCapabilities::RESTORE.union(PlatformCapabilities::NATIVE_MENU);
+        assert!(bin.supports(PlatformAction::Restore));
+        assert!(!bin.supports(PlatformAction::TrashRecoverable));
+        assert!(!bin.supports(PlatformAction::DeletePermanent));
+        let trash_only = PlatformCapabilities::TRASH_RECOVERABLE;
+        assert!(!trash_only.supports(PlatformAction::Restore));
     }
 
     #[test]

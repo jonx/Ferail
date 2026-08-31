@@ -244,6 +244,7 @@
     "Could not read the file: {error}": "Impossible de lire le fichier : {error}",
     "Could not read the image: {error}": "Impossible de lire l’image : {error}",
     "Could not resolve the shortcut": "Impossible de résoudre le raccourci",
+    "Could not restore the selected items": "Impossible de restaurer les éléments sélectionnés",
     "Could not reveal {n} item": {
       "one": "Impossible d’afficher {n} élément dans l’Explorateur",
       "other": "Impossible d’afficher {n} éléments dans l’Explorateur"
@@ -937,6 +938,7 @@
     "Reset icon size": "Réinitialiser la taille des icônes",
     "Reset to Original Name": "Réinitialiser au nom d'origine",
     "Reset to recommended": "Réinitialiser aux valeurs recommandées",
+    "Restore": "Restaurer",
     "Restored Favorite": "Favoris restauré",
     "Restored from Trash": "Restauré à partir de la corbeille",
     "Results view": "Vue des résultats",
@@ -1179,6 +1181,7 @@
     "Toggle Sidebar": "Afficher ou masquer la barre latérale",
     "Too many edited copies of this image already exist here.": "Trop de copies modifiées de cette image existent déjà ici.",
     "Too many items selected for the Windows context menu": "Trop d’éléments sont sélectionnés pour le menu contextuel Windows",
+    "Too many items selected to restore at once": "Trop d’éléments sont sélectionnés pour une restauration en une fois",
     "Track": "Piste",
     "Trailing whitespace": "Espaces de fin",
     "Transferring failed: {detail}": "Échec du transfert : {detail}",

@@ -787,6 +787,9 @@ impl Shell {
                         let native_menu = item.capabilities.contains(
                             ferail_core::platform_namespace::PlatformCapabilities::NATIVE_MENU,
                         );
+                        let can_restore = item.capabilities.contains(
+                            ferail_core::platform_namespace::PlatformCapabilities::RESTORE,
+                        );
                         let icon = match item.kind {
                             PlatformItemKind::Container => "icons/folder.svg",
                             PlatformItemKind::Link => "icons/file/symlink.svg",
@@ -824,6 +827,29 @@ impl Shell {
                                     });
                                 })
                                 .context_menu(move |menu, window, app| {
+                                    if !native_menu && !can_restore {
+                                        return menu;
+                                    }
+                                    // Restore is Ferail's own entry, drawn
+                                    // above the Shell's menu: it is the one
+                                    // thing anyone opens the Recycle Bin to do,
+                                    // and it should not be two clicks deep
+                                    // inside "More…".
+                                    let mut menu = menu;
+                                    if can_restore {
+                                        let restore_shell = menu_shell.clone();
+                                        menu = menu.item(
+                                            gpui_component::menu::PopupMenuItem::new(tr!("Restore"))
+                                                .on_click(move |_event, window, app| {
+                                                    let win = window.window_handle();
+                                                    let _ = restore_shell.update(app, |shell, cx| {
+                                                        shell.restore_platform_items(
+                                                            tab_id, item_id, win, cx,
+                                                        );
+                                                    });
+                                                }),
+                                        );
+                                    }
                                     if !native_menu {
                                         return menu;
                                     }

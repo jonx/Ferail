@@ -244,6 +244,7 @@
     "Could not read the file: {error}": "Could not read the file: {error}",
     "Could not read the image: {error}": "Could not read the image: {error}",
     "Could not resolve the shortcut": "Could not resolve the shortcut",
+    "Could not restore the selected items": "Could not restore the selected items",
     "Could not reveal {n} item": {
       "one": "Could not reveal {n} item",
       "other": "Could not reveal {n} items"
@@ -937,6 +938,7 @@
     "Reset icon size": "Reset icon size",
     "Reset to Original Name": "Reset to Original Name",
     "Reset to recommended": "Reset to recommended",
+    "Restore": "Restore",
     "Restored Favorite": "Restored Favorite",
     "Restored from Trash": "Restored from Trash",
     "Results view": "Results view",
@@ -1179,6 +1181,7 @@
     "Toggle Sidebar": "Toggle Sidebar",
     "Too many edited copies of this image already exist here.": "Too many edited copies of this image already exist here.",
     "Too many items selected for the Windows context menu": "Too many items selected for the Windows context menu",
+    "Too many items selected to restore at once": "Too many items selected to restore at once",
     "Track": "Track",
     "Trailing whitespace": "Trailing whitespace",
     "Transferring failed: {detail}": "Transferring failed: {detail}",
