@@ -47,68 +47,59 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
 
 ## Architecture
 
-Every menu is built imperatively, entry by entry, into a
-`gpui_component::menu::PopupMenu`: `menu.menu(label, action)` for a command,
-`.separator()`, and `PopupMenuItem::submenu(label, entity)` for a nested menu
-built through `PopupMenu::build`. Which entries appear is decided inline by
-`Availability` rules over the resolved target set (see
+The **file row** (which also serves the icon grid) and the **file background**
+menus are built as data first: `file_list.rs` assembles a
+[`MenuPlan`](../../crates/ferail-gpui/src/menu_plan.rs) of `PlanItem::Action` /
+`Submenu` / `Separator` entries, each carrying a stable `CommandId`, and
+`plan.render(menu)` turns it into a `gpui_component::menu::PopupMenu` at the
+end. Which entries go into the plan is still decided inline by `Availability`
+rules over the resolved target set (see
 [Command availability over a group](#command-availability-over-a-group-gpui),
-computed once per open by `resolve_menu_targets_with_mode`). Choosing an entry dispatches a `gpui::Action`
-through the window's normal dispatch path, anchored to the Shell's focus handle
-so keyboard-shortcut hints resolve on the first frame.
+computed once per open by `resolve_menu_targets_with_mode`). Choosing an entry
+dispatches a `gpui::Action` through the window's normal dispatch path, anchored
+to the Shell's focus handle so keyboard-shortcut hints resolve on the first
+frame.
 
-An entry's identity is therefore its **Rust action type**. There is no
-action to `CommandId` bridge at the menu site, and labels are written twice:
-once as the catalogue's `msgid!` and again as the menu's `tr!`.
-`ferail_core::commands` carries 17 `Category::Context` specs against roughly
-50 entries in the row menu alone. `keyboard_help::action_for_command` maps ids
-to actions for the palette, but only in that direction, and only for commands
-that have a catalogue spec.
+Two things live in the render step rather than at the call sites:
 
-This is what blocks user-customizable menus: there is nothing stable to key a
-preference on. The refactor that unblocks it is described under
-[Customizing Which Entries Appear](#customizing-which-entries-appear-planned).
+- **Separator hygiene.** Groups empty out as `Availability` hides their
+  entries, leaving the separators that framed them behind. `tidy` drops
+  leading and trailing separators and collapses runs to one, in a single pass
+  over the finished list. As bookkeeping at each `if` this would be unreadable
+  and untestable; as a list rule it is four lines and has its own tests.
+- **Duplicate-id detection**, as a debug assertion. A repeated id is not
+  cosmetic: it would make one preference govern two different entries.
 
-> **Historical note.** This section previously described a `MenuPlan` of
-> `MenuPlanItem::Action` / `Separator` / `Submenu` entries, each carrying a
-> `CommandId` and an optional `CommandPayload`, rendered by
-> `ferail_shell_mac::show_context_menu` into an `NSMenu` and answered with a
-> `MenuPick`. None of that exists in this codebase: it was the pre-GPUI Cocoa
-> app's design, and the port to gpui-component's builder chains dropped it.
-> The description survived the code by a long way, which matters here because
-> the planned work below cites `MenuPlanItem` as if it were live. Worth
-> keeping in view while reading that plan: the refactor it asks for largely
-> **restores** the shape the old app already had.
+Submenus (Compress, Extract, Open With, Tags) stay where they are built,
+because gpui-component builds a nested `PopupMenu` through its own `build`,
+which needs a `Window`. The plan decides only whether the submenu appears and
+under which id.
 
-Slow operations run on workers and report back through
-`AppEvent::FileOpComplete`:
+### Entry ids
 
-- Duplicate (`ferail_shell_mac::duplicate_path`)
-- Compress / Extract: the pure-Rust archive engine
-  (`ferail_fs_native::{create_archive, extract_archive}`, backed by the
-  `ferail-archive` model crate). Creates zip / 7z / tar / tar.gz / tar.bz2 /
-  tar.xz; extracts all of those plus gzip/bzip2/xz single members. The GPUI
-  shell no longer shells out to `/usr/bin/ditto`, so every platform shares one
-  path. Extract is offered only for archive rows (lexical extension check,
-  precomputed at right-click); **Open as Archive** is broader and appears for
-  every single file, with the authoritative content probe deferred to its
-  worker. "Extract Here" targets the current folder and
-  "Extract To…" a native folder picker (run inside a spawned task so its nested
-  run-loop holds no `App` borrow). Both pick a smart destination off-thread:
-  extract in place when the archive has a single root folder, otherwise a
-  `" 2"`-deduped wrapper named after the archive.
-- Explicit text editing launches the platform editor on a background task:
-  TextEdit on macOS, Notepad on Windows, and the desktop text association on
-  Linux. It is single-file only and never probes the file while building the
-  menu.
+[`menu_plan::ids`](../../crates/ferail-gpui/src/menu_plan/ids.rs) is the table.
+An entry that is a catalogue command reuses the catalogue's id, so
+`file.rename` means the same thing in the menu, the palette and the shortcuts
+page. An entry that exists only as a menu item mints one in the same namespace
+and says why, because giving it a `CommandSpec` would put it in the Cmd+K
+palette where it would sit disabled: most of them need a right-clicked target
+to mean anything. A test pins that split, so an id that is neither a catalogue
+command nor a declared menu-only entry (a typo, most likely) fails the build's
+tests instead of silently becoming a third kind of id.
 
-Synchronous-but-fast Cocoa hops:
+The remaining eight surfaces (breadcrumb, the three sidebar sections, browse
+tree, disk-usage treemap, table header, duplicates panel) are still imperative
+chains. They convert the same way, one at a time, whenever their customization
+is wanted.
 
-- Quick Look: `qlmanage -p` subprocess (spawn-and-detach)
-- Make Alias: `NSURL.bookmarkData(...).suitableForBookmarkFile`
-- Tags read/write: `URLTagNamesKey` via `NSURL.setResourceValue:`
-- Open With enumeration: `NSWorkspace.URLsForApplicationsToOpenURL:`
-- Share: `NSSharingServicePicker.showRelativeToRect:ofView:`
+> **Historical note.** This section once described a `MenuPlan` of
+> `MenuPlanItem::Action` / `Separator` / `Submenu` entries carrying a
+> `CommandId`, rendered by `ferail_shell_mac::show_context_menu` into an
+> `NSMenu`. That was the pre-GPUI Cocoa app, and the port to gpui-component's
+> builder chains dropped the shape entirely; the description outlived the code
+> by a long way. The plan type above deliberately **restores** it, minus the
+> `NSMenu` renderer and the `CommandPayload` (payload-carrying entries, tag
+> colours and Open With slots, live inside submenus built at their own sites).
 
 ## Multi-Selection
 
@@ -302,26 +293,23 @@ supplies the storage rules to copy verbatim:
   visible**, so a new command is never invisible to an upgrading user;
 - the visible set is never allowed to go empty.
 
-### Prerequisite: a stable id per entry
+### Prerequisite: a stable id per entry  ✅ done for the two file-pane menus
 
-Today the row menu is an imperative chain:
-`menu.menu(tr!("Rename…"), Box::new(RenameSelected))`, ~40 entries in
-`context_menu` plus 8 in `background_context_menu`. An entry's identity
-is its **Rust action type**, there is no action↔`CommandId` bridge, and
-labels are duplicated between the catalogue's `msgid!` and the menu
-site's `tr!`. `ferail_core::commands` carries only 17
-`Category::Context` specs against those ~40 entries.
+The row menu used to be an imperative chain,
+`menu.menu(tr!("Rename…"), Box::new(RenameSelected))`, so an entry's identity
+was its Rust action type and there was nothing to key a preference on.
 
-So the enabling change is to build each menu from a table of
-`(CommandId, Availability, label, action)` rather than an inline chain.
-That is worth doing on its own merits: it removes the label
-duplication and makes the menus introspectable for the Cmd+K palette and
-the Keyboard Shortcuts page. Once it exists, hiding entries is one
-predicate.
+Both file-pane menus now build a [`MenuPlan`](#architecture) of id-carrying
+entries instead, which is the enabling change: hiding an entry becomes one
+predicate in `render`. The same refactor is a prerequisite for user-defined
+tools ([OPEN_WITH.md](OPEN_WITH.md) §5.6), which cannot hard-code an action
+type per user-created entry.
 
-The same refactor is a prerequisite for user-defined tools
-([OPEN_WITH.md](OPEN_WITH.md) §5.6), which cannot hard-code an action
-type per user-created entry. Do it once; both features land on it.
+Still open from this step: the eight other surfaces are unconverted, and the
+label duplication between the catalogue's `msgid!` and the menu site's `tr!`
+survives. Sourcing an entry's label from its catalogue spec is possible now
+that the ids line up, but it is not automatic: a menu label and a palette
+title differ on purpose in places, so each one has to be looked at.
 
 ### The editor picks a surface
 
@@ -362,15 +350,14 @@ Dynamic entries must not add per-open cost. The rules:
 - The common case is "nothing hidden". Keep a fast path: an empty
   override set short-circuits to exactly the current behaviour.
 
-### Separators
+### Separators  ✅ done
 
-Hiding entries leaves doubled and leading separators. Once the menu is
-built from a list, this is one pass over the items before they are handed
-to `PopupMenu`: drop separators at the head, collapse any run of adjacent
-separators to one, drop separators at the tail. Deliberately a
-post-processing step on the item list rather than per-`if` bookkeeping at
-each call site: the group structure stays readable, and the rule is
-testable in isolation.
+Hiding entries leaves doubled and leading separators. `menu_plan::tidy` is that
+pass, already running for both file-pane menus: drop separators at the head,
+collapse any run of adjacent separators to one, drop separators at the tail.
+Deliberately a post-processing step on the item list rather than per-`if`
+bookkeeping at each call site: the group structure stays readable, and the rule
+is testable in isolation, which it is.
 
 ### Safety rules
 

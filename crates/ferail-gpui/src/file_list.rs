@@ -3464,9 +3464,18 @@ impl TableDelegate for FileListDelegate {
             tr!("Add to Favorites")
         };
 
-        let mut menu = menu.menu(tr!("Open"), Box::new(OpenSelected));
+        use crate::menu_plan::{ids, MenuPlan, MenuSurface};
+        let mut plan = MenuPlan::new(MenuSurface::FileRow).action(
+            ids::OPEN,
+            tr!("Open"),
+            Box::new(OpenSelected),
+        );
         if show_new_tab {
-            menu = menu.menu(tr!("Open in New Tab"), Box::new(OpenInNewTab));
+            plan = plan.action(
+                ids::OPEN_IN_NEW_TAB,
+                tr!("Open in New Tab"),
+                Box::new(OpenInNewTab),
+            );
         }
         if show_single_file {
             // Built-in lightweight editor first (docs/features/TEXT_EDITOR.md),
@@ -3474,14 +3483,14 @@ impl TableDelegate for FileListDelegate {
             // bundled codecs can round-trip also get the redaction/annotation
             // editor (docs/features/IMAGE_EDITOR.md): extension check only,
             // over the already-cached row name.
-            menu = menu.menu(tr!("Edit"), Box::new(EditFile));
+            plan = plan.action(ids::EDIT, tr!("Edit"), Box::new(EditFile));
             let anchor_editable_image = self
                 .entries
                 .get(row_ix)
                 .map(|e| crate::image_edit::editable_image_name(&e.name))
                 .unwrap_or(false);
             if anchor_editable_image {
-                menu = menu.menu(tr!("Edit Image"), Box::new(EditImage));
+                plan = plan.action(ids::EDIT_IMAGE, tr!("Edit Image"), Box::new(EditImage));
             }
             let label = if cfg!(target_os = "macos") {
                 tr!("Edit in TextEdit")
@@ -3490,19 +3499,24 @@ impl TableDelegate for FileListDelegate {
             } else {
                 tr!("Edit in Text Editor")
             };
-            menu = menu.menu(label, Box::new(EditTextFile));
+            plan = plan.action(ids::EDIT_IN_SYSTEM_EDITOR, label, Box::new(EditTextFile));
         }
-        let mut menu = menu
+        plan = plan
             .separator()
-            .menu(tr!("Get Info"), Box::new(GetInfo))
-            .menu(tr!("Quick Look"), Box::new(QuickLook));
+            .action(ids::GET_INFO, tr!("Get Info"), Box::new(GetInfo))
+            .action(ids::QUICK_LOOK, tr!("Quick Look"), Box::new(QuickLook));
         if show_slideshow {
             // Anchor command: start the viewer slideshow anchored to the
             // clicked file (docs/features/VIEWER.md). Folder anchors can't
             // start a slideshow, so the item is file-anchored.
-            menu = menu.menu(tr!("Slideshow from Here"), Box::new(SlideshowFromHere));
+            plan = plan.action(
+                ids::SLIDESHOW_FROM_HERE,
+                tr!("Slideshow from Here"),
+                Box::new(SlideshowFromHere),
+            );
         }
-        let mut menu = menu.separator().menu(
+        plan = plan.separator().action(
+            ids::REVEAL,
             crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
             Box::new(RevealInFinder),
         );
@@ -3510,37 +3524,62 @@ impl TableDelegate for FileListDelegate {
             // SingleOnly: copying one path is the row action; copying many
             // joined paths is a deliberate, separate gesture, so this hides
             // past a single target rather than silently concatenating.
-            menu = menu.menu(tr!("Copy Path"), Box::new(CopyPath));
+            plan = plan.action(ids::COPY_PATH, tr!("Copy Path"), Box::new(CopyPath));
         }
         if show_checksum {
-            menu = menu.menu(tr!("Generate SHA-256…"), Box::new(GenerateSha256));
+            plan = plan.action(
+                ids::GENERATE_SHA256,
+                tr!("Generate SHA-256…"),
+                Box::new(GenerateSha256),
+            );
         }
         if show_verify {
-            menu = menu.menu(tr!("Verify Checksums…"), Box::new(VerifyChecksums));
+            plan = plan.action(
+                ids::VERIFY_CHECKSUMS,
+                tr!("Verify Checksums…"),
+                Box::new(VerifyChecksums),
+            );
         }
-        menu = menu.menu(tr!("Create Checksum File…"), Box::new(CreateChecksumFile));
+        plan = plan.action(
+            ids::CREATE_CHECKSUM_FILE,
+            tr!("Create Checksum File…"),
+            Box::new(CreateChecksumFile),
+        );
         if crate::platform_shell::lock_diagnostics_available() {
             // Batch diagnostic over the whole resolved set: name the
             // processes holding these files open, with force-close
             // buttons. Hidden where the platform lookup is stubbed
             // (macOS/Linux) rather than showing an always-empty dialog.
-            menu = menu.menu(tr!("What’s Locking This?"), Box::new(ShowLockHolders));
+            plan = plan.action(
+                ids::SHOW_LOCK_HOLDERS,
+                tr!("What’s Locking This?"),
+                Box::new(ShowLockHolders),
+            );
         }
         if show_terminal {
             // Anchor command: open a terminal at the clicked directory,
             // grouped with the path-oriented actions above.
-            menu = menu.menu(tr!("Open Terminal Here"), Box::new(OpenTerminalHere));
+            plan = plan.action(
+                ids::OPEN_TERMINAL_HERE,
+                tr!("Open Terminal Here"),
+                Box::new(OpenTerminalHere),
+            );
         }
-        let mut menu = menu.separator();
+        plan = plan.separator();
         if show_single_only {
             // SingleOnly: Rename targets one file (single-target, like
             // Finder's inline rename); hidden on a multi-selection.
-            menu = menu.menu(tr!("Rename\u{2026}"), Box::new(RenameSelected));
+            plan = plan.action(
+                ids::RENAME,
+                tr!("Rename\u{2026}"),
+                Box::new(RenameSelected),
+            );
         }
         if bulk_rename_count >= 2 {
             // Multi-selection twin of Rename: the pattern-rule modal
             // over every resolved target (docs/features/BULK_RENAME.md).
-            menu = menu.menu(
+            plan = plan.action(
+                ids::BULK_RENAME,
                 trn!(
                     "Rename {n} Item\u{2026}",
                     "Rename {n} Items\u{2026}",
@@ -3569,10 +3608,10 @@ impl TableDelegate for FileListDelegate {
                 .separator()
                 .menu(tr!("New Archive\u{2026}"), Box::new(NewArchive))
         });
-        let mut menu = menu
-            .menu(tr!("Duplicate"), Box::new(Duplicate))
-            .menu(tr!("Make Alias"), Box::new(MakeAlias))
-            .item(PopupMenuItem::submenu(tr!("Compress"), compress_submenu));
+        plan = plan
+            .action(ids::DUPLICATE, tr!("Duplicate"), Box::new(Duplicate))
+            .action(ids::MAKE_ALIAS, tr!("Make Alias"), Box::new(MakeAlias))
+            .submenu(ids::COMPRESS, tr!("Compress"), compress_submenu);
         if show_extract {
             // Capability command: shown when any target is an archive
             // (docs/features/CONTEXT_MENU.md). "Extract Here" unpacks into the
@@ -3582,9 +3621,13 @@ impl TableDelegate for FileListDelegate {
                 m.menu(tr!("Extract Here"), Box::new(Extract))
                     .menu(tr!("Extract To\u{2026}"), Box::new(ExtractTo))
             });
-            menu = menu.item(PopupMenuItem::submenu(tr!("Extract"), extract_submenu));
+            plan = plan.submenu(ids::EXTRACT, tr!("Extract"), extract_submenu);
             if show_single_only {
-                menu = menu.menu(tr!("Convert Archive…"), Box::new(ConvertArchive));
+                plan = plan.action(
+                    ids::CONVERT_ARCHIVE,
+                    tr!("Convert Archive…"),
+                    Box::new(ConvertArchive),
+                );
             }
         }
         if show_single_file {
@@ -3592,7 +3635,11 @@ impl TableDelegate for FileListDelegate {
             // The backend probes bytes off-thread, so OOXML/JAR/APK files and
             // extensionless or misnamed archives remain browsable without
             // adding synchronous sniffing to context-menu construction.
-            menu = menu.menu(tr!("Open as Archive"), Box::new(OpenAsArchive));
+            plan = plan.action(
+                ids::OPEN_AS_ARCHIVE,
+                tr!("Open as Archive"),
+                Box::new(OpenAsArchive),
+            );
         }
         if show_clear_quarantine {
             // Capability command (docs/features/CONTEXT_MENU.md): show when
@@ -3603,7 +3650,8 @@ impl TableDelegate for FileListDelegate {
             // menu-open time. Right-clicking the clean file in a
             // mixed selection now offers the command too, instead of hiding
             // it based on the single clicked row.
-            menu = menu.separator().menu(
+            plan = plan.separator().action(
+                ids::CLEAR_QUARANTINE,
                 crate::i18n::tr_static(ferail_core::commands::CLEAR_QUARANTINE_LABEL),
                 Box::new(ClearQuarantine),
             );
@@ -3612,15 +3660,16 @@ impl TableDelegate for FileListDelegate {
             // Anchor command: toggle the clicked folder's path against the
             // user's Favorites (docs/features/FAVORITES.md §2.1).
             // `resolve_favorite_target` reads the row from `context_row`.
-            menu = menu
-                .separator()
-                .menu(favorite_label, Box::new(ToggleFavoriteForTarget));
+            plan = plan.separator().action(
+                ids::TOGGLE_FAVORITE,
+                favorite_label,
+                Box::new(ToggleFavoriteForTarget),
+            );
         }
 
         // Build submenu Entities via `PopupMenu::build`, which only
         // needs `&mut App` (which we have via Context<TableState>'s
-        // deref). The parent menu accepts pre-built submenu entries
-        // through `PopupMenuItem::submenu(label, entity)`.
+        // deref). The plan carries pre-built submenu entities.
         // SingleOnly: "Open With" resolves one warmed path; on a
         // multi-selection the slot indices wouldn't map to a single app,
         // so the submenu is hidden rather than acting on just the anchor.
@@ -3631,7 +3680,7 @@ impl TableDelegate for FileListDelegate {
                     let open_with_submenu = PopupMenu::build(window, cx, move |m, _w, _c| {
                         build_open_with_submenu(m, &candidates)
                     });
-                    menu = menu.item(PopupMenuItem::submenu(tr!("Open With"), open_with_submenu));
+                    plan = plan.submenu(ids::OPEN_WITH, tr!("Open With"), open_with_submenu);
                 }
                 // Cache miss: retain a real submenu entity containing the
                 // placeholder. The background completion rebuilds this exact
@@ -3649,7 +3698,7 @@ impl TableDelegate for FileListDelegate {
                             cx,
                         );
                     }
-                    menu = menu.item(PopupMenuItem::submenu(tr!("Open With"), open_with_submenu));
+                    plan = plan.submenu(ids::OPEN_WITH, tr!("Open With"), open_with_submenu);
                 }
             }
         }
@@ -3687,30 +3736,30 @@ impl TableDelegate for FileListDelegate {
                 }
                 m
             });
-            menu = menu.item(PopupMenuItem::submenu(tr!("Tags"), tags_submenu));
+            plan = plan.submenu(ids::TAGS, tr!("Tags"), tags_submenu);
         }
 
-        let menu = menu
+        plan = plan
             .separator()
-            .menu(
+            .action(
+                ids::MOVE_TO_TRASH,
                 crate::i18n::tr_static(ferail_core::commands::TRASH_LABEL),
                 Box::new(MoveToTrash),
             )
-            .menu(
+            .action(
+                ids::DELETE_IMMEDIATELY,
                 tr!("Delete Immediately\u{2026}"),
                 Box::new(DeleteImmediately),
             );
         #[cfg(windows)]
         {
-            menu.separator().menu(
+            plan = plan.separator().action(
+                ids::WINDOWS_CONTEXT_MENU,
                 tr!("More options from Windows\u{2026}"),
                 Box::new(ShowWindowsContextMenu),
-            )
+            );
         }
-        #[cfg(not(windows))]
-        {
-            menu
-        }
+        plan.render(menu)
     }
 
     fn background_context_menu(
@@ -3738,26 +3787,34 @@ impl TableDelegate for FileListDelegate {
         // current directory the instant this menu opened. Prime
         // directive: labels and actions only, no filesystem or shell
         // queries at menu-open time.
-        menu.action_context(self.shell_focus.clone())
-            .menu(tr!("New Folder"), Box::new(NewFolder))
+        use crate::menu_plan::{ids, MenuPlan, MenuSurface};
+        MenuPlan::new(MenuSurface::FileBackground)
+            .action(ids::NEW_FOLDER, tr!("New Folder"), Box::new(NewFolder))
             .separator()
-            .menu(tr!("Paste"), Box::new(PasteFiles))
-            .menu(tr!("Select All"), Box::new(SelectAll))
+            .action(ids::PASTE, tr!("Paste"), Box::new(PasteFiles))
+            .action(ids::SELECT_ALL, tr!("Select All"), Box::new(SelectAll))
             .separator()
-            .menu(tr!("Get Info"), Box::new(GetInfoAtContext))
-            .menu(
+            .action(ids::GET_INFO, tr!("Get Info"), Box::new(GetInfoAtContext))
+            .action(
+                ids::REVEAL,
                 crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
                 Box::new(RevealContextPath),
             )
-            .menu(tr!("Copy Path"), Box::new(CopyContextPath))
-            .menu(tr!("Open Terminal Here"), Box::new(OpenTerminalAtContext))
+            .action(ids::COPY_PATH, tr!("Copy Path"), Box::new(CopyContextPath))
+            .action(
+                ids::OPEN_TERMINAL_HERE,
+                tr!("Open Terminal Here"),
+                Box::new(OpenTerminalAtContext),
+            )
             .separator()
-            .menu(
+            .action(
+                ids::PIN_TO_FAVORITES,
                 tr!("Add Folder to Favorites"),
                 Box::new(AddCurrentFolderToFavorites),
             )
             .separator()
-            .menu(tr!("Refresh"), Box::new(Refresh))
+            .action(ids::REFRESH, tr!("Refresh"), Box::new(Refresh))
+            .render(menu.action_context(self.shell_focus.clone()))
     }
 
     fn move_column(

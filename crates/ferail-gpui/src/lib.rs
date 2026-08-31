@@ -50,6 +50,7 @@ pub mod inline_edit;
 pub mod keyboard_help;
 pub mod keymap;
 pub mod locations_section;
+pub mod menu_plan;
 pub mod multi_table;
 pub mod obs;
 pub mod path_complete;
