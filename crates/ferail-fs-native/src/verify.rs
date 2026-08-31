@@ -103,6 +103,39 @@ impl std::fmt::Display for ManifestError {
 
 impl std::error::Error for ManifestError {}
 
+/// Whether a file name looks like a checksum manifest.
+///
+/// Name-only and allocation-free: it answers for a row in a listing, where
+/// reading the file to be sure is out of the question. Both the context menu's
+/// availability rule and the double-click activation route through here so the
+/// two can never disagree about what counts as a manifest.
+pub fn is_manifest_file_name(name: &str) -> bool {
+    const EXTENSIONS: [&str; 7] = [
+        "sfv", "md5", "sha1", "sha224", "sha256", "sha384", "sha512",
+    ];
+    const WHOLE_NAMES: [&str; 6] = [
+        "md5sums",
+        "sha1sums",
+        "sha224sums",
+        "sha256sums",
+        "sha384sums",
+        "sha512sums",
+    ];
+    let extension = std::path::Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str());
+    if extension.is_some_and(|extension| {
+        EXTENSIONS
+            .iter()
+            .any(|known| extension.eq_ignore_ascii_case(known))
+    }) {
+        return true;
+    }
+    WHOLE_NAMES
+        .iter()
+        .any(|known| name.eq_ignore_ascii_case(known))
+}
+
 pub fn parse_manifest(source: PathBuf, bytes: &[u8]) -> Result<Manifest, ManifestError> {
     let mut decoded = decode_text(bytes).ok_or(ManifestError::NotText)?;
     let format = {
@@ -972,6 +1005,32 @@ fn path_still_names_open_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_names_are_recognized_by_extension_or_whole_name() {
+        for name in [
+            "checksums.sfv",
+            "Checksums.SFV",
+            "release.md5",
+            "image.sha256",
+            "SHA256SUMS",
+            "md5sums",
+        ] {
+            assert!(is_manifest_file_name(name), "{name} should be a manifest");
+        }
+        for name in [
+            "sfv",
+            "notes.txt",
+            "sha256sums.txt",
+            "archive.sfv.bak",
+            "my.sha256.notes",
+        ] {
+            assert!(
+                !is_manifest_file_name(name),
+                "{name} should not be a manifest"
+            );
+        }
+    }
 
     fn fixture(path: &str) -> Vec<u8> {
         std::fs::read(

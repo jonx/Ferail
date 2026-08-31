@@ -4,6 +4,18 @@ use gpui_component::{WindowExt as _, notification::Notification};
 
 use super::{CreateChecksumFile, Shell, VerifyChecksums, tab::ToolResultSurface};
 
+/// Whether a listing row looks like a checksum manifest.
+///
+/// Name first (`ferail_fs_native::verify::is_manifest_file_name`), then the
+/// sniffed description for a manifest that does not wear a telling name. Both
+/// the context menu's availability rule and double-click activation ask this
+/// one question, so the menu can never offer Verify on a row the double-click
+/// would open, or the reverse.
+pub(crate) fn entry_is_manifest(entry: &ferail_core::FileEntry) -> bool {
+    ferail_fs_native::verify::is_manifest_file_name(&entry.name)
+        || entry.display_magic.contains("checksum")
+}
+
 impl Shell {
     pub(crate) fn open_verify_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
         let manifest = path.clone();

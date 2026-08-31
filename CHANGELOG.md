@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Double-clicking a checksum file now runs the check.** Opening an `.sfv`,
+  `.md5`, `SHA256SUMS` or similar list in a text editor shows a column of
+  hashes, which is rarely what you wanted from it: the verification report
+  opens instead, with the same per-file OK / mismatch / missing outcomes as
+  *Verify Checksums…*. Open and Open With still open the file as text.
+
 - **Entering a folder now previews the item it selected for you.** Ferail
   selects the first row when you open a folder, but nothing asked for that
   row's preview, so the pane showed the file's details next to an empty

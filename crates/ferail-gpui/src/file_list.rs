@@ -3437,26 +3437,10 @@ impl TableDelegate for FileListDelegate {
         let show_checksum =
             Availability::SingleOnly.allows(t) && Availability::When(avail_anchor_file).allows(t);
         let show_verify = show_checksum
-            && self.entries.get(row_ix).is_some_and(|entry| {
-                let name = entry.name.to_ascii_lowercase();
-                name.ends_with(".sfv")
-                    || name.ends_with(".md5")
-                    || name.ends_with(".sha1")
-                    || name.ends_with(".sha224")
-                    || name.ends_with(".sha256")
-                    || name.ends_with(".sha384")
-                    || name.ends_with(".sha512")
-                    || matches!(
-                        name.as_str(),
-                        "md5sums"
-                            | "sha1sums"
-                            | "sha224sums"
-                            | "sha256sums"
-                            | "sha384sums"
-                            | "sha512sums"
-                    )
-                    || entry.display_magic.contains("checksum")
-            });
+            && self
+                .entries
+                .get(row_ix)
+                .is_some_and(crate::shell::verify::entry_is_manifest);
         let show_terminal = Availability::When(avail_anchor_dir).allows(t);
         let show_favorites = Availability::When(avail_anchor_dir).allows(t);
         // A folder seeds a tab directly. One file seeds its parent tab and is

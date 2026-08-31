@@ -62,7 +62,7 @@ pub(crate) mod render;
 mod search;
 mod selection;
 mod tab;
-mod verify;
+pub(crate) mod verify;
 
 pub use actions::*;
 pub use dock::{DockEdge, DockState, ScreenFrame};
@@ -7319,9 +7319,10 @@ impl Shell {
                     e.id,
                     e.size,
                     e.mtime_unix,
+                    crate::shell::verify::entry_is_manifest(e),
                 )
             });
-        let Some((path, kind, node, size, mtime_unix)) = path_and_kind else {
+        let Some((path, kind, node, size, mtime_unix, manifest)) = path_and_kind else {
             return;
         };
         #[cfg(not(windows))]
@@ -7343,6 +7344,15 @@ impl Shell {
                 window,
                 cx,
             );
+            return;
+        }
+        // A checksum manifest is a list of hashes about other files. Handing
+        // it to the system text editor answers no question anyone had; running
+        // the check is the whole reason the file exists. The context menu's
+        // Open and Open With still open it as a text file for the rare case
+        // where reading it is the point.
+        if matches!(kind, EntryKind::File) && manifest {
+            self.open_verify_path(path, cx);
             return;
         }
         match kind {

@@ -41,7 +41,12 @@ value from a trusted source independent of the downloaded file.
 
 Ferail also recognizes SFV, GNU-style checksum lists and BSD tagged lists by
 content. **Verify Checksums…** opens a tab-local, cancellable and virtualized
-report. CRC32, MD5 and SHA-1 are supported for compatibility and presented as
+report. **Double-clicking a manifest runs the check** instead of handing the
+file to the system text editor, which answers no question the double-click was
+asking; Open and Open With in the context menu still open it as text. One
+predicate decides what counts as a manifest for both the menu entry and the
+double-click (`verify::is_manifest_file_name` on the name, then the sniffed
+description), so the two can never disagree. CRC32, MD5 and SHA-1 are supported for compatibility and presented as
 legacy integrity checks; SHA-224/256/384/512 use the same streaming engine.
 
 Manifest filenames are untrusted. Unix verification opens each component
