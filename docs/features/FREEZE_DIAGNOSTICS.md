@@ -174,11 +174,39 @@ model), so only an explicit Quit arms this there.
   late. `FERAIL_NO_SHUTDOWN_EXIT=1` suppresses that when the point is to attach
   a debugger to the stuck process instead.
 
-Verify it with `FERAIL_SHUTDOWN_GRACE_MS=500 ferail-gpui --stuck-shutdown`
-(dev builds only: the packaged build drops the harness feature). The probe arms
-the watchdog and then deliberately outlives it, which is the only way to see a
-real report land without a hanging quit to reproduce. `FERAIL_SHUTDOWN_GRACE_MS`
-collapses both deadlines to one short interval.
+**The report needs no terminal; the knobs do.** The `.txt` is written to the
+config folder however Ferail was started, including from Explorer, the Dock, or
+a desktop shortcut: that is the whole point, since the user hitting this bug is
+not running the app from a shell. What *does* require a command line is
+everything that has to be set before launch: the environment variables below,
+the probe flag, and the log line naming the report path, which goes to stderr
+and is simply lost when there is no console attached. Tell users to look for
+the file, not for the message.
+
+Launching with the knobs set, per shell:
+
+```sh
+# macOS / Linux
+FERAIL_SHUTDOWN_GRACE_MS=500 ./ferail-gpui --stuck-shutdown
+FERAIL_NO_SHUTDOWN_EXIT=1 ./ferail-gpui
+```
+
+```powershell
+# Windows PowerShell (the assignment is a separate statement)
+$env:FERAIL_SHUTDOWN_GRACE_MS = "500"; .\ferail.exe --stuck-shutdown
+$env:FERAIL_NO_SHUTDOWN_EXIT = "1"; .\ferail.exe
+```
+
+```bat
+rem Windows cmd.exe
+set FERAIL_SHUTDOWN_GRACE_MS=500 && ferail.exe --stuck-shutdown
+```
+
+`--stuck-shutdown` arms the watchdog and then deliberately outlives it, which
+is the only way to see a real report land without a hanging quit to reproduce.
+`FERAIL_SHUTDOWN_GRACE_MS` collapses both deadlines to one short interval. Dev
+builds only: the packaged build drops the harness feature, so the flag is
+inert (and unknown flags are ignored) in a released binary.
 
 ## Testing the machinery
 
@@ -209,4 +237,8 @@ separately so the independent thread's decision logic does not depend on GPUI.
 
 For a process that survives its own close, ask for `reports/ferail-shutdown-*.txt`
 instead: its `windows` line says how many gpui still had, and `aux` names the
-sub-windows among them.
+sub-windows among them. No terminal is needed to produce it, and Settings →
+Diagnostics prints the config folder it sits in. Only ask someone to relaunch
+from a command line when you want a shorter grace period or the forced exit
+suppressed, and give them the exact line for their shell: an environment
+variable typed after the executable name silently does nothing.

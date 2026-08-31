@@ -21,6 +21,16 @@
 //!
 //! Step 3 can be turned off with `FERAIL_NO_SHUTDOWN_EXIT=1` when the point is
 //! to attach a debugger to the stuck process rather than to be rid of it.
+//!
+//! Note which half of this needs a terminal. The report is written whatever
+//! launched Ferail, Explorer and the Dock included, because the user hitting
+//! this bug is not running the app from a shell. The environment variables
+//! here, and the `--stuck-shutdown` probe, have to be set before launch, so
+//! they are command-line only; so is the log line naming the report path,
+//! which goes to stderr and is lost when no console is attached. When asking a
+//! user for evidence, point at the file, not at the message.
+//! [FREEZE_DIAGNOSTICS.md](../../../docs/features/FREEZE_DIAGNOSTICS.md) has
+//! the per-shell command lines.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
