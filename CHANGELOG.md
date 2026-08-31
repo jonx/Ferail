@@ -136,6 +136,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   longer hides that fact. The toolbar's new overflow menu turns line
   wrapping and line numbers on and off.
 
+- **The Edit menu is no longer almost empty.** Cut, Copy, Paste and Move
+  Items Here were on the keyboard and in the right-click menu but nowhere in
+  the menu bar, which listed only Copy Path.
 ## 0.7.6 - 2026-08-30
 
 - **Enter in a path or filter field now uses exactly what you typed.**

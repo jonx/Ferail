@@ -12,13 +12,13 @@ use crate::{
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
-        ClearRecents, CloseTab, CloseWindow, CopyPath, CreateChecksumFile, CycleSidebarSize,
-        DeleteImmediately, EditFile, EditImage, EmptyTrash, FindDuplicates, FindSimilarImages,
-        FocusFilter, GenerateSha256, GoHome, GoToFolder, MoveToTrash, NavigateBack,
-        NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected,
-        OpenSettings, Refresh, RenameSelected, ResetSidebarOrder, RevealInFinder, Shell,
-        ShowDesktop, ToggleFavoriteForTarget, ToggleFlatView, ToggleHidden, TogglePreview,
-        VerifyChecksums,
+        ClearRecents, CloseTab, CloseWindow, CopyFiles, CopyPath, CreateChecksumFile,
+        CutFiles, CycleSidebarSize, DeleteImmediately, EditFile, EditImage, EmptyTrash,
+        FindDuplicates, FindSimilarImages, FocusFilter, GenerateSha256, GoHome, GoToFolder,
+        MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder,
+        NewTab, OpenDiskUsage, OpenSelected, OpenSettings, PasteFiles, Refresh, RenameSelected,
+        ResetSidebarOrder, RevealInFinder, Shell, ShowDesktop, ToggleFavoriteForTarget,
+        ToggleFlatView, ToggleHidden, TogglePreview, VerifyChecksums,
     },
 };
 use ferail_core::commands::{CommandId, find};
@@ -857,11 +857,20 @@ pub(crate) fn install_app_menus(cx: &mut App) {
             disabled: false,
         },
         Menu {
+            // The clipboard verbs act on the *selection in the front
+            // window*: files in a browsing window, and (through the text
+            // widget's own Cmd+X/C/V) text in an editor window. They lived
+            // only on the keyboard and the row context menu until now,
+            // which left this menu with a single entry.
             name: tr!("Edit"),
-            items: vec![MenuItem::action(
-                title("file.copy_path", "Copy Path"),
-                CopyPath,
-            )],
+            items: vec![
+                MenuItem::action(title("file.cut", "Cut"), CutFiles),
+                MenuItem::action(title("file.copy", "Copy"), CopyFiles),
+                MenuItem::action(title("file.paste", "Paste"), PasteFiles),
+                MenuItem::action(title("file.move_paste", "Move Items Here"), MovePasteFiles),
+                MenuItem::separator(),
+                MenuItem::action(title("file.copy_path", "Copy Path"), CopyPath),
+            ],
             disabled: false,
         },
         Menu {
