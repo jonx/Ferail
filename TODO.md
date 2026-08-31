@@ -236,11 +236,15 @@ relative to the daily value. Ordered by bang-for-buck.
 - Drag follow-ups: **auto-scroll near the list edges** while dragging and
   **drops on favorite rows** have shipped. Remaining drag work needs
   interactive testing, not headlessly drivable.
-- Trash follow-ups: general **"Put Back"** for items trashed in earlier
-  sessions or by Finder (needs Finder's private put-back metadata: may stay
-  session-scoped); a richer **Trash browsing view** (original-location column).
-  Windows Recycle Bin restore is blocked (`SHFileOperationW` doesn't report the
-  recycled location).
+- Trash follow-ups: general **"Put Back"** on macOS for items trashed in
+  earlier sessions or by Finder (needs Finder's private put-back metadata: may
+  stay session-scoped); a richer **Trash browsing view** (original-location
+  column). Windows Recycle Bin restore shipped: not through
+  `SHFileOperationW`, which cannot report the recycled location, but through
+  the Shell's own `undelete` verb invoked by the context-menu broker
+  ([CONTEXT_MENU.md](docs/features/CONTEXT_MENU.md)). Remaining there: reach
+  Restore from the keyboard and the toolbar, not the context menu only, and
+  show the original location as a column.
 - Permanent-delete follow-up: `on_delete_immediately` reports failures as raw
   `format!("{}: {e}")` strings instead of the structured
   `FileOpError`/`file_op_failure_report` path that `on_move_to_trash` and
