@@ -37,6 +37,11 @@ use gpui::RenderImage;
 /// encoder: six is enough to produce distinct-looking blurs.
 const SOURCE_SIZE: usize = 6;
 
+/// `rgba_to_thumb_hash` asserts on anything larger, so this is checked where
+/// it can never reach a user: at compile time, not in a test that has to be
+/// run to say so.
+const _: () = assert!(SOURCE_SIZE <= 100);
+
 /// Bound on the per-session cache. Private Mode is used to capture a screen,
 /// not to browse, so this only has to cover the rows on screen plus scrolling
 /// slack; beyond that, recomputing costs a few microseconds.
@@ -111,14 +116,12 @@ pub fn decode(hash: &[u8]) -> Option<RenderImage> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build, decode, SOURCE_SIZE};
+    use super::{build, decode};
 
     #[test]
     fn a_stand_in_decodes_to_a_paintable_image() {
-        // Guards the one thing that can silently break: `rgba_to_thumb_hash`
-        // asserts on inputs over 100x100, and its output has to survive the
-        // decoder that paints it.
-        assert!(SOURCE_SIZE <= 100);
+        // The encoder's output has to survive the decoder that paints it, for
+        // any identity: this is the round trip, end to end.
         assert!(build(7).is_some());
         assert!(build(u64::MAX).is_some());
     }
