@@ -270,106 +270,87 @@ Launch Services bootstrap per process and then ~0.03 ms per call, so the
 warm cache is insurance against cold bundles on slow volumes rather than
 a hot-path saving (see [OPEN_WITH.md](OPEN_WITH.md) §3).
 
-## Customizing Which Entries Appear (planned)
+## Customizing Which Entries Appear
 
-Goal: let the user hide the context-menu entries they never use, per
-menu, the way the table header already lets them hide columns. Not built
-This section is the design the work should follow.
+**Shipped for the two file-pane menus.** Settings ▸ Menus lists every entry the
+row menu and the empty-space menu can show, with a switch each, the way the
+table header already lets a user hide columns. The eight other surfaces are not
+customizable yet: they need the [plan refactor](#architecture) first.
 
-### The precedent is already in the codebase
+### Storage
 
-`FileListDelegate::header_context_menu`
-([file_list.rs:2414](../../crates/ferail-gpui/src/file_list.rs#L2414))
-is this feature, for columns: a ✓/blank toggle per column built from
-closure-backed `PopupMenuItem`s, persisted through the existing
-subscription, with a **Reset Columns** escape hatch and a primary column
-that can never be hidden. `split_persisted_columns`
-([file_list.rs:2947](../../crates/ferail-gpui/src/file_list.rs#L2947))
-supplies the storage rules to copy verbatim:
+One `AppState` key, `menu_hidden`, holding `surface:id,id;surface:id`. The
+rules come from `split_persisted_columns`, and each one is a promise to a user
+who upgrades, downgrades, or syncs a settings file between machines:
 
-- unknown keys are ignored, so a spec written by a newer build does not
-  break an older one;
-- entries the spec never mentions (new in this build) **default to
-  visible**, so a new command is never invisible to an upgrading user;
-- the visible set is never allowed to go empty.
+- unknown surfaces and unknown ids are ignored, so a spec written by a newer
+  build does not wedge an older one, and an id it does not recognize is kept as
+  written rather than dropped, so the preference survives a round trip;
+- an entry the spec never names is **visible**, so a command added in a later
+  version is never invisible to someone who upgraded;
+- junk costs the user their customization, never their menus: an unparseable
+  group is skipped and the rest of the spec still applies.
 
-### Prerequisite: a stable id per entry  ✅ done for the two file-pane menus
+`menu_plan::prefs` owns it. The spec is parsed **once**, at startup and on
+change, into a small `Arc`; menu building takes one `Arc` clone and a linear
+scan over what is nearly always an empty list. The overwhelmingly common case,
+nothing hidden, short-circuits before any of that, so a menu with no
+customization is exactly as expensive to open as it was before the feature
+existed.
 
-The row menu used to be an imperative chain,
-`menu.menu(tr!("Rename…"), Box::new(RenameSelected))`, so an entry's identity
-was its Rust action type and there was nothing to key a preference on.
+### The floor
 
-Both file-pane menus now build a [`MenuPlan`](#architecture) of id-carrying
-entries instead, which is the enabling change: hiding an entry becomes one
-predicate in `render`. The same refactor is a prerequisite for user-defined
-tools ([OPEN_WITH.md](OPEN_WITH.md) §5.6), which cannot hard-code an action
-type per user-created entry.
-
-Still open from this step: the eight other surfaces are unconverted, and the
-label duplication between the catalogue's `msgid!` and the menu site's `tr!`
-survives. Sourcing an entry's label from its catalogue spec is possible now
-that the ids line up, but it is not automatic: a menu label and a palette
-title differ on purpose in places, so each one has to be looked at.
-
-### The editor picks a surface
-
-There is more than one menu, so the editor is a two-pane thing: choose
-the surface, then toggle its entries. The surfaces are:
-
-| Surface | Built in |
-|---|---|
-| File list / icon grid **row** (one definition serves both) | [file_list.rs:2465](../../crates/ferail-gpui/src/file_list.rs#L2465) |
-| File list **background** (targets the browsed folder) | [file_list.rs:2812](../../crates/ferail-gpui/src/file_list.rs#L2812) |
-| Table **header** (already customizable: columns) | [file_list.rs:2414](../../crates/ferail-gpui/src/file_list.rs#L2414) |
-| **Breadcrumb** segment | [shell/render.rs:3111](../../crates/ferail-gpui/src/shell/render.rs#L3111) |
-| Sidebar **Favorites** section header / favorite row | [favorites_section.rs:258](../../crates/ferail-gpui/src/favorites_section.rs#L258), [:741](../../crates/ferail-gpui/src/favorites_section.rs#L741) |
-| Sidebar **Locations / Volumes** row | [locations_section.rs:325](../../crates/ferail-gpui/src/locations_section.rs#L325) |
-| Sidebar **Recents** header / row | [recents_section.rs:145](../../crates/ferail-gpui/src/recents_section.rs#L145), [:258](../../crates/ferail-gpui/src/recents_section.rs#L258) |
-| **Browse tree** row | [tree.rs:802](../../crates/ferail-gpui/src/tree.rs#L802) |
-| **Disk-usage treemap** | [disk_usage.rs:1223](../../crates/ferail-gpui/src/disk_usage.rs#L1223) |
-
-Each gets a stable `MenuSurface` id, and visibility is stored per
-`(surface, command)`: the same command can be wanted in one menu and
-not another.
-
-### Opening a menu must not get slower
-
-Dynamic entries must not add per-open cost. The rules:
-
-- Parse the persisted spec **once**: at startup and on settings change:
-  into an in-memory structure keyed by surface, exactly like
-  `app_state`'s memoized `load()`. **Never** read the file, and never
-  call a parsing `load()`, at menu-open time (Prime Directive: menu
-  building is read-only and I/O-free).
-- Resolve per entry with an **array index or a small set probe** against
-  a dense id, not a string parse. For scale: every entry already pays a
-  `tr_raw` (an `arc_swap` load plus, in a non-English catalog, a HashMap
-  lookup and an `Arc` clone) just to get its label: a visibility check
-  is strictly cheaper than what the loop already does, so a correct
-  implementation is unmeasurable next to today's build.
-- The common case is "nothing hidden". Keep a fast path: an empty
-  override set short-circuits to exactly the current behaviour.
-
-### Separators  ✅ done
-
-Hiding entries leaves doubled and leading separators. `menu_plan::tidy` is that
-pass, already running for both file-pane menus: drop separators at the head,
-collapse any run of adjacent separators to one, drop separators at the tail.
-Deliberately a post-processing step on the item list rather than per-`if`
-bookkeeping at each call site: the group structure stays readable, and the rule
-is testable in isolation, which it is.
+`prefs::ALWAYS_VISIBLE` (Open, Get Info) cannot be hidden. Their switches are
+shown but disabled rather than omitted, so the settings list still reads as the
+whole menu. The rule is enforced when the spec is **parsed**, not only in the
+UI, so a hand-edited file cannot do what the UI refuses to; the same principle
+keeps the file table's `name` column.
 
 ### Safety rules
 
-- **Preference AND availability, never OR.** A user marking an entry
-  "shown" must not override `Availability`: otherwise the
-  shown-for-a-file-it-will-not-touch class of bug that the availability
-  machinery exists to prevent comes straight back.
-- **Never hide everything.** Same rule as columns: the visible set can
-  not go empty, and each surface has a **Reset** action.
-- Consider a small always-on floor (Open / Get Info) so a user cannot
-  configure themselves out of the app's primary verb, mirroring how the
-  `name` column can never be hidden.
+- **Preference AND availability, never OR.** Turning an entry on does not make
+  it appear: `Availability` still decides that. Otherwise the
+  shown-for-a-file-it-will-not-touch class of bug the availability machinery
+  exists to prevent comes straight back.
+- **Never hide everything.** Guaranteed by the floor rather than by a count:
+  both menus contain a protected entry, and a test asserts that every protected
+  id is actually in a menu, since a floor naming an entry no menu has would
+  protect nothing while reading as though it did.
+- Hiding an entry never removes a capability. The command keeps its keyboard
+  shortcut and stays in the command palette; only this menu stops offering it.
+
+### The settings page
+
+`settings::menus_page` builds one group per surface from
+[`menu_plan::inventory`](../../crates/ferail-gpui/src/menu_plan/inventory.rs),
+which lists what a surface *can* show, in menu order. That list has to exist
+because a plan is built against a live right-click and the settings window has
+none. It could drift from the real menus, so it is checked rather than trusted:
+`MenuPlan::render` asserts in debug builds that every entry it is about to draw
+is in the inventory, which turns "added an entry, forgot the settings list"
+into a failure on the first right-click in a dev build.
+
+Labels come from the command catalogue wherever the id is a catalogue command,
+so an entry is named the same thing in the menu, the palette and the shortcuts
+page. Menu-only ids carry their own label in the inventory, deliberately in a
+neutral form: the row menu says "Edit in TextEdit" or "Edit in Notepad", the
+settings list says "Edit in the system text editor", because one preference
+governs the entry on every platform.
+
+Each group ends with **Show All Entries**, disabled while that surface has
+nothing hidden.
+
+### Still open
+
+- **Reordering and user-placed separators.** The design question is not the
+  drag and drop, it is the merge: hidden-set storage is order-free, but an
+  ordered list has to answer where a command added in a later version lands for
+  a user who rearranged everything. Appending to the end is the lazy answer and
+  it buries new work. The order override should be anchored to the built-in
+  list rather than replacing it.
+- **The eight other surfaces**, each needing its plan conversion first.
+- **Per-target enable/disable** (greyed rather than hidden), which needs an
+  `enabled` flag on `PlanItem`.
 
 ## Windows Native Menu
 
@@ -436,10 +417,10 @@ ported: the normal menu never pays the Shell-extension cost.
   tools, "Always Open With", and allowing the submenu on a
   multi-selection (the dispatch already handles many files).
   [OPEN_WITH.md](OPEN_WITH.md).
-- User-customizable menu entries: see
-  [Customizing Which Entries Appear](#customizing-which-entries-appear-planned)
-  above. Blocked on giving every entry a stable `CommandId` and building
-  the menus from a table.
+- User-customizable menu entries: shipped for the two file-pane menus, see
+  [Customizing Which Entries Appear](#customizing-which-entries-appear) above
+  for what is still open (reordering, user-placed separators, the eight other
+  surfaces).
 - Per-target enable/disable rules (read-only volumes, missing files,
   permission-denied): today an unavailable entry is hidden, never shown
   greyed out. Needs an `enabled` flag on each entry, which the table-driven

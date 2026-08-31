@@ -44,11 +44,16 @@ fn main() -> Result<()> {
     ferail_gpui::obs::init();
     // Honor the persisted diagnostics-privacy preference (defaults to on) before
     // anything can record a report-bound trail.
+    let startup_state = ferail_gpui::app_state::load();
     ferail_gpui::redact::set_enabled(
-        ferail_gpui::app_state::load()
+        startup_state
             .redact_diagnostics
             .unwrap_or(ferail_gpui::app_state::DEFAULT_REDACT_DIAGNOSTICS),
     );
+    // Parse the context-menu customization once, here, so opening a menu
+    // never parses anything: menu building is a read-only, I/O-free path and
+    // has to stay that way (docs/features/CONTEXT_MENU.md).
+    ferail_gpui::menu_plan::prefs::init(startup_state.menu_hidden.as_deref());
     // Dev-only probe for the shutdown watchdog (dev builds strip nothing else
     // from this binary; the packaged build drops the harness feature). A quit
     // that hangs cannot be reproduced on demand, so this arms the watchdog and

@@ -681,7 +681,11 @@ pub(crate) fn write_shutdown_report(reason: &str, details: &str) -> Option<std::
     let body = shutdown_report_body(reason, details);
     let path = report_file_path("shutdown")?;
     if let Err(error) = std::fs::write(&path, &body) {
-        crate::log_warn!(90, "shutdown report write failed ({}): {error}", path.display());
+        crate::log_warn!(
+            90,
+            "shutdown report write failed ({}): {error}",
+            path.display()
+        );
         return None;
     }
     Some(path)

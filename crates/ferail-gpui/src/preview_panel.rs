@@ -52,27 +52,23 @@ fn terminal_font_family() -> &'static str {
 /// scrollbar element takes the hitbox of whatever bounds it is given, and the
 /// text underneath has to stay selectable.
 fn scrolled_preview_box(body: impl IntoElement, scroll: &ScrollHandle) -> Div {
-    div()
-        .relative()
-        .w_full()
-        .child(body)
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .right_0()
-                .bottom_0()
-                .w(px(16.0))
-                .child(
-                    gpui_component::scroll::Scrollbar::vertical(scroll)
-                        // The theme default fades the bar out when idle, which
-                        // is right for a pane you already know scrolls. Here
-                        // the bar IS the "there is more below" signal for a
-                        // box that stops at 280px, so it stays up. It still
-                        // draws nothing when the content fits.
-                        .mode(gpui_component::scroll::ScrollbarMode::Always),
-                ),
-        )
+    div().relative().w_full().child(body).child(
+        div()
+            .absolute()
+            .top_0()
+            .right_0()
+            .bottom_0()
+            .w(px(16.0))
+            .child(
+                gpui_component::scroll::Scrollbar::vertical(scroll)
+                    // The theme default fades the bar out when idle, which
+                    // is right for a pane you already know scrolls. Here
+                    // the bar IS the "there is more below" signal for a
+                    // box that stops at 280px, so it stays up. It still
+                    // draws nothing when the content fits.
+                    .mode(gpui_component::scroll::ScrollbarMode::Always),
+            ),
+    )
 }
 
 fn ansi_color(color: AnsiColor) -> Hsla {

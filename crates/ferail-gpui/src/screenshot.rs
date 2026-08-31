@@ -230,6 +230,12 @@ pub struct Args {
     /// Nothing else opens it: the menu lives in a mouse-event listener,
     /// not behind an action.
     pub context_menu_row: Option<usize>,
+    /// Adopt a context-menu customization spec for this run, in the
+    /// `surface:id,id;surface:id` form `AppState::menu_hidden` stores. The
+    /// preference otherwise comes from the user's own settings file, which a
+    /// capture must not read or write, so this is how the hidden-entry path
+    /// gets exercised for real rather than only in unit tests.
+    pub menu_hidden: Option<String>,
     /// Right-click the middle of the file-list body: the background, not
     /// a row, so the empty-space context menu (New Folder / Paste / …)
     /// builds and can be captured. Point the harness at an empty folder
@@ -251,7 +257,10 @@ pub struct Args {
 /// One scripted mouse gesture for `--click-rows`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ClickGesture {
-    Click { row: usize, count: usize },
+    Click {
+        row: usize,
+        count: usize,
+    },
     /// Wait past the click-to-rename delay, so the next click is judged as
     /// a fresh gesture rather than half of a double-click.
     Pause,
@@ -326,6 +335,7 @@ pub fn parse_args() -> Args {
                 args.context_menu_row = iter.next().and_then(|s| s.parse().ok())
             }
             "--context-menu-background" => args.context_menu_background = true,
+            "--menu-hidden" => args.menu_hidden = iter.next(),
             "--breadcrumb" => args.breadcrumb = iter.next(),
             "--keys" => args.keys = iter.next(),
             "--paste-source" => {
@@ -505,6 +515,9 @@ OPTIONS
   --viewer-adjust          Open the viewer's colour/enhance panel for capture.
   --viewer-rotate <n>      Rotate the viewer n clockwise quarter-turns.
   --viewer-step <n>        Advance n items in the viewer (after --viewer-rotate).
+  --menu-hidden <spec>     Context-menu entries to hide for this run, as
+                           `surface:id,id;surface:id` (the AppState form).
+                           The user's own preference is never read here.
   --click-rows <list>      Real left clicks on rows: `row[:count]` items
                            separated by commas, `pause` waits past the
                            click-to-rename delay. `0,0:2` double-clicks row 0
@@ -538,6 +551,11 @@ pub fn run(args: Args) -> Result<()> {
     crate::performance_hud::set_start_enabled(
         args.performance_hud || crate::performance_hud::from_env(),
     );
+    // Before any menu is built, and only when asked: a capture never reads or
+    // writes the user's own menu customization.
+    if let Some(spec) = args.menu_hidden.as_deref() {
+        crate::menu_plan::prefs::init(Some(spec));
+    }
     let path = args
         .screenshot
         .clone()
@@ -1436,7 +1454,11 @@ impl ShellArgs {
             // closely, so `0,0:2` is a genuine double-click rather than two
             // separate clicks. Insert `pause` for the latter.
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(if first_click { 700 } else { 60 }))
+                .timer(std::time::Duration::from_millis(if first_click {
+                    700
+                } else {
+                    60
+                }))
                 .await;
             first_click = false;
             let point = shell.read_with(cx, |s, cx| s.active_tab().table.read(cx).row_center(row));

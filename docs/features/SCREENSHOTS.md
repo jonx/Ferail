@@ -72,7 +72,11 @@ look more interesting.
   a user: it lives in a mouse-event listener, so no action can open it),
   `--context-menu-background` (same synthesis aimed at the file-list body's
   midpoint, capturing the empty-space folder menu; point it at an empty
-  folder, or one whose rows stop above the midpoint).
+  folder, or one whose rows stop above the midpoint), `--menu-hidden <spec>`
+  (adopt a context-menu customization for this run only, in the
+  `surface:id,id;surface:id` form the settings file uses: a capture must
+  neither read nor write the user's own preference, and this is how the
+  hidden-entry path gets exercised against a real menu).
 - **Panels & overlays**: `--preview`, `--properties` (Get Info),
   `--rename`, `--new-folder`, `--shortcuts-help[-filter]`, `--simulate-toast`,
   `--simulate-progress`, `--simulate-task-panel`, `--update-dialog <state>`

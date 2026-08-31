@@ -4596,10 +4596,7 @@ impl Shell {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| dest_parent.to_string_lossy().into_owned());
         let success = if count == 1 {
-            tr!(
-                "Extracted to {dest}, click to show",
-                dest = dest_name
-            )
+            tr!("Extracted to {dest}, click to show", dest = dest_name)
         } else {
             trn!(
                 "Extracted {n} archive to {dest}, click to show",

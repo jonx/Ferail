@@ -3464,7 +3464,7 @@ impl TableDelegate for FileListDelegate {
             tr!("Add to Favorites")
         };
 
-        use crate::menu_plan::{ids, MenuPlan, MenuSurface};
+        use crate::menu_plan::{MenuPlan, MenuSurface, ids};
         let mut plan = MenuPlan::new(MenuSurface::FileRow).action(
             ids::OPEN,
             tr!("Open"),
@@ -3569,11 +3569,7 @@ impl TableDelegate for FileListDelegate {
         if show_single_only {
             // SingleOnly: Rename targets one file (single-target, like
             // Finder's inline rename); hidden on a multi-selection.
-            plan = plan.action(
-                ids::RENAME,
-                tr!("Rename\u{2026}"),
-                Box::new(RenameSelected),
-            );
+            plan = plan.action(ids::RENAME, tr!("Rename\u{2026}"), Box::new(RenameSelected));
         }
         if bulk_rename_count >= 2 {
             // Multi-selection twin of Rename: the pattern-rule modal
@@ -3787,7 +3783,7 @@ impl TableDelegate for FileListDelegate {
         // current directory the instant this menu opened. Prime
         // directive: labels and actions only, no filesystem or shell
         // queries at menu-open time.
-        use crate::menu_plan::{ids, MenuPlan, MenuSurface};
+        use crate::menu_plan::{MenuPlan, MenuSurface, ids};
         MenuPlan::new(MenuSurface::FileBackground)
             .action(ids::NEW_FOLDER, tr!("New Folder"), Box::new(NewFolder))
             .separator()

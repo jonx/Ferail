@@ -130,6 +130,15 @@ pub struct AppState {
     /// [`crate::file_list::split_persisted_columns`], so schema drift
     /// can't wedge the table.
     pub list_columns: Option<String>,
+    /// Context-menu entries the user turned off, as
+    /// `surface:id,id;surface:id` (e.g.
+    /// `file.row:file.make_alias,file.duplicate`). `None` == nothing hidden,
+    /// which is also what an unparseable value degrades to. Unknown surfaces
+    /// and ids are ignored at load and entries the spec never names stay
+    /// visible, so a spec written by another build cannot hide a command this
+    /// one has never heard of. Parsed once by
+    /// [`crate::menu_plan::prefs`], never at menu-open time.
+    pub menu_hidden: Option<String>,
     /// "light", "dark", or "system". `None` = follow the system
     /// detection done at startup (Stage 9.a default).
     pub theme_pref: Option<String>,
@@ -383,6 +392,9 @@ fn load_from_disk() -> AppState {
                     out.disk_usage_engine = Some(value);
                 }
             }
+            "menu_hidden" if !val.trim().is_empty() => {
+                out.menu_hidden = Some(val.trim().to_string());
+            }
             "list_columns" if !val.trim().is_empty() => {
                 out.list_columns = Some(val.trim().to_string());
             }
@@ -591,6 +603,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(engine) = &state.disk_usage_engine {
         s.push_str(&format!("disk_usage_engine={engine}\n"));
+    }
+    if let Some(m) = &state.menu_hidden {
+        s.push_str(&format!("menu_hidden={m}\n"));
     }
     if let Some(c) = &state.list_columns {
         s.push_str(&format!("list_columns={c}\n"));

@@ -32,8 +32,8 @@
 //! [FREEZE_DIAGNOSTICS.md](../../../docs/features/FREEZE_DIAGNOSTICS.md) has
 //! the per-shell command lines.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// How long a normal quit is allowed to take before the process is presumed
@@ -173,7 +173,7 @@ fn render_details(trigger: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{note_windows, render_details, AUX_WINDOWS};
+    use super::{AUX_WINDOWS, note_windows, render_details};
 
     // One test, not two: the published state is process-global, and two tests
     // writing it in parallel would race each other rather than the code.

@@ -21,6 +21,8 @@ use gpui_component::menu::{PopupMenu, PopupMenuItem};
 use ferail_core::commands::CommandId;
 
 pub(crate) mod ids;
+pub(crate) mod inventory;
+pub mod prefs;
 
 /// Which menu an entry belongs to. Visibility is stored per
 /// `(surface, command)`: the same command can be wanted in one menu and not
@@ -34,6 +36,9 @@ pub(crate) enum MenuSurface {
 }
 
 impl MenuSurface {
+    /// Every surface, in the order the settings UI lists them.
+    pub(crate) const ALL: [MenuSurface; 2] = [Self::FileRow, Self::FileBackground];
+
     /// Stable key for persistence. Never derived from the variant name, so
     /// renaming the variant cannot silently orphan a user's saved preference.
     pub(crate) fn key(self) -> &'static str {
@@ -137,8 +142,9 @@ impl MenuPlan {
         self
     }
 
-    /// Render into the widget: tidy the item list, then emit it.
-    pub(crate) fn render(self, mut menu: PopupMenu) -> PopupMenu {
+    /// Render into the widget: apply the user's preferences, tidy what is
+    /// left, then emit it.
+    pub(crate) fn render(mut self, mut menu: PopupMenu) -> PopupMenu {
         // A duplicated id is not cosmetic: it makes one preference govern two
         // different entries, so it has to fail while the plan is being
         // written, not after a user reports a menu item that will not stay
@@ -152,6 +158,27 @@ impl MenuPlan {
                 "duplicate menu entry ids in {}: {duplicates:?}",
                 self.surface.key()
             );
+            // The settings UI lists what a surface can show from
+            // `inventory`, which a live plan could drift away from. Checking
+            // it here means adding an entry and forgetting the inventory
+            // fails on the first right-click in a dev build, rather than
+            // silently shipping an entry nobody can turn off.
+            for id in self.items.iter().filter_map(PlanShape::entry_id) {
+                assert!(
+                    inventory::lists(self.surface, CommandId(id)),
+                    "{id} is in the {} menu but not in its inventory",
+                    self.surface.key()
+                );
+            }
+        }
+        // Fast path: with no customization at all, which is the overwhelmingly
+        // common case, this is exactly the old behaviour plus one atomic read.
+        if prefs::any_hidden() {
+            let surface = self.surface;
+            self.items.retain(|item| {
+                item.entry_id()
+                    .is_none_or(|id| !prefs::is_hidden(surface, CommandId(id)))
+            });
         }
         for item in tidy(self.items) {
             menu = match item {
@@ -203,7 +230,7 @@ fn duplicate_ids<T: PlanShape>(items: &[T]) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{duplicate_ids, tidy, MenuSurface, PlanShape};
+    use super::{MenuSurface, PlanShape, duplicate_ids, tidy};
 
     enum Test {
         Entry(&'static str),

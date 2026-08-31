@@ -839,15 +839,17 @@ impl Shell {
                                     if can_restore {
                                         let restore_shell = menu_shell.clone();
                                         menu = menu.item(
-                                            gpui_component::menu::PopupMenuItem::new(tr!("Restore"))
-                                                .on_click(move |_event, window, app| {
-                                                    let win = window.window_handle();
-                                                    let _ = restore_shell.update(app, |shell, cx| {
-                                                        shell.restore_platform_items(
-                                                            tab_id, item_id, win, cx,
-                                                        );
-                                                    });
-                                                }),
+                                            gpui_component::menu::PopupMenuItem::new(tr!(
+                                                "Restore"
+                                            ))
+                                            .on_click(move |_event, window, app| {
+                                                let win = window.window_handle();
+                                                let _ = restore_shell.update(app, |shell, cx| {
+                                                    shell.restore_platform_items(
+                                                        tab_id, item_id, win, cx,
+                                                    );
+                                                });
+                                            }),
                                         );
                                     }
                                     if !native_menu {

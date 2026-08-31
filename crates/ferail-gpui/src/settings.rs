@@ -49,6 +49,7 @@ pub enum SettingsCategory {
     Performance,
     SearchDupes,
     Layout,
+    Menus,
     Plugins,
     Shortcuts,
     Diagnostics,
@@ -62,6 +63,7 @@ impl SettingsCategory {
         SettingsCategory::Performance,
         SettingsCategory::SearchDupes,
         SettingsCategory::Layout,
+        SettingsCategory::Menus,
         SettingsCategory::Plugins,
         SettingsCategory::Shortcuts,
         SettingsCategory::Diagnostics,
@@ -78,6 +80,7 @@ impl SettingsCategory {
             SettingsCategory::SearchDupes => msgid!("Search & Duplicates"),
             SettingsCategory::Plugins => msgid!("Plugins"),
             SettingsCategory::Layout => msgid!("Layout"),
+            SettingsCategory::Menus => msgid!("Menus"),
             SettingsCategory::Shortcuts => msgid!("Keyboard Shortcuts"),
             SettingsCategory::Diagnostics => msgid!("Diagnostics"),
             SettingsCategory::About => msgid!("About"),
@@ -91,10 +94,11 @@ impl SettingsCategory {
             SettingsCategory::Performance => 2,
             SettingsCategory::SearchDupes => 3,
             SettingsCategory::Layout => 4,
-            SettingsCategory::Plugins => 5,
-            SettingsCategory::Shortcuts => 6,
-            SettingsCategory::Diagnostics => 7,
-            SettingsCategory::About => 8,
+            SettingsCategory::Menus => 5,
+            SettingsCategory::Plugins => 6,
+            SettingsCategory::Shortcuts => 7,
+            SettingsCategory::Diagnostics => 8,
+            SettingsCategory::About => 9,
         }
     }
 }
@@ -105,6 +109,7 @@ pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
         "performance" | "perf" => SettingsCategory::Performance,
         "search" | "duplicates" | "dupes" => SettingsCategory::SearchDupes,
         "layout" => SettingsCategory::Layout,
+        "menus" | "menu" | "context-menu" => SettingsCategory::Menus,
         "plugins" | "plugin" => SettingsCategory::Plugins,
         "shortcuts" | "keyboard" | "keys" => SettingsCategory::Shortcuts,
         "diagnostics" | "diag" | "health" | "doctor" => SettingsCategory::Diagnostics,
@@ -830,6 +835,7 @@ fn build_pages(
         performance_page(),
         search_dupes_page(),
         layout_page(),
+        menus_page(),
         plugins_page(),
         shortcuts_page(),
         diagnostics_page(diagnostics),
@@ -2040,6 +2046,129 @@ fn persist_mpv_path(value: &str) {
     let v = value.trim();
     app_state::save(&AppState {
         mpv_path: (!v.is_empty()).then(|| v.to_string()),
+        ..existing
+    });
+}
+
+/// The Menus page: one group per customizable context menu, one switch per
+/// entry it can show.
+///
+/// Every entry is listed whether or not it would appear on a given
+/// right-click, because the preference is about the command, not about the
+/// file that happens to be under the pointer. Turning one on never forces it
+/// to appear: `Availability` still decides that, and the two combine with AND,
+/// never OR, so a user cannot re-enable a command onto a target it cannot act
+/// on.
+fn menus_page() -> SettingPage {
+    use crate::menu_plan::{MenuSurface, inventory, prefs};
+    use gpui_component::{Disableable as _, Sizable as _, button::Button};
+
+    let mut page = SettingPage::new(tr!("Menus")).icon(Icon::empty().path("icons/list.svg"));
+    page = page.group(SettingGroup::new().title(tr!("Context menus")).item(
+        SettingItem::render(|_options, _window, cx| {
+            div()
+                .text_scale_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(tr!(
+                    "Turn off the entries you never use. Hiding an entry never changes what Ferail can do: the command keeps its keyboard shortcut and stays in the command palette. Entries still appear only where they apply, so turning one on does not make it show up on files it cannot act on."
+                ))
+                .into_any_element()
+        }),
+    ));
+
+    for surface in MenuSurface::ALL {
+        let mut group = SettingGroup::new().title(surface_title(surface));
+        for id in inventory::entries(surface) {
+            group = group.item(menu_entry_switch(surface, *id));
+        }
+        group = group.item(SettingItem::render(move |_options, _window, _cx| {
+            let customized = prefs::surface_is_customized(surface);
+            gpui_component::h_flex()
+                .justify_end()
+                .child(
+                    Button::new(SharedString::from(format!("reset-menu-{}", surface.key())))
+                        .label(tr!("Show All Entries"))
+                        .small()
+                        .disabled(!customized)
+                        .on_click(move |_event, _window, cx: &mut App| {
+                            persist_menu_hidden(prefs::reset(surface));
+                            cx.refresh_windows();
+                        }),
+                )
+                .into_any_element()
+        }));
+        page = page.group(group);
+    }
+    page
+}
+
+fn surface_title(surface: crate::menu_plan::MenuSurface) -> SharedString {
+    use crate::menu_plan::MenuSurface;
+    match surface {
+        MenuSurface::FileRow => tr!("Right-click on a file or folder"),
+        MenuSurface::FileBackground => tr!("Right-click on empty space"),
+    }
+}
+
+/// One entry's on/off switch.
+///
+/// Modelled on [`switch_setting`] but keyed on `(surface, id)` rather than on
+/// the label: the same command appears in more than one menu, and two switches
+/// sharing an element id would share state.
+fn menu_entry_switch(
+    surface: crate::menu_plan::MenuSurface,
+    id: ferail_core::commands::CommandId,
+) -> SettingItem {
+    use crate::menu_plan::{inventory, prefs};
+    use gpui_component::{Disableable as _, Sizable as _, switch::Switch};
+
+    let label = inventory::label(id);
+    let protected = prefs::ALWAYS_VISIBLE.contains(&id);
+    SettingItem::render(move |_options, _window, cx| {
+        let shown = !prefs::is_hidden(surface, id);
+        let label = label.clone();
+        gpui_component::h_flex()
+            .w_full()
+            .items_center()
+            .justify_between()
+            .gap_4()
+            .child(
+                div()
+                    .text_scale_sm()
+                    .text_color(if protected {
+                        cx.theme().muted_foreground
+                    } else {
+                        cx.theme().foreground
+                    })
+                    .child(label),
+            )
+            .child(
+                Switch::new(SharedString::from(format!(
+                    "menu-{}-{}",
+                    surface.key(),
+                    id.0
+                )))
+                .checked(shown)
+                .small()
+                // Open and Get Info are the menu's reason to exist. The
+                // switch stays visible and on rather than disappearing, so
+                // the list still reads as the whole menu.
+                .disabled(protected)
+                .on_click(
+                    move |checked: &bool, _window: &mut Window, cx: &mut App| {
+                        persist_menu_hidden(prefs::set_hidden(surface, id, !*checked));
+                        cx.refresh_windows();
+                    },
+                ),
+            )
+            .into_any_element()
+    })
+}
+
+fn persist_menu_hidden(spec: Option<String>) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        menu_hidden: spec,
         ..existing
     });
 }
