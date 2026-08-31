@@ -8,6 +8,16 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Closing Ferail now actually ends it, and says why when it does not.**
+  Some closes left the process running with no window and no taskbar icon, so
+  the only way to install an update was to kill it by hand. Ferail exits when
+  its last window is gone, and an orphaned sub-window could keep that from ever
+  happening. Quitting now starts a watchdog: if the process is still alive a
+  few seconds later it writes `reports/ferail-shutdown-<pid>-<n>.txt` naming
+  the windows that outlived the quit, and then exits on its own rather than
+  leaving you to Task Manager. Set `FERAIL_NO_SHUTDOWN_EXIT=1` to keep the
+  stuck process around for debugging.
+
 - **The Windows Recycle Bin can restore again, and right-click works there
   at all.** Browsing the Recycle Bin showed its contents but the context menu
   came up empty, so the only thing you could do with it was empty it: Ferail

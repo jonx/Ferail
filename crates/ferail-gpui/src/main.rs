@@ -49,6 +49,17 @@ fn main() -> Result<()> {
             .redact_diagnostics
             .unwrap_or(ferail_gpui::app_state::DEFAULT_REDACT_DIAGNOSTICS),
     );
+    // Dev-only probe for the shutdown watchdog (dev builds strip nothing else
+    // from this binary; the packaged build drops the harness feature). A quit
+    // that hangs cannot be reproduced on demand, so this arms the watchdog and
+    // then deliberately outlives it, which is the only way to see a real
+    // shutdown report land on disk. Pair it with FERAIL_SHUTDOWN_GRACE_MS.
+    #[cfg(feature = "screenshot-harness")]
+    if std::env::args_os().any(|arg| arg == "--stuck-shutdown") {
+        ferail_gpui::shutdown::arm("stuck-shutdown probe");
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        return Ok(());
+    }
     let args = screenshot::parse_args();
     if args.screenshot.is_some() {
         ferail_gpui::log_info!(90, "headless screenshot path");

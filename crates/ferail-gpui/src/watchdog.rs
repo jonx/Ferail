@@ -181,6 +181,7 @@ fn start_heartbeat(cx: &mut App) {
             cx.update(|cx| {
                 BEAT.fetch_add(1, Ordering::Release);
                 publish_task_snapshot(cx);
+                publish_window_snapshot(cx);
             });
         }
     })
@@ -220,6 +221,28 @@ fn publish_task_snapshot(cx: &mut App) {
     }
 }
 
+/// Runs on the UI thread once per beat: tell `shutdown` what gpui still
+/// tracks, so its watchdog thread can name the windows that outlived a quit
+/// without reaching into `App` from off the UI thread. Two cheap reads, no
+/// I/O, no path resolution (Prime Directive-clean).
+fn publish_window_snapshot(cx: &mut App) {
+    let open = cx.windows().len();
+    let aux = cx
+        .try_global::<crate::process_state::ProcessStateGlobal>()
+        .map(|global| global.0.clone())
+        .map(|process| {
+            process
+                .live_aux_windows(cx)
+                .into_iter()
+                // Labels carry file names ("Viewer: passport.png"): scrub them
+                // under the same privacy policy as the task snapshot.
+                .map(|window| crate::redact::scrub_text(&window.label))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    crate::shutdown::note_windows(open, aux);
+}
+
 fn start_watchdog_thread() {
     crate::obs::spawn_logged("freeze-watchdog", || {
         let mut last_check = Instant::now();
@@ -250,13 +273,10 @@ fn start_watchdog_thread() {
 /// Assemble the in-process half of a hang report: header, last task
 /// snapshot, breadcrumbs, activity trail. Pure string building: split
 /// out so tests can exercise it without a frozen app.
-fn render_report_body(reason: &str) -> String {
+fn render_report_body(title: &str, reason: &str) -> String {
     use std::fmt::Write as _;
     let mut r = String::with_capacity(8 * 1024);
-    let _ = writeln!(
-        r,
-        "==================== Ferail (gpui) Hang Report ===================="
-    );
+    let _ = writeln!(r, "==================== {title} ====================");
     let _ = writeln!(
         r,
         "version   : {} ({}/{})",
@@ -270,7 +290,9 @@ fn render_report_body(reason: &str) -> String {
     let _ = writeln!(r, "safe mode : {}", crate::safe_mode::enabled());
     let _ = writeln!(r);
 
-    let _ = writeln!(r, "background tasks (last snapshot before the stall):");
+    // Neutral wording: this body serves the hang report and the shutdown
+    // report, and "before the stall" is wrong for the second.
+    let _ = writeln!(r, "background tasks (last snapshot):");
     match snapshot_cell().try_lock() {
         Ok(snapshot) => {
             if snapshot.is_empty() {
@@ -350,8 +372,8 @@ fn render_report_body(reason: &str) -> String {
 /// Callable from any thread except the (presumably wedged) UI thread.
 pub fn write_hang_report(reason: &str) {
     let verbose = std::env::var_os("FERAIL_FULL_HANG_REPORT").is_some();
-    let body = render_report_body(reason);
-    let path = report_file_path();
+    let body = render_report_body("Ferail (gpui) Hang Report", reason);
+    let path = report_file_path("hang");
     if let Some(path) = &path {
         if let Err(e) = std::fs::write(path, &body) {
             crate::log_warn!(90, "hang report write failed ({}): {e}", path.display());
@@ -619,9 +641,9 @@ fn clean_frame(line: &str) -> String {
     s
 }
 
-/// `<config>/reports/ferail-hang-<pid>-<seq>.txt`: the same folder the
-/// issue bundle uses, so users find both in one place.
-fn report_file_path() -> Option<std::path::PathBuf> {
+/// `<config>/reports/ferail-<kind>-<pid>-<seq>.txt`: the same folder the
+/// issue bundle uses, so users find every report in one place.
+fn report_file_path(kind: &str) -> Option<std::path::PathBuf> {
     let dir = crate::app_state::config_dir()?.join("reports");
     std::fs::create_dir_all(&dir).ok()?;
     // A PID can be reused after a reboot. Never overwrite earlier diagnostic
@@ -629,11 +651,40 @@ fn report_file_path() -> Option<std::path::PathBuf> {
     // broker's final atomic rename fail).
     loop {
         let seq = HANG_SEQ.fetch_add(1, Ordering::Relaxed);
-        let path = dir.join(format!("ferail-hang-{}-{seq}.txt", std::process::id()));
+        let path = dir.join(format!("ferail-{kind}-{}-{seq}.txt", std::process::id()));
         if !path.exists() && !path.with_extension("dmp").exists() {
             return Some(path);
         }
     }
+}
+
+/// Assemble a shutdown report: the shared body, with the shutdown-specific
+/// facts lifted above the task snapshot so the first screen answers "what was
+/// still open?" rather than making the reader scroll for it.
+fn shutdown_report_body(reason: &str, details: &str) -> String {
+    let mut body = render_report_body("Ferail (gpui) Shutdown Report", reason);
+    match body.find("background tasks") {
+        Some(insert) => body.insert_str(insert, &format!("{details}\n")),
+        None => body.push_str(details),
+    }
+    body
+}
+
+/// Write a shutdown report: the same body a hang report carries (task
+/// snapshot, breadcrumbs, activity trail), under its own title and with the
+/// shutdown-specific facts on top.
+///
+/// Deliberately no whole-process stack capture: the UI thread is not wedged
+/// here, it has usually already returned from its last frame, so `sample` and
+/// friends would add a page of addresses and nothing to read.
+pub(crate) fn write_shutdown_report(reason: &str, details: &str) -> Option<std::path::PathBuf> {
+    let body = shutdown_report_body(reason, details);
+    let path = report_file_path("shutdown")?;
+    if let Err(error) = std::fs::write(&path, &body) {
+        crate::log_warn!(90, "shutdown report write failed ({}): {error}", path.display());
+        return None;
+    }
+    Some(path)
 }
 
 fn append_to_file(path: &std::path::Path, text: &str) {
@@ -878,13 +929,32 @@ mod tests {
 
     #[test]
     fn report_body_carries_reason_and_sections() {
-        let body = render_report_body("test reason: synthetic stall");
+        let body = render_report_body("Ferail (gpui) Hang Report", "test reason: synthetic stall");
         assert!(body.contains("Hang Report"));
         assert!(body.contains("test reason: synthetic stall"));
         assert!(body.contains("background tasks"));
         assert!(body.contains("breadcrumbs:"));
         assert!(body.contains("activity trail"));
         assert!(body.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn shutdown_report_puts_its_own_facts_above_the_task_snapshot() {
+        let body = shutdown_report_body(
+            "still running 5s after last window closed",
+            "windows   : 1 still registered with gpui",
+        );
+        assert!(body.contains("Shutdown Report"));
+        assert!(!body.contains("Hang Report"));
+        let windows = body
+            .find("1 still registered")
+            .expect("the shutdown facts are in the body");
+        let tasks = body
+            .find("background tasks")
+            .expect("the shared sections follow");
+        // Order is the point: the first screen has to answer "what was still
+        // open?", not make the reader scroll past the shared sections for it.
+        assert!(windows < tasks);
     }
 
     /// A real `sample` call graph is indented, count-prefixed and

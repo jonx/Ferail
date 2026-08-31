@@ -141,6 +141,45 @@ samples. It is session-only, disabled by default, and configured in
 non-continuous mode: it observes Ferail's actual redraws instead of creating a
 busy render loop of its own.
 
+## The shutdown report
+
+A frozen window is one failure; a process that outlives its own window is the
+other. The reported symptom: the user closes Ferail to install an update, the
+taskbar icon disappears, and `ferail.exe` is still running, holding its own
+executable, with nothing on screen to close. Only Task Manager ends it.
+
+The mechanism is not exotic. Outside macOS, Ferail quits when gpui reports no
+windows left (`boot.rs`, `on_window_closed`); anything that keeps one window
+registered, an orphaned sub-window or a close callback that never fired, keeps
+the process alive with no surface to interact with, and nothing forces the exit
+afterwards. macOS deliberately stays resident with no windows (the Finder
+model), so only an explicit Quit arms this there.
+
+`shutdown.rs` makes that observable and then survivable:
+
+- the watchdog heartbeat publishes, once a second from the UI thread, how many
+  windows gpui still tracks and the scrubbed labels of the live auxiliary
+  windows (`publish_window_snapshot`), so the reporting thread never has to
+  touch `App`;
+- every window close leaves a breadcrumb with the remaining count: a run of
+  closes that never reaches zero is the whole diagnosis;
+- quitting arms a watchdog thread. Reaching its first deadline at all means
+  the process outlived its own quit, since a clean exit would have taken the
+  thread with it. It writes `reports/ferail-shutdown-<pid>-<seq>.txt`: the same
+  body as a hang report (task snapshot, breadcrumbs, activity trail) with the
+  window facts lifted above them, and no whole-process stack capture, because
+  the UI thread is not wedged here and a page of addresses would add nothing;
+- at the second deadline it exits the process anyway. A process the user has
+  to hunt down in Task Manager is worse than one that stopped a few seconds
+  late. `FERAIL_NO_SHUTDOWN_EXIT=1` suppresses that when the point is to attach
+  a debugger to the stuck process instead.
+
+Verify it with `FERAIL_SHUTDOWN_GRACE_MS=500 ferail-gpui --stuck-shutdown`
+(dev builds only: the packaged build drops the harness feature). The probe arms
+the watchdog and then deliberately outlives it, which is the only way to see a
+real report land without a hanging quit to reproduce. `FERAIL_SHUTDOWN_GRACE_MS`
+collapses both deadlines to one short interval.
+
 ## Testing the machinery
 
 `FERAIL_DEBUG_FREEZE=<secs>` deliberately wedges the UI thread for that
@@ -167,3 +206,7 @@ separately so the independent thread's decision logic does not depend on GPUI.
    Diagnostics shows the path; the issue bundle lives in the same place). On
    Windows, attach the same-stem `.dmp` too; it contains the useful stacks.
 3. Relaunch with `--safe-mode` and say whether the freeze survives.
+
+For a process that survives its own close, ask for `reports/ferail-shutdown-*.txt`
+instead: its `windows` line says how many gpui still had, and `aux` names the
+sub-windows among them.

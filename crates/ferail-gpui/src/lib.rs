@@ -76,6 +76,7 @@ pub mod screenshot;
 pub mod selection_colors;
 pub mod settings;
 pub mod shell;
+pub mod shutdown;
 pub mod sidebar_layout;
 pub mod sidecar_preview;
 pub mod single_line_complete;

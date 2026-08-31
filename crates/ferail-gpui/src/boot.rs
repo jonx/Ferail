@@ -425,6 +425,10 @@ pub fn run_gui(args: screenshot::Args) {
         // window closes; macOS keeps the process resident (Finder model).
         cx.on_window_closed(|cx, _| {
             refresh_window_menu(cx);
+            // A run of closes that never reaches zero is the whole diagnosis
+            // when the process outlives its last visible window, so record the
+            // remaining count on every close, not only on the last one.
+            crate::shutdown::note_window_closed(cx.windows().len());
             #[cfg(not(target_os = "macos"))]
             {
                 if cx.windows().is_empty() && !dev_quit_cleanup_in_progress() {
@@ -585,6 +589,16 @@ pub(crate) fn drain_dev_callbacks_before_quit(cx: &mut App) {
 /// its entity-map assertion. Packaged builds have no leak detector and keep
 /// the normal immediate quit path.
 fn quit_after_dev_cleanup(cx: &mut App) {
+    // From here the process has committed to ending. Arm the watchdog that
+    // proves it actually did: see `crate::shutdown` for the failure this
+    // catches (no window, no taskbar icon, process still holding its own
+    // executable against an update).
+    crate::shutdown::arm(if cx.windows().is_empty() {
+        "last window closed"
+    } else {
+        "quit requested"
+    });
+
     #[cfg(feature = "screenshot-harness")]
     {
         use std::sync::atomic::Ordering;
