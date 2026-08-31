@@ -119,6 +119,23 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   the double-click interval before it starts, and a double-click cancels it.
   Click, pause, click still renames, as before.
 
+- **The built-in text editor already had find and replace; now you can see
+  them.** Cmd+F searches and Cmd+Shift+F replaces (Ctrl+F and Ctrl+H
+  elsewhere), with previous/next, a match counter, a case toggle and Replace
+  All, and they have worked since the editor shipped: nothing in the window
+  pointed at them. The toolbar now has a button for each. Escape also stops
+  closing the whole window when the find panel is open: it closes the panel,
+  and a second Escape closes the window.
+
+- **The text editor can reload a file from disk, and tells you where you
+  are.** A **Reload from Disk** button re-reads the file, keeping your place
+  in it, and asks first if you have unsaved edits: useful when something else
+  changed the file while it was open. A new strip along the bottom shows the
+  line and column of the cursor, how many lines the file has, and its
+  encoding and line endings, so a file that came in as CRLF or with a BOM no
+  longer hides that fact. The toolbar's new overflow menu turns line
+  wrapping and line numbers on and off.
+
 ## 0.7.6 - 2026-08-30
 
 - **Enter in a path or filter field now uses exactly what you typed.**

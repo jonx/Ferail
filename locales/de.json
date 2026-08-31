@@ -520,6 +520,7 @@
     "Find Duplicates…": "Duplikate suchen …",
     "Find Similar Images": "Ähnliche Bilder suchen",
     "Find Similar Images…": "Ähnliche Bilder suchen …",
+    "Find and Replace": "Suchen und Ersetzen",
     "Finding duplicates in {root}": "Duplikate werden in {root} gesucht",
     "Finding similar images in {root}": "Ähnliche Bilder werden in {root} gesucht",
     "Fit": "Einpassen",
@@ -622,6 +623,8 @@
     "Leading whitespace": "Führender Leerraum",
     "Lens": "Objektiv",
     "Light": "Hell",
+    "Line Numbers": "Zeilennummern",
+    "Line {line}, Column {column}": "Zeile {line}, Spalte {column}",
     "Linux": "Linux",
     "List the folders you've opened recently in the sidebar, most recent first. Off hides the section and stops adding to it your Ant Trail heat is unaffected.": "Zeigt die zuletzt geöffneten Ordner in der Seitenleiste, neueste zuerst. „Aus“ blendet den Bereich aus und ergänzt ihn nicht mehr deine Ant-Trail-Wärme bleibt unberührt.",
     "List view": "Listenansicht",
@@ -898,6 +901,8 @@
     "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.": "Aktualisiere den Ordner und versuche es erneut. Schlägt es weiterhin fehl, prüfe das Objekt in deinem Dateimanager.",
     "Regex": "Regex",
     "Reload": "Neu laden",
+    "Reload from Disk": "Neu laden vom Datenträger",
+    "Reloading “{name}” discards your unsaved changes.": "Beim Neuladen von „{name}“ gehen Ihre nicht gespeicherten Änderungen verloren.",
     "Remove": "Entfernen",
     "Remove from Archive": "Aus Archiv entfernen",
     "Remove from Favorites": "Aus Favoriten entfernen",
@@ -1297,6 +1302,7 @@
     "Windows context menu unavailable for this item": "Windows-Kontextmenü für dieses Objekt nicht verfügbar",
     "Windows context menu unavailable: {detail}": "Windows-Kontextmenü nicht verfügbar: {detail}",
     "Windows location unavailable": "Windows-Speicherort nicht verfügbar",
+    "Wrap Lines": "Zeilenumbruch",
     "Year": "Jahr",
     "Yellow": "Gelb",
     "You're up to date for {platform}, {latest} is the latest release.": "Du bist für {platform} auf dem neuesten Stand, {latest} ist die neueste Version.",
@@ -1488,6 +1494,10 @@
     "{n} item · {size}": {
       "one": "{n} Objekt · {size}",
       "other": "{n} Objekte · {size}"
+    },
+    "{n} line": {
+      "one": "{n} Zeile",
+      "other": "{n} Zeilen"
     },
     "{n} mismatches": "{n} Abweichungen",
     "{n} missing": "{n} fehlen",

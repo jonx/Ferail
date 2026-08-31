@@ -7,6 +7,11 @@
 //! back off-thread. Closing with unsaved changes prompts Save / Don't Save /
 //! Cancel, both from the window's close button and from Esc / Cmd+W.
 //!
+//! Find and replace come from the widget (Cmd+F / Cmd+Shift+F, Ctrl+F /
+//! Ctrl+H): this module only makes them reachable from the toolbar and keeps
+//! Esc from closing the window out from under an open search panel. Reload,
+//! soft wrap and line numbers are ours.
+//!
 //! Saving writes the full text to a unique hidden sibling first, so the
 //! bytes are durably on disk before the original is touched, then rewrites
 //! the original **in place** (same inode, so Finder tags, permissions, and
@@ -23,7 +28,8 @@ use gpui_component::{
     ActiveTheme, Disableable as _, Root, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Editor, EditorState, InputEvent},
+    input::{Editor, EditorState, InputEvent, Position, RopeExt as _},
+    menu::DropdownMenu as _,
     notification::Notification,
     v_flex,
 };
@@ -45,6 +51,9 @@ actions!(
         EditorZoomOut,
         EditorZoomReset,
         EditorRevealFile,
+        EditorReload,
+        EditorToggleWrap,
+        EditorToggleLineNumbers,
     ]
 );
 
@@ -166,6 +175,9 @@ pub fn open(
         // The rich editor owns a more-specific key context and can consume
         // Escape before the parent view sees EditorDismiss. Intercept the raw
         // key for this native window so Escape reaches the guarded close path.
+        // Escape must reach the search panel first. Closing it here rather
+        // than letting the widget do it keeps the behaviour identical whether
+        // focus sits in the query field or back in the text.
         let target_window = window.window_handle();
         let escape_view = view.downgrade();
         let escape_subscription = cx.intercept_keystrokes(move |event, window, app| {
@@ -175,7 +187,13 @@ pub fn open(
             {
                 return;
             }
-            let _ = escape_view.update(app, |view, cx| view.request_dismiss(window, cx));
+            let _ = escape_view.update(app, |view, cx| {
+                if view.search_open(cx) {
+                    view.editor.update(cx, |state, cx| state.close_search(cx));
+                } else {
+                    view.request_dismiss(window, cx);
+                }
+            });
             app.stop_propagation();
         });
         view.update(cx, |view, _| {
@@ -197,6 +215,13 @@ pub struct TextEditorView {
     load: LoadState,
     dirty: bool,
     saving: bool,
+    /// A re-read of the file is in flight (the Reload command).
+    reloading: bool,
+    /// View toggles the widget owns but does not expose a getter for, so we
+    /// keep the authoritative copy here and push it down on change. Both
+    /// match `EditorState`'s own defaults.
+    soft_wrap: bool,
+    line_numbers: bool,
     /// Text zoom factor. Scales the editor's font size only; the rest of
     /// the chrome follows the app-wide `ui_scale` as usual.
     zoom: f32,
@@ -246,6 +271,10 @@ impl TextEditorView {
             }
         })
         .detach();
+        // `InputEvent` fires on text change only, but the status bar reports
+        // the caret, which moves without an edit. Observing the entity catches
+        // those; the editor repaints on those frames anyway.
+        cx.observe(&editor, |_, _, cx| cx.notify()).detach();
 
         // Read the whole file on the background executor, then apply under
         // the window so `set_value` can run. The window handle re-entry is
@@ -259,7 +288,7 @@ impl TextEditorView {
                 .await;
             let _ = handle.update(cx, |_, window, cx| {
                 let _ = this.update(cx, |view: &mut Self, cx| {
-                    view.apply_load(outcome, window, cx);
+                    view.apply_load(outcome, None, window, cx);
                 });
             });
         })
@@ -272,6 +301,9 @@ impl TextEditorView {
             load: LoadState::Loading,
             dirty: false,
             saving: false,
+            reloading: false,
+            soft_wrap: true,
+            line_numbers: true,
             zoom: 1.0,
             had_crlf: false,
             had_bom: false,
@@ -286,7 +318,21 @@ impl TextEditorView {
         }
     }
 
-    fn apply_load(&mut self, outcome: ReadOutcome, window: &mut Window, cx: &mut Context<Self>) {
+    /// Install a freshly read file. `restore_cursor` carries the caret
+    /// position from before a reload, so re-reading a file does not throw the
+    /// user back to line 1.
+    fn apply_load(
+        &mut self,
+        outcome: ReadOutcome,
+        restore_cursor: Option<Position>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // This read replaces the buffer, so nothing is pending a save. The
+        // failing arms need it too: a reload of a vanished file leaves no
+        // editor to save from, and a stale `dirty` would trap the close
+        // behind a Save button that can do nothing.
+        self.dirty = false;
         match outcome {
             ReadOutcome::Text {
                 text,
@@ -300,6 +346,21 @@ impl TextEditorView {
                 // an undoable step.
                 self.editor
                     .update(cx, |state, cx| state.set_value(text, window, cx));
+                if let Some(position) = restore_cursor {
+                    self.editor.update(cx, |state, cx| {
+                        // The file may have shrunk under us; the column
+                        // clamps itself, the line does not.
+                        let last = state.text().lines_len().saturating_sub(1) as u32;
+                        state.set_cursor_position(
+                            Position {
+                                line: position.line.min(last),
+                                character: position.character,
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                }
                 self.load = LoadState::Ready;
             }
             ReadOutcome::TooLarge(bytes) => {
@@ -382,6 +443,83 @@ impl TextEditorView {
         .detach();
     }
 
+    /// True while the widget's find/replace panel is showing.
+    fn search_open(&self, cx: &App) -> bool {
+        self.editor.read(cx).search_session().open
+    }
+
+    /// Open the widget's own find (or find-and-replace) panel. The keyboard
+    /// route (Cmd+F / Cmd+Shift+F, Ctrl+F / Ctrl+H) is gpui-component's; this
+    /// is the toolbar route to the same panel.
+    fn open_search(&mut self, replace_mode: bool, cx: &mut Context<Self>) {
+        if !matches!(self.load, LoadState::Ready) {
+            return;
+        }
+        self.editor
+            .update(cx, |state, cx| state.open_search(replace_mode, cx));
+        cx.notify();
+    }
+
+    fn on_reload(&mut self, _: &EditorReload, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_reload(window, cx);
+    }
+
+    /// Re-read the file from disk. With unsaved edits this asks first: a
+    /// reload throws them away and there is no undo across the swap.
+    fn request_reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving || self.reloading || matches!(self.load, LoadState::Loading) {
+            return;
+        }
+        if self.dirty {
+            self.prompt_reload(window, cx);
+        } else {
+            self.reload(window, cx);
+        }
+    }
+
+    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reloading = true;
+        cx.notify();
+        let cursor = matches!(self.load, LoadState::Ready)
+            .then(|| self.editor.read(cx).cursor_position());
+        let path = self.path.clone();
+        let handle = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move { read_for_edit(&path) })
+                .await;
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = this.update(cx, |view: &mut Self, cx| {
+                    view.reloading = false;
+                    view.apply_load(outcome, cursor, window, cx);
+                });
+            });
+        })
+        .detach();
+    }
+
+    fn on_toggle_wrap(&mut self, _: &EditorToggleWrap, window: &mut Window, cx: &mut Context<Self>) {
+        self.soft_wrap = !self.soft_wrap;
+        let wrap = self.soft_wrap;
+        self.editor
+            .update(cx, |state, cx| state.set_soft_wrap(wrap, window, cx));
+        cx.notify();
+    }
+
+    fn on_toggle_line_numbers(
+        &mut self,
+        _: &EditorToggleLineNumbers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.line_numbers = !self.line_numbers;
+        let on = self.line_numbers;
+        self.editor
+            .update(cx, |state, cx| state.set_line_number(on, window, cx));
+        cx.notify();
+    }
+
     fn on_dismiss(&mut self, _: &EditorDismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.request_dismiss(window, cx);
     }
@@ -429,6 +567,10 @@ impl TextEditorView {
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let ready = matches!(self.load, LoadState::Ready);
         let zoom_label = format!("{:.0}%", self.zoom * 100.0);
+        let border = cx.theme().border;
+        let separator = move || div().w(px(1.0)).h(px(20.0)).bg(border);
+        let view_focus = self.focus_handle.clone();
+        let (soft_wrap, line_numbers) = (self.soft_wrap, self.line_numbers);
         h_flex()
             .flex_none()
             .items_center()
@@ -436,7 +578,7 @@ impl TextEditorView {
             .px_3()
             .py_1p5()
             .border_b_1()
-            .border_color(cx.theme().border)
+            .border_color(border)
             .child(
                 Button::new("editor-save")
                     .icon(gpui_component::Icon::empty().path("icons/save.svg"))
@@ -444,6 +586,14 @@ impl TextEditorView {
                     .tooltip(command_tooltip(tr!("Save"), "⌘S", "Ctrl+S"))
                     .disabled(!ready || self.saving)
                     .on_click(cx.listener(|view, _, window, cx| view.save(false, window, cx))),
+            )
+            .child(
+                Button::new("editor-reload")
+                    .icon(gpui_component::Icon::empty().path("icons/nav/refresh.svg"))
+                    .small()
+                    .tooltip(tr!("Reload from Disk"))
+                    .disabled(!ready || self.saving || self.reloading)
+                    .on_click(cx.listener(|view, _, window, cx| view.request_reload(window, cx))),
             )
             .child(
                 Button::new("editor-reveal")
@@ -454,7 +604,24 @@ impl TextEditorView {
                         view.on_reveal_file(&EditorRevealFile, window, cx)
                     })),
             )
-            .child(div().w(px(1.0)).h(px(20.0)).bg(cx.theme().border))
+            .child(separator())
+            .child(
+                Button::new("editor-find")
+                    .icon(gpui_component::Icon::empty().path("icons/search.svg"))
+                    .small()
+                    .tooltip(command_tooltip(tr!("Find"), "⌘F", "Ctrl+F"))
+                    .disabled(!ready)
+                    .on_click(cx.listener(|view, _, _, cx| view.open_search(false, cx))),
+            )
+            .child(
+                Button::new("editor-replace")
+                    .icon(gpui_component::Icon::empty().path("icons/replace.svg"))
+                    .small()
+                    .tooltip(command_tooltip(tr!("Find and Replace"), "⌘⇧F", "Ctrl+H"))
+                    .disabled(!ready)
+                    .on_click(cx.listener(|view, _, _, cx| view.open_search(true, cx))),
+            )
+            .child(separator())
             .child(
                 Button::new("editor-zoom-out")
                     .icon(gpui_component::Icon::empty().path("icons/minus.svg"))
@@ -493,6 +660,29 @@ impl TextEditorView {
                     .disabled(!ready)
                     .on_click(cx.listener(|view, _, _, cx| view.zoom_by(ZOOM_STEP, cx))),
             )
+            .child(separator())
+            // Display toggles, not commands: a checkable menu shows their
+            // state where an icon button could not.
+            .child(
+                Button::new("editor-view-menu")
+                    .icon(gpui_component::Icon::empty().path("icons/ellipsis.svg"))
+                    .small()
+                    .tooltip(tr!("More"))
+                    .disabled(!ready)
+                    .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _window, _cx| {
+                        menu.action_context(view_focus.clone())
+                            .menu_with_check(
+                                tr!("Wrap Lines"),
+                                soft_wrap,
+                                Box::new(EditorToggleWrap),
+                            )
+                            .menu_with_check(
+                                tr!("Line Numbers"),
+                                line_numbers,
+                                Box::new(EditorToggleLineNumbers),
+                            )
+                    }),
+            )
             .child(div().flex_1())
             .when(self.dirty, |bar| {
                 bar.child(
@@ -502,6 +692,51 @@ impl TextEditorView {
                         .child(tr!("Unsaved")),
                 )
             })
+    }
+
+    /// Footer strip: caret position, line count, encoding, line endings.
+    /// All derived from state already in memory, so it costs a rope lookup
+    /// and no I/O. Line and column are coordinates, not counts, so they are
+    /// not digit-grouped; the line total is, through `trn!`. No file size:
+    /// it goes stale on the first keystroke and re-reading it here would be
+    /// a filesystem call on the UI thread.
+    fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let ready = matches!(self.load, LoadState::Ready);
+        let editor = self.editor.read(cx);
+        let position = editor.cursor_position();
+        let lines = editor.text().lines_len();
+        let text = if ready {
+            [
+                tr!(
+                    "Line {line}, Column {column}",
+                    line = position.line + 1,
+                    column = position.character + 1
+                )
+                .to_string(),
+                trn!("{n} line", "{n} lines", lines).to_string(),
+                // Encoding and line-ending names are identifiers, not prose:
+                // they read the same in every language.
+                if self.had_bom { "UTF-8 (BOM)" } else { "UTF-8" }.to_string(),
+                if self.had_crlf { "CRLF" } else { "LF" }.to_string(),
+            ]
+            .join(" · ")
+        } else {
+            String::new()
+        };
+        h_flex()
+            .flex_none()
+            .items_center()
+            .justify_end()
+            .px_3()
+            .py_1()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .text_scale_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(text),
+            )
     }
 
     /// The OS close-button path: `true` lets the window close.
@@ -561,6 +796,50 @@ impl TextEditorView {
                                     window.close_dialog(cx);
                                     let _ = weak_save.update(cx, |view, cx| {
                                         view.save(true, window, cx);
+                                    });
+                                }),
+                        ),
+                )
+        });
+    }
+
+    /// Reload with unsaved edits: say plainly that they go away, because the
+    /// swap is not undoable.
+    fn prompt_reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let weak = cx.weak_entity();
+        let name = crate::private_mode::present_leaf_str(&self.name, false);
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let weak_reload = weak.clone();
+            dialog
+                .title(tr!("Reload from Disk"))
+                .child(div().text_scale_sm().child(tr!(
+                    "Reloading \u{201C}{name}\u{201D} discards your unsaved changes.",
+                    name = name.clone()
+                )))
+                .footer(
+                    h_flex()
+                        .gap_2()
+                        .justify_end()
+                        .child(
+                            Button::new("editor-reload-cancel")
+                                .label(tr!("Cancel"))
+                                .small()
+                                .on_click(|_, window, cx| {
+                                    window.close_dialog(cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("editor-reload-confirm")
+                                .label(tr!("Reload"))
+                                .primary()
+                                .small()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = weak_reload.update(cx, |view, cx| {
+                                        view.reload(window, cx);
                                     });
                                 }),
                         ),
@@ -705,11 +984,17 @@ impl Render for TextEditorView {
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_zoom_reset))
             .on_action(cx.listener(Self::on_reveal_file))
+            .on_action(cx.listener(Self::on_reload))
+            .on_action(cx.listener(Self::on_toggle_wrap))
+            .on_action(cx.listener(Self::on_toggle_line_numbers))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .when(!private, |this| this.child(self.toolbar(cx)))
             .child(body)
+            // Private Mode blanks the stage, so the footer goes with it: the
+            // caret position and line count describe the file's content.
+            .when(!private, |this| this.child(self.status_bar(cx)))
             // This window's own Root holds dialog/notification state but
             // doesn't render the layers; do it here so the unsaved-changes
             // dialog and save-error toasts appear.

@@ -34,9 +34,11 @@ file. **Consequence worth remembering:** a path like `icons/folder.svg` (no
   re-saved at `stroke-width="1.75"` (Lucide ships them at `2`); a few are
   in-house glyphs drawn in the same style (listed below).
 - **`gpui-component-assets`** (longbridge/gpui-component, pinned rev
-  `c112e7b`): Apache-2.0. Its `crates/assets/assets/icons/*.svg` are
+  `e8f54eb`): Apache-2.0. Its `crates/assets/assets/icons/*.svg` are
   Lucide-derived (`class="lucide lucide-…"`, stroke 2). 99 icons; we reference
-  ~28 of them.
+  40 of them by path, plus a few gpui-component draws itself through its
+  `IconName` enum (the sidebar toggle's `panel-left-*`, the sort header's
+  `chevrons-up-down`), which a path grep misses.
 - **Apple system icons** via `NSWorkspace iconForFile:`: Apple artwork,
   fetched at runtime, never redistributed. Folders/volumes only.
 - **[Bootstrap Icons](https://icons.getbootstrap.com)**: MIT License. Two
@@ -51,23 +53,26 @@ SVG bundles; Apache-2.0 covers the upstream crate.
 
 ## Spare upstream icons (check here before vendoring)
 
-The upstream `gpui-component-assets` bundle ships **99 Lucide glyphs**; we use
-~34. The other ~65 are **already compiled into the binary**: reference any with
+The upstream `gpui-component-assets` bundle ships **99 Lucide glyphs**; we
+reference 40 by path. The ~56 genuinely free ones are **already compiled into
+the binary**: reference any with
 `icons/<name>.svg` at zero cost (no new file, no normalization), they just render
 at Lucide's heavier stroke `2`. **When you need a new icon, look here first**: a
 spare-pool glyph is free; a local copy is only worth it for primary chrome that
 needs the 1.75 weight, or for a glyph the pool lacks.
 
-Snapshot at rev `c112e7b`: re-run the listing below if you bump gpui-component:
+Recomputed at the pinned rev `e8f54eb` (bundle minus every `icons/<name>.svg`
+the crate references that has no local file). Re-run the listing below if you
+bump gpui-component:
 
-- **Arrows / chevrons**: `arrow-down` `arrow-left` `arrow-right` `chevron-down` `chevron-up`
+- **Arrows / chevrons**: `arrow-down` `arrow-left` `arrow-right` `chevron-up` (`chevron-down` now used by the file list's tree caret)
 - **Stars / reactions**: `star` `star-fill` `star-off` `heart` `heart-off` `thumbs-up` `thumbs-down`
 - **Files / storage**: `file` `folder-closed` `hard-drive` `gallery-vertical-end`
-- **Windows / panels**: `panel-left` `panel-bottom` `panel-bottom-open` `window-close` `window-maximize` `window-minimize` `window-restore` `frame` `resize-corner`
-- **Theme / view**: `sun` `moon` `eye` `eye-off` `layout-dashboard` `chart-pie`
-- **Text / search controls**: `a-large-small` `case-sensitive` `asterisk` `dash` `check` `replace`
+- **Windows / panels**: `panel-left` `panel-right` `panel-bottom` `panel-bottom-open` `window-close` `window-maximize` `window-minimize` `window-restore` `frame` `resize-corner` (`panel-left-open` / `-close` and `chevrons-up-down` are *not* free: gpui-component draws them itself for the sidebar toggle and the sort header)
+- **Theme / view**: `sun` `moon` `layout-dashboard` `chart-pie` (`eye` / `eye-off` now used by the checksum report's problems-only filter and the archive workbench)
+- **Text / search controls**: `case-sensitive` `asterisk` `dash` (`a-large-small` now used by the text-size control, `check` by the checksum report header, `replace` by the text editor's Find and Replace button)
 - **System / hardware**: `memory-stick` `square-terminal` `bot` `inspector` `loader` `loader-circle` `battery` (+ `-charging` `-full` `-medium` `-low` `-warning`) (`cpu` now used by the Settings → Performance page; `network` now used for network-mount volume rows)
-- **People / misc**: `user` `circle-user` `delete` `bell` `calendar` `book-open` `building-2` `globe` `github` `map` `menu` `ellipsis-vertical` `undo` `redo-2` (`undo-2` now used by the toolbar's Reset-icon-size button)
+- **People / misc**: `user` `circle-user` `delete` `bell` `calendar` `book-open` `building-2` `globe` `github` `map` `menu` `ellipsis-vertical` `redo-2` (`undo` now used by the image editor, `undo-2` by the toolbar's Reset-icon-size button)
 
 ```sh
 # Regenerate after a gpui-component bump:
@@ -276,6 +281,18 @@ table's icon set. The one addition is the tree disclosure caret on folder rows.
 | Overflow menu (narrow window) | `icons/ellipsis.svg` ↑ | Lucide, same "More" affordance as the shell toolbar's overflow menu (render.rs:1668), deliberately shared: one glyph for the one concept. Appears only when the width-tiered toolbar has folded clusters away. |
 | Fullscreen | `icons/maximize.svg` ↑ | Lucide |
 
+### Text editor window ([text_editor.rs](../../crates/ferail-gpui/src/text_editor.rs))
+
+| Command | Icon path | Origin |
+| --- | --- | --- |
+| Save | `icons/save.svg` | **In-house** Lucide `save` (house style, stroke 1.75). |
+| Reload from Disk | `icons/nav/refresh.svg` | Lucide `refresh-cw`, local 1.75. Same glyph as the shell's Refresh and Disk Usage's rescan: one verb, three surfaces. Not `undo-2`, which reverts rather than re-reads. |
+| Show in Ferail | `icons/locate-fixed.svg` | **In-house** Lucide `locate-fixed` (house style, stroke 1.75). Distinct from `folder-open`, which opens a location rather than aiming at an item. |
+| Find | `icons/search.svg` ↑ | Lucide. Shared with the Settings *Search & Duplicates* page icon, a page label rather than a command, so the ~1:1 command→icon rule holds. Local `nav/search.svg` is the saved-search *place* glyph and stays separate. |
+| Find and Replace | `icons/replace.svg` ↑ | Lucide `replace`, from the spare upstream pool. See [Known gaps](#known-gaps--weak-icons) #10. |
+| Zoom out / in | `icons/minus.svg` / `plus.svg` ↑ | Lucide, the app-wide ± stepper pair. |
+| More (Wrap Lines, Line Numbers) | `icons/ellipsis.svg` ↑ | Lucide, the same "More" affordance as the shell and viewer toolbars. |
+
 ### Disk Usage window ([disk_usage.rs](../../crates/ferail-gpui/src/disk_usage.rs))
 
 | Command | Icon path | Origin |
@@ -375,6 +392,10 @@ issues in [TODO.md](../../TODO.md).
    (folded into #2). Residual, by design: Sort / ± / ellipsis and the
    gpui-component sidebar toggle remain upstream-2 (full uniformity would require
    vendoring every upstream chrome glyph locally: deferred, not a defect).
+
+10. ⚠️ **`replace.svg` is busy at 16 px.** Seven subpaths in a 16 px box: it
+    reads as texture before it reads as an icon. Kept because it is the
+    metaphor every code editor uses. Revisit if a simpler one turns up.
 
 ## Adding a new icon
 

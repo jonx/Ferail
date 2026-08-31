@@ -520,6 +520,7 @@
     "Find Duplicates…": "Find Duplicates…",
     "Find Similar Images": "Find Similar Images",
     "Find Similar Images…": "Find Similar Images…",
+    "Find and Replace": "Find and Replace",
     "Finding duplicates in {root}": "Finding duplicates in {root}",
     "Finding similar images in {root}": "Finding similar images in {root}",
     "Fit": "Fit",
@@ -622,6 +623,8 @@
     "Leading whitespace": "Leading whitespace",
     "Lens": "Lens",
     "Light": "Light",
+    "Line Numbers": "Line Numbers",
+    "Line {line}, Column {column}": "Line {line}, Column {column}",
     "Linux": "Linux",
     "List the folders you've opened recently in the sidebar, most recent first. Off hides the section and stops adding to it your Ant Trail heat is unaffected.": "List the folders you've opened recently in the sidebar, most recent first. Off hides the section and stops adding to it your Ant Trail heat is unaffected.",
     "List view": "List view",
@@ -898,6 +901,8 @@
     "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.": "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.",
     "Regex": "Regex",
     "Reload": "Reload",
+    "Reload from Disk": "Reload from Disk",
+    "Reloading “{name}” discards your unsaved changes.": "Reloading “{name}” discards your unsaved changes.",
     "Remove": "Remove",
     "Remove from Archive": "Remove from Archive",
     "Remove from Favorites": "Remove from Favorites",
@@ -1297,6 +1302,7 @@
     "Windows context menu unavailable for this item": "Windows context menu unavailable for this item",
     "Windows context menu unavailable: {detail}": "Windows context menu unavailable: {detail}",
     "Windows location unavailable": "Windows location unavailable",
+    "Wrap Lines": "Wrap Lines",
     "Year": "Year",
     "Yellow": "Yellow",
     "You're up to date for {platform}, {latest} is the latest release.": "You're up to date for {platform}, {latest} is the latest release.",
@@ -1488,6 +1494,10 @@
     "{n} item · {size}": {
       "one": "{n} item · {size}",
       "other": "{n} items · {size}"
+    },
+    "{n} line": {
+      "one": "{n} line",
+      "other": "{n} lines"
     },
     "{n} mismatches": "{n} mismatches",
     "{n} missing": "{n} missing",

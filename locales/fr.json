@@ -520,6 +520,7 @@
     "Find Duplicates…": "Rechercher des doublons…",
     "Find Similar Images": "Rechercher des images similaires",
     "Find Similar Images…": "Rechercher des images similaires…",
+    "Find and Replace": "Rechercher et remplacer",
     "Finding duplicates in {root}": "Recherche de doublons dans {root}",
     "Finding similar images in {root}": "Recherche d’images similaires dans {root}",
     "Fit": "Ajuster",
@@ -622,6 +623,8 @@
     "Leading whitespace": "Espace initial",
     "Lens": "Objectif",
     "Light": "Clair",
+    "Line Numbers": "Numéros de ligne",
+    "Line {line}, Column {column}": "Ligne {line}, colonne {column}",
     "Linux": "Linux",
     "List the folders you've opened recently in the sidebar, most recent first. Off hides the section and stops adding to it your Ant Trail heat is unaffected.": "Afficher dans la barre latérale les dossiers ouverts récemment, du plus récent au plus ancien. Désactivé masque cette section et cesse de l’alimenter la chaleur de l’Ant Trail n’est pas modifiée.",
     "List view": "Vue en liste",
@@ -898,6 +901,8 @@
     "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.": "Actualisez le dossier et réessayez. S'il continue d'échouer, inspectez l'élément dans votre gestionnaire de fichiers.",
     "Regex": "Expression régulière",
     "Reload": "Recharger",
+    "Reload from Disk": "Recharger depuis le disque",
+    "Reloading “{name}” discards your unsaved changes.": "Recharger « {name} » supprime vos modifications non enregistrées.",
     "Remove": "Retirer",
     "Remove from Archive": "Retirer de l’archive",
     "Remove from Favorites": "Supprimer des favoris",
@@ -1297,6 +1302,7 @@
     "Windows context menu unavailable for this item": "Menu contextuel Windows indisponible pour cet élément",
     "Windows context menu unavailable: {detail}": "Menu contextuel Windows indisponible : {detail}",
     "Windows location unavailable": "Emplacement Windows indisponible",
+    "Wrap Lines": "Retour à la ligne automatique",
     "Year": "Année",
     "Yellow": "Jaune",
     "You're up to date for {platform}, {latest} is the latest release.": "Vous êtes à jour pour {platform}, {latest} est la dernière version.",
@@ -1488,6 +1494,10 @@
     "{n} item · {size}": {
       "one": "{n} élément · {size}",
       "other": "{n} éléments · {size}"
+    },
+    "{n} line": {
+      "one": "{n} ligne",
+      "other": "{n} lignes"
     },
     "{n} mismatches": "{n} non-correspondances",
     "{n} missing": "{n} manquants",

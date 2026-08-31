@@ -2,9 +2,10 @@
 
 A deliberately small "open, fix, save, close" editor for text files, not an
 IDE. One standalone window per file over gpui-component's `Editor` widget,
-which contributes multi-line editing, undo/redo, find, line numbers, and
-tree-sitter syntax highlighting; Ferail contributes the file I/O discipline
-around it.
+which contributes multi-line editing, undo/redo, find and replace, line
+numbers, and tree-sitter syntax highlighting; Ferail contributes the file I/O
+discipline around it, and the toolbar that makes the widget's own commands
+findable.
 
 ← Back to [feature notes](README.md) · Source:
 `crates/ferail-gpui/src/text_editor.rs`
@@ -25,6 +26,27 @@ around it.
   is gone, it falls back to an ordinary reveal in Ferail. Command-icon
   tooltips include their Cmd/Ctrl shortcuts, and every editor window appears
   in the app's Window menu.
+- **Find and replace** are the widget's own, on its own shortcuts: Cmd+F /
+  Ctrl+F finds, Cmd+Shift+F / Ctrl+H opens the replace field. The panel
+  brings previous/next, a `3/17` match counter, a case toggle, *Replace* and
+  *Replace All*; the toolbar has a button for each. **Esc closes the panel
+  before it closes the window**: the interceptor in `open()` checks
+  `search_session().open` first, so it behaves the same whether focus sits in
+  the query field or the text.
+- **Reload from Disk** re-reads the file, keeping the caret where it was
+  (clamped, in case the file shrank). With unsaved edits it asks first, since
+  the swap is not undoable.
+- **Wrap Lines** and **Line Numbers** are checkable entries under the
+  toolbar's `⋯` menu. Per window, not persisted; a new window gets the
+  widget's defaults, both on.
+- **A footer strip** reports `Line 42, Column 7 · 1.104 lines · UTF-8 (BOM) ·
+  CRLF`. The caret moves without an edit and `InputEvent` only fires on
+  change, so the view observes the editor entity to repaint. Line and column
+  are coordinates, not counts, so they are not digit-grouped; the line total
+  is. That total is the rope's line count, so a file ending in a newline
+  reports one line more than it has text lines, matching the gutter. No file
+  size: it would be stale after the first keystroke, and re-reading it on the
+  UI thread is not allowed.
 - **Language pick is extension-only** (no content sniffing on the UI
   thread); unknown extensions fall back to plain text inside the widget.
   `syntax_extra`'s vendored highlight queries apply here exactly as in the
@@ -66,12 +88,16 @@ states (`--text-editor <path>`, with and without `--unsafe-real-data`).
 
 No tabs, no LSP, no Save As, no encoding conversion (non-UTF-8 files are
 refused rather than transcoded), no file watching for concurrent external
-edits: the last writer wins, exactly like TextEdit. Text zoom does ship
-(toolbar, Cmd+= / Cmd+- / Cmd+0), scaling the document font only.
+edits: the last writer wins, exactly like TextEdit, and Reload from Disk is
+the manual way back. No "go to line", the one basic command the widget lacks.
+Text zoom does ship (toolbar, Cmd+= / Cmd+- / Cmd+0), scaling the document
+font only.
 
 ## Follow-ups if wanted
 
-- A footer strip (size · encoding · line-ending · cursor position).
+- Go to line. In French the label must read *Atteindre la ligne…*: *aller à
+  la ligne* means inserting a line break.
 - Cmd+S on a refused/failed state could offer Save As.
 - Watcher-driven "file changed on disk" banner, once the shared watcher
   items under Responsiveness land.
+- Remembering Wrap Lines / Line Numbers across windows.

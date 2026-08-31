@@ -520,6 +520,7 @@
     "Find Duplicates…": "Znajdź duplikaty…",
     "Find Similar Images": "Znajdź podobne obrazy",
     "Find Similar Images…": "Znajdź podobne obrazy…",
+    "Find and Replace": "Znajdź i zamień",
     "Finding duplicates in {root}": "Wyszukiwanie duplikatów w {root}",
     "Finding similar images in {root}": "Wyszukiwanie podobnych obrazów w {root}",
     "Fit": "Dopasuj",
@@ -622,6 +623,8 @@
     "Leading whitespace": "Puste znaki na początku",
     "Lens": "Obiektyw",
     "Light": "Jasny",
+    "Line Numbers": "Numery wierszy",
+    "Line {line}, Column {column}": "Wiersz {line}, kolumna {column}",
     "Linux": "Linux",
     "List the folders you've opened recently in the sidebar, most recent first. Off hides the section and stops adding to it your Ant Trail heat is unaffected.": "Wyświetlaj niedawno otwierane foldery na pasku bocznym (od najnowszych). Wyłączenie ukrywa tę sekcję i przerywa dodawanie do niej pozycji – ciepło ścieżki mrówki pozostaje nienaruszone.",
     "List view": "Widok listy",
@@ -898,6 +901,8 @@
     "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.": "Odśwież folder i spróbuj ponownie. Jeśli problem nadal występuje, sprawdź element w menedżerze plików.",
     "Regex": "Wyrażenie regularne",
     "Reload": "Załaduj ponownie",
+    "Reload from Disk": "Załaduj ponownie z dysku",
+    "Reloading “{name}” discards your unsaved changes.": "Ponowne załadowanie „{name}” odrzuci niezapisane zmiany.",
     "Remove": "Usuń",
     "Remove from Archive": "Usuń z archiwum",
     "Remove from Favorites": "Usuń z ulubionych",
@@ -1297,6 +1302,7 @@
     "Windows context menu unavailable for this item": "Menu kontekstowe systemu Windows jest niedostępne dla tego elementu",
     "Windows context menu unavailable: {detail}": "Menu kontekstowe systemu Windows jest niedostępne: {detail}",
     "Windows location unavailable": "Lokalizacja systemowa Windows jest niedostępna",
+    "Wrap Lines": "Zawijaj wiersze",
     "Year": "Rok",
     "Yellow": "Żółty",
     "You're up to date for {platform}, {latest} is the latest release.": "Masz najnowszą wersję dla platformy {platform}, najnowsze wydanie to {latest}.",
@@ -1488,6 +1494,12 @@
     "{n} item · {size}": {
       "one": "{n} element · {size}",
       "other": "{n} elementów · {size}"
+    },
+    "{n} line": {
+      "one": "{n} wiersz",
+      "few": "{n} wiersze",
+      "many": "{n} wierszy",
+      "other": "{n} wierszy"
     },
     "{n} mismatches": "{n} niezgodności",
     "{n} missing": "{n} brakujących",
