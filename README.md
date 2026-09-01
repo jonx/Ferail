@@ -170,8 +170,13 @@ The ❌ rows are real gaps, not modesty.
 | **Previews** | ✅ Quick Look + inline highlighted code | ✅ Quick Look | ⚠️ preview pane | ✅ Dolphin strong |
 | **Tabs + multi-window** | ✅ | ⚠️ tabs, no split | ⚠️ tabs (recent) | ✅ Dolphin best-in-class |
 | **Command palette** | ✅ Cmd+K | ❌ | ❌ | ❌ |
+| **Editable right-click menus** (hide, reorder, add separators) | ✅ per surface, in Settings | ❌ | ❌ | ⚠️ service menus only |
+| **Chroma-keyed transparent video windows** | ✅ stack keyed videos over the desktop | ❌ | ❌ | ❌ |
+| **Built-in text and image editing** | ✅ editor + redact/annotate | ⚠️ Quick Look markup | ❌ | ⚠️ opens another app |
+| **Capture-safe screenshot mode** | ✅ Private Mode | ❌ | ❌ | ❌ |
 | **Global / indexed search** | ⚠️ Spotlight-backed, single query box | ✅ rich | ✅ indexed | ✅ Tracker / Baloo |
-| **Accessibility / localization / maturity** | ⚠️ four bundled languages, otherwise young and single-dev | ✅ decades | ✅ decades | ✅ mature |
+| **Localization** | ⚠️ four bundled languages, any other importable | ✅ dozens | ✅ dozens | ✅ dozens |
+| **Accessibility / maturity** | ❌ young, single-dev | ✅ decades | ✅ decades | ✅ mature |
 
 ✅ first-class · ⚠️ partial / varies · ❌ absent
 
@@ -190,6 +195,10 @@ The platforms are not always released in lockstep: the newest downloads may
 sit on different release tags. Check the
 [Releases](https://github.com/jonx/Ferail/releases) list for the latest of
 each.
+
+**AROS** has no download here. The research port ships inside the **Macaros**
+releases, as the `C:Ferail` command of the AROS image that Macaros boots on
+macOS. ([details](docs/features/aros-port.md))
 
 > ### ⚠️ The Windows download is not code-signed yet
 >

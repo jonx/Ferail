@@ -1,9 +1,10 @@
 # mpv Video Backend & Layered Chroma-Key Compositing
 
-Plan for replacing the libvlc video backend with **libmpv**, and building a
-**multi-layer transparent-color (chroma-key) compositor** on top of it: the
-user picks a transparent colour on a video and sees the layer(s) beneath show
-through: potentially other videos that are themselves keyed.
+The optional video backend is **libmpv**, dlopened at runtime, and on top of
+it a **transparent-colour (chroma-key)** stage: the user picks a colour on a
+video and sees through it to whatever is beneath, including other videos that
+are themselves keyed. Layers are separate transparent viewer windows, stacked
+and composited by the window server rather than inside the app.
 
 ← [Feature notes index](README.md) · [Viewer](VIEWER.md) ·
 [Architecture](../ARCHITECTURE.md) · [TODO](../../TODO.md)

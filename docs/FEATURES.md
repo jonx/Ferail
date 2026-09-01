@@ -157,10 +157,15 @@ frames. Per-file rotation, slideshow, frame stepping, and a live
 adjustment panel (brightness/contrast/saturation, one-click
 auto-enhance, SIMD 1×/2×/4× upscale).
 
-With the optional **mpv backend** it plays virtually any container and
-grades it live with no re-encode, plus the showpiece: **chroma-keyed,
-stackable transparent video windows** (pick a color, key it out, float
-the clip over your desktop; stack several). ([viewer](features/VIEWER.md))
+With the **mpv backend** it plays virtually any container and grades it
+live with no re-encode, plus the showpiece: **chroma-keyed, stackable
+transparent video windows** (pick a colour, key it out, float the clip
+over your desktop, stack several). Every release build has the backend
+compiled in; it loads libmpv from the system at startup, so installing
+mpv (`brew install mpv`, `apt install libmpv2`, or the Windows
+`libmpv-2.dll` beside the exe) enables it. Without libmpv the viewer
+falls back to the platform-native player.
+([viewer](features/VIEWER.md) · [video backend](features/VIDEO-MPV.md))
 
 ## Disk Usage - see the bytes, act on them, share the picture
 

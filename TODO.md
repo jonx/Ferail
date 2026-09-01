@@ -3,838 +3,552 @@
 ← [Project README](README.md) · [Documentation map](docs/README.md) ·
 [Architecture](docs/ARCHITECTURE.md) · [Status](docs/STATUS.md)
 
-This is the single list of unfinished work, grouped by area and ordered by
-priority. What is *done* is in [docs/STATUS.md](docs/STATUS.md); how a feature
-is built is in [docs/features/](docs/features/README.md); the program rules are
-in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). When an item ships, delete it
+The single list of unfinished work, grouped by area and ordered by priority.
+What is *done* is in [docs/STATUS.md](docs/STATUS.md); how a feature is built
+is in [docs/features/](docs/features/README.md); the program rules are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). When an item ships, delete it
 here and let [CHANGELOG.md](CHANGELOG.md) and git history carry the record.
 
 <!-- toc depth=2 -->
 
-- [Highest Priority - finish in-flight features](#highest-priority---finish-in-flight-features)
-- [High-Value Features - mostly wiring over subsystems we already own](#high-value-features---mostly-wiring-over-subsystems-we-already-own)
-- [File List, Sidebar & Navigation](#file-list-sidebar--navigation)
-- [File Ops, Trash & Drag](#file-ops-trash--drag)
+- [Known bugs](#known-bugs)
+- [Highest priority](#highest-priority)
+- [High-value features](#high-value-features)
+- [File list, sidebar and navigation](#file-list-sidebar-and-navigation)
+- [File ops, Trash and drag](#file-ops-trash-and-drag)
 - [Search](#search)
-- [Preview, Get Info & Viewer](#preview-get-info--viewer)
-- [Metadata & Intelligence](#metadata--intelligence)
-- [Responsiveness & Data Architecture](#responsiveness--data-architecture)
-- [Settings, Commands & Accessibility](#settings-commands--accessibility)
-- [CLI & Automation](#cli--automation)
-- [Packaging & Polish](#packaging--polish)
-- [Cross-Platform](#cross-platform)
-- [Open-Source Release](#open-source-release)
+- [Preview, Get Info and viewer](#preview-get-info-and-viewer)
+- [Metadata and intelligence](#metadata-and-intelligence)
+- [Responsiveness and data architecture](#responsiveness-and-data-architecture)
+- [Settings, commands and accessibility](#settings-commands-and-accessibility)
+- [CLI and automation](#cli-and-automation)
+- [Packaging and polish](#packaging-and-polish)
+- [Cross-platform](#cross-platform)
 - [Cleanup](#cleanup)
 
 <!-- /toc -->
 
-## Highest Priority - finish in-flight features
+## Known bugs
 
-- **Windows reliability and compatibility campaign.** The 0.6.5 tester report
-  is tracked item by item in
-  [docs/features/WINDOWS_COMPATIBILITY_PLAN.md](docs/features/WINDOWS_COMPATIBILITY_PLAN.md):
-  crash dumps/symbols, isolated preview handlers, viewport-bound detail work,
-  Open/Reveal, the on-demand native context menu and normal-path outbound OLE
-  drag now ship. On 2026-08-25 the user validated 10k previews,
-  multi-selection, Flat 4M, Open/Reveal, the native menu and the portable ZIP
-  in a clean Windows Sandbox. Continue through the ledger's **Mac-first,
-  Windows-final** plan: finish shared scheduler/selection contracts first,
-  then shortcuts/icons/transfers, Shell namespace locations, metadata/native
-  Properties and release qualification, without touching the ordinary
-  filesystem fast path. Exact adversarial/measurement work is accepted only
-  after the
-  [Windows reliability test plan](docs/testing/WINDOWS_RELIABILITY_TEST_PLAN.md)
-  passes interactively on a real Windows machine, including its 4,194,304-row
-  regression gate. Resume work on that machine from the live
-  [Windows handover](docs/testing/WINDOWS_HANDOVER.md).
-- **Notifications & undo coverage for mutations.** Success feedback is now
-  intentionally quiet for immediate visible work: rename/new-folder stay silent
-  on success, and task-backed copy/move/duplicate/compress only toast after the
-  task surfaced.
-  - ✅ **Cross-volume move undo**: shipped on main (`b2c5ca3`): `UndoOp::MoveBack`
-    now covers cross-volume moves.
-  - ✅ **Actionable raw-error messages**: shipped on main (`b2c5ca3`): structured
-    failure reports across the mutation surfaces.
-  - ✅ **Error-notification UX**: shipped: `shell::error_notification` shows a
-    one-line headline with **Show details** (full message, scrollable) and
-    **Copy** (whole message to the clipboard), and keeps the toast from
-    auto-hiding; the structured failure reports route through it. 2026-08-21:
-    the nine remaining dynamic-text error toasts (trash/dedup/save/move
-    failures, disk-full) were moved onto it too; the plain `Notification::error`
-    sites left are short fixed strings where expand/copy adds nothing.
-- ✅ **Persist file-table column order**: shipped on main (`c0f1de2`): column
-  order AND widths now persist across launches.
+- **The command palette cannot be scrolled to the end.** Cmd+/ lists 108
+  commands; the wheel stops around row 62 and will not go further. Measured:
+  60 and 200 wheel notches land on the identical row, shrinking the card's
+  `max_h` from 460 to 300 makes the reachable end *earlier*, and neither a
+  definite card height nor an active filter changes it. So the clamp tracks
+  the viewport, not the content length, inside gpui-component's `Command`
+  scroll handle. Arrow keys reach every row, which is the workaround shipped
+  in the 0.7.7 notes.
+- **Rows overlap while scrolling the list in Flat View.** Painted rows smear
+  over each other during a fast scroll, yet clicking selects the correct row,
+  so this is paint, not layout or hit-testing. Not reproduced headlessly yet;
+  needs a capture of a real scroll on the reporter's machine.
+- **36 catalogue commands have no palette action.** `action_for_command` in
+  `keyboard_help.rs` maps 68 of 104 `CommandId`s; the rest render disabled, so
+  the palette shows commands it cannot run. Most are context-only (tag colours,
+  Open With slots) and correctly disabled, but the list has not been audited
+  since the catalogue grew.
 
-## High-Value Features - mostly wiring over subsystems we already own
+## Highest priority
 
-Net-new, but each sits on plumbing that already exists, so the build is small
-relative to the daily value. Ordered by bang-for-buck.
-
+- **Windows reliability and compatibility campaign.** Every item WIN-001 to
+  WIN-017 is implemented; what is open is qualification, which by the ledger's
+  own rule is never claimed from macOS. Work the remaining Windows-only gates
+  in [WINDOWS_COMPATIBILITY_PLAN.md](docs/features/WINDOWS_COMPATIBILITY_PLAN.md)
+  against the
+  [reliability test plan](docs/testing/WINDOWS_RELIABILITY_TEST_PLAN.md),
+  including its 4.194.304-row regression gate, resuming from the
+  [handover](docs/testing/WINDOWS_HANDOVER.md). Open in particular: independent
+  administrator-equipped qualification of the Fast NTFS helper across the VHDX
+  and large-volume matrix, the adversarial cases (MTP disconnect, hostile
+  providers, long soaks, multi-DPI), and WTEST-130 to 139 for the WSL
+  locations.
 - **Editors must open a file of any size, the same way listings do.** The
-  built-in editors currently *refuse* what they cannot handle comfortably:
-  text past 2 MiB or 100.000 lines, images past 64 MP
+  built-in editors *refuse* what they cannot handle comfortably: text past
+  2 MiB or 100.000 lines, images past 64 MP
   ([TEXT_EDITOR.md](docs/features/TEXT_EDITOR.md),
-  [IMAGE_EDITOR.md](docs/features/IMAGE_EDITOR.md)). A refusal with a
-  hand-off to the system editor is honest, but it is the one place in
-  Ferail that gives up on scale, and the app's whole premise is the
-  million-row case. What it needs, in order:
-  - **Text: stop loading the whole file.** Today `read_for_edit` reads
-    the file into one `String` and hands it to the widget, so a 2 GiB log
-    is out of reach by construction. The shape that scales is the one the
-    file list already uses: a windowed view over the file (memory-mapped
-    or paged reads), with the editor rendering only the visible span and
-    edits accumulated as a piece table rather than a mutated buffer.
-    gpui-component's `EditorState` is documented for ~50K lines, so the
-    huge-file path likely needs its own read-mostly viewer with an
-    edit overlay, not the same widget scaled up.
-  - **Text: save without materialising.** With a piece table the save
-    becomes a streamed copy through `safe_write`'s sibling-then-in-place
-    dance, applying spans in order, never holding the file in RAM.
-  - **Images: tile the canvas.** Strokes are already stored in
-    full-image coordinates and composited off-thread, so the model
-    survives; what breaks past 64 MP is the single full-res RGBA buffer
-    in the save worker (4 B/px). Compositing and encoding in horizontal
-    strips would lift the cap to whatever the codec can stream.
-  - Until then the refusal states stay, and they must keep naming the
-    reason and offering the system editor: a silent failure on a huge
-    file is worse than an honest "not here".
+  [IMAGE_EDITOR.md](docs/features/IMAGE_EDITOR.md)). A refusal with a hand-off
+  to the system editor is honest, but it is the one place in Ferail that gives
+  up on scale, and the million-row case is the whole premise. In order:
+  - **Text: stop loading the whole file.** `read_for_edit` reads the file into
+    one `String`, so a 2 GiB log is out of reach by construction. The shape
+    that scales is the one the file list already uses: a windowed view over
+    the file (memory-mapped or paged), rendering only the visible span, edits
+    accumulated as a piece table rather than a mutated buffer.
+    gpui-component's `EditorState` is documented for ~50K lines, so the huge
+    file path likely needs its own read-mostly viewer with an edit overlay.
+  - **Text: save without materialising.** With a piece table the save is a
+    streamed copy through `safe_write`'s sibling-then-in-place dance, applying
+    spans in order, never holding the file in RAM.
+  - **Images: tile the canvas.** Strokes are already in full-image coordinates
+    and composited off-thread, so the model survives; what breaks past 64 MP is
+    the single full-res RGBA buffer in the save worker (4 B/px). Compositing
+    and encoding in horizontal strips lifts the cap to whatever the codec can
+    stream.
+  - Until then the refusal states stay, and they must keep naming the reason
+    and offering the system editor.
+- **A `--no-default-features` CI leg.** `bundle-mac.sh` builds without the
+  `screenshot-harness` feature and no CI job builds that configuration, so a
+  release build broke on a feature-gated symbol that every green check had
+  compiled. One cheap `cargo check -p ferail-gpui --no-default-features`
+  closes it.
 
-- ✅ **Bulk rename with regex / pattern rules**: shipped on main (`689406d`):
-  self-contained modal over the selection with literal + regex find/replace,
-  sequence numbering, case transforms, and a live before→after preview
-  (docs/features/BULK_RENAME.md).
-- ✅ **NFO, SFV and checksum sidecars**: the primary vertical slice ships in
-  source: content-first recognition, bounded CP437/ANSI/Kodi preview, safe
-  cancellable verification, atomic SFV/SHA256SUMS generation and the
-  memory-only folder card. Follow-ups are tracked in
-  [docs/features/SIDECARS.md](docs/features/SIDECARS.md): stream/compact the
-  million-entry parser/report store, add reveal/copy/extras actions, SAUCE and
-  styled ANSI colours, then richer release completeness. Sidecar contents,
-  names, hashes and reports remain forbidden from persistence/diagnostics.
+## High-value features
+
+Net-new, but each sits on plumbing that already exists.
+
 - **Smart Folders / Saved Searches.** Wire the reserved
-  `FavoriteTarget::SavedSearch` (favorites.rs) into a real feature: pin a search
-  as a favorite that re-runs live on click: Spotlight-backed where available,
-  with the search-glyph icon already rendering. Mostly wiring (favorite type +
-  a persistent search identity; search mode is ephemeral per tab today), not new
-  architecture. Consolidates the prior "saved smart folders" notes under Search
-  and Favorites: this is the canonical entry.
-- **Clipboard history stack.** A bounded ring buffer of recent copies/cuts plus
-  a paste-picker modal (e.g. Cmd+Shift+V) to choose an older entry. We already
-  own the clipboard plumbing in `shell/file_ops.rs` and `CF_HDROP` on Win32:
-  this is a small buffer + picker on top.
-- **File-level frecency → search ranking.** Extend the Ant Trail (already logging
-  folder visits in SQLite, with a decay concept) to file opens, and feed
-  frequency × recency × relevance into search result ordering. An extension of
-  the existing table + decay model. Shares the file-open signal the Recents
-  "recently-opened files" item needs, and pairs with the Ant Trail decay item
-  under Metadata & Intelligence.
-- **Command-palette polish** (canonical detail under Settings & Commands). The
-  Cmd+K overlay in `keyboard_help.rs` already doubles as a palette; the gap is
-  arrow-key navigation between matches and splitting "Commands" vs "Keyboard
-  Shortcuts". Low-effort, validated as worth doing: listed here so it's not
-  buried.
-
-## File List, Sidebar & Navigation
-
-- ✅ **Flat view, one recursive list with a Path column**
-  ([docs/features/FLAT_VIEW.md](docs/features/FLAT_VIEW.md)): shipped as an
-  uncapped, cancellable files-only snapshot on the existing virtualized list.
-  It uses an explicit match-all walker, scan-local identities and a compact
-  per-directory path arena, so toggling it off releases every recursive path;
-  no Flat path enters `NodeStore` or `NativeFs`'s lifetime maps. Streaming
-  enumeration now shares macOS `getattrlistbulk` reads and bounded local-APFS
-  directory parallelism with Disk Usage and recursive search, without changing
-  the compact row/path model or viewport-only enrichment. Batch application is
-  O(batch), filtering is snapshot-local, Refresh rescans, and
-  whole-list magic/folder-size workers stay off. The shared `FileEntry` payload
-  is down from 264 to 160 bytes, empty Flat decorations are no longer allocated,
-  names/directories/repeated display values share storage, and visible rows
-  retain viewport-scoped Format/Description/quarantine enrichment. Select All
-  is symbolic (`all except exceptions`), status/painting remain bounded, and
-  Copy File List yields between path batches. Remaining million-plus polish:
-  build sort/filter indexes off-thread, add segmented scroll geometry, and a
-  page-backed spill path for result sets larger than RAM. A dedicated sub-100
-  byte Flat row is deferred unless later measurements justify its complexity.
-- Finish the hover/focus/selected-state consistency audit. First pass shipped:
-  the icon grid gained its missing hover wash (`table_hover`) and an
-  out-of-range sort-icon `opacity(7.)` was fixed. Remaining is the larger
-  unification: the app carries a bespoke `ferail_design` token set that is
-  dead for color while every surface pulls ad-hoc from the gpui-component theme
-  plus `selection_colors`, giving five different hover treatments and three
-  selection systems. Wire one semantic token layer (or standardize every
-  surface onto the existing `*_hover` / `*_active` / `ring` tokens) so tabs,
-  breadcrumbs, rows, grid, and sidebar read as one system.
-- Add sidebar collapse-to-icons and narrow-window behavior; give the sidebar a
-  keyboard focus region (also unblocks the Favorites arrow-key item above).
-- Add "Reveal in Browse" file-list context action.
-- More Finder-style sidebar roots. Shipped: an **iCloud Drive** Location
-  (surfaced only when the ubiquity container exists) and a distinct
-  `network.svg` glyph for **network mounts** (`is_local == false`).
-  Removable/external disks already carry the eject affordance, and arbitrary
-  user locations are covered by Favorites. Remaining if wanted: a dedicated
-  Network browse root and splitting Volumes into Internal / External / Network
-  sections.
-- Breadcrumb completion (Cmd+L path edit) and a per-segment **Go to Subfolder**
-  menu have shipped; richer completion (inline segment-mode filtering) is the
-  remaining polish.
-- Toolbar **grouping by kind / date**: a shared list+grid sort/render model
-  (group headers with members beneath). Deferred from the density pass.
-- Persist per-tab sort/filter/scroll state where it is not already stable.
-- ✅ **Hidden-file affordances**: shipped: with *show hidden* on, hidden rows
-  (list + grid) render dimmed via the cut-row opacity treatment (cut wins over
-  hidden); with it off, the status bar shows a passive "N hidden · X B" chip
-  next to the Show-hidden toggle, fed by a `HiddenSummary` the enumeration's
-  `Done` message carries (counted before the text filter, so typing a filter
-  doesn't perturb it). Optional follow-up: mirror the summary into folder Get
-  Info via the Calculate walk.
-- **Open With: custom tools, “Other…”, and multi-selection**
-  ([docs/features/OPEN_WITH.md](docs/features/OPEN_WITH.md)). System handler
-  enumeration already ships on all three platforms behind the warm off-thread
-  cache. The gaps: the submenu is `SingleOnly` even though `open_with_slot`
-  already resolves the whole selection and calls `open_with_app_many`; an empty
-  candidate set hides the submenu entirely (an unknown extension gets *zero*
-  LaunchServices handlers, exactly when a specific tool is most wanted);
-  there is no “Other…” chooser (`gpui::PathPromptOptions` has no
-  type filter and a macOS `.app` is a directory, so this needs a platform
+  `FavoriteTarget::SavedSearch` (favorites.rs) into a real feature: pin a
+  search as a favorite that re-runs live on click, Spotlight-backed where
+  available, with the search glyph already rendering. Mostly wiring (a
+  favorite type plus a persistent search identity; search mode is ephemeral
+  per tab today), not new architecture.
+- **Clipboard history stack.** A bounded ring of recent copies and cuts plus a
+  paste picker (Cmd+Shift+V) to choose an older entry. The clipboard plumbing
+  in `shell/file_ops.rs` and `CF_HDROP` on Win32 is already ours: this is a
+  buffer and a picker on top.
+- **File-level frecency feeding search ranking.** Extend the Ant Trail, which
+  already logs folder visits in SQLite with a decay concept, to file opens, and
+  feed frequency × recency × relevance into result ordering. Shares the
+  file-open signal that recently-opened files needs, and pairs with the Ant
+  Trail decay item under Metadata & Intelligence.
+- **Open With: custom tools, "Other…", and multi-selection**
+  ([OPEN_WITH.md](docs/features/OPEN_WITH.md)). The gaps: the submenu is
+  `SingleOnly` even though `open_with_slot` already resolves the whole
+  selection and calls `open_with_app_many`; an empty candidate set hides the
+  submenu entirely, exactly when an unknown extension most wants a specific
+  tool; there is no "Other…" chooser (`gpui::PathPromptOptions` has no type
+  filter and a macOS `.app` is a directory, so this needs a platform
   `NSOpenPanel` entry point); and no user-defined tools. The tool model should
-  be a sibling of `ferail_core::terminal::TerminalSpec`: program +
-  pre-split argv tokens + per-token placeholder substitution, argv never a
-  shell string: persisted as a shareable `tools.json` rather than in the
+  be a sibling of `ferail_core::terminal::TerminalSpec`: program plus
+  pre-split argv tokens plus per-token placeholder substitution, argv never a
+  shell string, persisted as a shareable `tools.json` rather than in the
   recreate-on-version-mismatch metadata DB, matched only against cached
-  `FileEntry` fields, and dispatched through closure-backed menu items (the
-  twelve `OpenWithSlot` actions don't extend). Phase 1 is the three cheap gaps;
-  custom tools follow.
-- **User-customizable context menus: hide the entries you never use**
-  ([docs/features/CONTEXT_MENU.md](docs/features/CONTEXT_MENU.md#customizing-which-entries-appear)).
-  The table header already does exactly this for columns (✓/blank closure
-  items, persisted, with Reset), and `split_persisted_columns` supplies the
-  storage rules to copy: unknown keys ignored, unmentioned entries default to
-  visible, never let the set go empty. **Blocked on one prerequisite**: the
-  menus are imperative chains (`menu.menu(tr!("Rename…"), Box::new(…))`, ~40
-  row entries + 8 background), so an entry's identity is its Rust action type
- , there is no action↔`CommandId` bridge and the labels are duplicated
-  against the catalogue. Build each menu from a
-  `(CommandId, Availability, label, action)` table instead; that also
-  de-duplicates the labels, makes the menus introspectable for the Cmd+K
-  palette / Shortcuts page, and is the same refactor user-defined tools need
-  ([OPEN_WITH.md](docs/features/OPEN_WITH.md) §5.6): do it once for both.
-  Then: the editor picks a **surface** first (row, background, header,
-  breadcrumb, favorites, locations, recents, tree, treemap: visibility is per
-  `(surface, command)`); **separators collapse** in one post-pass over the
-  built item list (drop leading, collapse runs, drop trailing) rather than
-  per-`if` bookkeeping; and **menu-open cost must not rise**: parse the spec
-  once into memory (never a `load()` per entry, never I/O at menu-open time)
-  and resolve each entry by array index, which is cheaper than the `tr_raw`
-  every entry already pays for its label. Preference ANDs with `Availability`,
-  never overrides it.
-- Context-menu follow-ups: compact Finder-style tag swatch row, async Open With
-  prewarm if cold-cache stutter appears, and per-target enable/disable rules for
-  read-only volumes, missing files, and permission-denied targets.
-- Tags checkmarks over a multi-selection: the Tags submenu now reads only the
-  clicked row's `tags`, but the toggle applies to the whole resolved selection.
-  Make the checkmarks a true group state (✓ = applied to all targets,
-  mixed-state for partial) by projecting per-target tag sets into `TargetCap`
-  and reading them through `MenuTargets::all`, mirroring the bulk/anchor model
-  Clear Quarantine now uses (docs/features/CONTEXT_MENU.md → Command
-  availability over a group).
-
-## File Ops, Trash & Drag
-
-- **Target panel ("Pick as Target") + batched transfers.** A pinned, *frozen*
+  `FileEntry` fields, and dispatched through closure-backed menu items. Phase 1
+  is the three cheap gaps; custom tools follow.
+- **Target panel ("Pick as Target") and batched transfers.** A pinned, frozen
   second listing on the right: right-click a folder anywhere, pick it as the
-  target, and it stays put as a source/destination until replaced or closed,
-  no navigation, no spring-load, drops onto its folder rows allowed. It reuses
-  the existing table + `FileListDelegate` (already multi-surface via
-  `asset_scope`); the one coupling to break is that context-menu actions
-  resolve against the active tab, which funnels through `Shell::resolve_targets`
-  (27 `context_row` sites, three real functions). Phase 2 stages transfers into
-  a reviewable queue applied on commit: a batch, explicitly not a transaction,
-  re-validated at commit time. Design: [docs/features/TARGET_PANEL.md](docs/features/TARGET_PANEL.md).
-  Supersedes a dual-pane split for the "reorganize files across folders" use
-  case; the split stays optional and composes with it later.
-- Drag follow-ups: **auto-scroll near the list edges** while dragging and
-  **drops on favorite rows** have shipped. Remaining drag work needs
-  interactive testing, not headlessly drivable.
-- Trash follow-ups: general **"Put Back"** on macOS for items trashed in
-  earlier sessions or by Finder (needs Finder's private put-back metadata: may
-  stay session-scoped); a richer **Trash browsing view** (original-location
-  column). Windows Recycle Bin restore shipped: not through
-  `SHFileOperationW`, which cannot report the recycled location, but through
-  the Shell's own `undelete` verb invoked by the context-menu broker
-  ([CONTEXT_MENU.md](docs/features/CONTEXT_MENU.md)). Remaining there: reach
-  Restore from the keyboard and the toolbar, not the context menu only, and
-  show the original location as a column.
-- Permanent-delete follow-up: `on_delete_immediately` reports failures as raw
-  `format!("{}: {e}")` strings instead of the structured
-  `FileOpError`/`file_op_failure_report` path that `on_move_to_trash` and
-  `on_empty_trash` use: align it so permanent-delete failures get the same
-  per-item classified report + coping actions. (The feature itself shipped as
-  `DeleteImmediately`: mandatory confirmation, Shift+Delete /
-  Option+Cmd+Delete, elevated retry: docs/features/FILE_OPS.md.)
-- File-ops: Windows pasteboard **volume-identity parity** (CF_HDROP copy/paste
-  itself shipped: docs/features/FILE_OPS.md).
-- Recents follow-ups: recently-opened **files** (needs a file-open signal: we
-  only log folder visits today); optionally a dedicated recents store decoupled
-  from the heat map (today Clear/Remove also clears that folder's heat).
-- **Refresh folder sizes after size-changing ops.** ✅ *In-app half shipped on
-  main* via [FRESHNESS.md](docs/features/FRESHNESS.md): subtree-derived caches now
-  validate by mtime + TTL, invalidate the ancestor chain on in-app mutations, and
-  force a size refresh when the window returns to the foreground (see also the
-  **Cache freshness follow-ups** item under Responsiveness & Data Architecture).
-  Historical context: after a mutation that changes a directory's contents:
-  trash/delete, move, copy/paste, duplicate, compress: the affected folder-size
-  rows must recompute instead of waiting for a navigation/reload; the old cache
-  contract in `folder_sizes.rs` validated a row by the folder's *own* mtime, but a
-  directory's mtime bumps only on *direct* child changes, so a delete deep in a
-  subtree left a stale size.
-  - This must also catch **external changes from third-party apps**: deletes,
-    adds, or edits made outside Ferail (another file manager, a terminal `rm`,
-    an installer). Ferail can't self-report those, so only a live filesystem
-    watcher (FSEvents / `ReadDirectoryChangesW` / inotify) closes the gap; it
-    should refresh the *listing* (rows appearing/disappearing) and the folder
-    *sizes* together, since both go stale the same way. Pairs with the existing
-    watcher items under Favorites (**Missing transitions**) and Responsiveness
-    & Data Architecture (**NodeStore identity** → watcher events).
-- **Write per-directory subtotals through the folder-size walk (drill-down
-  reuse).** Today `recursive_totals` sums a subtree into one grand total and
-  keeps no per-directory breakdown, so sizing `Downloads` walks every descendant
-  but caches only the top-level rows; navigating *into* a subfolder then re-walks
-  it from scratch. Make the walk cache a `folder_sizes` row (size + counts) for
-  **every** directory it descends, keyed by each subdir's own path+mtime, so any
-  later drill-down into a just-sized tree is a pure cache hit. Requires turning
-  the current pre-order stack sum into a post-order accumulation (child totals
-  bubble up to parents) and multiplies DB writes from a handful per listing to
-  hundreds/thousands per top-level folder: batch them in one transaction and
-  weigh the write amplification against the drill-down win before committing.
-  Inherits the same deep-mtime staleness bound as the existing cache (a subdir
-  row is validated by its *own* mtime, so a deep external edit hides until TTL).
-  The counts columns and the shared cache contract are already in place (shipped
-  with the folder Description counts), so this is purely a walker change. Only
-  worth doing if drill-down re-walks prove noticeable on a slow disk.
+  target, and it stays put as a source or destination until replaced or
+  closed. No navigation, no spring-load, drops onto its folder rows allowed.
+  It reuses the existing table and `FileListDelegate` (already multi-surface
+  via `asset_scope`); the coupling to break is that context-menu actions
+  resolve against the active tab through `Shell::resolve_targets` (27
+  `context_row` sites, three real functions). Phase 2 stages transfers into a
+  reviewable queue applied on commit: a batch, explicitly not a transaction,
+  re-validated at commit time.
+  Design: [TARGET_PANEL.md](docs/features/TARGET_PANEL.md). Supersedes a
+  dual-pane split for the reorganize-across-folders case; the split stays
+  optional and composes with it later.
+
+## File list, sidebar and navigation
+
+- Finish the hover/focus/selected-state consistency audit. The app carries a
+  `ferail_design` token set that is dead for colour while every surface pulls
+  ad hoc from the gpui-component theme plus `selection_colors`, giving five
+  hover treatments and three selection systems. Wire one semantic token layer
+  (or standardize every surface onto the existing `*_hover` / `*_active` /
+  `ring` tokens) so tabs, breadcrumbs, rows, grid and sidebar read as one.
+- Add sidebar collapse-to-icons and narrow-window behaviour; give the sidebar a
+  keyboard focus region (this also unblocks Favorites arrow-key navigation).
+- Add a "Reveal in Browse" file-list context action.
+- More Finder-style sidebar roots: a dedicated Network browse root, and
+  splitting Volumes into Internal / External / Network sections.
+- Breadcrumb completion polish: inline segment-mode filtering.
+- Toolbar **grouping by kind or date**: a shared list and grid sort/render
+  model with group headers and members beneath. Deferred from the density
+  pass.
+- Persist per-tab sort/filter/scroll state where it is not already stable.
+- Mirror the hidden-file summary into folder Get Info via the Calculate walk.
+- Flat View at the million-plus scale: build sort and filter indexes
+  off-thread, add segmented scroll geometry, and a page-backed spill path for
+  result sets larger than RAM. A dedicated sub-100-byte Flat row is deferred
+  unless later measurement justifies the complexity.
+- Context-menu follow-ups: a compact Finder-style tag swatch row, async Open
+  With prewarm if cold-cache stutter appears, and per-target enable/disable
+  rules for read-only volumes, missing files and permission-denied targets.
+- Tags checkmarks over a multi-selection read only the clicked row's `tags`
+  while the toggle applies to the whole resolved selection. Make them a true
+  group state (✓ applied to all targets, mixed for partial) by projecting
+  per-target tag sets into `TargetCap` and reading them through
+  `MenuTargets::all`, mirroring the bulk/anchor model Clear Quarantine uses.
+
+## File ops, Trash and drag
+
+- **Put Back for items Ferail did not trash.** Ferail records where it moved
+  each item from, so Put Back works for its own trashing. An item trashed by
+  Finder reports an unknown original location, because macOS keeps Finder's
+  put-back record in a private store. Verified empirically: a file trashed by
+  Finder on a scratch APFS volume carries only `com.apple.provenance`, and
+  `.Trashes/<uid>` holds no sidecar. Any fix needs a supported API that does
+  not exist today, so this may stay session-scoped by design.
+- **Reach Restore from the keyboard and the toolbar.** `file.restore_from_trash`
+  exists in the menu inventory but not in `ferail-core`'s command catalogue, so
+  it has no shortcut and no palette row. Add it to the catalogue and bind it.
+- Permanent delete reports failures as raw `format!("{}: {e}")` strings instead
+  of the structured `FileOpError` / `file_op_failure_report` path that
+  `on_move_to_trash` and `on_empty_trash` use. Align it so permanent-delete
+  failures get the same per-item classified report and coping actions.
+- Windows pasteboard **volume-identity parity** for CF_HDROP.
+- Recents follow-ups: recently-opened **files** (needs a file-open signal; only
+  folder visits are logged today), and optionally a recents store decoupled
+  from the heat map, since Clear and Remove also clear that folder's heat.
+- **Catch external changes with a filesystem watcher.** Deletes, adds and edits
+  made outside Ferail (another file manager, a terminal `rm`, an installer)
+  cannot be self-reported, so only FSEvents / `ReadDirectoryChangesW` / inotify
+  closes the gap. It should refresh the *listing* (rows appearing and
+  disappearing) and the folder *sizes* together, since both go stale the same
+  way. Pairs with the Favorites missing-transitions item and the NodeStore
+  identity item.
+- **Write per-directory subtotals through the folder-size walk.**
+  `recursive_totals` sums a subtree into one grand total and keeps no
+  per-directory breakdown, so sizing `Downloads` walks every descendant but
+  caches only the top-level rows; navigating *into* a subfolder re-walks it
+  from scratch. Cache a `folder_sizes` row (size plus counts) for **every**
+  directory the walk descends, keyed by each subdir's own path and mtime, so a
+  later drill-down is a pure cache hit. This turns the pre-order stack sum into
+  a post-order accumulation and multiplies DB writes from a handful per listing
+  to thousands per top-level folder: batch them in one transaction and weigh
+  the write amplification against the drill-down win first. Only worth doing if
+  drill-down re-walks prove noticeable on a slow disk.
 
 ## Search
 
-Base recursive/global search ships ([docs/features/SEARCH.md](docs/features/SEARCH.md))
-with live streaming result updates and selectable engine (Spotlight + walker
-fallback). Remaining is the UX the system explorers have and we don't:
-
-- Filter chips (kind / date / size), query operators, and glob/regex queries.
-- Saved smart folders: see **Smart Folders / Saved Searches** under High-Value
-  Features (needs a persistent search identity; search mode is ephemeral today).
+- Filter chips (kind / date / size), query operators, and glob or regex
+  queries.
+- Saved smart folders: see **Smart Folders / Saved Searches** above.
 - Windows NTFS MFT + USN and Linux Tracker/Baloo engines behind the same
-  `SearchEngine` selection.
+  `SearchEngine` selection. Until one exists, Settings offers a "Spotlight"
+  engine on Windows where `resolve_spotlight` is macOS-only and can never
+  engage: hide the option off macOS or implement a real backend.
 
-## Preview, Get Info & Viewer
+## Preview, Get Info and viewer
 
-- Get Info follow-ups (editable inspector + detachable per-item window ship):
-  **inline rename inside the popup** (name is read-only there; F2 still
-  renames); **undo coverage** for attribute/permission/tag edits; combined
-  **multi-item Get Info**; real Windows/Linux gather (unix `stat_info` already
-  yields perms/dates; NSURL/volume-format reads are macOS-only). Filesystem
-  timestamp editing now ships for creation/modification/access on Windows and
-  modification/access on Unix; remaining timestamp parity is a native macOS
-  creation-time writer and an explicit policy for symlinks/reparse points.
-- **Embedded metadata editing (future, not part of filesystem dates).** Start
-  with a privacy-first **Remove location data** action for JPEG/TIFF, deleting
-  location from EXIF, XMP, and IPTC through an atomic same-directory rewrite
+- Get Info follow-ups: **inline rename inside the popup** (the name is
+  read-only there; F2 still renames); **undo coverage** for attribute,
+  permission and tag edits; combined **multi-item Get Info**; real Windows and
+  Linux gather (unix `stat_info` yields perms and dates; NSURL and
+  volume-format reads are macOS-only). For timestamps, the remaining parity is
+  a native macOS creation-time writer and an explicit policy for symlinks and
+  reparse points.
+- **Embedded metadata editing** (distinct from filesystem dates). Start with a
+  privacy-first **Remove location data** action for JPEG and TIFF, deleting
+  location from EXIF, XMP and IPTC through an atomic same-directory rewrite
   that never recompresses pixels; extend to HEIC and video location atoms only
   with container-specific validation. Separately, expose common writable audio
-  tags (title, artist, album, genre, year, track/disc) through `lofty`, and a
-  conservative allow-list of Windows document properties only when the
-  handler's `IPropertyStore` is writable. Do not add arbitrary GPS-coordinate,
-  camera, lens, exposure, orientation, or video-metadata editing until their
-  lossless round-trip behavior is proven.
-- Preview-pane providers (Quick Look image/PDF/media, inline text + markdown,
-  scroll-chaining, and now lofty-backed audio tags + cover art all ship: see
-  [docs/features/MEDIA-TAGS.md](docs/features/MEDIA-TAGS.md)): audio
-  **waveform / video thumbnail strip** beyond the QL poster,
-  **archive/package summaries**, and per-provider cancellation tokens (today
-  stale results are dropped at apply, not cancelled mid-read). Add an explicit
-  cloud-placeholder state before reads that may fault remote content in.
-  - **Audio waveform**: a SoundCloud-style peak view styled to the app's look
-    (theme tokens, house stroke), shown in the preview stage for audio. lofty
-    reads tags but not samples, so decode peak buckets off-thread with
-    `symphonia`, cache them like previews, and paint bars through the existing
-    preview-cache/staleness machinery. Design note in
-    [MEDIA-TAGS.md](docs/features/MEDIA-TAGS.md#deferred-waveform-preview).
-- **Windows preview pane: host `IPreviewHandler` live, not as a capture.**
-  Today the pane's last resort for Office/RTF/text files is a `PrintWindow`
-  screenshot of the handler taken in the broker (`preview_handler.rs`):
-  chrome included, and with no reliable "finished painting" signal; ShellBat
-  wrote the same code and disabled it for those reasons. Explorer's shape is
-  the right one: a native child window (`WS_POPUP | WS_EX_NOACTIVATE`,
-  parented to the app window) positioned over the pane's rect, `SetWindow`
-  once, `SetRect` on every scroll/resize, `IObjectWithSite` +
-  `IPreviewHandlerFrame` provided, activated `CLSCTX_LOCAL_SERVER` so it
-  runs in `prevhost.exe`, kill-and-retry on `RPC_E_SERVERCALL_RETRYLATER`.
-  Needs the GPUI window's HWND, a rect feed from the pane's layout, and
-  z-order/occlusion handling for popups and dialogs. PDFs are already off
+  tags (title, artist, album, genre, year, track, disc) through `lofty`, and a
+  conservative allow-list of Windows document properties only where the
+  handler's `IPropertyStore` is writable. Do not add arbitrary GPS, camera,
+  lens, exposure, orientation or video-metadata editing until lossless
+  round-trip behaviour is proven.
+- Preview-pane providers: audio **waveform** and a **video thumbnail strip**
+  beyond the Quick Look poster, **archive and package summaries**, and
+  per-provider cancellation tokens (stale results are dropped at apply today,
+  not cancelled mid-read). Add an explicit cloud-placeholder state before reads
+  that may fault remote content in.
+  - **Audio waveform**: a peak view styled to the app's look (theme tokens,
+    house stroke) in the preview stage. lofty reads tags but not samples, so
+    decode peak buckets off-thread with `symphonia`, cache them like previews,
+    and paint bars through the existing preview-cache and staleness machinery.
+    Design: [MEDIA-TAGS.md](docs/features/MEDIA-TAGS.md#deferred-waveform-preview).
+- **Windows preview pane: host `IPreviewHandler` live, not as a capture.** The
+  pane's last resort for Office, RTF and text files is a `PrintWindow`
+  screenshot taken in the broker (`preview_handler.rs`): chrome included, with
+  no reliable finished-painting signal. ShellBat wrote the same code and
+  disabled it for those reasons. Explorer's shape is right: a native child
+  window (`WS_POPUP | WS_EX_NOACTIVATE`, parented to the app window) positioned
+  over the pane's rect, `SetWindow` once, `SetRect` on every scroll and resize,
+  `IObjectWithSite` plus `IPreviewHandlerFrame` provided, activated
+  `CLSCTX_LOCAL_SERVER` so it runs in `prevhost.exe`, kill-and-retry on
+  `RPC_E_SERVERCALL_RETRYLATER`. Needs the GPUI window's HWND, a rect feed from
+  the pane's layout, and z-order and occlusion handling. PDFs are already off
   this path (`pdf_render.rs`).
 - **Windows: decode HEIC/AVIF/RAW through WIC** where the bundled `image`
-  crate has no codec (same gap noted in VIEWER.md): `IWICImagingFactory` →
-  `CreateDecoderFromFilename` → frame → `32bppPBGRA` converter →
-  `IWICBitmapScaler`, on the pool. Requires the `Win32_Graphics_Imaging`
-  feature; ShellBat's `Entry.GetImage` is the reference shape.
-- Viewer follow-ups ([docs/features/VIEWER.md](docs/features/VIEWER.md)): swap
-  the `qlmanage` shell-out for `QLThumbnailGenerator`; pinch-to-zoom; live
-  playlist sync via the watcher (skip deleted entries); **audio-file playback**
-  ships ([MEDIA-TAGS.md](docs/features/MEDIA-TAGS.md#in-viewer-audio-playback):
-  cover on the stage + play/pause/mute/loop/seek, autoplay unmuted, via the
-  active backend; native mute now real (`AVPlayer setMuted:` /
-  `IMFMediaEngine::SetMuted`); follow-up: an audible-output pass on a real run);
-  a watchdog for eligible-but-unplayable videos stalling auto-advance; slideshow
-  transitions once the animation-budget review lands. Video frame surface ships
- : follow-ups: per-frame copy on a `CVDisplayLink` background pull if 4K60
-  shows cost, precise/scrubbing seek (`seekToTime:` tolerance-zero), volume
-  control. Windows parity: Ctrl/F11 chords, `IShellItemImageFactory` fallback,
-  Media Foundation video frame source feeding the shared `RenderImage` path.
-- Similar Images comparison extension: turn the group-scoped viewer into an
-  A/B workspace: pin one reference, compare the current candidate beside it
-  with synchronized zoom/pan, then add optional opacity overlay, draggable
-  wipe, and press-and-hold flicker. Keep side-by-side as the safe default for
-  cropped or shifted images; evaluate automatic alignment separately. All
-  comparison paths and decoded pixels must remain window-scoped and ephemeral.
-- ✅ **mpv video backend → retire VLC**: shipped on main
-  ([docs/features/VIDEO-MPV.md](docs/features/VIDEO-MPV.md)): libmpv provider behind
-  the `VideoBackend` seam (runtime load, SW render into the BGRA pull buffer) with
-  live `vf set` denoise/sharpen/deband/grain; VLC crate deleted (`3b1abc5`) and the
-  seamless-reopen machinery removed (`c8b117f`). **Windows parity pending (this
-  port):** confirm native Media Foundation video (`video_mf.rs`) still integrates
-  after the viewer refactor, and the optional mpv plugin loads via `LoadLibraryW`.
-- ✅ **Color-key transparency**: shipped on main
-  ([docs/features/VIDEO-MPV.md](docs/features/VIDEO-MPV.md)): single-layer chroma
-  key + eyedropper (`9fb9ff7`), N-layer compositing (`f9cbdc8`), and see-through
-  transparent windows (`750eb6c`/`afeb437`). **Windows parity pending (this
-  port):** transparent windows are the highest-risk Windows-specific gap
-  (DWM/layered vs NSWindow): top Phase 1 investigation.
+  crate has no codec: `IWICImagingFactory` → `CreateDecoderFromFilename` →
+  frame → `32bppPBGRA` converter → `IWICBitmapScaler`, on the pool. Requires
+  the `Win32_Graphics_Imaging` feature; ShellBat's `Entry.GetImage` is the
+  reference shape.
+- Viewer follow-ups ([VIEWER.md](docs/features/VIEWER.md)): swap the `qlmanage`
+  shell-out for `QLThumbnailGenerator`; pinch to zoom; live playlist sync via
+  the watcher, skipping deleted entries; a watchdog for eligible-but-unplayable
+  videos stalling auto-advance; slideshow transitions once the animation-budget
+  review lands; an audible-output pass for in-viewer audio on a real run;
+  per-frame copy on a `CVDisplayLink` background pull if 4K60 shows cost;
+  precise scrubbing seek (`seekToTime:` tolerance zero); volume control.
+- Windows viewer parity: Ctrl and F11 chords, an `IShellItemImageFactory`
+  fallback, and a Media Foundation video frame source feeding the shared
+  `RenderImage` path. Confirm `video_mf.rs` still integrates after the viewer
+  refactor and that the optional mpv plugin loads via `LoadLibraryW`.
+- **Windows transparent viewer windows.** Chroma-keyed see-through windows are
+  the highest-risk Windows-specific gap in the video stack: macOS uses
+  `NSWindow` background appearance, Windows needs the DWM or layered-window
+  equivalent. Top Phase 1 investigation for the port.
+- Similar Images comparison: turn the group-scoped viewer into an A/B
+  workspace. Pin one reference, compare the current candidate beside it with
+  synchronized zoom and pan, then add optional opacity overlay, draggable wipe,
+  and press-and-hold flicker. Keep side by side as the safe default for cropped
+  or shifted images; evaluate automatic alignment separately. Every comparison
+  path and decoded pixel stays window-scoped and ephemeral.
 
-## Metadata & Intelligence
+## Metadata and intelligence
 
-- **Magic detection**: the table (~67 signatures + structured parsers for
-  exe/zip/image/audio/video) is solid; expand the long tail and add the CLI
-  modes (see CLI section).
-- ✅ **Directories get a file-format label (bug)**: fixed: directory rows are
-  guarded at all three layers (the worker derive skips `is_dir` seeds, magic
-  sniffing refuses directories at `detect_magic_info`'s entry, and the prefetch
-  apply never writes a magic label/description onto a `Directory` row), and the
-  `MAGIC_REVISION` bump nulls already-poisoned path-keyed cache rows at next
-  launch.
-- **Quarantine / provenance UI**: badge halo + clear-quarantine action ship.
-  Add Gatekeeper assessment, code-signature identity, and in-list provenance
-  display (where-from is cached but only shown in the preview pane).
-- **Ant Trail**: heat map (visit-count tint) ships; add prediction/prewarming
-  and time-decay (heat is cumulative, no recency weighting today).
-- **Mouse predictor** ([docs/features/MOUSE_PREDICTOR.md](docs/features/MOUSE_PREDICTOR.md)):
-  pure pointer prediction module, Ant Trail blend, task-scheduler integration,
-  debug overlay, and pointer-path performance tests.
-- **APFS clone-aware disk-usage sizing**: hard-link `(dev, inode)` de-dup and
-  filesystem-boundary handling (firmlink-aware `du -x` semantics) now ship in
-  the scanner; **APFS clones still count at full size** (clones share extents
-  without `nlink > 1`, so detecting them needs per-file clone-id queries:
-  weigh the extra syscall per file before adding it).
-- Disk Usage follow-ups from the feature doc: richer iCloud download-state
-  handling once the existing path-prefix cloud glyph is not enough.
+- **Magic detection**: 111 format types with structured parsers for
+  executables, archives, images, audio and video is solid. Expand the long tail
+  and add the CLI modes below.
+- **Quarantine and provenance UI**: add Gatekeeper assessment, code-signature
+  identity, and in-list provenance display. Where-from is cached but shown only
+  in the preview pane.
+- **Ant Trail**: add prediction and prewarming, and time decay. Heat is
+  cumulative today with no recency weighting.
+- **Mouse predictor** ([MOUSE_PREDICTOR.md](docs/features/MOUSE_PREDICTOR.md)):
+  the pointer-prediction module, Ant Trail blend, task-scheduler integration,
+  debug overlay and pointer-path performance tests. Nothing is implemented.
+- **APFS clone-aware disk-usage sizing**: clones share extents without
+  `nlink > 1`, so they still count at full size. Detecting them needs a
+  per-file clone-id query: weigh the extra syscall per file before adding it.
+- Disk Usage: richer iCloud download-state handling once the existing
+  path-prefix cloud glyph is not enough.
+- **ThumbHash placeholders for real thumbnails.** Private Mode already
+  synthesises and decodes ThumbHash blurs (`private_thumb.rs`). The real
+  feature is storing a ~25-byte hash per image so a grid paints a recognisable
+  blur before the thumbnail exists. Measured on a real SQLite build: 28,1 MB
+  for 200.000 images as its own table (147 B/row, path dominates) against
+  about 5 MB as a column on the existing `files` table, which is the shape to
+  build. Privacy: a stored hash is a 6x6 impression of the image, so it belongs
+  under the same reset scopes and diagnostics exclusions as thumbnails.
 
-## Responsiveness & Data Architecture
+## Responsiveness and data architecture
 
 - Finish the stable **NodeStore identity** model for rename, move, mount
-  changes, Ant Trail, selection, watcher events, and metadata cache keys.
-- **NodeId intern-map lifecycle**: `NativeFs`'s identity maps are add-only
-  for the life of the process, so every path the app resolves stays pinned:
-  an ordinary browsing session grows them one entry per file *seen*, and one
-  recursive tool run over a large tree pins the whole tree. Observed on a
-  released 0.7.6 after nine hours of normal use: 1.38 GB RSS, with a sample
-  showing `getattrlistbulk`/`open` still walking at idle.
-  - Both directions now share one `Arc<Path>` allocation instead of holding
-    a `PathBuf` each, measured at **241 → 144 bytes per path** (230 → 138 MB
-    per million; see the ignored `intern_footprint_for_a_million_paths`
-    measurement). That halves the slope; it does not stop the growth.
-  - `NativeFs::intern_stats` reports the footprint in O(1), and the stats
-    sampler logs a line the first time the count crosses 250k / 500k / 1M /
-    2M / 4M, so an issue report from a session that went sluggish carries
-    the evidence.
-  - The remaining work is the lifecycle itself. Disk Usage and Flat View
-    already use drop-with-surface scan-local arenas
-    (`file_list.rs`'s flat path arena is the template); duplicate finding,
-    recursive search and *ordinary listings* still mint global ids. Careful:
-    scan-minted ids interleave with ids live tabs/selections/history hold
-    (the path-keyed map returns the same id to both), so range- or
-    ownership-based forgetting can misdirect a later trash/rename through a
-    stale `path_for`. Either refcount ids per holding surface, or give each
-    surface an arena id namespace that drops with it, keeping the global map
-    for navigation identity only.
-- **Cache freshness follow-ups** ([docs/features/FRESHNESS.md](docs/features/FRESHNESS.md)).
-  Subtree-derived caches now stay honest via mtime + TTL validity, exact
-  ancestor invalidation on in-app mutations, and a forced size refresh when the
-  window returns to the foreground. Remaining: invalidate **both** parents'
-  ancestor chains on a cross-directory move (`spawn_file_op` reloads a single
-  `reload_path` today); and reuse the same model for the next recursive
-  aggregates (item counts, APFS clone-aware sizing) rather than a parallel one.
-- ✅ **Cancellation/backpressure baseline (2026-08-29):** directory and Flat
-  enumeration, search, duplicate finding, image/text preview, thumbnails,
-  folder sizing, Disk Usage and copy/move now cancel cooperatively or retire by
-  generation. Streaming directory/search/duplicate/folder-size channels are
-  finite; ordinary listing and search coalesce a bounded number of rows then
-  yield to GPUI just like Flat, so a fast producer cannot build an unbounded
-  result train or monopolise the event loop. Remaining work is qualification,
-  not another scheduler: inactive tabs now apply without table/window notify
-  and refresh/warm their visible viewport on activation. Add hostile
-  slow-provider/network/cloud tests, expose
-  aggregate lane counts/cancellations in diagnostics, and migrate any new
-  recursive tool to these primitives instead of adding a private queue.
-- **Two bounded-work follow-ups found in the 2026-08-29 audit:** Similar Images
-  still hands its complete scan-local image/signature index to one foreground
-  conversion pass at scan completion; slice that conversion/apply before
-  qualifying libraries with hundreds of thousands of images. The viewer's
-  next-slide `preview::warm` also bypasses the one-active/one-latest Shell
-  preview queue; route it through a small process-owned speculative lane so
-  very rapid slideshow navigation cannot accumulate provider calls. Neither
-  path touches ordinary listing/Flat/Search scalability.
+  changes, Ant Trail, selection, watcher events and metadata cache keys.
+- **NodeId intern-map lifecycle.** `NativeFs`'s identity maps are add-only for
+  the life of the process, so every path the app resolves stays pinned: a
+  browsing session grows them one entry per file *seen*, and one recursive tool
+  run over a large tree pins the whole tree. Observed on a released 0.7.6 after
+  nine hours of normal use: 1,38 GB RSS, with a sample showing
+  `getattrlistbulk` and `open` still walking at idle. Both directions now share
+  one `Arc<Path>` instead of a `PathBuf` each (241 → 144 bytes per path), which
+  halves the slope without stopping the growth, and `NativeFs::intern_stats`
+  plus the stats sampler put the footprint in an issue report. The remaining
+  work is the lifecycle. Disk Usage and Flat View already use
+  drop-with-surface scan-local arenas (`file_list.rs`'s flat path arena is the
+  template); duplicate finding, recursive search and *ordinary listings* still
+  mint global ids. Careful: scan-minted ids interleave with ids that live tabs,
+  selections and history hold, because the path-keyed map returns the same id
+  to both, so range- or ownership-based forgetting can misdirect a later trash
+  or rename through a stale `path_for`. Either refcount ids per holding
+  surface, or give each surface an arena namespace that drops with it and keep
+  the global map for navigation identity only.
+- **Cache freshness follow-ups** ([FRESHNESS.md](docs/features/FRESHNESS.md)):
+  invalidate **both** parents' ancestor chains on a cross-directory move
+  (`spawn_file_op` reloads a single `reload_path` today), and reuse the same
+  model for the next recursive aggregates (item counts, clone-aware sizing)
+  rather than building a parallel one.
+- **Qualify the cancellation and backpressure baseline.** Every recursive lane
+  cancels cooperatively or retires by generation, and the streaming channels
+  are finite. What is missing is proof: hostile slow-provider, network and
+  cloud tests, aggregate lane counts and cancellations exposed in diagnostics,
+  and the rule that any new recursive tool adopts these primitives instead of
+  adding a private queue.
+- **Two bounded-work gaps from the 2026-08-29 audit.** Similar Images still
+  hands its complete scan-local image and signature index to one foreground
+  conversion pass at scan completion: slice that before qualifying libraries
+  with hundreds of thousands of images. The viewer's next-slide
+  `preview::warm` bypasses the one-active plus one-latest Shell preview queue:
+  route it through a small process-owned speculative lane so rapid slideshow
+  navigation cannot accumulate provider calls.
 - Move remaining expensive metadata reads off synchronous UI paths (preview
-  generation, large-folder bookkeeping).
-- **Prime Directive: known remaining UI-thread I/O** (from the 2026-07 audit;
-  the enforcement layers: `path_guard::assert_off_ui_thread`, the
-  `disallowed-methods` clippy deny in ferail-gpui: are live, these are the
-  surviving violations):
-  - ✅ `Shell::new` start-path validation (2026-08-21): the window now boots on
-    the raw persisted last-dir and `resolve_start_path_then_load` does the
-    `is_dir` + canonicalize on the background executor, then loads.
-  - ✅ Grid / sidebar folder-icon warms (2026-08-21): `warm_path_icons_async`
-    fetches on the background executor (`fetch_icon_rgba` made thread-safe
-    by drawing a copy of the shared NSImage); `IconCache` tracks in-flight
-    keys so the per-frame collectors converge.
-  - ✅ `app_state::save()`: was already coalesced onto a writer thread
-    (stale bullet; `app_state.rs` module docs describe it).
-  - NSPasteboard reads/writes in copy/cut/paste handlers run on the main
-    thread. Fast (no per-path stat: handlers pre-collect cached `is_dir`),
-    listed for strict-compliance completeness only.
-- Audit render paths for accidental `PathBuf` resolution or filesystem calls;
-  keep resolution behind the filesystem / native-shell boundaries.
+  generation, large-folder bookkeeping), and audit render paths for accidental
+  `PathBuf` resolution or filesystem calls.
+- **Prime Directive: the one surviving UI-thread I/O.** NSPasteboard reads and
+  writes in the copy, cut and paste handlers run on the main thread. They are
+  fast (no per-path stat: the handlers pre-collect cached `is_dir`), and this is
+  listed for strict-compliance completeness.
 - Add slow-path tests or fixtures for slow folders, network volumes, cloud
-  placeholders, permission failures, and stale worker results.
-- Streaming-enumeration tests: add delayed/full-channel cancellation, stale
-  generation delivery, UI-slice limits and partial-error delivery for ordinary
-  listing/search (Flat already covers the bounded million-row shape); surface
-  partial enumeration errors in the task/notification UI instead of logging
-  only.
-- Platform fast-walk follow-up: macOS `getattrlistbulk` plus bounded APFS
-  parallelism now serve ordinary listings, Flat View, recursive search and Disk
-  Usage. Add an opt-in elevated NTFS MFT backend on Windows (isolated helper,
-  portable fallback) according to
-  [WINDOWS_FAST_NTFS.md](docs/features/WINDOWS_FAST_NTFS.md), and evaluate Linux
-  `statx`/`io_uring`; duplicate finding
-  should adopt the shared reader without weakening clone/cloud rules.
+  placeholders, permission failures and stale worker results.
+- Streaming-enumeration tests: delayed and full-channel cancellation, stale
+  generation delivery, UI-slice limits, and partial-error delivery for ordinary
+  listing and search (Flat already covers the bounded million-row shape).
+  Surface partial enumeration errors in the task and notification UI instead of
+  logging them only.
+- Evaluate Linux `statx` and `io_uring` for the shared fast walk, and have
+  duplicate finding adopt the shared reader without weakening the clone and
+  cloud rules.
 
-## Settings, Commands & Accessibility
+## Settings, commands and accessibility
 
-- **Polish plurals need their `few` form.** The bundled Polish pack has
-  `one` + `other` for all 105 plural entries, with `other` holding the
-  genitive (`many`) form, so counts of 2 to 4 fall back to it and read
-  `3 elementów` where Polish wants `3 elementy`. `i18n/plural.rs` already
-  computes `one`/`few`/`many` correctly, so only the pack is missing forms.
-  Ask the pack's author (Bohun) rather than search-and-replacing: a phrase
-  whose head is itself genitive does not take the nominative plural the bare
-  rule suggests. See
+- **Polish plurals need their `few` form.** The bundled pack has `one` and
+  `other` for all 105 plural entries, with `other` holding the genitive
+  (`many`) form, so counts of 2 to 4 fall back to it and read `3 elementów`
+  where Polish wants `3 elementy`. `i18n/plural.rs` already computes
+  `one`/`few`/`many` correctly, so only the pack is missing forms. Ask the
+  pack's author rather than search-and-replacing: a phrase whose head is itself
+  genitive does not take the nominative plural the bare rule suggests. See
   [LOCALIZATION.md](docs/features/LOCALIZATION.md#known-gap-polish-plurals-need-a-few-form).
-
-- **Localization follow-ups** (docs/features/LOCALIZATION.md: the catalog,
-  packs, Settings UI and the export → translate → import flow ship):
-  - Translate backend error text (`ferail-fs-native`, `ferail-archive`) and
-    the failure-report bodies, once bug reports can carry the English
-    alongside.
-  - Locale-aware numbers, sizes and dates.
-  - RTL mirroring (blocked on gpui layout support).
-  - Contribute Ferail's languages to gpui-component's own `ui.yml` so the
-    widgets' OK/Cancel follow too.
-  - Optional in-app translation provider on top of the same file format
-    (deliberately left out of v1 to avoid API-key handling).
-
-- Diagnostics, activity trail & issue reporter
-  ([docs/features/DIAGNOSTICS.md](docs/features/DIAGNOSTICS.md)). Phases 1-3
-  shipped: the activity-trail ring buffer + hooks; `diagnostics.rs` health
-  checks surfaced as a Settings → Diagnostics page and the `--doctor` CLI; and
-  the issue reporter (`report.rs`) that bundles diagnostics + trail + an
-  optional screenshot into a `.zip` and reveals it. Remaining follow-ups:
-  (a) the **in-app redaction modal** (drag-to-black-box over the screenshot
-  before bundling): an unverifiable-headless UI, build it with visual testing.
-  The stroke/composite core now exists: reuse `image_edit`'s Redact mode
-  ([docs/features/IMAGE_EDITOR.md](docs/features/IMAGE_EDITOR.md)) rather than
-  building a second canvas;
-  (b) an **OS-level window capture** so the bundle's screenshot works on a clean
-  Windows build (today it uses `render_to_image`, which needs the gpui_windows
-  patch and is omitted gracefully otherwise); (c) move `run_checks()` off the
-  UI thread if a slow/network config dir makes the one-time probe in
-  `SettingsView::new` noticeable.
-- Settings "Saved" feedback pill or toast (changes persist silently today).
-- **Themes & color customization** ([docs/features/THEMES.md](docs/features/THEMES.md)).
-  Phase 0 shipped: a selection-accent override + Appearance color picker
-  (`selection_colors`), shared by the list and grid. Remaining (scoped in the
-  note): bundled themes + a theme picker (Phase 1), a drop-in user themes folder
-  with hot-reload via `ThemeRegistry::watch_dir` (Phase 2), and a generalized
+- **Localization follow-ups**: translate backend error text
+  (`ferail-fs-native`, `ferail-archive`) and the failure-report bodies, once
+  bug reports can carry the English alongside; locale-aware numbers, sizes and
+  dates; RTL mirroring (blocked on gpui layout support); contribute Ferail's
+  languages to gpui-component's own `ui.yml` so the widgets' OK and Cancel
+  follow; and optionally an in-app translation provider on the same file
+  format, left out of v1 to avoid API-key handling.
+- Diagnostics follow-ups ([DIAGNOSTICS.md](docs/features/DIAGNOSTICS.md)):
+  (a) the **in-app redaction modal**, drag-to-black-box over the screenshot
+  before bundling. Reuse `image_edit`'s Redact mode rather than building a
+  second canvas; it is unverifiable headlessly, so build it with visual
+  testing. (b) An **OS-level window capture** so the bundle's screenshot works
+  on a clean Windows build; today it uses `render_to_image`, which needs the
+  gpui_windows patch and is omitted gracefully otherwise. (c) Move
+  `run_checks()` off the UI thread if a slow or network config dir makes the
+  one-time probe in `SettingsView::new` noticeable.
+- Settings "Saved" feedback pill or toast: changes persist silently today.
+- **Themes and colour customization** ([THEMES.md](docs/features/THEMES.md)):
+  bundled themes plus a theme picker (Phase 1), a drop-in user themes folder
+  with hot reload via `ThemeRegistry::watch_dir` (Phase 2), and a generalized
   accent-override layer (Phase 3).
-- Command palette: arrow-key selection between matches (today Enter runs the top
-  match), and a distinct "Commands" vs "Keyboard Shortcuts" mode if the dual
-  role confuses.
-- User-overridable key bindings (installed from the catalogue today, no UI).
-- Ensure every icon-only button has a tooltip with shortcut, every truncated
-  string has a tooltip, and menu shortcuts render via `Kbd`.
+- Split the Cmd+/ overlay's dual role into distinct "Commands" and "Keyboard
+  Shortcuts" modes if it proves confusing.
+- User-overridable key bindings: installed from the catalogue today, with no
+  UI.
+- Ensure every icon-only button has a tooltip with its shortcut, every
+  truncated string has a tooltip, and menu shortcuts render via `Kbd`.
 - Keyboard accessibility: tab order, focus rings, arrow navigation, Escape
-  behavior, and Settings-from-anywhere.
+  behaviour, and Settings-from-anywhere.
 - Accessibility announcements for file operations and long-running tasks.
-- IME / composition support for text input and rename flows.
+- IME and composition support for text input and rename flows.
 
-## CLI & Automation
+## CLI and automation
 
-- Extend `ferail magic` with `--json`, `--csv`, `--recursive`,
-  `--mismatch-only`, and `--limit` (today: paths in, tab-separated label out).
-- Extend `ferail du` with structured output and filters (today: `--top`,
-  `--packages`); reach parity with the Disk Usage window's largest-file model.
-- Add useful non-GUI commands for automation: metadata reset, duplicate
-  finding, cache inspection, command-catalogue listing.
+- Extend `ferail magic` with `--json`, `--csv`, `--mismatch-only` and
+  `--limit`.
+- Extend `ferail du` with structured output and filters, reaching parity with
+  the Disk Usage window's largest-file model.
+- Add non-GUI commands for automation: metadata reset, duplicate finding, cache
+  inspection, command-catalogue listing.
+- Accept a bare directory argument so `Exec=ferail %U` and
+  `MimeType=inode/directory;` work in the desktop entry. A bare path exits as
+  an unknown subcommand today.
 - Add a plugin or scripting story only after the command and permission model
   is explicit.
 
-## Packaging & Polish
+## Packaging and polish
 
-- Rework the app icon to macOS conventions and generate the iconset (the bundle
-  script already builds `.icns` from a PNG source; the icon *art* is the gap).
-- Bundle an **LGPL** libmpv inside the `.app` so mpv playback works out of the
-  box. ✅ *Step 1 shipped:* every release build (DMG, Windows ZIP, .deb) now
-  compiles `--features mpv` in: the provider dlopens a user-installed libmpv
-  and falls back to the native player without one, and the .deb `Recommends:
-  libmpv2` (Debian 12+ / Ubuntu 23.04+; jammy only has libmpv1, whose
-  soname the loader doesn't probe). *Remaining: ship the library itself.*
-  Homebrew's libmpv chain is **GPL-3.0**: its ffmpeg is built with x264/x265
- , so it cannot ship inside an MIT/Apache DMG without making the whole binary
-  GPL. The viable path: build ffmpeg `--disable-gpl --disable-nonfree`
-  (decoders/demuxers only: the *encoders* are GPL; the H.264/HEVC/AV1/VP9
-  **decoders** are LGPL, and decoding is all the viewer needs) as **static
-  libs linked into libmpv** built with its LGPL option, yielding a single
-  self-contained `libmpv.dylib`: one file to place in `Contents/Frameworks/`
-  and sign, instead of relocating Homebrew's ~47-dylib closure with
-  `install_name_tool`. Sign it *before* the outer bundle (`bundle-mac.sh`
-  signs only the app today, so notarization would fail), probe the bundle
-  ahead of Homebrew in `default_mpv_path()` (the resolver already probes
-  `Contents/Frameworks/libmpv.2.dylib` under a hint dir), and add the LGPL
-  notices plus a corresponding-source offer: pin the ffmpeg/mpv sources +
-  build script in-repo, an ongoing obligation on every rebuild. **Verify
-  early:** the viewer's live vf chain must survive an LGPL ffmpeg: ffmpeg's
-  `eq` filter is GPL-gated, so the grade path may need `colorlevels`/`hue`
-  there; test the exact chain with the headless probe
-  (`cargo run -p ferail-video-mpv --example probe`). Windows: same recipe →
-  `libmpv-2.dll` beside the exe in the ZIP. Linux: nothing to bundle
-  (distro libmpv via Recommends).
-- Visual polish still missing from the GPUI shell: vibrancy/materials, titlebar
-  hit testing, sharper row density, empty/error illustrations, animation-budget
-  review.
+- Rework the app icon to macOS conventions and generate the iconset. The bundle
+  script already builds `.icns` from a PNG source; the icon *art* is the gap.
+- **Bundle an LGPL libmpv inside the `.app`** so mpv playback works out of the
+  box. Every release build compiles `--features mpv`, and the provider dlopens
+  a user-installed libmpv, falling back to the native player without one. What
+  is missing is the library itself. Homebrew's libmpv chain is **GPL-3.0**
+  because its ffmpeg is built with x264 and x265, so it cannot ship inside an
+  MIT/Apache DMG without making the whole binary GPL. The viable path: build
+  ffmpeg `--disable-gpl --disable-nonfree` (decoders and demuxers only; the
+  *encoders* are GPL, while the H.264/HEVC/AV1/VP9 **decoders** are LGPL and
+  decoding is all the viewer needs) as static libs linked into an LGPL libmpv,
+  yielding one self-contained `libmpv.dylib` to place in
+  `Contents/Frameworks/` and sign, instead of relocating Homebrew's ~47-dylib
+  closure with `install_name_tool`. Sign it *before* the outer bundle
+  (`bundle-mac.sh` signs only the app today, so notarization would fail), probe
+  the bundle ahead of Homebrew in `default_mpv_path()`, and add the LGPL
+  notices plus a corresponding-source offer: pinning the ffmpeg and mpv sources
+  and build script in-repo is an ongoing obligation on every rebuild. **Verify
+  early:** the viewer's live vf chain must survive an LGPL ffmpeg, whose `eq`
+  filter is GPL-gated, so the grade path may need `colorlevels` or `hue`
+  instead. Test the exact chain with
+  `cargo run -p ferail-video-mpv --example probe`. Windows: the same recipe
+  yields `libmpv-2.dll` beside the exe in the ZIP. Linux: nothing to bundle.
+- **Obtain an Authenticode certificate.** `scripts/package-win.ps1` wires
+  signing end to end but a stock run is unsigned, and SmartScreen warns on
+  every download of an unsigned binary. Reputation accrues *to the
+  certificate*, so signing from the first public release matters more than
+  signing later.
+- **A macOS release job in CI.** It needs the signing certificate (.p12) and a
+  notary API key as encrypted repo secrets. Until then a Mac release is one
+  local `scripts/package-mac.sh` run plus `gh release upload`. Linux .debs
+  already release from CI on `v*` tags; the Windows ZIP is still a local
+  `scripts/package-win.ps1` run.
+- **`cargo-deny` for licence and advisory drift.** There is no `deny.toml`, so
+  a future `gpui` rev bump that changes the transitive licence surface would
+  not be caught mechanically. The GPL edge is severed today through
+  [`vendor/ztracing`](vendor/ztracing/README.md); the lesson that made it
+  necessary is worth keeping: **do not audit the licence surface from the
+  lockfile alone**, resolve the graph. A lockfile generated with the AROS
+  `[patch]` active dropped `ztracing` entirely and made THIRD-PARTY-NOTICES.md
+  record the edge as fixed upstream when it never was.
+- **One published zed fork** referenced by `git =` URL, carrying both the GPL
+  severance and the `gpui_windows::render_to_image` patch. It would retire
+  `vendor/sum-tree` and the local screenshot path override. Upstream fix
+  tracked at <https://github.com/zed-industries/zed/issues/55470>, acknowledged
+  but stuck in legal: do **not** assume it lands on a timeline.
+- Visual polish still missing from the GPUI shell: vibrancy and materials,
+  titlebar hit testing, sharper row density, empty and error illustrations, and
+  an animation-budget review.
 - Rebuild deterministic screenshot fixtures for the shell, settings pages, disk
-  usage, task popover/panel, errors, empty folders, and narrow layouts.
+  usage, task popover and panel, errors, empty folders and narrow layouts.
 - Screenshot CLI deferred flags: either implement deterministic `--splitter`,
-  `--scroll`, `--ui-scale`, and `--mac-chrome` behavior or remove/warn clearly
-  where the current harness cannot honor them.
-- Add debug overlays for frame time, task queue, cached/missing metadata,
+  `--scroll`, `--ui-scale` and `--mac-chrome` behaviour, or remove them and
+  warn clearly where the harness cannot honour them.
+- Add debug overlays for frame time, task queue, cached and missing metadata,
   layout bounds, hit regions, and injected slow I/O.
 
-## Cross-Platform
+## Cross-platform
 
-- **Filename display-convention parity.** macOS landed: a name's on-disk `:`
-  shows as `/` and a typed `/` stores `:`, matching Finder, via
-  `ferail_fs_native::paths::{display_leaf,on_disk_leaf}` (the seam for
-  per-platform name presentation; see ARCHITECTURE.md "Raw name vs. display
-  name"). Remaining per-platform quirks to consider on the same seam, none
-  implemented yet:
-  - ✅ **Windows name validation**: shipped: `paths::validate_leaf` rejects
-    reserved device names (`CON`/`PRN`/`AUX`/`NUL`/`COM1`–`COM9`/`LPT1`–`LPT9`,
-    with or without an extension), reserved characters (`<>:"|?*` + separators +
-    controls), and trailing dot/space, with a user-facing message. Wired into
-    the shared New Folder / rename modal (`open_named_prompt`), which keeps the
-    dialog open on rejection so the name can be fixed; the favorite-*label*
-    rename opts out (not a filesystem name). Identity/no-op off Windows.
-  - macOS: HFS NFD normalization is cosmetic and renders fine today; revisit
-    only if a normalization-sensitive comparison surfaces.
-  - Optional: an informational (not red-hazard) note in Get Info when a name
-    contains a `/`-shown-as-`:`, so the on-disk reality is discoverable.
-- **Windows WSL Linux locations**
-  ([WIN-017](docs/features/WINDOWS_COMPATIBILITY_PLAN.md#win-017---wsl-distributions-as-path-backed-linux-locations-p1)):
-  adapt the pinned Ferail-Win32 behavior behind the shared platform-location
-  seam. Discover installed distributions off-thread, show stopped ones without
-  starting them, activate only on explicit navigation, then hand
-  `\\wsl.localhost\<distro>` to the normal compact `NativeFs` surface. Add
-  bounded/cancellable symlink resolution, checked `/mnt/<drive>` conversion,
-  capability-correct trash/open/reveal semantics and privacy-redacted
-  diagnostics. **In progress:** the neutral store, cached Linux section,
-  fake-provider tests, Win32 registry discovery, bounded explicit activation,
-  UNC parsing, explicit and failed-navigation symlink resolution,
-  `/mnt/<drive>` conversion and fail-closed WSL Recycle Bin behavior are
-  implemented in the working tree. Finish and polish
-  them through WTEST-130–139 on Windows; restore WSL folder totals only after
-  the recursive size worker has a viewport/on-demand mode. Third-party
-  shell-extension context-menu verbs (`IContextMenu`) already ship on explicit
-  demand through the isolated broker; the old selection-time prefetch remains
-  deliberately removed.
-- **Windows release-readiness follow-ups** (from the 2026-07-31 pass:
-  windows-port.md §2.2; the build fix, screenshot fallback, clippy and
-  packaging all shipped there):
-  - **Restore a build gate for Windows.** ✅ Done 2026-08-07:
-    `.github/workflows/ci.yml` restores the `6d85def` workflow in full: the
-    repo went public the same day, so all three platform legs
-    (windows/ubuntu/macos over the shell crates + ferail-fs-native + meta +
-    archive) and the windows ferail-gpui clippy job run on every push.
-    Docs-only pushes skip CI; superseded runs are cancelled.
-  - **Port window docking to Windows** (docs/features/DOCK.md). ✅ The sibling
-    half of this shipped: the viewer's **Stay on Top** was dead on Windows
-    because `content_ns_view` only matched `RawWindowHandle::AppKit`; it now
-    also matches `RawWindowHandle::Win32` and `set_window_floating` is a real
-    `SetWindowPos(HWND_TOPMOST/HWND_NOTOPMOST)`. The dock itself is **not**
-    stub-filling: `dock.rs` computes frames in macOS **global screen space**
-    (origin bottom-left, y-up), so a Windows arm has to map that onto Win32's
-    top-left, y-down monitor rects: `MonitorFromWindow`/`GetMonitorInfoW` for
-    `screen_visible_frame_for_window`, `GetCursorPos` for
-    `current_mouse_location`, `SetWindowPos` for the frame, and a docked
-    drawer (edge-slam reveal, auto-hide) cannot be verified headlessly, so it
-    needs interactive testing on a real desktop. `Shell::window_ns_view` must
-    stay AppKit-only until then: returning `Some(hwnd)` would let `set_dock`
-    run against no-op primitives and show a docked state for a window that
-    never moved. No dead UI in the meantime: the toolbar control is already
-    `cfg!(target_os = "macos")`-gated and the actions are unbound elsewhere.
-  - **Recycle Bin sidebar row.** macOS has a Trash location; Windows has none.
-    It is a shell *virtual* folder (`FOLDERID_RecycleBinFolder`, CLSID
-    `{645FF040-…}`), not a filesystem path, so it needs shell-namespace browsing
-    rather than a `well_known_locations_for` entry, navigating to the raw
-    `C:\$Recycle.Bin\<SID>` would show the `$R*`/`$I*` internals, which is worse
-    than nothing. Pairs with the existing Trash-browsing-view item under File
-    Ops.
-  - **~50 px empty band under the title bar** that macOS does not have (compare
-    `screenshots/win-baseline.png` against `docs/images/tour-shell.png`).
-    Probably `TitleBar::title_bar_options()` reserving the macOS traffic-light
-    strip on top of the Windows caption area: windows-port.md §5 predicted
-    exactly this. Cosmetic, but it is the first thing a Windows user sees.
-  - **Settings offers a "Spotlight" search engine on Windows**, where
-    `resolve_spotlight` is macOS-only so it can never engage. Either hide the
-    option off macOS or implement a real indexed backend (Windows Search
-    `ISearchQueryHelper`, or the NTFS MFT+USN engine already listed under
-    Search).
-  - **Obtain an Authenticode certificate.** `scripts/package-win.ps1` wires
-    signing end to end but a stock run is unsigned, and SmartScreen warns on
-    every download of an unsigned binary. Reputation accrues *to the
-    certificate*, so signing from the first public release matters more than
-    signing later. This is the Windows analogue of the Developer ID +
-    notarization line under Packaging & Polish.
-- **Resilient file-op coping: Windows-native primitives.** ✅ *Shipped on
-  `windows-parity`* (`ferail-shell-win32/src/elevation.rs`): `run_elevated_self`
-  via `ShellExecuteExW` verb `"runas"` (UAC) + wait-for-exit powers **Retry as
-  administrator**; `processes_using` via the **Restart Manager**
-  (`RmStartSession`/`RmRegisterResources`/`RmGetList`) names the locking process;
-  `force_close_processes` via `RmShutdown` (+ `TerminateProcess` fallback) powers
-  the **"What's using it?" → "Close & retry"** toast flow. `elevation_available()`
-  / `lock_diagnostics_available()` return true on Windows; verified end-to-end
-  against a real exclusive lock. **Linux follow-up still open:** `pkexec` re-exec
-  for `run_elevated_self` + `/proc/*/fd` scan for `processes_using`.
-- Linux port ([docs/features/linux-port.md](docs/features/linux-port.md)):
-  `ferail-gpui` now **builds and runs** on Linux (verified on WSL2 / Ubuntu
-  24.04 under WSLg + lavapipe: launches a Wayland window, opens its XDG SQLite
-  metadata DB, enumerates folders, runs prefetch + folder-sizes). Done and
-  tested: volumes (`/proc/self/mountinfo` + `statvfs`), trash (freedesktop
-  spec), download-provenance / MoTW (`user.xdg.origin.url`), plain-text
-  clipboard (`arboard`), and Open With (freedesktop MIME + `.desktop` scan).
-  Also done: **file-type icons** (`fetch_icon_rgba`: shared-mime-info MIME
-  detection → freedesktop icon-theme lookup → PNG/SVG rasterization via
-  `image`/`resvg`; cached per-kind, off the render path). Verified in WSL2 by
-  dumping real theme glyphs to PNG (a document glyph for text, a distinct
-  folder glyph) and by a smoke test; type-specific glyphs resolve where the
-  theme ships them (WSL2's stripped Adwaita falls to the generic, same as
-  Nautilus there). Also done: **thumbnails** (`fetch_quick_look_thumbnail`:
-  shared freedesktop cache keyed by `md5(file-uri)`, `gdk-pixbuf-thumbnailer`
-  generation on miss/stale; images in v1, video/PDF via totem/evince/Tumbler as
-  a follow-up). Remaining shell stubs to fill with real XDG portal / freedesktop
-  work: the file-URL clipboard (`text/uri-list`), and the dark/volume/power
-  observers (D-Bus / udisks2 / logind). These need a real desktop (mounts,
-  session events) to verify meaningfully: best paired with the next item.
-  **Ubuntu/Debian packaging works (2026-08-08):**
-  `resources/linux/ferail.desktop`, cargo-deb metadata
-  (`[package.metadata.deb]` in ferail-gpui's Cargo.toml), and
-  `WindowOptions::app_id = "ferail"` on every window
-  (`base_window_options()`). Validated in an arm64 Ubuntu 24.04 QEMU VM:
-  builds, installs, `ferail doctor` clean, GUI launches under Xvfb with
-  `WM_CLASS = ferail` (details + build-host gotchas in
-  [docs/features/linux-port.md](docs/features/linux-port.md) § packaging).
-  The **amd64 + arm64** builds are CI's job: `.github/workflows/deb.yml`
-  builds each in an ubuntu:22.04 container (pins the glibc floor), installs
-  the result, smoke-tests `ferail doctor`, and on `v*` tags attaches both
-  packages to the tag's GitHub release (manual dispatch leaves them as run
-  artifacts). Remaining: taskbar-identity check on a real desktop session,
-  and later `Exec=ferail %U` + `MimeType=inode/directory;` once the binary
-  accepts a directory argument (today a bare path exits as an unknown
-  subcommand).
-- Linux headless screenshots: implement `render_to_image` in `gpui_wgpu`
-  (offscreen render target + `copy_texture_to_buffer` readback, BGRA/RGBA) and
-  wire it through both `gpui_linux` window backends (Wayland + X11), mirroring
-  the `gpui_windows` D3D11 patch. Unlocks `--screenshot` on Linux so the GUI can
-  be visually verified the same way as macOS/Windows.
-- Windows power follow-ups ([docs/features/POWER.md](docs/features/POWER.md)):
-  display on/off events (`PBT_POWERSETTINGCHANGE` +
+- **Filename display-convention parity.** macOS landed: an on-disk `:` shows as
+  `/` and a typed `/` stores `:`, matching Finder, through
+  `ferail_fs_native::paths::{display_leaf,on_disk_leaf}`. Remaining on the same
+  seam: macOS HFS NFD normalization is cosmetic and renders fine today, so
+  revisit only if a normalization-sensitive comparison surfaces; and
+  optionally an informational note in Get Info when a name contains a
+  `/`-shown-as-`:`, so the on-disk reality is discoverable.
+- **Windows Shell namespace breadth** (WIN-013). This PC, the Recycle Bin and
+  connected portable devices enumerate through the provider. Still missing: a
+  **Desktop folder** Location, OneDrive and other provider roots, and treating
+  removable or disconnected provider identity as ephemeral with a clear
+  reconnect state.
+- **A Recycle Bin sidebar row on Windows.** macOS has a Trash location; Windows
+  has none. It is a shell *virtual* folder (`FOLDERID_RecycleBinFolder`, CLSID
+  `{645FF040-…}`), not a filesystem path, so it needs shell-namespace browsing
+  rather than a `well_known_locations_for` entry: navigating to the raw
+  `C:\$Recycle.Bin\<SID>` would show the `$R*` and `$I*` internals, which is
+  worse than nothing.
+- **Port window docking to Windows** ([DOCK.md](docs/features/DOCK.md)).
+  `dock.rs` computes frames in macOS global screen space (origin bottom-left,
+  y-up), so a Windows arm has to map that onto Win32's top-left, y-down monitor
+  rects: `MonitorFromWindow` and `GetMonitorInfoW` for
+  `screen_visible_frame_for_window`, `GetCursorPos` for
+  `current_mouse_location`, `SetWindowPos` for the frame. A docked drawer with
+  edge-slam reveal and auto-hide cannot be verified headlessly, so it needs
+  interactive testing on a real desktop. `Shell::window_ns_view` must stay
+  AppKit-only until then: returning `Some(hwnd)` would let `set_dock` run
+  against no-op primitives and show a docked state for a window that never
+  moved. The toolbar control is already `cfg!(target_os = "macos")`-gated, so
+  there is no dead UI meanwhile.
+- **A ~50 px empty band under the Windows title bar** that macOS does not have
+  (compare `screenshots/win-baseline.png` against `docs/images/tour-shell.png`).
+  Probably `TitleBar::title_bar_options()` reserving the macOS traffic-light
+  strip on top of the Windows caption area, exactly as windows-port.md §5
+  predicted. Cosmetic, but it is the first thing a Windows user sees.
+- **Windows power follow-ups** ([POWER.md](docs/features/POWER.md)): display
+  on/off events (`PBT_POWERSETTINGCHANGE` plus
   `RegisterPowerSettingNotification` for `GUID_CONSOLE_DISPLAY_STATE`), and
   switching the idle-sleep guard from per-thread `SetThreadExecutionState` to
   the process-wide Power Request API if a transfer ever asserts from a
   thread-pool worker.
-- Publish the gpui fork carrying the `gpui_windows::render_to_image` patch and
-  point the `[patch]` block at `git = "<fork-url>", rev = "..."` so the Windows
-  screenshot harness builds identically to macOS (today a local-path override).
-
-## Open-Source Release
-
-The repo is prepared for a **source-first** public release (dual MIT/Apache;
-README, CONTRIBUTING, SECURITY, THIRD-PARTY-NOTICES in place; private checkout
-paths scrubbed). Source-first is unblocked. Remaining:
-
-- **`cargo-deny` for license / advisory drift.** No `deny.toml` today. Add one
-  so a future `gpui` rev bump that changes the transitive license surface is
-  caught mechanically (see the GPL note below).
-
-### Before distributing a prebuilt binary
-
-Publishing *source* is unaffected by the transitive GPL chain; a redistributable
-*binary* is not. Do these only when building a download:
-
-- ✅ **Sever the GPL-3.0 dependency edge**: shipped in 0.2.2 via a vendored
-  `sum_tree` fork; **superseded 2026-08-08** by
-  [`vendor/ztracing`](vendor/ztracing/README.md), a clean-room MIT/Apache
-  no-op stub patched over the zed source, after gpui gained a *direct*
-  `ztracing` dependency (zed 00cba838a) that the sum_tree fork could no longer
-  sever. The stub also keeps GPL `zlog`/`ztracing_macro` out and needs no
-  re-sync on gpui bumps. `cargo tree -p ferail-gpui -i ztracing` must print
-  only the vendor path crate; `-i zlog` must print nothing.
-  - ⚠️ **Lesson worth keeping: the lockfile lied.** Before this, `Cargo.lock`
-    had been generated on a machine with the AROS `[patch]` active, and the
-    `../zed-aros` fork it pointed at happens to drop `ztracing`: so the
-    committed lock contained no `ztracing`, and THIRD-PARTY-NOTICES.md
-    confidently (and wrongly) recorded the edge as already fixed upstream. It
-    never was: upstream `sum_tree` at the pinned rev still carries
-    `ztracing.workspace = true`. **Do not audit the licence surface from the
-    lockfile alone**: resolve the graph.
-  - Still worth doing eventually: one **published** zed fork referenced by
-    `git =` URL, carrying both this severance and the
-    `gpui_windows::render_to_image` patch (see the item at the end of
-    Cross-Platform), which would retire both `vendor/sum-tree` and the local
-    screenshot patch. Upstream fix tracked at
-    <https://github.com/zed-industries/zed/issues/55470> (acknowledged but stuck
-    in legal: do **not** assume it lands on a timeline).
-  Context in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-- ✅ macOS code signing / notarization / `.dmg`: **shipped in 0.2.2** via
-  `scripts/package-mac.sh` (Developer ID + hardened runtime, notarytool
-  profile `D4Mac`, stapled; the released dmg passes
-  `spctl --assess` as "Notarized Developer ID"). Still open: a **macOS
-  release job in CI**: needs the signing cert (.p12) and a notary API key
-  as encrypted repo secrets; until then a mac release is one local
-  `scripts/package-mac.sh` run + `gh release upload`. Linux .debs already
-  release from CI on `v*` tags (`.github/workflows/deb.yml`); Windows zip
-  remains a local `scripts/package-win.ps1` run (and unsigned: see the
-  Authenticode item under Cross-Platform).
+- **Linux shell stubs** ([linux-port.md](docs/features/linux-port.md)): the
+  file-URL clipboard (`text/uri-list`), and the dark, volume and power
+  observers (D-Bus, udisks2, logind). These need a real desktop with mounts and
+  session events to verify meaningfully. Also open: `pkexec` re-exec for
+  `run_elevated_self` and a `/proc/*/fd` scan for `processes_using`, the Linux
+  half of the resilient file-op coping that ships on Windows; a taskbar-identity
+  check on a real desktop session; and video and PDF thumbnails through totem,
+  evince or Tumbler beyond the image support that ships.
+- **Linux headless screenshots**: implement `render_to_image` in `gpui_wgpu`
+  (offscreen render target plus `copy_texture_to_buffer` readback, BGRA/RGBA)
+  and wire it through both `gpui_linux` window backends, Wayland and X11,
+  mirroring the `gpui_windows` D3D11 patch. This unlocks `--screenshot` on
+  Linux so the GUI can be verified the way macOS and Windows are.
 
 ## Cleanup
 
 - Keep `cargo clippy --workspace --all-targets` at zero warnings. `multi_table/`
   carries a module-level `#![allow]` for style lints by policy (pinned
-  gpui-component fork); don't extend those allows elsewhere.
+  gpui-component fork); do not extend those allows elsewhere.
 - Remove stale references to old specs or deleted migration ledgers as code and
   docs settle.

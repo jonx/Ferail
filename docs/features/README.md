@@ -82,8 +82,8 @@ keep the UI off the I/O path.
   batched-transfer queue it makes possible.
 - [VIEWER.md](VIEWER.md): viewer window: big preview, slideshow, sticky
   zoom across entries.
-- [VIDEO-MPV.md](VIDEO-MPV.md): replacing the mpv video backend with libmpv,
-  and the N-layer transparent-colour (chroma-key) compositor it enables.
+- [VIDEO-MPV.md](VIDEO-MPV.md): the libmpv video backend, live grading, and
+  the transparent-colour (chroma-key) stacking the window server composites.
 - [FILE_OPS.md](FILE_OPS.md): copy/paste/move engine: progress,
   cancellation, collision policy, clipboard verbs, and what the Trash can do.
 - [ARCHIVES.md](ARCHIVES.md): browsing inside an archive without extracting,
