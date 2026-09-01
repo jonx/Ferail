@@ -1061,6 +1061,9 @@ struct ShellArgs {
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
+    /// Only read with the harness feature; the packaged build compiles this
+    /// module with it off and would warn on a field nothing looks at.
+    #[cfg_attr(not(feature = "screenshot-harness"), allow(dead_code))]
     platform_namespace: bool,
     scroll_wheel: Option<i32>,
     context_menu_row: Option<usize>,
@@ -1342,6 +1345,11 @@ impl ShellArgs {
                 });
             });
         }
+        // Gated: the demo provider only exists with the harness feature, and
+        // a packaged build compiles this module with the feature off. Without
+        // this the release build fails on a symbol CI never looks for, since
+        // CI builds with default features and the packaging script does not.
+        #[cfg(feature = "screenshot-harness")]
         if self.platform_namespace {
             // After the boot listing has settled, not before: opening the
             // surface first only to have the startup load replace it is
