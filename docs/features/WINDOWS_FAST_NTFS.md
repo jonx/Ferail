@@ -9,6 +9,23 @@ during a Ferail session so repeated scans do not repeatedly prompt for UAC.
 ← Back to [feature notes](README.md) · [Disk Usage](DISK_USAGE.md) ·
 [Windows handover](../testing/WINDOWS_HANDOVER.md)
 
+<!-- toc depth=2 -->
+
+- [Status and non-goals](#status-and-non-goals)
+- [User contract](#user-contract)
+- [Interim helper attestation](#interim-helper-attestation)
+- [Architecture boundary](#architecture-boundary)
+- [Probe and elevation sequence](#probe-and-elevation-sequence)
+- [Private protocol](#private-protocol)
+- [Raw reader and parser](#raw-reader-and-parser)
+- [Compact tree and exact semantics](#compact-tree-and-exact-semantics)
+- [Failure and fallback rules](#failure-and-fallback-rules)
+- [Isolated implementation sequence](#isolated-implementation-sequence)
+- [Test and release gates](#test-and-release-gates)
+- [Primary references](#primary-references)
+
+<!-- /toc -->
+
 ## Status and non-goals
 
 Implemented on Windows as the isolated commit series `d0c0a0b` through

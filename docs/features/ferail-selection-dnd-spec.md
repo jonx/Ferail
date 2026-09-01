@@ -1,10 +1,25 @@
 # Ferail - Node Selection & Drag-and-Drop Specification
 
-Behavioral spec for selecting filesystem nodes and for drag-and-drop, written against the constraints in `ARCHITECTURE.md` and `STREAMING_ENUMERATION.md`.
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
+Behavioral spec for selecting filesystem nodes and for drag-and-drop, written against the constraints in `ARCHITECTURE.md` and [STREAMING_ENUMERATION.md](STREAMING_ENUMERATION.md).
 
 The governing rule from the architecture doc applies to everything here: **the UI must never stop.** Selection, hit testing, hover, and drag are explicitly named as hot-path interactions that must not perform I/O. This spec is written so that every selection and drag operation reads only cached in-memory state and enqueues anything expensive through the scheduler.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [1. Scope and vocabulary](#1-scope-and-vocabulary)
+- [2. Selection model](#2-selection-model)
+- [3. Drag and drop](#3-drag-and-drop)
+- [4. Interaction with streaming enumeration](#4-interaction-with-streaming-enumeration)
+- [5. Component mapping (gpui-component)](#5-component-mapping-gpui-component)
+- [6. Implementation order](#6-implementation-order)
+- [7. Acceptance checklist](#7-acceptance-checklist)
+
+<!-- /toc -->
 
 ## 1. Scope and vocabulary
 

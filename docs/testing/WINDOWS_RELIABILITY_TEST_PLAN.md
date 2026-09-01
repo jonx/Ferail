@@ -4,6 +4,21 @@
 [Windows handover](WINDOWS_HANDOVER.md) ·
 [Windows port notes](../features/windows-port.md) · [Open work](../../TODO.md)
 
+<!-- toc depth=2 -->
+
+- [Purpose](#purpose)
+- [1. What constitutes a valid run](#1-what-constitutes-a-valid-run)
+- [2. Required Windows environments](#2-required-windows-environments)
+- [3. Test corpora](#3-test-corpora)
+- [4. Baseline and performance measurements](#4-baseline-and-performance-measurements)
+- [5. Build, automated, and package gate](#5-build-automated-and-package-gate)
+- [6. Exact interactive cases](#6-exact-interactive-cases)
+- [7. Cross-platform regression after the Windows pass](#7-cross-platform-regression-after-the-windows-pass)
+- [8. Test cadence](#8-test-cadence)
+- [9. Sign-off record](#9-sign-off-record)
+
+<!-- /toc -->
+
 ## Purpose
 
 This is the reproducible acceptance procedure for the Windows corrections
@@ -30,7 +45,7 @@ On 2026-08-25 the user reported successful real-Windows use of v0.6.8 for the
 10,000-image preview flow, multi-selection, roughly four-million-row Flat View,
 default Open, Reveal in Explorer, the explicit native Windows context menu and
 the portable package in a clean Windows Sandbox. This acceptance is recorded
-in `WINDOWS_HANDOVER.md` and is the baseline for continued work.
+in [WINDOWS_HANDOVER.md](WINDOWS_HANDOVER.md) and is the baseline for continued work.
 
 The report does not by itself claim every numbered stress/adversarial subcase
 below. Leave an exact case unchecked until its defining conditions and evidence

@@ -1,13 +1,32 @@
 # Ferail TODO
 
-← [Project README](README.md) · [Architecture](docs/ARCHITECTURE.md) ·
-[Feature notes](docs/features/README.md)
+← [Project README](README.md) · [Documentation map](docs/README.md) ·
+[Architecture](docs/ARCHITECTURE.md) · [Status](docs/STATUS.md)
 
 This is the single list of unfinished work, grouped by area and ordered by
-priority. Keep architecture and current program rules in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); keep deep feature notes in
-[docs/features/](docs/features/README.md). When an item ships, delete it here
-and let git history plus release notes carry the record.
+priority. What is *done* is in [docs/STATUS.md](docs/STATUS.md); how a feature
+is built is in [docs/features/](docs/features/README.md); the program rules are
+in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). When an item ships, delete it
+here and let [CHANGELOG.md](CHANGELOG.md) and git history carry the record.
+
+<!-- toc depth=2 -->
+
+- [Highest Priority - finish in-flight features](#highest-priority---finish-in-flight-features)
+- [High-Value Features - mostly wiring over subsystems we already own](#high-value-features---mostly-wiring-over-subsystems-we-already-own)
+- [File List, Sidebar & Navigation](#file-list-sidebar--navigation)
+- [File Ops, Trash & Drag](#file-ops-trash--drag)
+- [Search](#search)
+- [Preview, Get Info & Viewer](#preview-get-info--viewer)
+- [Metadata & Intelligence](#metadata--intelligence)
+- [Responsiveness & Data Architecture](#responsiveness--data-architecture)
+- [Settings, Commands & Accessibility](#settings-commands--accessibility)
+- [CLI & Automation](#cli--automation)
+- [Packaging & Polish](#packaging--polish)
+- [Cross-Platform](#cross-platform)
+- [Open-Source Release](#open-source-release)
+- [Cleanup](#cleanup)
+
+<!-- /toc -->
 
 ## Highest Priority - finish in-flight features
 
@@ -186,7 +205,7 @@ relative to the daily value. Ordered by bang-for-buck.
   twelve `OpenWithSlot` actions don't extend). Phase 1 is the three cheap gaps;
   custom tools follow.
 - **User-customizable context menus: hide the entries you never use**
-  ([docs/features/CONTEXT_MENU.md](docs/features/CONTEXT_MENU.md#customizing-which-entries-appear-planned)).
+  ([docs/features/CONTEXT_MENU.md](docs/features/CONTEXT_MENU.md#customizing-which-entries-appear)).
   The table header already does exactly this for columns (✓/blank closure
   items, persisted, with Reset), and `split_persisted_columns` supplies the
   storage rules to copy: unknown keys ignored, unmentioned entries default to
@@ -636,7 +655,7 @@ fallback). Remaining is the UX the system explorers have and we don't:
   - Optional: an informational (not red-hazard) note in Get Info when a name
     contains a `/`-shown-as-`:`, so the on-disk reality is discoverable.
 - **Windows WSL Linux locations**
-  ([WIN-017](docs/features/WINDOWS_COMPATIBILITY_PLAN.md#win-017--wsl-distributions-as-path-backed-linux-locations-p1)):
+  ([WIN-017](docs/features/WINDOWS_COMPATIBILITY_PLAN.md#win-017---wsl-distributions-as-path-backed-linux-locations-p1)):
   adapt the pinned Ferail-Win32 behavior behind the shared platform-location
   seam. Discover installed distributions off-thread, show stopped ones without
   starting them, activate only on explicit navigation, then hand

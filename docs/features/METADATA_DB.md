@@ -1,5 +1,8 @@
 # Metadata DB
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Persistent SQLite-backed substrate for everything Ferail has been
 keeping in-memory: Ant Trail heat, magic cache, quarantine cache,
 window/layout/tab geometry, pinned items, file-hash funnel for the
@@ -7,7 +10,20 @@ duplicate finder. Ported from the Ferail-Win32 predecessor's
 `crates/ferail-core/src/metadata/{db,cache}.rs`;
 schema reused with macOS-flavored adjustments.
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [Crate](#crate)
+- [Schema](#schema)
+- [Lifecycle](#lifecycle)
+- [How to add a new persistent field](#how-to-add-a-new-persistent-field)
+- [CLI: `--reset-db <scope>`](#cli---reset-db-)
+- [Differences from Ferail-Win32](#differences-from-ferail-win32)
+- [Open items](#open-items)
+
+<!-- /toc -->
+
+## What is built
 
 Done (iter-8.0 → 8.5). All five sub-iters shipped:
 

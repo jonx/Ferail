@@ -1,8 +1,30 @@
 # Ferail - Favorites Feature Specification
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 A complete behavioral spec for the Favorites section of the sidebar. Written to be implemented against directly.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [1. Concept and scope](#1-concept-and-scope)
+- [2. Adding a favorite](#2-adding-a-favorite)
+- [3. Removing a favorite](#3-removing-a-favorite)
+- [4. Reordering](#4-reordering)
+- [5. The "underline if also in Favorites" behavior](#5-the-underline-if-also-in-favorites-behavior)
+- [6. Renaming a favorite](#6-renaming-a-favorite)
+- [7. Icons](#7-icons)
+- [8. Unavailable and broken favorites](#8-unavailable-and-broken-favorites)
+- [9. Saved searches and tags as favorites (if applicable)](#9-saved-searches-and-tags-as-favorites-if-applicable)
+- [10. Persistence](#10-persistence)
+- [11. Interaction details and edge cases](#11-interaction-details-and-edge-cases)
+- [12. Component mapping (gpui-component)](#12-component-mapping-gpui-component)
+- [13. Implementation order](#13-implementation-order)
+- [14. Acceptance checklist](#14-acceptance-checklist)
+
+<!-- /toc -->
 
 ## 1. Concept and scope
 

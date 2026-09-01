@@ -86,7 +86,7 @@ exercise:
    button;
 4. ordinary close and Quit with a focused input, Get Info window, and context
    menu open under the dev leak detector;
-5. the existing P0 Windows plan in `docs/testing/WINDOWS_HANDOVER.md`.
+5. the existing P0 Windows plan in [docs/testing/WINDOWS_HANDOVER.md](../testing/WINDOWS_HANDOVER.md).
 
 ### AROS
 

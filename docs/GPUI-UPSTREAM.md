@@ -12,6 +12,24 @@ to remove the need.
 
 ---
 
+<!-- toc depth=2 -->
+
+- [1. gpui-component pins `gpui` to an explicit rev - consumers must mirror it](#1-gpui-component-pins-gpui-to-an-explicit-rev---consumers-must-mirror-it)
+- [2. Table events don't carry click `Modifiers` - forced a full table fork](#2-table-events-dont-carry-click-modifiers---forced-a-full-table-fork)
+- [3. gpui `flex_grow()` / `flex_shrink()` became 1-arg (silent churn)](#3-gpui-flexgrow--flexshrink-became-1-arg-silent-churn)
+- [4. `context_menu` keeps open/close state private - no callback](#4-contextmenu-keeps-openclose-state-private---no-callback)
+- [4b. Async context-menu contents - RESOLVED for Ferail](#4b-async-context-menu-contents---resolved-for-ferail)
+- [5. `img` can't be rotated/transformed (only `svg` can)](#5-img-cant-be-rotatedtransformed-only-svg-can)
+- [6. TextView preview scroll cluster - bounded-box vs `scrollable(true)`](#6-textview-preview-scroll-cluster---bounded-box-vs-scrollabletrue)
+- [7. Windows `Window::render_to_image` - RESOLVED upstream](#7-windows-windowrendertoimage---resolved-upstream)
+- [8. gpui grew a *direct* GPL-3.0 `ztracing` dependency](#8-gpui-grew-a-direct-gpl-30-ztracing-dependency)
+- [9. External file drag-out finally exists - via `external_drag_payload` (zed #58161)](#9-external-file-drag-out-finally-exists---via-externaldragpayload-zed-58161)
+- [10. Drag-out operation mask is hardcoded to Copy - no move, no modifiers](#10-drag-out-operation-mask-is-hardcoded-to-copy---no-move-no-modifiers)
+- [11. Native file promises are rejected by GPUI drop destinations](#11-native-file-promises-are-rejected-by-gpui-drop-destinations)
+- [12. gpui-component `Input` paint leaked strong handles - upstream shape fixed, teardown containment retained](#12-gpui-component-input-paint-leaked-strong-handles---upstream-shape-fixed-teardown-containment-retained)
+
+<!-- /toc -->
+
 ## 1. gpui-component pins `gpui` to an explicit rev - consumers must mirror it
 
 **Hit during:** bump from `ba44512` → `c112e7b` (2026-06-16).

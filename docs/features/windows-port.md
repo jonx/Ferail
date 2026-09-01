@@ -1,5 +1,8 @@
 # Ferail - Windows port handoff
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 A self-contained orientation for picking up the Windows port from a Windows machine. Assumes you've worked on the macOS side recently: if not, read [docs/ARCHITECTURE.md](../ARCHITECTURE.md) first; the prime directives and crate boundaries described there apply unchanged on Windows.
 
 This doc covers:
@@ -14,6 +17,24 @@ This doc covers:
 8. Useful references.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [1. What Ferail is](#1-what-ferail-is)
+- [2.2 Status update - release readiness (2026-07-31)](#22-status-update---release-readiness-2026-07-31)
+- [2.1 Status update - parity pass (2026-07-14)](#21-status-update---parity-pass-2026-07-14)
+- [2.0 Status update - `windows-parity` branch (2026-06-23)](#20-status-update---windows-parity-branch-2026-06-23)
+- [2. State of the Windows port (as of this writing)](#2-state-of-the-windows-port-as-of-this-writing)
+- [3. Workspace map](#3-workspace-map)
+- [4. The `platform_shell` indirection](#4-the-platformshell-indirection)
+- [5. macOS assumptions in `ferail-gpui` that need cfg-gating](#5-macos-assumptions-in-ferail-gpui-that-need-cfg-gating)
+- [6. Win32 implementation gaps](#6-win32-implementation-gaps)
+- [6b. Parity with Ferail-Win32 - capability diff](#6b-parity-with-ferail-win32---capability-diff)
+- [7. Day-one steps on a Windows machine](#7-day-one-steps-on-a-windows-machine)
+- [8. Working on Windows without breaking Mac](#8-working-on-windows-without-breaking-mac)
+- [9. References](#9-references)
+
+<!-- /toc -->
 
 ## 1. What Ferail is
 
@@ -440,7 +461,7 @@ In rough priority order. The first three were the §6 stubs above and are now al
 2. ~~**Volume device-change observer (`WM_DEVICECHANGE`)**~~, **shipped 2026-06-20** (§6 real table). Note the watch needed a hidden top-level window, *not* the theme observer's message-only one, message-only windows don't get broadcasts.
 3. ~~**Inline-rename / new-folder text input**~~: **shipped 2026-06-20.** Solved as the shared cross-platform `open_text_prompt` gpui modal (`ferail-gpui`) rather than Win32; rename and new-folder both route through it (focus + select-on-open), and the dead native `prompt_for_text` stub was removed from both shell crates.
 4. ~~**Third-party shell-extension context-menu verbs**~~: **shipped on explicit demand.** Ferail keeps its instant internal menu and opens the real Windows menu through **More options from Windows…**, Shift+right-click or Shift+F10 in an isolated broker. The predecessor remains a behavioral reference; its selection-time preload did not return.
-5. **WSL integration**: *implemented in source under [WIN-017](WINDOWS_COMPATIBILITY_PLAN.md#win-017--wsl-distributions-as-path-backed-linux-locations-p1), pending WTEST-130–139 on real Windows.* Ferail-Win32's `wsl.rs` (~480 lines) remains the behavioral reference for per-user registry distribution discovery, `\\wsl$\` / `\\wsl.localhost\` parsing, explicit on-demand start and `wsl.exe readlink` resolution. The adapted implementation does not copy its UI-adjacent blocking calls, MSI-only availability probe, broad WSL metadata skip or incomplete `/mnt/<drive>` handling: it uses a neutral cached Linux-location state, a bounded/cancellable Windows provider, checked path conversion and a `NativeFs` handoff while excluding registry base paths from diagnostics.
+5. **WSL integration**: *implemented in source under [WIN-017](WINDOWS_COMPATIBILITY_PLAN.md#win-017---wsl-distributions-as-path-backed-linux-locations-p1), pending WTEST-130–139 on real Windows.* Ferail-Win32's `wsl.rs` (~480 lines) remains the behavioral reference for per-user registry distribution discovery, `\\wsl$\` / `\\wsl.localhost\` parsing, explicit on-demand start and `wsl.exe readlink` resolution. The adapted implementation does not copy its UI-adjacent blocking calls, MSI-only availability probe, broad WSL metadata skip or incomplete `/mnt/<drive>` handling: it uses a neutral cached Linux-location state, a bounded/cancellable Windows provider, checked path conversion and a `NativeFs` handoff while excluding registry base paths from diagnostics.
 
 ### C. Optional / lessons-only
 

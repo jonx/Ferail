@@ -9,6 +9,22 @@ has shipped; Phases 1–4 are the work this note scopes.
 
 ---
 
+<!-- toc depth=2 -->
+
+- [1. Goal and scope](#1-goal-and-scope)
+- [2. Current state (what exists today)](#2-current-state-what-exists-today)
+- [3. What gpui-component already provides (verified)](#3-what-gpui-component-already-provides-verified)
+- [4. Design principles / constraints](#4-design-principles--constraints)
+- [5. Data model & persistence](#5-data-model--persistence)
+- [6. Phased plan](#6-phased-plan)
+- [7. Settings UX (Appearance page, end state)](#7-settings-ux-appearance-page-end-state)
+- [8. Integration points (files)](#8-integration-points-files)
+- [9. Open questions (resolve before Phase 1 build)](#9-open-questions-resolve-before-phase-1-build)
+- [10. Risks & trade-offs](#10-risks--trade-offs)
+- [11. Testing & verification](#11-testing--verification)
+
+<!-- /toc -->
+
 ## 1. Goal and scope
 
 Let users change how Ferail looks without touching code:

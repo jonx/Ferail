@@ -1,12 +1,25 @@
 # Status Progress
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ferail presents background work through one process-wide task model. The
 status bar and the task popover both read the same `TaskRegistry`, so the small
 bottom strip and the detailed task list cannot disagree.
 
-## Status
+<!-- toc depth=2 -->
 
-Shipped with follow-ups.
+- [What is built](#what-is-built)
+- [Task Model](#task-model)
+- [Progress States](#progress-states)
+- [Surfaces](#surfaces)
+- [Integration Points](#integration-points)
+- [Rules](#rules)
+- [Remaining Work](#remaining-work)
+
+<!-- /toc -->
+
+## What is built
 
 Implemented:
 

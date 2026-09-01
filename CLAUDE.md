@@ -102,7 +102,7 @@ Every icon the app draws is cataloged in
 NSWorkspace / local Lucide-derived bundle / upstream `gpui-component-assets`),
 attribution, and the exact command/surface that uses it.
 
-**When you add, move, or repurpose any icon, update `docs/features/ICONS.md` in
+**When you add, move, or repurpose any icon, update [docs/features/ICONS.md](docs/features/ICONS.md) in
 the same change.** Specifically:
 
 - Do not reuse an existing command's glyph for a different command: the
@@ -176,13 +176,33 @@ counts: leave them to `humanize_bytes` and friends.
 
 ## Where To Document Work
 
-- Current architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Open work: [TODO.md](TODO.md)
-- Feature design notes: [docs/features](docs/features)
-- What changed, for users: [CHANGELOG.md](CHANGELOG.md) (see below)
+The full rule set is [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md), and
+[docs/README.md](docs/README.md) is the map of every document. Four rules
+matter more than the rest:
 
-Do not add new root ledgers under `docs/`. If it is current structure, put it
-in Architecture. If it is not done, put it in TODO.
+1. **One home per fact.** Every other mention is a link.
+2. **Status lives only in [docs/STATUS.md](docs/STATUS.md).** Not in a feature
+   note, not in a README paragraph, not in a `## Status` section.
+3. **Write the finished state.** *Now*, *currently*, *still*, *no longer* and
+   *after the fix* belong in the decision log or a memo, not in a design
+   note.
+4. **Point-in-time documents go to `docs/memos/`** with a date, and are never
+   cited as a current statement about the app.
+
+| Kind | Home |
+| --- | --- |
+| Current architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| How a feature is built | [docs/features/](docs/features/README.md) |
+| Where the project is | [docs/STATUS.md](docs/STATUS.md) |
+| What is not done | [TODO.md](TODO.md) |
+| What changed, for users | [CHANGELOG.md](CHANGELOG.md) (see below) |
+| What was decided, and why | [NOTES.md](NOTES.md) |
+| A session, handover or checkpoint | `docs/memos/` |
+
+Do not add new root ledgers under `docs/`. Run
+`python3 scripts/check-docs.py` after any documentation change; it verifies
+links, anchors, tables of contents, `WIN-nnn` identifiers, navigation lines
+and index membership.
 
 ## Changelog
 
@@ -252,6 +272,8 @@ Before finishing code changes:
   `screenshots/` is gitignored scratch, any image a committed document
   references (README, docs/) must live in `docs/images/` instead, or it
   will be broken on GitHub.
+- Run `python3 scripts/check-docs.py` when the change touches any Markdown
+  file; `--write-toc` regenerates stale tables of contents.
 - Do not run whole-repo formatters casually; this repo may have local dirty
   work.
 - If the change touches icons, update

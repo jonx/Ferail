@@ -1,5 +1,8 @@
 # Building Ferail for AROS - the complete guide
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 How to go from five git checkouts to **Ferail running on AROS**, on an
 Apple Silicon Mac. This documents everything "in between": the AROS OS
 build, the cross-toolchain, the custom Rust std, the patched GPUI stack,
@@ -15,10 +18,26 @@ why).
 > **Dependency migration checkpoint (2026-08-28).** Desktop Ferail now uses
 > Zed `f66ed399` and gpui-component `e8f54eb`. The sibling AROS forks still
 > need to be rebased and revalidated before this recipe is current again; see
-> [the migration handover](../GPUI-MIGRATION-2026-08.md#aros). Do not treat a
+> [the migration handover](../memos/gpui-migration-2026-08.md#aros). Do not treat a
 > host macOS build as proof that the AROS source overrides still interoperate.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [0. What you end up with](#0-what-you-end-up-with)
+- [1. Host prerequisites](#1-host-prerequisites)
+- [2. Checkout layout (sibling paths are load-bearing)](#2-checkout-layout-sibling-paths-are-load-bearing)
+- [3. Build hosted AROS + its SDK (the big prerequisite)](#3-build-hosted-aros--its-sdk-the-big-prerequisite)
+- [4. The Rust side: custom std + target spec](#4-the-rust-side-custom-std--target-spec)
+- [5. The GPUI stack](#5-the-gpui-stack)
+- [6. Ferail itself (this repo, branch `main`)](#6-ferail-itself-this-repo-branch-main)
+- [7. Build → link → deploy → run](#7-build--link--deploy--run)
+- [8. Test suites](#8-test-suites)
+- [9. Troubleshooting (the ledger - every one of these actually happened)](#9-troubleshooting-the-ledger---every-one-of-these-actually-happened)
+- [10. Known limitations (2026-08-01)](#10-known-limitations-2026-08-01)
+
+<!-- /toc -->
 
 ## 0. What you end up with
 
@@ -279,7 +298,7 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
 | `errno`/`rustix`/`polling` fail to build ("target OS is not yet supported") | The async-io reactor is back in the graph. Ferail never calls it: gpui takes `http_client` with `default-features = false`, which drops `github_download` and util's smol half. Check that zed-aros still has that (root manifest note on `http_client`) and that no new crate pulls `smol`/`async-std` directly. Do **not** fix this by mirroring zed's ~35 vendored reactor crates. |
 | `[patch]` not applied: gpui resolves from github | `--config packaging/aros/aros-patches.toml` missing from the cargo invocation, or a sibling checkout is missing / on the wrong branch. Verify with `cargo tree -i gpui`: it must print a path, not a git URL. |
 | stacker `libc::mmap` / filetime `os::unix` errors | The AROS patch is not being used. With the AROS `--config`, `cargo tree -i stacker` must resolve to `zed-aros/vendor-aros/stacker` while the old fork still needs it; `filetime` must resolve to Ferail's `vendor/filetime`. Keep lock versions at stacker 0.1.23 / filetime 0.2.26 until the rebase proves otherwise. |
-| `tar` fails with 15 errors in `header.rs` | Same thing for `vendor/tar`: `cargo tree -i tar` must print the vendor path. See `vendor/tar/README.md`. |
+| `tar` fails with 15 errors in `header.rs` | Same thing for `vendor/tar`: `cargo tree -i tar` must print the vendor path. See [vendor/tar/README.md](../../vendor/tar/README.md). |
 | lzma-sys: `pthread_sigmask` undeclared | The AROS build tree predates the `pthread_sigmask` implementation. It was a stub: unimplemented, absent from `compiler/pthread/mmakefile.src`, undeclared in `pthread.h`: so liblzma could not compile. Rebuild the OS side: `make linklibs-pthread` in the configured tree. |
 | lzma-sys: `unresolved imports \`libc::c_char\`` | The vendored libc patch is inert. `cargo tree -i libc` (with the AROS `--config`) must print `zed-aros/vendor-aros/libc`; if it prints a registry version, re-pin: `cargo update -p libc --precise 0.2.186`. |
 | Link fails with undefined `aros_pipe_*` / `aros_proc_*` / `aros_sig_*` | `link-aros.sh` is missing a glue file from `aros-aarch64/hosted/rust`. That set grows as the std pal does: `aros_proc_glue.c` was added on 2026-08-01. Compare against the `.c` files in that directory. |

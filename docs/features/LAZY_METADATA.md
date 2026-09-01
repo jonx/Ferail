@@ -1,14 +1,15 @@
 # Lazy Metadata And Node Identity
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ferail keeps expensive metadata and filesystem identity below the render
 path. Paint reads cached display data; actions and workers resolve paths at
 explicit boundaries.
 
-## Status
+## What is built
 
-Shipped with follow-ups.
-
-The current implementation has:
+The implementation has:
 
 - A process-wide `NodeStore` in `ProcessState`.
 - Stable `NodeId` values for filesystem paths and core virtual nodes.

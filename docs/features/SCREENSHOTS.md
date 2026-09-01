@@ -9,6 +9,16 @@ The harness lives in [`screenshot.rs`](../../crates/ferail-gpui/src/screenshot.r
 
 ← Back to [feature notes](README.md) · related: [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md)
 
+<!-- toc depth=2 -->
+
+- [How it works](#how-it-works)
+- [Invocation](#invocation)
+- [The flag families](#the-flag-families)
+- [Complex examples](#complex-examples)
+- [Gotchas](#gotchas)
+
+<!-- /toc -->
+
 ## How it works
 
 `main.rs` dispatches to the headless path the moment it sees `--screenshot`:

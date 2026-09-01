@@ -1,14 +1,15 @@
 # System Stats
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 The status bar's app-footprint segment:
 
 ```
 up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 rps
 ```
 
-## Status
-
-Shipped.
+## What is built
 
 Implemented:
 

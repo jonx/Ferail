@@ -1,5 +1,8 @@
 # Archives
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ferail's archive subsystem treats an archive as a browsable folder while
 keeping every potentially blocking codec and filesystem operation away from
 the GUI thread. This document is the detailed contract shared by the pure
@@ -24,6 +27,23 @@ Code:
 - `ferail-gpui/src/archive_convert.rs`: capability-driven conversion dialog;
 - `ferail-gpui/src/shell/file_ops.rs`: background task integration and user
   notifications.
+
+<!-- toc depth=2 -->
+
+- [Supported formats](#supported-formats)
+- [Opening and browsing](#opening-and-browsing)
+- [Entry metadata](#entry-metadata)
+- [Extraction](#extraction)
+- [Creating archives](#creating-archives)
+- [Staged ZIP editing](#staged-zip-editing)
+- [Drag-and-drop feedback](#drag-and-drop-feedback)
+- [Passwords and encrypted archives](#passwords-and-encrypted-archives)
+- [Prime Directive](#prime-directive)
+- [Convert Archive…](#convert-archive)
+- [Localization and documentation rule](#localization-and-documentation-rule)
+- [Verification](#verification)
+
+<!-- /toc -->
 
 ## Supported formats
 

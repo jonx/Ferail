@@ -1,16 +1,27 @@
 # Context Menu
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ferail-Win32 used Win32 shell context menus and prewarming to avoid the first
 right-click feeling stuck. Ferail rebuilds the same outcome with Mac-native
 building blocks. macOS does not expose Finder's actual menu through any public
 API, so we compose a faithful equivalent from `NSWorkspace`,
 `NSSharingServicePicker`, `URLTagNamesKey`, and `qlmanage` / `ditto`.
 
-## Status
+<!-- toc depth=2 -->
 
-Done: broad parity with Finder's menu. Services / Quick Actions submenu now
-auto-populated by AppKit through a custom `ServicesAnchor` responder spliced
-into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](../../crates/ferail-shell-mac/src/services.rs)).
+- [Surfaces Covered](#surfaces-covered)
+- [Architecture](#architecture)
+- [Multi-Selection](#multi-selection)
+- [Tags](#tags)
+- [Open Terminal Here](#open-terminal-here)
+- [Prewarm Rule](#prewarm-rule)
+- [Customizing Which Entries Appear](#customizing-which-entries-appear)
+- [Windows Native Menu](#windows-native-menu)
+- [Open Work](#open-work)
+
+<!-- /toc -->
 
 ## Surfaces Covered
 
@@ -28,7 +39,7 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
   Copy Path, Open Terminal Here (folders), What's Locking This? (platforms
   with `lock_diagnostics_available()`: Windows-only today; a Restart-Manager
   dialog naming the processes holding the selection open, with force-close
-  buttons: `shell/lock_info.rs`), Share…, Tags row
+  buttons: `shell/lock_info.rs`), Tags row
   (7 colours), Move to Trash.
 - List pane (background): right-click on empty space: below the last row,
   or anywhere in an empty folder: targets the *folder being browsed*,

@@ -38,6 +38,9 @@ adding cross-crate dependencies.
 
 - `cargo check` for the touched crate (or the workspace).
 - `cargo test` unless the change is docs-only.
+- `python3 scripts/check-docs.py` when the change touches Markdown. The
+  documentation rules it enforces are in
+  [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
 - For UI changes, attach a screenshot. Generate one headlessly:
 
   ```sh

@@ -1,12 +1,13 @@
 # Streaming Directory Enumeration
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Directory loading must be notification-driven, cancellable, and safe to
 apply incrementally. Ferail should never synchronously read a whole
 directory on the GPUI render/update path.
 
-## Status
-
-Implemented for the active GPUI file list.
+## What is built
 
 - `ferail-fs-native::NativeFs::enumerate_streaming` reads on a worker
   thread, emits bounded batches, and checks an `AtomicBool` cancellation

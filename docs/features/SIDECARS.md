@@ -1,10 +1,27 @@
 # Sidecar files: NFO, SFV and checksum manifests
 
-Status: shipped with follow-ups.
-
 ← Back to the [feature index](README.md) · [Checksums](CHECKSUMS.md) ·
 [Magic sniffing](MAGIC_SNIFFING.md) · [Preview](PREVIEW.md) ·
 [Tool results](TOOL_RESULTS.md)
+
+<!-- toc depth=2 -->
+
+- [Product position](#product-position)
+- [Current implementation](#current-implementation)
+- [Decisions that refine the original proposal](#decisions-that-refine-the-original-proposal)
+- [Formats and semantics](#formats-and-semantics)
+- [Global implementation invariants](#global-implementation-invariants)
+- [Phase 0 - pure recognition](#phase-0---pure-recognition)
+- [Phase 1 - shared decoding and faithful preview](#phase-1---shared-decoding-and-faithful-preview)
+- [Phase 2 - manifest parser and verification engine](#phase-2---manifest-parser-and-verification-engine)
+- [Phase 3 - Verify result surface](#phase-3---verify-result-surface)
+- [Phase 4 - generation](#phase-4---generation)
+- [Phase 5 - release-folder awareness](#phase-5---release-folder-awareness)
+- [Privacy and diagnostics](#privacy-and-diagnostics)
+- [Delivery order and gates](#delivery-order-and-gates)
+- [Primary interoperability references](#primary-interoperability-references)
+
+<!-- /toc -->
 
 ## Product position
 
@@ -302,7 +319,7 @@ prompt cancellation and no millions of queued callbacks.
 
 Entry points: File menu, command palette and context menu when the selected file
 is a recognized manifest. No default shortcut is necessary initially. The
-feature gets its own icon and `ICONS.md` entry.
+feature gets its own icon and [ICONS.md](ICONS.md) entry.
 
 ## Phase 4 - generation
 

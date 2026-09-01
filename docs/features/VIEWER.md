@@ -8,7 +8,22 @@ this document covers the *large* viewing experience.
 ← [Feature notes index](README.md) · [Architecture](../ARCHITECTURE.md) ·
 [TODO](../../TODO.md)
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [Platform tagging convention](#platform-tagging-convention)
+- [Goals](#goals)
+- [Non-goals (v1)](#non-goals-v1)
+- [Existing anchors (verified 2026-06-12)](#existing-anchors-verified-2026-06-12)
+- [Architecture](#architecture)
+- [Iterations](#iterations)
+- [Video playback in the slideshow (v1 2026-06-12; frame-pull 2026-06-18)](#video-playback-in-the-slideshow-v1-2026-06-12-frame-pull-2026-06-18)
+- [Windows parity worklist (deferred, tagged above)](#windows-parity-worklist-deferred-tagged-above)
+- [Open questions / deferred](#open-questions--deferred)
+
+<!-- /toc -->
+
+## What is built
 
 **Landed (v1, 2026-06-12)**: all six iterations below shipped; see the
 dated NOTES.md entry for the decision log. Deliberate deviations from

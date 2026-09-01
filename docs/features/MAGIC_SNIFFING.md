@@ -1,11 +1,25 @@
 # Magic Sniffing
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Purpose: identify real file types from content without trusting extensions, then
 cache the result so the Format and Description columns stay cheap to paint.
 
-## Status
+<!-- toc depth=2 -->
 
-Shipped with follow-ups.
+- [What is built](#what-is-built)
+- [Detector](#detector)
+- [Format Indicator (Disguise Detection)](#format-indicator-disguise-detection)
+- [Cached Fields](#cached-fields)
+- [Prefetch Flow](#prefetch-flow)
+- [Nonblocking Contract](#nonblocking-contract)
+- [Mac Notes](#mac-notes)
+- [Remaining Work](#remaining-work)
+
+<!-- /toc -->
+
+## What is built
 
 Implemented:
 

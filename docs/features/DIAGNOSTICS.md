@@ -1,5 +1,8 @@
 # Diagnostics, Activity Trail & Issue Reporter
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Support & observability for power users and for the maintainer receiving bug
 reports. Three pieces that compose:
 
@@ -14,6 +17,16 @@ Motivating example: the `config_dir()` Windows bug (settings silently never
 persisted because `config_dir()` returned `None` with no `$HOME`). A storage
 health check that reports "config dir: writable? no" would have caught it
 instantly.
+
+<!-- toc depth=2 -->
+
+- [Decisions (approved 2026-06-23)](#decisions-approved-2026-06-23)
+- [Phase 1 - Activity trail  ✅ implemented](#phase-1---activity-trail---implemented)
+- [Phase 2 - Diagnostics / health check  (TODO)](#phase-2---diagnostics--health-check--todo)
+- [Phase 3 - Issue reporter  (TODO)](#phase-3---issue-reporter--todo)
+- [Phase 4 - Privacy redaction  ✅ implemented](#phase-4---privacy-redaction---implemented)
+
+<!-- /toc -->
 
 ## Decisions (approved 2026-06-23)
 

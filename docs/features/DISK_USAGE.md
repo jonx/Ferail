@@ -1,5 +1,8 @@
 # Disk Usage
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Walks a directory tree off the UI thread and shows the result as an
 interactive squarified treemap. It now docks into the active tab as a
 [Tool Result Surface](TOOL_RESULTS.md), while the standalone GPUI window
@@ -9,7 +12,18 @@ Ferail-Win32 predecessor's spec
 and layout algorithm are shared verbatim, the worker and visual
 control are macOS-native rewrites.
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [Surface](#surface)
+- [Architecture](#architecture)
+- [Verification](#verification)
+- [Iter-7 polish (shipped)](#iter-7-polish-shipped)
+- [Still open](#still-open)
+
+<!-- /toc -->
+
+## What is built
 
 Shipped with follow-ups. The docked Disk Usage result surface, scanner, treemap,
 Top-N panel, package handling, category filtering, allocated/apparent size

@@ -1,5 +1,8 @@
 # Media Tags
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Embedded audio metadata, ID3v1/v2, MP4 atoms, Vorbis comments, APE, plus
 decoded audio properties and cover art, read once off the UI thread and surfaced
 in Get Info, the Description column, and the preview pane. One parser
@@ -7,7 +10,20 @@ in Get Info, the Description column, and the preview pane. One parser
 "music or other media files that support the standard" is handled without a
 per-format grab-bag of crates.
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [Why lofty](#why-lofty)
+- [Architecture](#architecture)
+- [Surfaces](#surfaces)
+- [Key decisions](#key-decisions)
+- [In-viewer audio playback](#in-viewer-audio-playback)
+- [Deferred: waveform preview](#deferred-waveform-preview)
+- [Tests](#tests)
+
+<!-- /toc -->
+
+## What is built
 
 **Shipped (2026-07-14):** reader + core model, Get Info **Media** section,
 cross-platform cover art in the preview/grid, the rich audio Description line,

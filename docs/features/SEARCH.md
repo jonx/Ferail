@@ -1,5 +1,8 @@
 # File Search
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Today Ferail only has an *in-directory filter*: a case-insensitive substring
 match over the rows already loaded for the current folder
 ([file_list.rs](../../crates/ferail-gpui/src/file_list.rs), applied in the
@@ -12,7 +15,20 @@ This note specifies real search, built in tiers, all behind the
 I/O. Every tier streams incremental results off the UI thread and is
 cancellable.
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [Filter tokens](#filter-tokens)
+- [The three tiers](#the-three-tiers)
+- [Rely on the OS index where it exists](#rely-on-the-os-index-where-it-exists)
+- [Tier 1 - recursive subtree walk (build first)](#tier-1---recursive-subtree-walk-build-first)
+- [GPUI integration (shared by all tiers)](#gpui-integration-shared-by-all-tiers)
+- [Build order](#build-order)
+- [Verification](#verification)
+
+<!-- /toc -->
+
+## What is built
 
 - Tier 0 (in-directory filter): **shipped**.
 - Tier 1 (recursive subtree walk): **shipped**: built-in walker, cancellable.

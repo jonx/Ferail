@@ -5,6 +5,18 @@
 [Windows test plan](../testing/WINDOWS_RELIABILITY_TEST_PLAN.md) ·
 [Feature index](README.md) · [Open work](../../TODO.md)
 
+<!-- toc depth=2 -->
+
+- [Status and purpose](#status-and-purpose)
+- [Evidence retained for the work](#evidence-retained-for-the-work)
+- [Non-negotiable architecture](#non-negotiable-architecture)
+- [Issue ledger](#issue-ledger)
+- [Continuation plan: Mac-first, Windows-final](#continuation-plan-mac-first-windows-final)
+- [Original campaign ledger and completion status](#original-campaign-ledger-and-completion-status)
+- [Definition of done](#definition-of-done)
+
+<!-- /toc -->
+
 ## Status and purpose
 
 This is the execution ledger for the Windows issues reported against Ferail
@@ -1342,7 +1354,7 @@ cross-platform or four-million-row regression remains.
 - [ ] Run macOS and Linux regressions for normal menus, open/reveal, previews,
   clipboard, and large Flat View.
 - [ ] Update localized strings, screenshots/tour, README, user documentation,
-  and `CHANGELOG.md` only alongside the implementation that users can run.
+  and [CHANGELOG.md](../../CHANGELOG.md) only alongside the implementation that users can run.
 - [ ] Package the exact tested binaries, preserve matching symbols, and record
   the tested Windows builds in the release notes.
 

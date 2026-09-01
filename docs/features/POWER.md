@@ -1,5 +1,8 @@
 # Power: sleep / wake handling
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ferail reacts to the machine (and its displays) going to sleep and
 waking. Two distinct mechanisms, because video and file-ops want
 opposite treatment:

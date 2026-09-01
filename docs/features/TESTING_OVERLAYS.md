@@ -1,12 +1,15 @@
 # Testing And Debug Overlays
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ferail has a screenshot CLI today and should grow a small set of debug
 overlays that make performance and async behavior visible.
 
-## Status
+## What is built
 
-Future overlay work. The screenshot CLI exists; the visual debug overlays below
-are not implemented yet and are tracked in [TODO.md](../../TODO.md).
+The screenshot CLI exists. The visual debug overlays below are a design;
+the work is tracked in [TODO.md](../../TODO.md).
 
 ## Current Tool
 

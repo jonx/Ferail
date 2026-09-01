@@ -1,12 +1,15 @@
 # Mouse Predictor
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Mouse prediction is a future prewarm feature from Ferail-Win32: use recent pointer
 motion to guess the next likely row or folder and prepare cheap state ahead of
 the click.
 
-## Status
+## What is built
 
-Future. No pointer predictor is implemented yet; the missing work is tracked in
+Nothing. This note is a design; the work is tracked in
 [TODO.md](../../TODO.md).
 
 ## What It May Do

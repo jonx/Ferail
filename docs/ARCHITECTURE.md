@@ -14,6 +14,24 @@ but the active application is now the GPUI shell:
 
 All new product work belongs in `crates/ferail-gpui`.
 
+<!-- toc depth=2 -->
+
+- [Prime Directive](#prime-directive)
+- [Crate Boundaries](#crate-boundaries)
+- [Data Model](#data-model)
+- [Work Scheduling](#work-scheduling)
+- [Active UI Structure](#active-ui-structure)
+- [Typography And UI Scale](#typography-and-ui-scale)
+- [Localization](#localization)
+- [Context Menus And Native Actions](#context-menus-and-native-actions)
+- [Persistence](#persistence)
+- [Command Surfaces](#command-surfaces)
+- [macOS Privacy (TCC) And Bundling](#macos-privacy-tcc-and-bundling)
+- [Observability And Failures](#observability-and-failures)
+- [Documentation Layout](#documentation-layout)
+
+<!-- /toc -->
+
 ## Prime Directive
 
 The UI must never stop. This rule is non-negotiable; every other design
@@ -456,4 +474,4 @@ Failure policy:
 - Root [NOTES.md](../NOTES.md) is the decision log for in-progress spec work.
 
 Do not add new phase ledgers or duplicate roadmaps under `docs/`. Put
-current architecture here and unfinished work in root `TODO.md`.
+current architecture here and unfinished work in root [TODO.md](../TODO.md).

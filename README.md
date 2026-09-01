@@ -9,6 +9,25 @@ command palette.
 
 ![Ferail main window](docs/images/tour-shell.png)
 
+<!-- toc depth=2 -->
+
+- [What is Ferail?](#what-is-ferail)
+- [What makes it different](#what-makes-it-different)
+- [Feature tour](#feature-tour)
+- [Privacy](#privacy)
+- [Vision & roadmap](#vision--roadmap)
+- [Current status](#current-status)
+- [Download](#download)
+- [Reporting bugs](#reporting-bugs)
+- [Getting started](#getting-started)
+- [Project layout](#project-layout)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
+
+<!-- /toc -->
+
 ## What is Ferail?
 
 Ferail is a desktop file manager built around a single conviction: **the UI
@@ -123,12 +142,15 @@ The prioritized list of open work is in **[TODO.md](TODO.md)**.
 
 ## Current status
 
-| Platform | Status |
+| Platform | State |
 |---|---|
-| **macOS** | **Primary, daily-driver.** Feature-complete for everyday use. |
-| **Windows** | **Active port**, broad native parity: clipboard, Recycle Bin, thumbnails, Open With, Media Foundation video, UAC elevation + Restart Manager lock diagnostics, plus isolated native context-menu verbs on explicit demand. Builds, runs, and screenshots on real hardware. WSL Linux locations are implemented in source and awaiting real-Windows qualification; indexed search and window docking remain planned. ([details](docs/features/windows-port.md)) |
-| **Linux** | **Early port**: builds and runs; volumes, Trash, and Open With are real; clipboard, thumbnails, and video are still stubbed. ([details](docs/features/linux-port.md)) |
-| **AROS** | **Research port**: Ferail boots and runs as a browsable, themed file manager on [AROS](https://aros.org) (the open-source AmigaOS) via a from-scratch GPUI platform backend. Not at parity: some features are gated pending native shell integration. ([details](docs/features/aros-port.md)) |
+| **macOS** | **Primary, daily driver.** Feature-complete for everyday use, signed and notarized. |
+| **Windows** | **Active port** with broad native parity. Builds, runs and ships; unsigned. |
+| **Linux** | **Early port**: builds and runs, with volumes, Trash and Open With real. |
+| **AROS** | **Research port**: boots and browses through a from-scratch GPUI backend. |
+
+What each of those means in detail, and where every feature stands, is in
+**[docs/STATUS.md](docs/STATUS.md)**.
 
 ### How Ferail compares
 
@@ -149,7 +171,7 @@ The ❌ rows are real gaps, not modesty.
 | **Tabs + multi-window** | ✅ | ⚠️ tabs, no split | ⚠️ tabs (recent) | ✅ Dolphin best-in-class |
 | **Command palette** | ✅ Cmd+K | ❌ | ❌ | ❌ |
 | **Global / indexed search** | ⚠️ Spotlight-backed, single query box | ✅ rich | ✅ indexed | ✅ Tracker / Baloo |
-| **Accessibility / localization / maturity** | ❌ young, single-dev | ✅ decades | ✅ decades | ✅ mature |
+| **Accessibility / localization / maturity** | ⚠️ four bundled languages, otherwise young and single-dev | ✅ decades | ✅ decades | ✅ mature |
 
 ✅ first-class · ⚠️ partial / varies · ❌ absent
 
@@ -257,11 +279,15 @@ Crate-boundary rules:
 
 ## Documentation
 
+**[docs/README.md](docs/README.md) is the map**: every document in the
+repository and what it is for. The ones most people want:
+
 | Document | Purpose |
 |---|---|
 | [docs/FEATURES.md](docs/FEATURES.md) | **The feature tour**: what the app does, with screenshots. |
 | [GETTING_STARTED.md](GETTING_STARTED.md) | Zero-to-running setup, per platform. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Source of truth for crate boundaries, data model, scheduling. |
+| [docs/STATUS.md](docs/STATUS.md) | Where the project is, per platform and per feature. |
 | [docs/features/](docs/features/README.md) | Deep design notes per feature. |
 | [TODO.md](TODO.md) | Open work and roadmap. |
 | [CHANGELOG.md](CHANGELOG.md) | What changed, newest first. |

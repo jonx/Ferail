@@ -8,7 +8,23 @@ through: potentially other videos that are themselves keyed.
 ← [Feature notes index](README.md) · [Viewer](VIEWER.md) ·
 [Architecture](../ARCHITECTURE.md) · [TODO](../../TODO.md)
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [Frame orientation (rotated video) - fixed 2026-06-25](#frame-orientation-rotated-video---fixed-2026-06-25)
+- [Diagnosing decode/render crashes (no GUI needed)](#diagnosing-decoderender-crashes-no-gui-needed)
+- [Platform tagging convention](#platform-tagging-convention)
+- [Why mpv (the motivation, tied to the VLC code we have)](#why-mpv-the-motivation-tied-to-the-vlc-code-we-have)
+- [Existing anchors (verified 2026-06-23)](#existing-anchors-verified-2026-06-23)
+- [Trait changes (additive, native keeps defaults)](#trait-changes-additive-native-keeps-defaults)
+- [Architecture](#architecture)
+- [Performance (the honest ceiling)](#performance-the-honest-ceiling)
+- [Phases](#phases)
+- [Open questions / deferred](#open-questions--deferred)
+
+<!-- /toc -->
+
+## What is built
 
 Phases 0–4 shipped (2026-06-23), all compile-green; see commits + the
 [NOTES.md](../../NOTES.md) decision log. At a glance:
@@ -50,7 +66,7 @@ in the adjustments popup (mpv video only) with an on/off toggle, an
 colour from the live frame), and **Similarity** (range width) + **Blend**
 (edge feather) sliders. The key is pushed live via `set_chroma_key`, so keyed
 pixels arrive transparent and the stage background shows through. No new icon
-(the swatch is the eyedropper affordance), so `ICONS.md` is untouched. `cargo
+(the swatch is the eyedropper affordance), so [ICONS.md](ICONS.md) is untouched. `cargo
 check -p ferail-gpui --features mpv` is green.
 
 > **Verified by screenshot + UI reworked.** The adjustments popup renders

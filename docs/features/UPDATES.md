@@ -1,5 +1,8 @@
 # Update Check
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 "Is there a newer Ferail on GitHub Releases, and how do I get it?":
 `ferail-gpui/src/update_check.rs`. Three surfaces over one state machine
 (check status × download status), all reading a process-wide global that

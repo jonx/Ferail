@@ -1,9 +1,9 @@
 # Flat View (recursive listing of a location)
 
 ← [Feature notes](README.md) · [Architecture](../ARCHITECTURE.md) ·
-[Search](SEARCH.md) · [Open work (TODO)](../TODO.md)
+[Search](SEARCH.md) · [Open work (TODO)](../../TODO.md)
 
-**Status: shipped, millions-first foundation.** Flat View is an uncapped,
+Flat View is an uncapped,
 files-only recursive snapshot with streaming progress, cancellation, a sortable
 relative Path column, in-memory filtering, and surface-local identities. The
 remaining scale work is listed in §4.5.
@@ -34,6 +34,17 @@ limit; the honest in-memory ceiling is available RAM, with a page-backed store
 planned for result sets that exceed it.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [1. What already exists that this rides on](#1-what-already-exists-that-this-rides-on)
+- [2. Measurements](#2-measurements)
+- [3. Verdict on the two questions](#3-verdict-on-the-two-questions)
+- [4. Design proposal](#4-design-proposal)
+- [5. Risks / what not to do](#5-risks--what-not-to-do)
+- [6. Verification plan (when built)](#6-verification-plan-when-built)
+
+<!-- /toc -->
 
 ## 1. What already exists that this rides on
 

@@ -1,5 +1,8 @@
 # Ferail - Windows, Instances & Tabs Specification
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Behavioral spec for multi-window, multi-tab, and cross-window/cross-app drag-and-drop. Written against `ARCHITECTURE.md` (the "UI must never stop" directive, the shell/tab ownership model) and the selection/DnD spec.
 
 A note on terminology, because "instance" is ambiguous and the distinction drives the whole design:
@@ -11,6 +14,20 @@ A note on terminology, because "instance" is ambiguous and the distinction drive
 The central architectural decision in §1 is: **Ferail is single-process, multi-window.** "Multiple instances" from the user's point of view means multiple windows, all served by one process. This is deliberate and explained below.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [1. Process model: single-process, multi-window](#1-process-model-single-process-multi-window)
+- [2. Window model](#2-window-model)
+- [3. Tab model](#3-tab-model)
+- [4. Starting locations and intents](#4-starting-locations-and-intents)
+- [5. Cross-window and cross-app drag-and-drop](#5-cross-window-and-cross-app-drag-and-drop)
+- [6. Session persistence and crash recovery](#6-session-persistence-and-crash-recovery)
+- [7. Component / crate mapping](#7-component--crate-mapping)
+- [8. Implementation order](#8-implementation-order)
+- [9. Acceptance checklist](#9-acceptance-checklist)
+
+<!-- /toc -->
 
 ## 1. Process model: single-process, multi-window
 
@@ -135,7 +152,7 @@ Tearing a tab out / moving it between windows is a **pure ownership transfer of 
 ### 3.6 Tabs and the shared shell
 
 - All tabs across all windows share the shell's caches and watcher. A tab is cheap.
-- Each tab's navigation is still an independent streaming enumeration with its own generation and cancellation (per `STREAMING_ENUMERATION.md`). Switching tabs does **not** cancel the inactive tab's in-flight enumeration, it may finish in the background and its result is applied to that tab's model, gated by that tab's generation, ready when the user switches back. (If memory pressure ever makes this a problem, an inactive tab's enumeration *could* be deprioritized, but never silently dropped, that's a future optimization, not v1 behavior.)
+- Each tab's navigation is still an independent streaming enumeration with its own generation and cancellation (per [STREAMING_ENUMERATION.md](STREAMING_ENUMERATION.md)). Switching tabs does **not** cancel the inactive tab's in-flight enumeration, it may finish in the background and its result is applied to that tab's model, gated by that tab's generation, ready when the user switches back. (If memory pressure ever makes this a problem, an inactive tab's enumeration *could* be deprioritized, but never silently dropped, that's a future optimization, not v1 behavior.)
 - An inactive tab whose directory is changed by an external event or a file op still reloads (through the shell fan-out, §2.3) so it's correct when the user switches to it.
 
 ---

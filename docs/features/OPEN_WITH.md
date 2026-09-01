@@ -1,10 +1,10 @@
 # Open With & Custom Tools
 
 ← [Feature notes](README.md) · [Architecture](../ARCHITECTURE.md) ·
-[Context menus](CONTEXT_MENU.md) · [Open work (TODO)](../TODO.md)
+[Context menus](CONTEXT_MENU.md) · [Open work (TODO)](../../TODO.md)
 
-**Status: Open With (system apps) ships. Custom tools are a study,
-nothing in §5 onward is implemented.**
+Sections 5 onward are a study of user-defined custom tools: a design, not
+a description of code that exists.
 
 The idea: keep double-click on the system default, and let **Open With**
 offer, alongside the apps the OS registers, a list of **user-defined
@@ -28,6 +28,20 @@ token" model, which already solves the quoting problem this feature would
 otherwise re-invent badly.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [1. What "programs register to handle file types" actually means](#1-what-programs-register-to-handle-file-types-actually-means)
+- [2. What already ships](#2-what-already-ships)
+- [3. Measurements](#3-measurements)
+- [4. The gaps, precisely](#4-the-gaps-precisely)
+- [5. Design proposal - custom tools](#5-design-proposal---custom-tools)
+- [6. Security - the part that must not be hand-waved](#6-security---the-part-that-must-not-be-hand-waved)
+- [7. Phasing](#7-phasing)
+- [8. What not to do](#8-what-not-to-do)
+- [9. Verification plan (when built)](#9-verification-plan-when-built)
+
+<!-- /toc -->
 
 ## 1. What "programs register to handle file types" actually means
 
@@ -87,7 +101,7 @@ The GPUI side is Prime-Directive-clean already:
 
 | Target | Candidates | First call in process | Warm |
 |---|---|---|---|
-| `README.md` | 6 | 9.4 ms | 0.03–0.06 ms |
+| [README.md](README.md) | 6 | 9.4 ms | 0.03–0.06 ms |
 | `t.txt` | 8 | 4.7 ms | 0.02–0.05 ms |
 | `Cargo.toml` | 1 | 0.23 ms | 0.03 ms |
 | a folder | 7 | 0.27 ms | 0.01–0.04 ms |

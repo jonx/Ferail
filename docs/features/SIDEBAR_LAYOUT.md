@@ -1,5 +1,8 @@
 # Sidebar Layout and Density
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 This document records the implementation contract behind the sidebar polish
 work. The design keeps one sidebar and one navigation model; density,
 disclosure and ordering only alter presentation.

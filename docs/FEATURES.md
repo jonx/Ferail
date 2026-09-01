@@ -10,6 +10,31 @@ that rule.
 
 ---
 
+<!-- toc depth=2 -->
+
+- [The shell - a file table that keeps up with you](#the-shell---a-file-table-that-keeps-up-with-you)
+- [Descriptions - what a file *is*, not what it claims](#descriptions---what-a-file-is-not-what-it-claims)
+- [Filename hazards - names that can't lie](#filename-hazards---names-that-cant-lie)
+- [SHA-256 - verify a download in place](#sha-256---verify-a-download-in-place)
+- [Archives - open them like folders](#archives---open-them-like-folders)
+- [Ant Trail - the app learns where you go](#ant-trail---the-app-learns-where-you-go)
+- [Icon grid - the same folder, visual](#icon-grid---the-same-folder-visual)
+- [Media viewer - compare files like frames](#media-viewer---compare-files-like-frames)
+- [Disk Usage - see the bytes, act on them, share the picture](#disk-usage---see-the-bytes-act-on-them-share-the-picture)
+- [Exact duplicates and similar images - built in, private](#exact-duplicates-and-similar-images---built-in-private)
+- [Bulk rename - regex power with a live preview](#bulk-rename---regex-power-with-a-live-preview)
+- [Search - streaming results, Spotlight-backed](#search---streaming-results-spotlight-backed)
+- [Flat View - every subfolder, one list](#flat-view---every-subfolder-one-list)
+- [Command palette & shortcuts](#command-palette--shortcuts)
+- [Settings & themes](#settings--themes)
+- [The command line - the same binary, without the window](#the-command-line---the-same-binary-without-the-window)
+- [The quiet features you'll feel](#the-quiet-features-youll-feel)
+- [Make it yours](#make-it-yours)
+- [Editors, for the small fixes](#editors-for-the-small-fixes)
+- [Where the project is](#where-the-project-is)
+
+<!-- /toc -->
+
 ## The shell - a file table that keeps up with you
 
 ![The shell](images/tour-shell.png)
@@ -17,7 +42,7 @@ that rule.
 - **Virtualized table** over directories of any size: sort, resize, and
   reorder columns (your layout persists across launches), filter as you
   type, and stream huge folders in without a frozen frame.
-- **Format column reads bytes, not extensions**: ~67 magic signatures
+- **Format column reads bytes, not extensions**: over 110 recognized formats
   with structured parsers (executables, archives, images, audio, video),
   so a `.jpg` that's secretly a `.zip` is flagged inline, and a
   Description column fills with real facts (bitness/arch, dimensions,
@@ -252,14 +277,40 @@ disk-usage walker, the thumbnail pipeline: scriptable from a shell.
 - **Undo that means it**: rename, bulk rename, move, copy, trash, and
   favorites edits are all reversible, with guards so an undo never
   overwrites something newer.
+- **A Trash you can act in**: its own menu, and **Put Back** returns an item
+  to where it came from without overwriting whatever took its place.
+  ([file ops](features/FILE_OPS.md))
+- **Private Mode**: a capture-safe lock that projects invented names, paths
+  and blurred thumbnails so a screenshot of a real session shows the app and
+  not your files. ([private mode](features/PRIVATE_MODE.md))
 - **CLI + headless screenshots**: `ferail magic`, `ferail du`, and
   a screenshot harness that renders any surface off-screen (it produced
   every image on this page).
 
-## Platform status
+## Make it yours
 
-macOS is the daily-driver build. Windows has broad native parity
-(clipboard, Recycle Bin, thumbnails, Open With, Media Foundation
-video). Linux builds and runs with the basics real and the rest
-stubbed. Details: [windows port](features/windows-port.md) ·
-[linux port](features/linux-port.md) · [roadmap](../TODO.md)
+Right-click menus are editable: Settings ▸ Menus lists every entry a menu
+shows, with a switch on each one, rows that drag into any order, separators
+you can place and remove, and a reset per menu. Hiding an entry never removes
+the command; it keeps its shortcut and stays in the palette.
+([context menus](features/CONTEXT_MENU.md))
+
+Ferail ships in **English, French, German and Polish**, switchable live, and
+any language can be added by exporting the catalog, translating it anywhere,
+and importing it back. ([localization](features/LOCALIZATION.md))
+
+## Editors, for the small fixes
+
+A built-in **text editor** opens a file in its own window with find and
+replace, reload from disk, wrap and line-number toggles, and a strip showing
+line, column, encoding and line endings; it round-trips CRLF and BOM and
+saves atomically beside the original.
+([text editor](features/TEXT_EDITOR.md))
+
+A built-in **image editor** redacts and annotates: rectangle and brush, opaque
+black or coloured, undo, and a save that writes a copy beside the original
+unless you confirm an overwrite. ([image editor](features/IMAGE_EDITOR.md))
+
+## Where the project is
+
+Per platform and per feature: **[docs/STATUS.md](STATUS.md)**.

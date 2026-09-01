@@ -10,6 +10,16 @@ an LLM.
 ← [Feature notes](README.md) · [Architecture](../ARCHITECTURE.md) ·
 [TODO](../../TODO.md)
 
+<!-- toc depth=2 -->
+
+- [For users: Settings › Appearance › Language](#for-users-settings--appearance--language)
+- [The pack format](#the-pack-format)
+- [For developers: writing strings](#for-developers-writing-strings)
+- [Who wrote the packs](#who-wrote-the-packs)
+- [Known gaps / follow-ups](#known-gaps--follow-ups)
+
+<!-- /toc -->
+
 ## For users: Settings › Appearance › Language
 
 | Control | What it does |

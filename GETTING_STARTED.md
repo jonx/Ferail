@@ -21,6 +21,21 @@ matches the maintainer's.
 
 ---
 
+<!-- toc depth=2 -->
+
+- [1. Install the prerequisites](#1-install-the-prerequisites)
+- [2. Get the code](#2-get-the-code)
+- [3. Build & run](#3-build--run)
+- [4. Verify your setup](#4-verify-your-setup)
+- [5. macOS: the signed `.app` bundle](#5-macos-the-signed-app-bundle)
+- [6. Windows: a distributable build](#6-windows-a-distributable-build)
+- [7. Optional: enable the mpv video backend](#7-optional-enable-the-mpv-video-backend)
+- [8. Command-line tools](#8-command-line-tools)
+- [Troubleshooting](#troubleshooting)
+- [Where to go next](#where-to-go-next)
+
+<!-- /toc -->
+
 ## 1. Install the prerequisites
 
 ### Rust (all platforms)

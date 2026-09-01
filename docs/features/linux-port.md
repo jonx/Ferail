@@ -1,5 +1,8 @@
 # Ferail - Linux port handoff
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 A self-contained orientation for starting the Linux port from a Linux machine.
 Assumes you've worked on (or read about) the macOS side recently: if not, read
 [docs/ARCHITECTURE.md](../ARCHITECTURE.md) first; the prime directive and crate
@@ -26,6 +29,21 @@ This doc covers:
 10. References.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [1. What Ferail is](#1-what-ferail-is)
+- [2. State of the Linux port](#2-state-of-the-linux-port)
+- [3. Workspace map](#3-workspace-map)
+- [4. The `platform_shell` indirection - and the one change that unblocks Linux](#4-the-platformshell-indirection---and-the-one-change-that-unblocks-linux)
+- [5. macOS assumptions in `ferail-gpui` that need cfg-gating for Linux](#5-macos-assumptions-in-ferail-gpui-that-need-cfg-gating-for-linux)
+- [6. The Linux shell surface](#6-the-linux-shell-surface)
+- [7. What "Linux" means here, and where to do the work](#7-what-linux-means-here-and-where-to-do-the-work)
+- [8. Day-one steps on a Linux machine](#8-day-one-steps-on-a-linux-machine)
+- [9. Working on Linux without breaking Mac/Windows](#9-working-on-linux-without-breaking-macwindows)
+- [10. References](#10-references)
+
+<!-- /toc -->
 
 ## 1. What Ferail is
 

@@ -1,5 +1,8 @@
 # Freeze Diagnostics
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 What happens when the Prime Directive fails in the field: the app stops
 responding on a user's machine, far from a debugger, and how Ferail turns
 that into a report worth attaching to an issue. Code: `ferail-gpui/src/
@@ -23,6 +26,20 @@ thread, but it is still inside the Ferail process: it detects a live process
 with a frozen UI; it cannot survive `SIGKILL`, a hard abort, or process death to
 report that death. Those remain the OS crash reporter's job; detecting them in
 Ferail would require a separate helper *process*, not another in-process thread.
+
+<!-- toc depth=2 -->
+
+- [The hang report](#the-hang-report)
+- [Trigger 1: the watchdog (automatic - all platforms)](#trigger-1-the-watchdog-automatic---all-platforms)
+- [Trigger 2: kill interception (terminal launches)](#trigger-2-kill-interception-terminal-launches)
+- [Thread-stack tiers](#thread-stack-tiers)
+- [Safe mode: `--safe-mode` / `FERAIL_SAFE_MODE=1`](#safe-mode---safe-mode--ferailsafemode1)
+- [Live performance HUD](#live-performance-hud)
+- [The shutdown report](#the-shutdown-report)
+- [Testing the machinery](#testing-the-machinery)
+- [What to ask a user reporting a freeze](#what-to-ask-a-user-reporting-a-freeze)
+
+<!-- /toc -->
 
 ## The hang report
 

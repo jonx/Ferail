@@ -21,7 +21,7 @@ doctrine, and the doctrine names every tripwire.
 ## The seven layers
 
 1. **One canonical statement, everywhere else pointers.** State the rule once,
-   in the file the agent is guaranteed to read first (`CLAUDE.md`, the system
+   in the file the agent is guaranteed to read first ([CLAUDE.md](../../CLAUDE.md), the system
    prompt, the top of `ARCHITECTURE.md`). Say explicitly that it is
    non-negotiable and what it outranks ("feature completeness, code brevity,
    every convenience"). All other mentions link to it: copies drift, and a
@@ -64,7 +64,7 @@ doctrine, and the doctrine names every tripwire.
 
 6. **Wire enforcement into the finishing ritual.** Whatever checklist the
    agent runs before declaring done (the "Verification" section of
-   `CLAUDE.md`, CI, a pre-commit hook) must include the enforcement commands
+   [CLAUDE.md](../../CLAUDE.md), CI, a pre-commit hook) must include the enforcement commands
    (`cargo clippy -p <ui-crate>`, `cargo test` with debug assertions on). A
    tripwire outside the default loop doesn't exist. Debug runs and screenshot
    harnesses double as guard exercises for free.
@@ -104,10 +104,10 @@ doctrine, and the doctrine names every tripwire.
 
 | Layer | Artifact |
 | --- | --- |
-| Canonical statement | `CLAUDE.md` § Prime Directive → `docs/ARCHITECTURE.md#prime-directive` |
+| Canonical statement | [CLAUDE.md](../../CLAUDE.md) § Prime Directive → `docs/ARCHITECTURE.md#prime-directive` |
 | Failure modes named | Slow-media list in both docs (exists/metadata/canonicalize/watch) |
 | Sanctioned path | `Shell::load_path_for_tab` pattern; `canonicalize_for_identity`; `FsWatcher` worker |
 | Static wall | `crates/ferail-gpui/clippy.toml` + `disallowed_methods = "deny"` |
 | Runtime tripwire | `ferail_core::path_guard`: render guard + `assert_off_ui_thread` |
-| Finishing ritual | `CLAUDE.md` § Verification (clippy line) |
-| Ledger | `TODO.md` § Responsiveness: "known remaining UI-thread I/O" |
+| Finishing ritual | [CLAUDE.md](../../CLAUDE.md) § Verification (clippy line) |
+| Ledger | [TODO.md](../../TODO.md) § Responsiveness: "known remaining UI-thread I/O" |

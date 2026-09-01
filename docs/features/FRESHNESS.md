@@ -13,6 +13,16 @@ function of an entire directory subtree (folder size and recursive item counts
 now; duplicate sets and clone-aware sizing later). Read it before adding another
 such cache.
 
+<!-- toc depth=2 -->
+
+- [The problem](#the-problem)
+- [The model - three mechanisms](#the-model---three-mechanisms)
+- [One source of truth](#one-source-of-truth)
+- [Where each piece lives](#where-each-piece-lives)
+- [Known gaps / future work](#known-gaps--future-work)
+
+<!-- /toc -->
+
 ## The problem
 
 A recursive folder size is cached in the `folder_sizes` table

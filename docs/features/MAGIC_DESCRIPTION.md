@@ -1,12 +1,31 @@
 # Magic Description Column
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Rich content-derived facts about a file, rendered as a single string in a
 new **Description** column to the right of Format. Inspired by the magic
 column in the `bfe-explorer` Windows predecessor (a private prior codebase),
 adapted to ferail's nonblocking contract and current single-`display_magic`
 shape.
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [Goal](#goal)
+- [Prime-Directive Constraints](#prime-directive-constraints)
+- [Single-Pass Strategy](#single-pass-strategy)
+- [Data Shape](#data-shape)
+- [UI](#ui)
+- [Prefetch Worker Changes](#prefetch-worker-changes)
+- [Performance Budget](#performance-budget)
+- [Test Plan](#test-plan)
+- [Open Items](#open-items)
+- [Reference](#reference)
+
+<!-- /toc -->
+
+## What is built
 
 **Shipped (2026-05-15).**
 

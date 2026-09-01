@@ -1,5 +1,8 @@
 # AROS port (branch `aros-port`)
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 > Building this from scratch? **[aros-building.md](aros-building.md)** is
 > the step-by-step guide (prerequisites, checkout layout, the whole chain).
 > This document is the map: what lives where and why.
@@ -9,12 +12,26 @@ Ferail on AROS (the open-source AmigaOS), targeting the user's hosted
 `~/Source/aros-aarch64`). Local-only work: absolute paths to sibling
 checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [The pieces and where they live](#the-pieces-and-where-they-live)
+- [The check command](#the-check-command)
+- [C-of-the-graph lessons (all encoded in `.cargo/config.toml`)](#c-of-the-graph-lessons-all-encoded-in-cargoconfigtoml)
+- [Vendored / patched crates (`[patch]` in `Cargo.toml`)](#vendored--patched-crates-patch-in-cargotoml)
+- [platform_shell](#platformshell)
+- [Feature completeness & roadmap (takeover)](#feature-completeness--roadmap-takeover)
+- [Running on hosted AROS](#running-on-hosted-aros)
+- [Build tree location (stable) + recovery](#build-tree-location-stable--recovery)
+
+<!-- /toc -->
+
+## What is built
 
 > **Handover, 2026-07-17:** the full state of the stability work (root-cause
 > preemption fix, the pthread/posixc/gpui_aros fix stack, the one diagnosed
 > in-flight bug, build foot-guns, and the on-device test harnesses) is in
-> [`aros-aarch64/graft/HANDOVER-2026-07-17.md`](../../../aros-aarch64/graft/HANDOVER-2026-07-17.md).
+> `aros-aarch64/graft/HANDOVER-2026-07-17.md`.
 > Start there before touching AROS stability.
 
 > **Update, 2026-07-18: supersedes the correction below.** The dominant
@@ -576,7 +593,7 @@ layer instead:
 Then `ferail-shell-aros` builds reveal/icons/thumbnails on `aros`, and
 `gpui_aros` moves its window/menu/dialog/clipboard glue onto the same crate.
 Full rationale + surface in
-[`gpui_aros/HANDOFF.md`](../../../zed-aros/crates/gpui_aros/HANDOFF.md#proposed-next-architecture-an-aros-platform-crate-family).
+`gpui_aros/HANDOFF.md`.
 
 ## Running on hosted AROS
 
@@ -606,7 +623,7 @@ The canonical AROS build tree and toolchain live **outside `/tmp`** (moved
 here; `gpui_aros/build.rs` probes `$AROS_BUILD` (default `~/aros-build`) for the
 SDK headers. **To rebuild/recover the whole boot + desktop set** in one command
 (reusing the toolchain): `aros-aarch64/graft/rebuild-aros.sh` (see
-[build/README.md](../../../aros-aarch64/docs/features/build/README.md)). Then
+build/README.md). Then
 rebuild + relink Ferail: `cargo … build -p ferail-aros-app …` then
 `crates/ferail-aros-app/link-aros.sh`.
 

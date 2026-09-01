@@ -1,5 +1,8 @@
 # Checksums and file verification
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ferail can calculate a SHA-256 checksum for one file without loading the whole
 file into memory. Select a file, then choose **Generate SHA-256…** from its
 context menu, the File menu, or the command palette.

@@ -9,7 +9,21 @@ clipboard verbs.
 ← [Feature notes index](README.md) · [Architecture](../ARCHITECTURE.md) ·
 [TODO](../../TODO.md)
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [Inside the Trash](#inside-the-trash)
+- [Rename gestures](#rename-gestures)
+- [Feedback UX Policy](#feedback-ux-policy)
+- [Platform tags](#platform-tags)
+- [Existing anchors (verified 2026-06-13)](#existing-anchors-verified-2026-06-13)
+- [Architecture](#architecture)
+- [Iterations](#iterations)
+- [Verification](#verification)
+
+<!-- /toc -->
+
+## What is built
 
 **Landed (v1, 2026-06-13)**: engine, progress + cancel UI, and the
 clipboard verbs shipped. Deviations from the design, deliberate:

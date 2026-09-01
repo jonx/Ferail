@@ -1,7 +1,8 @@
 # Tool Result Surfaces
 
-Status: shipped for Search, Duplicate Finder, docked Disk Usage, Archive and
-checksum Verify.
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Search](SEARCH.md) ·
+[Duplicates](DUPLICATES.md)
 
 Tool result surfaces are tab-local tools that temporarily replace the normal
 directory listing while keeping the tab rooted at a real folder. They are the

@@ -1,10 +1,26 @@
 # Ferail - Mac-side verification after the Windows port
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Companion to [windows-port.md](windows-port.md). That doc walks through getting Ferail building and running on Windows; this one is the reverse direction: what a Mac dev needs to know when picking the codebase back up after a Windows-development sprint has landed.
 
 The Windows port adds platform-specific code paths and refactors a few shared modules. macOS arms were kept intact in spirit, but several call sites changed shape and a handful of behaviors shifted slightly. This doc enumerates the changes so you know where to look if something on Mac feels off.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [1. Architecture changes (still macOS-friendly)](#1-architecture-changes-still-macos-friendly)
+- [2. Behavioral changes on Mac (not just compile concerns)](#2-behavioral-changes-on-mac-not-just-compile-concerns)
+- [3. Compile-side risks to verify](#3-compile-side-risks-to-verify)
+- [4. Mac interactive sanity pass](#4-mac-interactive-sanity-pass)
+- [5. Suggested order on Mac](#5-suggested-order-on-mac)
+- [6. Things explicitly NOT touched](#6-things-explicitly-not-touched)
+- [7. Useful diagnostics](#7-useful-diagnostics)
+- [8. Quick reference: what's in each touched file](#8-quick-reference-whats-in-each-touched-file)
+
+<!-- /toc -->
 
 ## 1. Architecture changes (still macOS-friendly)
 

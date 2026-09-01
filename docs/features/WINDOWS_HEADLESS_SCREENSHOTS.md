@@ -1,5 +1,8 @@
 # Windows Headless Screenshots - No-Flash Plan
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ferail's screenshot CLI should be able to render Windows UI states to PNGs
 without ever showing a real window. The desired behavior is the same as macOS:
 `ferail-gpui --screenshot ...` opens a GPUI window with `show: false` and

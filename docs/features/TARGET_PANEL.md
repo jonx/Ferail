@@ -8,7 +8,23 @@ operations, and as the staging surface for batched transfers.
 [TODO](../../TODO.md) · [File operations](FILE_OPS.md) ·
 [Selection & DnD spec](ferail-selection-dnd-spec.md)
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [The problem](#the-problem)
+- [The model](#the-model)
+- [It is a surface, not a tab](#it-is-a-surface-not-a-tab)
+- [Reusing the list view](#reusing-the-list-view)
+- [Drop semantics](#drop-semantics)
+- [Column layout](#column-layout)
+- [Phase 2: batched transfers](#phase-2-batched-transfers)
+- [Prime Directive](#prime-directive)
+- [Strings](#strings)
+- [Open questions](#open-questions)
+
+<!-- /toc -->
+
+## What is built
 
 **Design note only (2026-08-26).** Nothing here is implemented. The code
 references below are the seams this design leans on, all verified against the

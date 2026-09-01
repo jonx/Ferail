@@ -1,13 +1,28 @@
 # Ant Trail
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ant Trail is Ferail-Win32's folder-usage heat system. It tracks where the user
 actually goes and uses that signal to make navigation feel smarter.
 
-## Status
+<!-- toc depth=2 -->
 
-Shipped with follow-ups.
+- [What is built](#what-is-built)
+- [Rules](#rules)
+- [Data Flow](#data-flow)
+- [Sorting](#sorting)
+- [Heat Model](#heat-model)
+- [Customization](#customization)
+- [Future Prediction](#future-prediction)
+- [Mac Notes](#mac-notes)
+- [Remaining Work](#remaining-work)
 
-Ferail currently has:
+<!-- /toc -->
+
+## What is built
+
+Ferail has:
 
 - `AntTrail` logic in `ferail-core`.
 - Process-wide path-based visit counts in `ProcessState`.

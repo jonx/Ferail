@@ -1,12 +1,28 @@
 # Preview
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 Ferail's preview pane is an async, cache-backed inspector for the current
 selection. It combines Finder-style Get Info details with lightweight content
 preview, and it never reads file content from paint.
 
-## Status
+<!-- toc depth=2 -->
 
-Shipped with follow-ups.
+- [What is built](#what-is-built)
+- [User Surface](#user-surface)
+- [Provider Flow](#provider-flow)
+- [Content Thumbnail Provider](#content-thumbnail-provider)
+- [Text And Code Provider](#text-and-code-provider)
+- [Scrolling And Layout](#scrolling-and-layout)
+- [Provider Rules](#provider-rules)
+- [Metadata Editing](#metadata-editing)
+- [Mac Notes](#mac-notes)
+- [Remaining Work](#remaining-work)
+
+<!-- /toc -->
+
+## What is built
 
 Live providers:
 
@@ -128,7 +144,7 @@ identically. On Windows the two differ, because the shell does:
   handler is a live viewer, so its capture includes the handler's own
   chrome (scrollbars, toolbars); that is acceptable in the pane and
   exactly why the grid never gets it. Explorer's real answer: the handler
-  hosted live in a child window over the pane: is tracked in `TODO.md`.
+  hosted live in a child window over the pane: is tracked in [TODO.md](../../TODO.md).
   The capture loads in the disposable broker first so killing that process
   owns the provider lifetime; `prevhost.exe` is compatibility fallback only.
   A newer selection cancels and kills the active broker immediately.
@@ -214,7 +230,7 @@ link cannot silently update its target.
 Future embedded-metadata work is deliberately separate: location scrubbing,
 audio-tag editing, and writable document properties each need format-specific
 atomic replacement, cache invalidation, and privacy/error contracts. They are
-tracked in `TODO.md`, not implied by the filesystem-date editor.
+tracked in [TODO.md](../../TODO.md), not implied by the filesystem-date editor.
 
 ## Mac Notes
 
@@ -233,4 +249,4 @@ Tracked in [TODO.md](../../TODO.md):
 - Per-provider cancellation tokens.
 - More explicit cloud-placeholder state before reads that may fault content in.
 - Embedded metadata editing: remove location data, edit common audio tags, and
-  write supported Windows document properties (see `TODO.md`).
+  write supported Windows document properties (see [TODO.md](../../TODO.md)).

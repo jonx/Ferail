@@ -10,6 +10,23 @@ glyphs that are too weak, or too reused, for what they're meant to mean.
 
 Audited against the Rust sources on 2026-06-20.
 
+<!-- toc depth=2 -->
+
+- [Sources at a glance](#sources-at-a-glance)
+- [Attribution & licensing](#attribution--licensing)
+- [Spare upstream icons (check here before vendoring)](#spare-upstream-icons-check-here-before-vendoring)
+- [House style (all local SVGs)](#house-style-all-local-svgs)
+- [Platform neutrality](#platform-neutrality)
+- [File-type row icons (file list + grid)](#file-type-row-icons-file-list--grid)
+- [Sidebar Locations (well-known folders)](#sidebar-locations-well-known-folders)
+- [Toolbar / chrome / commands](#toolbar--chrome--commands)
+- [The favorite star](#the-favorite-star)
+- [Favorite icon picker](#favorite-icon-picker)
+- [Known gaps & weak icons](#known-gaps--weak-icons)
+- [Adding a new icon](#adding-a-new-icon)
+
+<!-- /toc -->
+
 ## Sources at a glance
 
 The app pulls icons from three places, resolved through one composite

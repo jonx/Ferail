@@ -3,7 +3,7 @@
 ← [Feature notes](README.md) · [Screenshot harness](SCREENSHOTS.md) ·
 [Diagnostics privacy](DIAGNOSTICS.md) · [Architecture](../ARCHITECTURE.md)
 
-**Status: implemented: semantic live projection, August 2026.** Private Mode is a process-wide,
+Private Mode is a process-wide,
 session-only presentation lock for making screenshots of a real Ferail session
 without displaying personal names, paths, content or identifying metadata. It
 is not a second file-browser mode and it never changes the filesystem model.
@@ -37,6 +37,19 @@ highlighted. Only visible controls are projected, so entering the mode never
 walks a Flat View with millions of rows.
 
 ---
+
+<!-- toc depth=2 -->
+
+- [1. Promise and boundary](#1-promise-and-boundary)
+- [2. Settled product behaviour](#2-settled-product-behaviour)
+- [3. Architecture](#3-architecture)
+- [4. Surface inventory](#4-surface-inventory)
+- [5. Screenshot harness integration](#5-screenshot-harness-integration)
+- [6. Implementation sequence](#6-implementation-sequence)
+- [7. Verification plan](#7-verification-plan)
+- [8. Release gate](#8-release-gate)
+
+<!-- /toc -->
 
 ## 1. Promise and boundary
 
@@ -539,7 +552,7 @@ until the release gate in Phase 6 passes.
 - Run the complete surface/action/multi-window canary matrix.
 - Run macOS, Windows and Linux screenshot qualification.
 - Pass four-million-row performance/memory gates.
-- Update `ICONS.md`, CHANGELOG and the feature tour.
+- Update [ICONS.md](ICONS.md), CHANGELOG and the feature tour.
 - Only then expose the Settings/menu command in normal builds.
 
 ---

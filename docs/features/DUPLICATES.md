@@ -1,5 +1,8 @@
 # Duplicate Finder
 
+← [Feature notes](README.md) · [Status](../STATUS.md) ·
+[Architecture](../ARCHITECTURE.md) · [Open work](../../TODO.md)
+
 The duplicate finder is I/O-heavy, so it lives behind the worker/task/progress
 architecture and the [prime directive](../ARCHITECTURE.md#prime-directive): the
 UI never blocks, the app stays navigable, and results stream in incrementally.
@@ -9,7 +12,22 @@ File Explorer, and the mainstream Linux managers ship **no** built-in duplicate
 finder: users reach for Gemini, dupeGuru, Czkawka, or rmlint. Ferail builds
 it in.
 
-## Status
+<!-- toc depth=2 -->
+
+- [What is built](#what-is-built)
+- [Target pipeline (the funnel)](#target-pipeline-the-funnel)
+- [Not killing the CPU](#not-killing-the-cpu)
+- [Fast enumeration (future, per-platform speed note)](#fast-enumeration-future-per-platform-speed-note)
+- [Mac correctness the CLI tools mostly ignore](#mac-correctness-the-cli-tools-mostly-ignore)
+- [Worker shape](#worker-shape)
+- [GPUI integration](#gpui-integration)
+- [Rules (invariant)](#rules-invariant)
+- [Shipped](#shipped)
+- [Follow-ups](#follow-ups)
+
+<!-- /toc -->
+
+## What is built
 
 **Shipped.** Find Duplicates (Cmd+Shift+U, the View menu, or the command
 palette) runs the funnel below off the UI thread, cache-backed by the `files`
