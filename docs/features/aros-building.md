@@ -117,7 +117,7 @@ Two non-repo trees, produced by step 3 (env-overridable everywhere via
 
 ## 3. Build hosted AROS + its SDK (the big prerequisite)
 
-This is the [aros-aarch64](../../../aros-aarch64/) project's territory; its
+This is the aros-aarch64 project's territory; its
 `graft/WORKFLOW.md` and `graft/build-darwin-aarch64.sh` are authoritative.
 The condensed shape:
 

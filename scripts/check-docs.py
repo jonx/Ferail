@@ -237,7 +237,12 @@ def main() -> int:
                 continue
             checked += 1
             label = f"{rel(source)} -> {raw}"
-            if not target.exists():
+            if not under(target, root):
+                # A link that escapes the repository resolves only on the
+                # machine that has the sibling checkout. It passed here and
+                # failed in CI once; a path outside the tree is not a link.
+                problems.append(f"{label} (outside the repository)")
+            elif not target.exists():
                 problems.append(f"{label} (missing)")
             elif (sep and fragment and target.is_file()
                   and target.suffix.lower() == ".md"
