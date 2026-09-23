@@ -2912,7 +2912,7 @@ impl TableDelegate for FileListDelegate {
             .map(|col| col.key.as_ref())
             .unwrap_or("");
 
-        match col_key {
+        let cell = match col_key {
             // Name: Lucide line-art icon tinted by category (files +
             // symlinks); macOS NSWorkspace bitmap for folders so
             // user-customised folder icons and cloud-sync overlays
@@ -3296,7 +3296,19 @@ impl TableDelegate for FileListDelegate {
                     .into_any_element()
             }
             _ => div().into_any_element(),
-        }
+        };
+        // gpui-component's cell wrapper is a plain full-height block, so a
+        // cell sized to its own content sat at the top of the row while the
+        // taller Name cell looked centered. A column flex centers every cell
+        // vertically and still stretches it to the column width, so
+        // truncation keeps working.
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .justify_center()
+            .child(cell)
+            .into_any_element()
     }
 
     /// Plain text of a cell: the same strings `render_td` paints,

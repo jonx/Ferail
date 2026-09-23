@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **List rows are centered vertically.** Size, Format, Modified and
+  Description sat at the top of each row while the name beside them was
+  centered on its icon.
+
 - **A volume that stops answering no longer freezes Ferail.** A network share
   whose server vanished, a disk pulled mid-read or a crashed FUSE filesystem
   used to hang the volume list for good, and one left behind in `/Volumes`
