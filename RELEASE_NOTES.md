@@ -1,4 +1,4 @@
-# Ferail 0.7.8
+# Ferail 0.7.8 - Apps launch, archives open in place, and dead volumes stay harmless
 
 Apps launch, archives open in place, screenshots paste, and a dead volume no
 longer takes Ferail with it.
