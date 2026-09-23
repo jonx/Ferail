@@ -1579,6 +1579,9 @@
     "−1f": "−1f",
     "⚠ {warning}": "⚠ {warning}",
     "{name} (not responding)": "{name} (nie odpowiada)",
-    "Show Contents": "Pokaż zawartość"
+    "Show Contents": "Pokaż zawartość",
+    "No files or image on the clipboard": "Brak plików i obrazu w schowku",
+    "Pasted Image {date} at {time}": "Wklejony obraz {date} o {time}",
+    "Paste image": "Wklej obraz"
   }
 }

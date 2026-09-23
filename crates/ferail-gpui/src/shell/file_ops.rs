@@ -238,7 +238,18 @@ impl Shell {
         let (sources, clipboard_operation) =
             crate::platform_shell::clipboard_read_file_urls_with_operation();
         if sources.is_empty() {
-            window.push_notification(Notification::info(tr!("No files on the clipboard")), cx);
+            // No files, but a picture (a screenshot, an image copied from a
+            // browser or an editor): paste it as a new image file. Files win
+            // when both are there, because copying a file in Finder also
+            // puts its icon on the clipboard.
+            if let Some(image) = clipboard_image(cx) {
+                self.paste_clipboard_image(image, window, cx);
+                return;
+            }
+            window.push_notification(
+                Notification::info(tr!("No files or image on the clipboard")),
+                cx,
+            );
             return;
         }
         // Pasting the exact set that was Cut → move + clear the mark.
@@ -255,6 +266,41 @@ impl Shell {
         };
         let dest = self.active_tab().current_dir.clone();
         self.spawn_transfer_op(sources, dest, mode, window, cx);
+    }
+
+    /// Write a clipboard image into the folder on screen as a new file named
+    /// after the moment it was pasted, then select it. PNG, JPEG, GIF and
+    /// WebP keep their bytes as they are; TIFF and BMP, which is what many
+    /// apps put on the clipboard, are converted to PNG, losslessly.
+    fn paste_clipboard_image(&mut self, image: gpui::Image, window: &mut Window, cx: &mut Context<Self>) {
+        let dir = self.active_tab().current_dir.clone();
+        let reload = dir.clone();
+        // The template is translated here; the date is filled in on the
+        // worker, where reading the local timezone costs nothing visible.
+        let template = crate::i18n::tr_static(ferail_core::msgid!("Pasted Image {date} at {time}"))
+            .to_string();
+        let now = ferail_core::now_unix();
+        self.spawn_file_op(
+            reload,
+            move || {
+                let (bytes, ext) = clipboard_image_file(image)?;
+                let stamp = ferail_fs_native::stat_info::format_editable_local_datetime(now);
+                let (date, time) = stamp.split_once(' ').unwrap_or((stamp.as_str(), ""));
+                // `:` is not a character Finder shows in a name.
+                let stem = template
+                    .replace("{date}", date)
+                    .replace("{time}", &time.replace(':', "."));
+                let path = ferail_fs_native::file_ops::write_new_file(&dir, stem.trim(), ext, &bytes)
+                    .map_err(|e| e.to_string())?;
+                Ok(vec![path])
+            },
+            ferail_core::msgid!("Paste image"),
+            None,
+            FileOpSuccessToast::None,
+            FileOpUndo::RemoveCreatedResult,
+            window,
+            cx,
+        );
     }
 
     /// Cmd+Option+V: Finder's "Move Items Here".
@@ -5627,5 +5673,39 @@ mod inline_name_tests {
     fn dotfiles_and_unicode_produce_utf8_byte_ranges() {
         assert_eq!(inline_name_selection_end(".gitignore", false), 10);
         assert_eq!(inline_name_selection_end("café.txt", false), "café".len());
+    }
+}
+
+/// The first image on the clipboard, if any. A pasteboard read: action
+/// handlers only, never render.
+fn clipboard_image(cx: &App) -> Option<gpui::Image> {
+    cx.read_from_clipboard()?
+        .into_entries()
+        .find_map(|entry| match entry {
+            gpui::ClipboardEntry::Image(image) => Some(image),
+            _ => None,
+        })
+}
+
+/// The bytes and extension to write for a clipboard image. Formats people
+/// open everywhere are kept byte for byte; TIFF and BMP become PNG.
+fn clipboard_image_file(image: gpui::Image) -> Result<(Vec<u8>, &'static str), String> {
+    use gpui::ImageFormat as F;
+    let keep = |ext| Ok((image.bytes.clone(), ext));
+    match image.format {
+        F::Png => keep("png"),
+        F::Jpeg => keep("jpg"),
+        F::Gif => keep("gif"),
+        F::Webp => keep("webp"),
+        F::Svg => keep("svg"),
+        F::Ico => keep("ico"),
+        F::Tiff | F::Bmp | F::Pnm => {
+            let decoded = image::load_from_memory(&image.bytes).map_err(|e| e.to_string())?;
+            let mut png = Vec::new();
+            decoded
+                .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                .map_err(|e| e.to_string())?;
+            Ok((png, "png"))
+        }
     }
 }

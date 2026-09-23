@@ -527,8 +527,19 @@ Finder semantics, not Windows cut:
   "Move Item Here").
 - Cut (Cmd+X) is deliberately absent in v1, like Finder. The
   catalogue grows `file.copy`, `file.paste`, `file.move_paste`.
-- Paste enables only when the pasteboard holds file URLs; the action
-  no-ops with a status notification otherwise.
+- **Paste an image.** When the pasteboard holds no file URLs but does hold
+  an image (a screenshot, a picture copied from a browser or an editor),
+  Cmd+V writes it into the active tab's directory as
+  `Pasted Image <date> at <time>.<ext>` (the name is translated), selects
+  it, and pushes a Remove Created undo. PNG, JPEG, GIF, WebP, SVG and ICO
+  keep their bytes; TIFF and BMP are converted to PNG. Files win when both
+  are present, because copying a file in Finder also puts its icon on the
+  pasteboard. The image comes through gpui's clipboard, so every platform
+  gets it; the write runs on the worker through
+  `ferail_fs_native::file_ops::write_new_file`, which never replaces an
+  existing file.
+- With neither files nor an image on the pasteboard, Paste no-ops with a
+  status notification. Move Paste takes files only.
 
 ### Undo
 

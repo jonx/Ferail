@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Paste an image straight into a folder.** With a screenshot or a copied
+  picture on the clipboard, Cmd+V (Ctrl+V on Windows and Linux) saves it in
+  the folder you are looking at as *Pasted Image* followed by the date and
+  time, and selects it. Undo removes it again. TIFF and BMP pictures, which
+  many apps put on the clipboard, are saved as PNG.
+
 - **Double-clicking an app launches it.** Applications, installers and
   document packages such as Keynote files or the Photos library opened as
   folders, because on disk they are folders. They now open the way Finder

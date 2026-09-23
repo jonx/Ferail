@@ -1626,3 +1626,55 @@ mod tests {
         assert!(of(libc::EACCES).os_code.is_some());
     }
 }
+
+/// Write `bytes` to a new file `<stem>.<ext>` in `dir`, never replacing an
+/// existing one: a taken name moves on to `<stem> 2.<ext>`, `<stem> 3.<ext>`…
+/// as Finder does. The file is created with `create_new`, so two writers
+/// racing for the same name cannot both win it. Returns the path written.
+pub fn write_new_file(dir: &Path, stem: &str, ext: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    use std::io::Write as _;
+    ferail_core::path_guard::assert_off_ui_thread("write_new_file");
+    for n in 1..=9999u32 {
+        let name = if n == 1 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem} {n}.{ext}")
+        };
+        let candidate = dir.join(name);
+        match fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(mut file) => {
+                if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+                    drop(file);
+                    let _ = fs::remove_file(&candidate);
+                    return Err(e);
+                }
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        format!("no free name for {stem}.{ext} in {}", dir.display()),
+    ))
+}
+
+#[cfg(test)]
+mod write_new_file_tests {
+    use super::write_new_file;
+
+    #[test]
+    fn a_taken_name_moves_on_instead_of_replacing() {
+        let dir = std::env::temp_dir().join(format!("ferail-write-new-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = write_new_file(&dir, "Pasted", "png", b"one").unwrap();
+        let second = write_new_file(&dir, "Pasted", "png", b"two").unwrap();
+        assert_eq!(first.file_name().unwrap(), "Pasted.png");
+        assert_eq!(second.file_name().unwrap(), "Pasted 2.png");
+        assert_eq!(std::fs::read(&first).unwrap(), b"one");
+        assert_eq!(std::fs::read(&second).unwrap(), b"two");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
