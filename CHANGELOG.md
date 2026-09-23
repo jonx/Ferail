@@ -6,6 +6,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
+## Unreleased
+
+- **The update window no longer shows the release name twice**, once as its
+  heading and again, larger, at the top of the notes. Its buttons are also a
+  little taller, so labels such as *Télécharger* no longer touch the bottom
+  edge.
+
 ## 0.7.8 - 2026-09-23
 
 - **Paste an image straight into a folder.** With a screenshot or a copied

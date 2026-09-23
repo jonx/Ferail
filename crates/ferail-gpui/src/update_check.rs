@@ -576,7 +576,7 @@ fn release_notes(r: &GhRelease) -> ReleaseNotes {
     let body = r
         .body
         .as_deref()
-        .map(|b| b.replace("\r\n", "\n").trim().to_string())
+        .map(|b| without_leading_title(&b.replace("\r\n", "\n")))
         .unwrap_or_default();
     let date = r
         .published_at
@@ -588,6 +588,18 @@ fn release_notes(r: &GhRelease) -> ReleaseNotes {
         title,
         body,
         date,
+    }
+}
+
+/// A release body without its leading `# Title` line. The notes are written
+/// to stand alone on GitHub, so they open with the release's name; the dialog
+/// already shows that name above them, and a second, larger copy is noise.
+fn without_leading_title(body: &str) -> String {
+    let body = body.trim();
+    match body.split_once('\n') {
+        Some((first, rest)) if first.starts_with("# ") => rest.trim().to_string(),
+        None if body.starts_with("# ") => String::new(),
+        _ => body.to_string(),
     }
 }
 
@@ -1042,6 +1054,14 @@ pub fn open_update_dialog(cx: &mut App) {
     });
 }
 
+/// Footer buttons are `.small()`, like every dialog's, but the small height
+/// leaves this dialog's labels, which carry descenders ("Télécharger",
+/// "Ferail-0.7.8.dmg"), touching the bottom edge. A little more height
+/// centers them.
+fn dialog_button_height() -> gpui::Rems {
+    gpui::rems(1.75)
+}
+
 fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
     let st = snapshot(cx);
     let dialog = dialog
@@ -1076,6 +1096,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                         Button::new("update-reveal")
                             .label(tr!("Show in Folder"))
                             .small()
+                            .h(dialog_button_height())
                             .on_click(move |_, window, cx| {
                                 let p = reveal_path.clone();
                                 cx.background_spawn(async move {
@@ -1094,6 +1115,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                             })
                             .primary()
                             .small()
+                            .h(dialog_button_height())
                             .on_click(move |_, window, cx| {
                                 let p = open_path.clone();
                                 if is_installer {
@@ -1141,6 +1163,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                         Button::new("update-later")
                             .label(tr!("Later"))
                             .small()
+                            .h(dialog_button_height())
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
@@ -1148,6 +1171,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                             .label(label)
                             .primary()
                             .small()
+                            .h(dialog_button_height())
                             .on_click(move |_, _window, cx| {
                                 // Keep the dialog open: it is the
                                 // progress UI.
@@ -1162,6 +1186,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                     .label(tr!("Retry"))
                     .primary()
                     .small()
+                    .h(dialog_button_height())
                     .on_click(|_, _window, cx| start_check(true, cx)),
             ),
         ),
@@ -1506,6 +1531,20 @@ pub fn seed_dialog_for_screenshot(state: &str, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_notes_drop_their_own_title() {
+        assert_eq!(
+            without_leading_title("# Ferail 0.7.8 - Apps launch\n\nApps launch.\n\n## More"),
+            "Apps launch.\n\n## More"
+        );
+        assert_eq!(
+            without_leading_title("## Section\nText"),
+            "## Section\nText"
+        );
+        assert_eq!(without_leading_title("- a bullet"), "- a bullet");
+        assert_eq!(without_leading_title("# Only a title"), "");
+    }
 
     #[test]
     fn version_parsing() {

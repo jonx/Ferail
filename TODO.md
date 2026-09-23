@@ -165,6 +165,14 @@ Net-new, but each sits on plumbing that already exists.
 - Context-menu follow-ups: a compact Finder-style tag swatch row, async Open
   With prewarm if cold-cache stutter appears, and per-target enable/disable
   rules for read-only volumes, missing files and permission-denied targets.
+- **Editor for the command-to-type table**
+  ([CONTEXT_MENU.md](docs/features/CONTEXT_MENU.md#commands-and-the-types-they-handle)).
+  Which commands a file type offers is fixed in `menu_plan::types::RULES`.
+  Settings ▸ Menus should let the user change it, per type or per group of
+  types: add or remove a command for images, archives, packages, and so on.
+  The overrides persist beside the existing menu preferences
+  (`menu_plan::prefs`), keyed by stable command id and type name, and a reset
+  returns to the built-in table.
 - Tags checkmarks over a multi-selection read only the clicked row's `tags`
   while the toggle applies to the whole resolved selection. Make them a true
   group state (✓ applied to all targets, mixed for partial) by projecting
