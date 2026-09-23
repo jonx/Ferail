@@ -4706,6 +4706,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))
             .on_action(cx.listener(Self::on_open_archive))
+            .on_action(cx.listener(Self::on_show_contents))
             .on_action(cx.listener(Self::on_convert_archive))
             .on_action(cx.listener(Self::on_pop_out_archive))
             .on_action(cx.listener(Self::on_close_tool_result))

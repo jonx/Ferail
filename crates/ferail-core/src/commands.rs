@@ -892,6 +892,20 @@ const CATALOGUE: &[CommandSpec] = &[
     // Folder-only context action: open the right-clicked directory
     // in a new tab in the same window. Mirrors Finder's primary
     // folder-menu action.
+    // Look inside an item that opens as a whole: a package (an app, an
+    // installer, a document package) is navigated into like a folder, an
+    // archive opens in the archive workbench. Double-click keeps opening it.
+    CommandSpec {
+        id: CommandId("file.show_contents"),
+        title: msgid!("Show Contents"),
+        category: Category::Context,
+        shortcuts: &[Shortcut {
+            key: "Enter",
+            primary: false,
+            shift: false,
+            alt: true,
+        }],
+    },
     CommandSpec {
         id: CommandId("file.open_in_new_tab"),
         title: msgid!("Open in New Tab"),

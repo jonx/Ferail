@@ -24,6 +24,7 @@ pub(crate) mod ids;
 pub(crate) mod inventory;
 pub(crate) mod layout;
 pub mod prefs;
+pub(crate) mod types;
 
 /// Which menu an entry belongs to. Visibility is stored per
 /// `(surface, command)`: the same command can be wanted in one menu and not
@@ -115,6 +116,9 @@ impl PlanShape for PlanItem {
 pub(crate) struct MenuPlan {
     surface: MenuSurface,
     items: Vec<PlanItem>,
+    /// What the menu was opened on, when it targets rows. Entries the
+    /// [`types`] table says do not handle these are dropped at render.
+    targets: Option<types::TargetTypes>,
 }
 
 impl MenuPlan {
@@ -124,7 +128,15 @@ impl MenuPlan {
         Self {
             surface,
             items: Vec::with_capacity(56),
+            targets: None,
         }
+    }
+
+    /// Filter this plan by target type (see [`types`]): the surface says
+    /// what the menu can hold, the targets what applies to them.
+    pub(crate) fn for_targets(mut self, targets: types::TargetTypes) -> Self {
+        self.targets = Some(targets);
+        self
     }
 
     pub(crate) fn action(
@@ -188,6 +200,12 @@ impl MenuPlan {
                     self.surface.key()
                 );
             }
+        }
+        if let Some(targets) = self.targets {
+            self.items.retain(|item| {
+                item.entry_id()
+                    .is_none_or(|id| types::handles(CommandId(id), &targets))
+            });
         }
         // Fast path: with no customization at all, which is the overwhelmingly
         // common case, this is exactly the old behaviour plus one atomic read.

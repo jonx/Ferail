@@ -51,6 +51,7 @@ use Item::Separator as S;
 const FILE_ROW: &[Item] = &[
     E(ids::OPEN),
     E(ids::OPEN_IN_NEW_TAB),
+    E(ids::SHOW_CONTENTS),
     E(ids::EDIT),
     E(ids::EDIT_IMAGE),
     E(ids::EDIT_IN_SYSTEM_EDITOR),

@@ -3220,7 +3220,9 @@ impl Shell {
             move |this, window, cx| {
                 let mut files = Vec::new();
                 for (_, entry, path) in entries {
-                    if matches!(entry.kind, EntryKind::Directory) {
+                    if matches!(entry.kind, EntryKind::Directory)
+                        && !ferail_core::packages::is_package_name(&entry.name)
+                    {
                         this.open_path_in_new_tab(path, window, cx);
                     } else {
                         files.push(path);
@@ -4042,6 +4044,28 @@ impl Shell {
             .map(|(_, _, path)| path);
         if let Some(archive) = archive {
             self.dock_archive_view(archive, window, cx);
+        }
+    }
+
+    /// Look inside the first selected item: a package is navigated into like
+    /// the folder it is on disk, an archive opens in the workbench. Anything
+    /// else is left alone: the menu only offers this for those two, and the
+    /// shortcut on a plain folder or file has nothing different to show.
+    pub fn on_show_contents(
+        &mut self,
+        _: &ShowContents,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::menu_plan::types::{TargetType, target_type};
+        let Some((_, entry, path)) = self.action_entries_visible_order(cx).into_iter().next()
+        else {
+            return;
+        };
+        match target_type(&entry) {
+            TargetType::Package => self.navigate(path, cx),
+            TargetType::Archive => self.dock_archive_view(path, window, cx),
+            _ => {}
         }
     }
 
@@ -7377,9 +7401,10 @@ impl Shell {
                     e.size,
                     e.mtime_unix,
                     crate::shell::verify::entry_is_manifest(e),
+                    ferail_core::packages::is_package_name(&e.name),
                 )
             });
-        let Some((path, kind, node, size, mtime_unix, manifest)) = path_and_kind else {
+        let Some((path, kind, node, size, mtime_unix, manifest, is_package)) = path_and_kind else {
             return;
         };
         #[cfg(not(windows))]
@@ -7410,6 +7435,13 @@ impl Shell {
         // where reading it is the point.
         if matches!(kind, EntryKind::File) && manifest {
             self.open_verify_path(path, cx);
+            return;
+        }
+        // A package (an app, an installer, a document package) is a folder
+        // on disk that Finder shows as one item: double-clicking it opens it.
+        // Show Contents (Option+Enter) is how to look inside.
+        if matches!(kind, EntryKind::Directory) && is_package {
+            Self::spawn_open_with_feedback(path, window, cx);
             return;
         }
         match kind {

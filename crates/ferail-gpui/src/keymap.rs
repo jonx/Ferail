@@ -283,6 +283,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
 
         // -- File: open in new tab -------------------------------
         "file.open_in_new_tab" => bind!(OpenInNewTab, ctx),
+        "file.show_contents" => bind!(crate::shell::ShowContents, ctx),
 
         // -- Tab cycling. These aren't in the canonical catalogue
         //    yet (Stage 5.5.d added them locally); bind from the

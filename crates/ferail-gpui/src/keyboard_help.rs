@@ -47,6 +47,7 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "file.rename" | "selection.start_rename" => Box::new(RenameSelected),
         "file.quick_look" => Box::new(QuickLook),
         "file.open_in_new_tab" => Box::new(OpenInNewTab),
+        "file.show_contents" => Box::new(ShowContents),
         "view.search" => Box::new(FocusFilter),
         "view.edit_breadcrumb" => Box::new(EditBreadcrumb),
         "view.toggle_preview" => Box::new(TogglePreview),

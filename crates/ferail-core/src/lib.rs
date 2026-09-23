@@ -16,6 +16,7 @@ pub mod media;
 pub mod name_hazards;
 pub mod navigation;
 pub mod node_store;
+pub mod packages;
 pub mod path_guard;
 pub mod platform_locations;
 pub mod platform_namespace;

@@ -8,6 +8,17 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Double-clicking an app launches it.** Applications, installers and
+  document packages such as Keynote files or the Photos library opened as
+  folders, because on disk they are folders. They now open the way Finder
+  opens them. **Show Contents** (right-click, or Option+Enter) is how to look
+  inside, and it also works on archives, where it opens the archive browser.
+
+- **The right-click menu fits what you clicked.** Commands now say which
+  kinds of file they apply to: Edit and Edit in TextEdit no longer appear on
+  pictures, videos, archives or programs, and Open as Archive gives way to
+  Show Contents on a file that is already a recognised archive.
+
 - **List rows are centered vertically.** Size, Format, Modified and
   Description sat at the top of each row while the name beside them was
   centered on its icon.

@@ -338,7 +338,7 @@ pub fn file_type_icon(entry: &FileEntry) -> FileTypeIcon {
     FileTypeIcon { path, tint }
 }
 
-fn classify_file(name: &str, magic: &str) -> FileTypeTint {
+pub(crate) fn classify_file(name: &str, magic: &str) -> FileTypeTint {
     let ext = name
         .rsplit_once('.')
         .map(|(_, e)| e.to_ascii_lowercase())

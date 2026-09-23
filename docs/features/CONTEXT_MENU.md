@@ -32,7 +32,7 @@ API, so we compose a faithful equivalent from `NSWorkspace`,
   latter additionally gated on `lock_diagnostics_available()`: Windows-only
   today, see `shell/lock_info.rs`).
 - List pane (per-row): full Finder-equivalent: Open, Open in New Tab
-  (folders/files), Edit in TextEdit/Notepad/Text Editor (one file), Open With submenu,
+  (folders/files), Show Contents (packages and archives), Edit in TextEdit/Notepad/Text Editor (one file), Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
   Compress (submenu: ZIP / 7-Zip / TAR ▸ Gzip·Bzip2·XZ·Uncompressed),
   Extract (archive rows only; submenu: Extract Here / Extract To…),
@@ -80,6 +80,10 @@ Two things live in the render step rather than at the call sites:
   and untestable; as a list rule it is four lines and has its own tests.
 - **Duplicate-id detection**, as a debug assertion. A repeated id is not
   cosmetic: it would make one preference govern two different entries.
+- **The command-to-type filter.** A row menu is planned `for_targets` the
+  types of what was right-clicked, and entries the
+  [type table](#commands-and-the-types-they-handle) says do not handle them
+  are dropped before the user's preferences apply.
 
 Submenus (Compress, Extract, Open With, Tags) stay where they are built,
 because gpui-component builds a nested `PopupMenu` through its own `build`,
@@ -199,9 +203,9 @@ Every command is classified by how it behaves across a multi-selection:
    With). Hidden once more than one row is targeted.
 
 Plus **capability / anchor** rules that don't fit a count (Clear
-Quarantine = any target quarantined; Open Terminal Here / Favorites /
-Open in New Tab = anchor is a folder; Slideshow from Here = anchor is a
-file).
+Quarantine = any target quarantined; Open in New Tab = anchor is a
+folder). Which *kinds* of file a command applies to is not an
+`Availability` rule: it is the type table below.
 
 Visibility is expressed with the `Availability` type and evaluated against
 the resolved `MenuTargets`:
@@ -226,6 +230,62 @@ To gate a new command, pick `SingleOnly` or write a `When` closure; to
 gate on a new per-file capability, add a field to `TargetCap` (projected
 from the cached `FileEntry`: no I/O) and read it through `any`/`all`.
 Caps are cache-only, honouring the prime directive.
+
+#### Commands and the types they handle
+
+A surface says what a menu can ever contain; the type table,
+[`menu_plan::types`](../../crates/ferail-gpui/src/menu_plan/types.rs), narrows
+it to what applies to the rows that were right-clicked. Each command names
+the target types it handles; a command the table does not name handles every
+type.
+
+Every row has one `TargetType`, decided from the kind, name and cached
+content description it already carries (the signals the list uses for its
+icon), so classifying needs no I/O:
+
+| Type | What it is |
+| --- | --- |
+| Folder | a directory |
+| Package | a directory macOS shows as one item: `.app`, `.pkg`, `.rtfd`, `.photoslibrary`, … (`ferail_core::packages`) |
+| Archive | a file Ferail can browse and extract, by its name |
+| ChecksumManifest | a checksum list |
+| Image, Video, Audio, Document, Code, DiskImage, Executable | from the same classification as the file icon |
+| Other | everything else |
+
+A rule looks either at the **anchor** (the right-clicked row, for commands
+that act on one item) or at **any** target (for commands that act on the
+matching subset of a selection):
+
+| Command | Scope | Handles |
+| --- | --- | --- |
+| Show Contents | anchor | Package, Archive |
+| Edit, Edit in TextEdit | anchor | any file except Image, Video, Audio, Archive, DiskImage, Executable |
+| Edit Image | anchor | Image |
+| Slideshow from Here, Generate SHA-256 | anchor | any file |
+| Verify Checksums | anchor | ChecksumManifest |
+| Open Terminal Here, Add to Favorites | anchor | Folder, Package |
+| Extract | any | Archive |
+| Convert Archive | anchor | Archive |
+| Open as Archive | anchor | any file except Archive |
+
+Open as Archive steps aside for a recognised archive, which has Show
+Contents; it stays for every other file because a `.docx`, a `.jar` or an
+extensionless download may still be a ZIP underneath. A selection too large
+to classify while the menu opens counts as holding every type, which can only
+offer a subset command, never hide one.
+
+To make a command type-aware, add a row to `RULES`; to add a type, extend
+`TargetType` and `target_type`. Counts (`SingleOnly`) stay at the call site:
+they are about how many rows are targeted, not what they are.
+
+#### Packages
+
+On macOS a package opens as a whole: double-click or Enter launches the app,
+runs the installer, opens the document, as Finder does. **Show Contents**
+(Option+Enter) navigates into it as the folder it is on disk. The same
+command on an archive opens the archive workbench, so looking inside
+anything that opens as a whole is one gesture. On other platforms the same
+directories are ordinary folders.
 
 #### Fan-out confirmation
 

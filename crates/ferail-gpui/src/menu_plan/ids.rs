@@ -48,6 +48,7 @@ pub(crate) const NEW_FOLDER: CommandId = CommandId("file.new_folder");
 pub(crate) const PASTE: CommandId = CommandId("file.paste");
 pub(crate) const REFRESH: CommandId = CommandId("file.refresh");
 pub(crate) const PIN_TO_FAVORITES: CommandId = CommandId("file.pin_to_favorites");
+pub(crate) const SHOW_CONTENTS: CommandId = CommandId("file.show_contents");
 
 /// The system-editor escape hatch next to the built-in **Edit**. Its label is
 /// per-platform ("Edit in TextEdit" / "Edit in Notepad"), which is exactly why
@@ -114,7 +115,7 @@ const MENU_ONLY: [CommandId; 10] = [
 
 /// Every id this module declares, for the checks below.
 #[cfg(test)]
-const ALL: [CommandId; 37] = [
+const ALL: [CommandId; 38] = [
     OPEN,
     OPEN_IN_NEW_TAB,
     EDIT,
@@ -141,6 +142,7 @@ const ALL: [CommandId; 37] = [
     PASTE,
     REFRESH,
     PIN_TO_FAVORITES,
+    SHOW_CONTENTS,
     EDIT_IN_SYSTEM_EDITOR,
     SLIDESHOW_FROM_HERE,
     SHOW_LOCK_HOLDERS,

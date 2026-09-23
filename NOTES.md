@@ -7,6 +7,35 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-09-23 Volumes, packages and a command-to-type table
+
+Fixes for issues #2, #3, #5, #8 and #10.
+
+## Key decisions
+
+- **Volumes come from the kernel mount table, not `/Volumes`.**
+  `getfsstat(MNT_NOWAIT)` answers from the kernel's cached copy and asks no
+  filesystem anything, so a dead mount point left behind in `/Volumes` is
+  never touched. `MNT_DONTBROWSE` is the same flag Finder hides by, and
+  deduplicating by `fsid` removes the symlink and stale-directory doubles.
+- **A deadline, not a cancel.** No syscall can be cancelled once a FUSE or
+  network filesystem stops answering. `ferail_fs_native::deadline` runs each
+  probe on its own thread and stops waiting; an in-flight key per path keeps
+  one dead volume from collecting a stuck thread per refresh. The stuck
+  thread is the accepted cost.
+- **Packages are recognised lexically.** Finder asks Launch Services, which
+  blocks; a fixed extension list answers during row activation and menu
+  building. Frameworks are left out on purpose: Finder browses into them.
+- **One gesture to look inside.** Show Contents (Option+Enter) navigates into
+  a package and opens an archive in the workbench, instead of a package-only
+  "Show Package Contents" next to "Open as Archive". Double-click keeps
+  opening the item, as Finder does; archives are unchanged there.
+- **Commands declare the types they handle.** The surface decides what a menu
+  can contain; `menu_plan::types` narrows it by what was right-clicked. The
+  classification is the icon's (`classify_file`) plus Package, Archive and
+  ChecksumManifest, so it costs no I/O. Count rules (`SingleOnly`) stay at
+  the call site: they are a different question.
+
 # 2026-08-25 "What's Locking This?" - lock diagnostics as a menu entry
 
 Slow AI session. Extends the existing Restart-Manager lock diagnostics

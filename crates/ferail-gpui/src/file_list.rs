@@ -278,6 +278,9 @@ pub struct MenuTargets {
     any_quarantined: bool,
     any_archive: bool,
     pub anchor: Option<TargetCap>,
+    /// Target types for the command-to-type table
+    /// (`menu_plan::types`).
+    pub(crate) types: crate::menu_plan::types::TargetTypes,
 }
 
 impl MenuTargets {
@@ -354,7 +357,15 @@ fn resolve_menu_targets_with_mode(
     let Some(clicked) = entries.get(row_ix) else {
         return MenuTargets::default();
     };
+    use crate::menu_plan::types::{TargetTypes, TypeSet, target_type};
     let anchor = TargetCap::from(clicked);
+    let anchor_type = target_type(clicked);
+    // Too many rows to classify while the menu opens: every type may be
+    // present, which only ever offers a subset command, never hides one.
+    let all_types = TargetTypes {
+        anchor: Some(anchor_type),
+        any: TypeSet::ALL,
+    };
     let is_selected = |id: NodeId| {
         if selection_all {
             !selected.contains(&id)
@@ -363,11 +374,17 @@ fn resolve_menu_targets_with_mode(
         }
     };
     if !is_selected(clicked.id) {
+        let mut any = TypeSet::EMPTY;
+        any.insert(anchor_type);
         return MenuTargets {
             count: 1,
             any_quarantined: anchor.is_quarantined,
             any_archive: anchor.is_archive,
             anchor: Some(anchor),
+            types: TargetTypes {
+                anchor: Some(anchor_type),
+                any,
+            },
         };
     }
 
@@ -382,6 +399,7 @@ fn resolve_menu_targets_with_mode(
             any_quarantined: count != 0 && all_caps.quarantined != 0,
             any_archive: count != 0 && all_caps.archives != 0,
             anchor: Some(anchor),
+            types: all_types,
         };
     }
 
@@ -395,21 +413,28 @@ fn resolve_menu_targets_with_mode(
             any_quarantined: all_caps.quarantined != 0,
             any_archive: all_caps.archives != 0,
             anchor: Some(anchor),
+            types: all_types,
         };
     }
 
     let mut any_quarantined = false;
     let mut any_archive = false;
+    let mut any = TypeSet::EMPTY;
     for entry in entries.iter().filter(|entry| selected.contains(&entry.id)) {
         let cap = TargetCap::from(entry);
         any_quarantined |= cap.is_quarantined;
         any_archive |= cap.is_archive;
+        any.insert(target_type(entry));
     }
     MenuTargets {
         count,
         any_quarantined,
         any_archive,
         anchor: Some(anchor),
+        types: TargetTypes {
+            anchor: Some(anchor_type),
+            any,
+        },
     }
 }
 
@@ -443,13 +468,6 @@ impl Availability {
 /// demand and remains discoverable even when the folder row itself is clean.
 fn avail_any_quarantined(t: &MenuTargets) -> bool {
     t.any_quarantined() || matches!(t.anchor.map(|cap| cap.kind), Some(EntryKind::Directory))
-}
-
-/// Bulk rule: at least one target is an archive file: offer Extract, which
-/// acts on the archive subset (mixed selections extract only their archives),
-/// mirroring how Clear Quarantine acts on the quarantined subset.
-fn avail_any_archive(t: &MenuTargets) -> bool {
-    t.any_archive()
 }
 
 /// Anchor rule: the right-clicked (else lead) row is a folder, for
@@ -3476,7 +3494,7 @@ impl TableDelegate for FileListDelegate {
             CreateChecksumFile, DeleteImmediately, Duplicate, EditFile, EditImage, EditTextFile,
             Extract, ExtractTo, GenerateSha256, GetInfo, MakeAlias, MoveToTrash, NewArchive,
             OpenAsArchive, OpenInNewTab, OpenSelected, OpenTerminalHere, QuickLook, RenameSelected,
-            RevealInFinder, ShowLockHolders, SlideshowFromHere, ToggleFavoriteForTarget,
+            RevealInFinder, ShowContents, ShowLockHolders, SlideshowFromHere, ToggleFavoriteForTarget,
             ToggleTagBlue, ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple,
             ToggleTagRed, ToggleTagYellow, VerifyChecksums,
         };
@@ -3540,17 +3558,13 @@ impl TableDelegate for FileListDelegate {
             row_ix,
             self.all_menu_caps,
         );
+        // Which kinds of file each entry applies to (Extract to archives,
+        // Show Contents to packages and archives, Verify Checksums to
+        // checksum lists…) is not decided here but by the command-to-type
+        // table, `menu_plan::types`, when the plan renders. What stays here
+        // are the rules about how many rows are targeted.
         let t = &targets;
-        let show_slideshow = Availability::When(avail_anchor_file).allows(t);
-        let show_checksum =
-            Availability::SingleOnly.allows(t) && Availability::When(avail_anchor_file).allows(t);
-        let show_verify = show_checksum
-            && self
-                .entries
-                .get(row_ix)
-                .is_some_and(crate::shell::verify::entry_is_manifest);
-        let show_terminal = Availability::When(avail_anchor_dir).allows(t);
-        let show_favorites = Availability::When(avail_anchor_dir).allows(t);
+        let show_single_only = Availability::SingleOnly.allows(t);
         // A folder seeds a tab directly. One file seeds its parent tab and is
         // selected there; this is especially useful from recursive Search
         // results, where the containing folder is not already on screen.
@@ -3558,8 +3572,6 @@ impl TableDelegate for FileListDelegate {
             || (Availability::SingleOnly.allows(t)
                 && Availability::When(avail_anchor_file).allows(t));
         let show_clear_quarantine = Availability::When(avail_any_quarantined).allows(t);
-        let show_extract = Availability::When(avail_any_archive).allows(t);
-        let show_single_only = Availability::SingleOnly.allows(t);
         let show_single_file = show_single_only && Availability::When(avail_anchor_file).allows(t);
         // Bulk complement of the SingleOnly Rename: pattern rename over
         // the whole resolved set (docs/features/BULK_RENAME.md).
@@ -3573,16 +3585,21 @@ impl TableDelegate for FileListDelegate {
         };
 
         use crate::menu_plan::{MenuPlan, MenuSurface, ids};
-        let mut plan = MenuPlan::new(MenuSurface::FileRow).action(
-            ids::OPEN,
-            tr!("Open"),
-            Box::new(OpenSelected),
-        );
+        let mut plan = MenuPlan::new(MenuSurface::FileRow)
+            .for_targets(targets.types)
+            .action(ids::OPEN, tr!("Open"), Box::new(OpenSelected));
         if show_new_tab {
             plan = plan.action(
                 ids::OPEN_IN_NEW_TAB,
                 tr!("Open in New Tab"),
                 Box::new(OpenInNewTab),
+            );
+        }
+        if show_single_only {
+            plan = plan.action(
+                ids::SHOW_CONTENTS,
+                tr!("Show Contents"),
+                Box::new(ShowContents),
             );
         }
         if show_single_file {
@@ -3613,7 +3630,7 @@ impl TableDelegate for FileListDelegate {
             .separator()
             .action(ids::GET_INFO, tr!("Get Info"), Box::new(GetInfo))
             .action(ids::QUICK_LOOK, tr!("Quick Look"), Box::new(QuickLook));
-        if show_slideshow {
+        {
             // Anchor command: start the viewer slideshow anchored to the
             // clicked file (docs/features/VIEWER.md). Folder anchors can't
             // start a slideshow, so the item is file-anchored.
@@ -3634,14 +3651,12 @@ impl TableDelegate for FileListDelegate {
             // past a single target rather than silently concatenating.
             plan = plan.action(ids::COPY_PATH, tr!("Copy Path"), Box::new(CopyPath));
         }
-        if show_checksum {
+        if show_single_only {
             plan = plan.action(
                 ids::GENERATE_SHA256,
                 tr!("Generate SHA-256…"),
                 Box::new(GenerateSha256),
             );
-        }
-        if show_verify {
             plan = plan.action(
                 ids::VERIFY_CHECKSUMS,
                 tr!("Verify Checksums…"),
@@ -3664,7 +3679,7 @@ impl TableDelegate for FileListDelegate {
                 Box::new(ShowLockHolders),
             );
         }
-        if show_terminal {
+        {
             // Anchor command: open a terminal at the clicked directory,
             // grouped with the path-oriented actions above.
             plan = plan.action(
@@ -3716,7 +3731,7 @@ impl TableDelegate for FileListDelegate {
             .action(ids::DUPLICATE, tr!("Duplicate"), Box::new(Duplicate))
             .action(ids::MAKE_ALIAS, tr!("Make Alias"), Box::new(MakeAlias))
             .submenu(ids::COMPRESS, tr!("Compress"), compress_submenu);
-        if show_extract {
+        {
             // Capability command: shown when any target is an archive
             // (docs/features/CONTEXT_MENU.md). "Extract Here" unpacks into the
             // current folder; "Extract To…" opens a folder picker first. Both
@@ -3760,7 +3775,7 @@ impl TableDelegate for FileListDelegate {
                 Box::new(ClearQuarantine),
             );
         }
-        if show_favorites {
+        {
             // Anchor command: toggle the clicked folder's path against the
             // user's Favorites (docs/features/FAVORITES.md §2.1).
             // `resolve_favorite_target` reads the row from `context_row`.
@@ -4937,6 +4952,7 @@ mod menu_targets_tests {
             any_quarantined: caps.iter().any(|cap| cap.is_quarantined),
             any_archive: caps.iter().any(|cap| cap.is_archive),
             anchor: None,
+            types: Default::default(),
         }
     }
 
@@ -4946,6 +4962,7 @@ mod menu_targets_tests {
             any_quarantined: anchor.is_quarantined,
             any_archive: anchor.is_archive,
             anchor: Some(anchor),
+            types: Default::default(),
         }
     }
 
