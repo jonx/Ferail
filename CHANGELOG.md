@@ -6,6 +6,25 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
+## Unreleased
+
+- **A volume that stops answering no longer freezes Ferail.** A network share
+  whose server vanished, a disk pulled mid-read or a crashed FUSE filesystem
+  used to hang the volume list for good, and one left behind in `/Volumes`
+  after it died kept doing so on every launch. Ferail no longer looks at such
+  leftovers at all, and each mounted volume now gets two seconds to answer; one
+  that does not stays in the sidebar, dimmed and marked *not responding*,
+  with Eject offered, and the other volumes are listed as usual. Ferail also
+  opens your home folder instead of waiting when the folder it last showed is
+  on such a volume.
+
+- **The Volumes list matches Finder on macOS.** It showed the hidden
+  *- Data* half of each system volume, and listed *Macintosh HD* several
+  times: once for the `/Volumes` shortcut to the startup disk and once for
+  every empty folder a tool had left behind in `/Volumes`. Ferail now lists
+  what is actually mounted, skips what Finder hides, and shows each volume
+  once.
+
 ## 0.7.7 - 2026-09-01
 
 - **Private Mode shows blurred stand-in thumbnails instead of grey boxes.**

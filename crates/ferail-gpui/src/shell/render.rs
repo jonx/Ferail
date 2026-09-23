@@ -107,12 +107,18 @@ pub(crate) fn truncated_url_value(
         .into_any_element()
 }
 
-/// One mounted volume for the sidebar Volumes section:
-/// `(path, display name, Some((total, available)) capacity bytes,
-/// is removable/ejectable, is network mount)`.
-type VolumeRow = (PathBuf, String, Option<(u64, u64)>, bool, bool);
-/// `VolumeRow` plus the "is favorited" star flag.
-type VolumeRowFav = (PathBuf, String, Option<(u64, u64)>, bool, bool, bool);
+/// One mounted volume for the sidebar Volumes section, snapshotted from the
+/// process volume list so the row loop holds no borrow.
+struct VolumeRowFav {
+    path: PathBuf,
+    name: String,
+    /// `(total, available)` bytes, when known.
+    capacity: Option<(u64, u64)>,
+    favorited: bool,
+    ejectable: bool,
+    is_network: bool,
+    responding: bool,
+}
 
 /// Per-cell drag payload for an unselected cell, which drags only itself.
 type GridCellDrag = (
@@ -278,6 +284,7 @@ impl Shell {
             icon: TreeRowIcon::Folder,
             favorited,
             ejectable: false,
+            dimmed: false,
         }];
         if is_expanded {
             self.append_tree_descendants_filtered(
@@ -541,53 +548,55 @@ impl Shell {
         // Snapshot the favorites paths once so the inner loop doesn't
         // re-read the entity per row.
         let favs = self.process.favorites().read(cx);
-        let volume_paths: Vec<VolumeRow> = self
+        let volumes: Vec<VolumeRowFav> = self
             .process
             .volumes
             .borrow()
             .iter()
             .map(|v| {
-                let cap = match (v.total_bytes, v.available_bytes) {
+                let capacity = match (v.total_bytes, v.available_bytes) {
                     (Some(t), Some(a)) if t > 0 => Some((t, a)),
                     _ => None,
                 };
-                (
-                    v.path.clone(),
-                    v.name.clone(),
-                    cap,
-                    v.is_removable,
-                    !v.is_local,
-                )
-            })
-            .collect();
-        let mut entries: Vec<VolumeRowFav> = volume_paths
-            .into_iter()
-            .map(|(p, n, c, ejectable, is_network)| {
-                let fav = favs.contains_path(&p);
-                (p, n, c, fav, ejectable, is_network)
+                VolumeRowFav {
+                    favorited: favs.contains_path(&v.path),
+                    path: v.path.clone(),
+                    name: v.name.clone(),
+                    capacity,
+                    ejectable: v.is_removable,
+                    is_network: !v.is_local,
+                    responding: v.responding,
+                }
             })
             .collect();
         let _ = favs;
-        for (path, name, capacity, favorited, ejectable, is_network) in entries.drain(..) {
+        for volume in volumes {
+            let path = volume.path;
             let node_id = self.sidebar_node_id(&path);
             let is_expanded = self.expanded.contains(&path);
+            let label = if volume.responding {
+                SharedString::from(volume.name)
+            } else {
+                tr!("{name} (not responding)", name = volume.name)
+            };
             rows.push(TreeRowSpec {
                 node_id,
                 path: path.clone(),
-                label: SharedString::from(name),
+                label,
                 depth: 0,
                 guides: Vec::new(),
                 is_expandable: true,
                 is_expanded,
                 is_active: path == current,
-                capacity,
-                icon: if is_network {
+                capacity: volume.capacity,
+                icon: if volume.is_network {
                     TreeRowIcon::Network
                 } else {
                     TreeRowIcon::Volume
                 },
-                favorited,
-                ejectable,
+                favorited: volume.favorited,
+                ejectable: volume.ejectable,
+                dimmed: !volume.responding,
             });
             if is_expanded {
                 self.append_tree_descendants(&mut rows, &path, 1, &current, &mut Vec::new(), cx);
@@ -698,6 +707,7 @@ impl Shell {
                 icon: TreeRowIcon::Folder,
                 favorited,
                 ejectable: false,
+                dimmed: false,
             });
             if is_expanded {
                 trunk.push(!is_last);

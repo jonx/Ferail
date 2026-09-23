@@ -80,6 +80,15 @@ Every feature that touches the filesystem follows the same shape (see
    skeleton loading view appears only after `SLOW_LOAD_INDICATOR_DELAY`
    without a first batch: fast loads never flash it).
 
+Moving work off the UI thread is not enough for a volume that has stopped
+answering (a network share whose server vanished, a stalled FUSE
+filesystem): every `stat` under it blocks forever, and a worker that waits on
+one never comes back. Work that visits volumes it did not choose (the volume
+list, the per-volume trashes, watcher registration, the restored start
+folder) runs each probe through `ferail_fs_native::deadline`: its own thread,
+a deadline, and at most one stuck probe per path. A volume that misses the
+deadline is reported as not responding; it never holds back the others.
+
 ### Enforcement
 
 The directive is enforced by the program, not just this document:
@@ -241,7 +250,10 @@ The sidebar has three concepts:
   `~/Applications` (PWA shims, per-user installs) gets its own "User
   Applications" row directly below, and only when it is non-empty.
 - **Browse:** a single expandable Home tree.
-- **Volumes:** mounted volumes with capacity bars and drive icons.
+- **Volumes:** mounted volumes with capacity bars and drive icons. On macOS
+  these are the browsable mounts from the kernel mount table, one row per
+  filesystem, the set Finder shows; a volume that does not answer is listed
+  dimmed as not responding.
 
 The file table is backed by `gpui_component::table::TableState`.
 Columns are Name, Size, Format, and Modified. Columns can be sorted,

@@ -22,6 +22,7 @@ use ferail_core::{
 pub mod archive;
 mod directory_reader;
 mod disk_usage_scanner;
+pub mod deadline;
 mod dupes;
 pub mod file_ops;
 mod icons;
@@ -594,13 +595,24 @@ pub fn trash_dirs() -> Vec<PathBuf> {
     if home_trash.is_dir() {
         dirs.push(home_trash);
     }
+    // Every mounted volume's `.Trashes/<uid>`, each probed under a deadline:
+    // a volume that has stopped answering is skipped rather than holding the
+    // whole list hostage. Volumes come from the mount table, never from
+    // listing `/Volumes`, whose stale mount points block on `stat`.
     let uid = unsafe { libc::getuid() };
-    if let Ok(rd) = std::fs::read_dir("/Volumes") {
-        for dirent in rd.flatten() {
-            let t = dirent.path().join(".Trashes").join(uid.to_string());
-            if t.is_dir() {
-                dirs.push(t);
-            }
+    let deadline_at = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let probes: Vec<_> = volumes::browsable_mounts(volumes::mounted_filesystems())
+        .into_iter()
+        .filter(|m| m.path != Path::new("/"))
+        .map(|m| {
+            let t = m.path.join(".Trashes").join(uid.to_string());
+            let probe_path = t.clone();
+            (t, deadline::start(("trash-dir", m.path), move || probe_path.is_dir()))
+        })
+        .collect();
+    for (t, probe) in probes {
+        if probe.wait_until(deadline_at) == Some(true) {
+            dirs.push(t);
         }
     }
     dirs
@@ -956,6 +968,11 @@ pub struct VolumeInfo {
     /// disk number(s) ("disk3"); Linux: the parent block device ("sdb").
     /// `None` when unknown or for network mounts, never grouped.
     pub device_id: Option<String>,
+    /// `false` when the volume is mounted but did not answer its metadata
+    /// lookup in time (a network share whose server vanished, a stalled FUSE
+    /// filesystem). Only the mount-table facts are known; the sidebar shows
+    /// the row dimmed.
+    pub responding: bool,
 }
 
 /// Look up a volume's metadata for the volume root at `path` (e.g.
@@ -1085,6 +1102,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
             read_only,
             bsd_device,
             device_id,
+            responding: true,
         })
     }
 }

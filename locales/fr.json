@@ -1408,6 +1408,7 @@
     "{location} · clone, no extra space": "{location} · clone, pas d'espace supplémentaire",
     "{location} · hard link": "{location} · lien physique",
     "{name} (default)": "{name} (par défaut)",
+    "{name} (not responding)": "{name} (ne répond pas)",
     "{name} - {index} of {total}": "{name} - {index} sur {total}",
     "{name} - {translated} of {total} strings, {origin}": "{name} - {translated} chaînes sur {total}, {origin}",
     "{name} is read-only": "{name} est en lecture seule",

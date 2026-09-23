@@ -110,7 +110,7 @@ After `cargo run --bin ferail-gpui`, walk through these. None should behave diff
 | Feature | Expected on Mac | Where to look if broken |
 |---|---|---|
 | **Sidebar Locations** | Home / Applications / Desktop / Documents / Downloads / Trash / Movies / Music / Pictures (in that order) | [ferail-fs-native/src/paths.rs](../../crates/ferail-fs-native/src/paths.rs) macOS arm |
-| **Sidebar Volumes** | `/Volumes` entries with NSURL-resolved labels + capacities | [ferail-fs-native/src/volumes.rs](../../crates/ferail-fs-native/src/volumes.rs) macOS arm |
+| **Sidebar Volumes** | Browsable mounts from the mount table with NSURL-resolved labels + capacities | [ferail-fs-native/src/volumes.rs](../../crates/ferail-fs-native/src/volumes.rs) macOS arm |
 | **Breadcrumb root** | `/` → `Users` → … (display same as before) | [shell/path.rs](../../crates/ferail-gpui/src/shell/path.rs): refactored `path_segments` should be Mac-equivalent for Unix-rooted paths |
 | **Copy Path** | Forward-slash paths, no `\` mixed in | n/a: uses `PathBuf::to_string_lossy()` directly |
 | **Quick Look (Spacebar)** | Pops the macOS Quick Look HUD via `qlmanage -p` | [shell/file_ops.rs:494-525](../../crates/ferail-gpui/src/shell/file_ops.rs): `on_quick_look` has explicit `cfg(target_os = "macos")` branch calling `platform_shell::show_quick_look`. Non-mac path toggles preview pane instead. |

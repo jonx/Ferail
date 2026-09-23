@@ -1408,6 +1408,7 @@
     "{location} · clone, no extra space": "{location} · clone, no extra space",
     "{location} · hard link": "{location} · hard link",
     "{name} (default)": "{name} (default)",
+    "{name} (not responding)": "{name} (not responding)",
     "{name} - {index} of {total}": "{name} - {index} of {total}",
     "{name} - {translated} of {total} strings, {origin}": "{name} - {translated} of {total} strings, {origin}",
     "{name} is read-only": "{name} is read-only",

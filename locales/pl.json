@@ -1577,6 +1577,7 @@
     },
     "…and {overflow} more": "…i {overflow} więcej",
     "−1f": "−1f",
-    "⚠ {warning}": "⚠ {warning}"
+    "⚠ {warning}": "⚠ {warning}",
+    "{name} (not responding)": "{name} (nie odpowiada)"
   }
 }

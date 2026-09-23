@@ -98,6 +98,22 @@ impl FsWatcher {
                             if watched.contains(&path) {
                                 continue;
                             }
+                            // One worker serves every watch, and
+                            // `watch()` stats the path: a directory on a
+                            // volume that has stopped answering would
+                            // block it for good and end live updates
+                            // everywhere. Probe it under a deadline first;
+                            // one that does not answer is skipped, and
+                            // retried on the next request.
+                            let probe_path = path.clone();
+                            let answered = ferail_fs_native::deadline::run(
+                                ("watch-probe", path.clone()),
+                                WATCH_PROBE_TIMEOUT,
+                                move || probe_path.is_dir(),
+                            );
+                            if answered != Some(true) {
+                                continue;
+                            }
                             // This worker thread is the one sanctioned
                             // home of the raw notify calls the lint bans.
                             #[allow(clippy::disallowed_methods)]
@@ -188,6 +204,10 @@ impl FsWatcher {
         relevant.into_iter().collect()
     }
 }
+
+/// How long the watcher worker waits for a directory to answer before
+/// skipping its registration.
+const WATCH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Recommended poll interval for the foreground-executor polling
 /// task. 250 ms gives near-immediate response without spinning.

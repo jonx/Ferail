@@ -1,6 +1,7 @@
 //! Volume / drive enumeration.
 //!
-//! macOS reads `/Volumes` and resolves NSURL keys via shell-mac;
+//! macOS reads the kernel mount table and resolves NSURL keys for each
+//! browsable mount under a deadline;
 //! Windows enumerates drive letters via `GetLogicalDrives` and
 //! classifies / measures each one via `GetDriveTypeW` +
 //! `GetVolumeInformationW` + `GetDiskFreeSpaceExW`.
@@ -152,6 +153,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             read_only,
             bsd_device: None,
             device_id,
+            responding: true,
         });
     }
 
@@ -261,34 +263,158 @@ fn probe_volume_device(letter: char) -> (Option<String>, bool) {
     }
 }
 
+/// How long one volume may take to answer its metadata lookup before it is
+/// listed as not responding. Healthy volumes, network shares included, answer
+/// from cached keys in milliseconds.
+#[cfg(target_os = "macos")]
+const VOLUME_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// macOS volumes, the way Finder's sidebar lists them: the mounted,
+/// browsable filesystems, one row per filesystem.
+///
+/// The mount table is read with `getfsstat(MNT_NOWAIT)`, which answers from
+/// the kernel's cached copy without asking any filesystem, so a volume that
+/// has stopped answering cannot stall the listing. Each volume is then
+/// resolved on its own thread under [`VOLUME_PROBE_TIMEOUT`]; one that does
+/// not answer in time keeps the facts the mount table already gave and is
+/// marked `responding: false`, and never hides the volumes after it.
 #[cfg(target_os = "macos")]
 pub fn list_volumes() -> Vec<VolumeInfo> {
-    let mut out: Vec<VolumeInfo> = Vec::new();
-    let Ok(read_dir) = std::fs::read_dir("/Volumes") else {
-        return out;
-    };
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        let info = crate::volume_info_for_path(&path).unwrap_or_else(|| VolumeInfo {
-            name: path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| path.display().to_string()),
-            path: path.clone(),
-            total_bytes: None,
-            available_bytes: None,
-            is_local: true,
-            is_removable: false,
-            format: None,
-            read_only: false,
-            bsd_device: None,
-            device_id: None,
-        });
-        out.push(info);
-    }
+    use crate::deadline;
+
+    let deadline_at = std::time::Instant::now() + VOLUME_PROBE_TIMEOUT;
+    let probes: Vec<(MountEntry, deadline::Probe<Option<VolumeInfo>>)> =
+        browsable_mounts(mounted_filesystems())
+            .into_iter()
+            .map(|mount| {
+                let path = mount.path.clone();
+                let probe = deadline::start(("volume-info", path.clone()), move || {
+                    crate::volume_info_for_path(&path)
+                });
+                (mount, probe)
+            })
+            .collect();
+    let mut out: Vec<VolumeInfo> = probes
+        .into_iter()
+        .map(|(mount, probe)| match probe.wait_until(deadline_at) {
+            Some(Some(info)) => info,
+            Some(None) => mount.into_info(true),
+            None => mount.into_info(false),
+        })
+        .collect();
     out.sort_by_key(|a| a.name.to_lowercase());
     out
+}
+
+/// One row of the kernel mount table, reduced to what the volume list needs.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MountEntry {
+    pub path: std::path::PathBuf,
+    pub fs_type: String,
+    pub source: String,
+    pub fsid: [i32; 2],
+    pub browsable: bool,
+    pub local: bool,
+    pub read_only: bool,
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+impl MountEntry {
+    /// The volume as the mount table alone describes it, for when the
+    /// metadata lookup failed or never answered.
+    fn into_info(self, responding: bool) -> VolumeInfo {
+        let name = self
+            .path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.path.display().to_string());
+        let is_root = self.path == std::path::Path::new("/");
+        let device_id = if self.local {
+            whole_disk_bsd(&self.source)
+        } else {
+            None
+        };
+        VolumeInfo {
+            name,
+            total_bytes: None,
+            available_bytes: None,
+            is_local: self.local,
+            // Offer Eject on anything but the boot volume: unmounting is the
+            // way out of a volume that has stopped answering.
+            is_removable: !is_root,
+            format: Some(self.fs_type),
+            read_only: self.read_only && !is_root,
+            bsd_device: self.local.then_some(self.source),
+            device_id,
+            responding,
+            path: self.path,
+        }
+    }
+}
+
+/// The mounts a user browses: drop what Finder hides (`MNT_DONTBROWSE`,
+/// which covers the Data half of an APFS volume group, Preboot, Recovery,
+/// VM and Update), the automounter's trigger points, and a second mount of a
+/// filesystem already listed.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn browsable_mounts(mounts: Vec<MountEntry>) -> Vec<MountEntry> {
+    let mut seen: std::collections::HashSet<[i32; 2]> = std::collections::HashSet::new();
+    mounts
+        .into_iter()
+        .filter(|m| m.browsable && m.fs_type != "autofs" && m.fs_type != "devfs")
+        .filter(|m| m.fsid == [0, 0] || seen.insert(m.fsid))
+        .collect()
+}
+
+/// The kernel mount table, from its cached copy (`MNT_NOWAIT`): no
+/// filesystem is asked anything, so a dead mount costs nothing here.
+#[cfg(target_os = "macos")]
+pub(crate) fn mounted_filesystems() -> Vec<MountEntry> {
+    use std::os::unix::ffi::OsStrExt;
+
+    // Sized by a first call, with headroom for a mount that lands between the
+    // two calls. `getfsstat` rather than `getmntinfo`: the latter returns a
+    // shared static buffer and is not thread-safe.
+    let count = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+    if count <= 0 {
+        return Vec::new();
+    }
+    let capacity = count as usize + 8;
+    let mut buf: Vec<libc::statfs> = Vec::with_capacity(capacity);
+    let bytes = (capacity * std::mem::size_of::<libc::statfs>()) as libc::c_int;
+    // SAFETY: the buffer holds `capacity` statfs records and the kernel
+    // writes at most `bytes` of them, returning how many it wrote.
+    let got = unsafe { libc::getfsstat(buf.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
+    if got <= 0 {
+        return Vec::new();
+    }
+    unsafe { buf.set_len((got as usize).min(capacity)) };
+
+    let text = |arr: &[libc::c_char]| -> String {
+        // SAFETY: the kernel NUL-terminates these fixed-size fields.
+        unsafe { std::ffi::CStr::from_ptr(arr.as_ptr()) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    buf.iter()
+        .map(|sfs| {
+            let on = unsafe { std::ffi::CStr::from_ptr(sfs.f_mntonname.as_ptr()) };
+            let flags = sfs.f_flags;
+            // SAFETY: fsid_t is two i32s; libc keeps the field private.
+            let fsid: [i32; 2] = unsafe { std::mem::transmute(sfs.f_fsid) };
+            MountEntry {
+                path: std::path::PathBuf::from(std::ffi::OsStr::from_bytes(on.to_bytes())),
+                fs_type: text(&sfs.f_fstypename),
+                source: text(&sfs.f_mntfromname),
+                fsid,
+                browsable: flags & libc::MNT_DONTBROWSE as u32 == 0,
+                local: flags & libc::MNT_LOCAL as u32 != 0,
+                read_only: flags & libc::MNT_RDONLY as u32 != 0,
+            }
+        })
+        .collect()
 }
 
 /// Linux volumes from `/proc/self/mountinfo`: the root filesystem, `/home`,
@@ -387,6 +513,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             read_only,
             bsd_device: Some(source.to_string()),
             device_id: linux_device_group(source),
+            responding: true,
         });
     }
 
@@ -480,6 +607,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             read_only: path == "MacRO:",
             bsd_device: None,
             device_id: None,
+            responding: true,
         })
         .collect()
 }
@@ -591,6 +719,59 @@ fn linux_device_group(source: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mount(path: &str, fsid: [i32; 2], browsable: bool) -> MountEntry {
+        MountEntry {
+            path: path.into(),
+            fs_type: "apfs".into(),
+            source: "/dev/disk9s1".into(),
+            fsid,
+            browsable,
+            local: true,
+            read_only: false,
+        }
+    }
+
+    #[test]
+    fn browsable_mounts_hide_what_finder_hides_and_list_each_filesystem_once() {
+        let mut automount = mount("/System/Volumes/Data/home", [9, 9], true);
+        automount.fs_type = "autofs".into();
+        let kept = browsable_mounts(vec![
+            mount("/", [1, 1], true),
+            mount("/System/Volumes/Data", [2, 2], false),
+            mount("/Volumes/Alpha", [3, 3], true),
+            mount("/Volumes/Alpha - Data", [4, 4], false),
+            mount("/private/tmp/second-mount-of-alpha", [3, 3], true),
+            automount,
+        ]);
+        let paths: Vec<_> = kept.iter().map(|m| m.path.to_str().unwrap()).collect();
+        assert_eq!(paths, ["/", "/Volumes/Alpha"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_live_list_has_the_boot_volume_once_and_no_hidden_volumes() {
+        let volumes = list_volumes();
+        let roots = volumes.iter().filter(|v| v.path == std::path::Path::new("/")).count();
+        assert_eq!(roots, 1, "{volumes:?}");
+        assert!(
+            volumes.iter().all(|v| v.path != std::path::Path::new("/System/Volumes/Data")),
+            "{volumes:?}"
+        );
+        assert!(volumes.iter().all(|v| v.responding), "{volumes:?}");
+    }
+
+    #[test]
+    fn an_unanswered_volume_keeps_its_mount_table_facts() {
+        let mut m = mount("/Volumes/Stalled", [5, 5], true);
+        m.fs_type = "macfuse".into();
+        let info = m.into_info(false);
+        assert_eq!(info.name, "Stalled");
+        assert!(!info.responding);
+        assert_eq!(info.format.as_deref(), Some("macfuse"));
+        assert_eq!(info.device_id.as_deref(), Some("disk9"));
+        assert!(info.total_bytes.is_none());
+    }
 
     #[test]
     fn whole_disk_bsd_parses_slices_and_rejects_non_disks() {

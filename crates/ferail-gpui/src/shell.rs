@@ -1864,6 +1864,9 @@ const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 /// the previous directory's stale rows. Showing it with no delay
 /// would flash a skeleton on every ordinary navigation.
 const SLOW_LOAD_INDICATOR_DELAY: Duration = Duration::from_millis(300);
+/// How long the first window waits for its restored folder to answer before
+/// opening home instead.
+const START_PATH_TIMEOUT: Duration = Duration::from_secs(3);
 
 const SIDEBAR_MIN_WIDTH: f32 = 180.0;
 const SIDEBAR_MAX_WIDTH: f32 = 520.0;
@@ -2604,12 +2607,19 @@ impl Shell {
         let tasks = self.process.tasks.clone();
         let probe = raw.clone();
         cx.spawn(async move |this, cx| {
+            // Bounded: a last folder on a volume that has stopped answering
+            // must not leave the first window waiting on it. No answer in
+            // time falls back to home, like a folder that no longer exists.
             let resolved: Option<PathBuf> = cx
                 .background_executor()
                 .spawn(async move {
-                    probe
-                        .is_dir()
-                        .then(|| path::canonicalize_for_identity(probe))
+                    let key = ("start-path", probe.clone());
+                    ferail_fs_native::deadline::run(key, START_PATH_TIMEOUT, move || {
+                        probe
+                            .is_dir()
+                            .then(|| path::canonicalize_for_identity(probe))
+                    })
+                    .flatten()
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {

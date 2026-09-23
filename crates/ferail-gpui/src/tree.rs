@@ -121,6 +121,9 @@ pub struct TreeRowSpec {
     /// Gates the "Eject" entry in the row's context menu. Always `false`
     /// for folders and the boot volume.
     pub ejectable: bool,
+    /// Drawn in the muted foreground: a volume that is mounted but did not
+    /// answer its last metadata lookup.
+    pub dimmed: bool,
 }
 
 /// Cached representation of one direct child of an expanded folder.
@@ -575,6 +578,7 @@ fn render_tree_row(
         icon,
         favorited,
         ejectable,
+        dimmed,
     } = spec;
     let label = crate::private_mode::present_label(&label);
     let collapsed_tooltip: SharedString = label.clone().into();
@@ -607,7 +611,9 @@ fn render_tree_row(
         .text_scale_sm()
         .rounded(theme.radius)
         .cursor_pointer()
-        .text_color(if is_active {
+        .text_color(if dimmed {
+            theme.muted_foreground
+        } else if is_active {
             theme.sidebar_accent_foreground
         } else {
             theme.sidebar_foreground
