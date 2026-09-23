@@ -13,7 +13,7 @@ instead.
 
 | | |
 | --- | --- |
-| Release | **0.7.7**, published on macOS, Windows and Linux |
+| Release | **0.7.8**, published on macOS, Windows and Linux |
 | Daily driver | macOS (Apple silicon), signed and notarized |
 | Toolchain | Rust `1.97.1`; MSRV `1.97` |
 | UI stack | gpui-component `e8f54eb`, Zed/GPUI `f66ed39` |

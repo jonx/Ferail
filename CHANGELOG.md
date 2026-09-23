@@ -6,13 +6,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
-## Unreleased
+## 0.7.8 - 2026-09-23
 
 - **Paste an image straight into a folder.** With a screenshot or a copied
-  picture on the clipboard, Cmd+V (Ctrl+V on Windows and Linux) saves it in
-  the folder you are looking at as *Pasted Image* followed by the date and
-  time, and selects it. Undo removes it again. TIFF and BMP pictures, which
-  many apps put on the clipboard, are saved as PNG.
+  picture on the clipboard, Paste (Cmd+V) saves it in the folder you are
+  looking at as *Pasted Image* followed by the date and time, and selects it.
+  Undo removes it again. TIFF and BMP pictures, which many apps put on the
+  clipboard, are saved as PNG.
 
 - **Double-clicking an app launches it.** Applications, installers and
   document packages such as Keynote files or the Photos library opened as

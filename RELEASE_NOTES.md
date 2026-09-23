@@ -1,56 +1,46 @@
-# Ferail 0.7.7
+# Ferail 0.7.8
 
-The right-click menu is yours now, the Trash finally does something, and the
-app speaks Polish.
+Apps launch, screenshots paste, and a dead volume no longer takes Ferail with
+it.
 
-## Make the menu yours
+## Apps open like apps
 
-**Settings ▸ Menus lists every right-click entry, with a switch on each one.**
-Turn off what you never use, drag the rest into the order you want, drop
-separators where you want gaps, and reset a menu if you go too far. Hiding an
-entry never removes the command: it keeps its shortcut and stays in the
-palette.
+**Double-clicking an application launches it** instead of walking into its
+folder. The same goes for installers and document packages such as Keynote
+files or the Photos library. To look inside, right-click and choose **Show
+Contents**, or press **Option+Enter**; on an archive the same command opens
+the archive browser.
 
-## A Trash that behaves like one
+## Paste a picture as a file
 
-**Right-clicking in the Trash used to offer to rename and compress things you
-had thrown away.** It now offers what deleted items deserve, including **Put
-Back**, which returns an item to where it came from and refuses to overwrite
-anything standing there. Ferail can only put back what it trashed itself;
-macOS keeps Finder's own record private.
+**Copy a screenshot or an image, press Cmd+V in a folder**, and Ferail saves
+it there as *Pasted Image* with the date and time, selected and ready to
+rename. Undo takes it back.
 
-**On Windows the Recycle Bin works again.** Every row has its Shell menu, a
-**Restore** entry backed by Windows' own restore command, an icon, and a
-column showing where the item was deleted from.
+## Volumes you can trust
 
-## Ferail speaks Polish
+**A network share, USB disk or FUSE filesystem that stops answering no
+longer freezes Ferail.** It stays in the sidebar, dimmed and marked *not
+responding*, with Eject offered, and every other volume keeps working.
 
-A complete Polish translation ships in the app, contributed by **Bohun**. Pick
-it in Settings, or let Ferail follow your system language. Counts of two to
-four items read slightly off until the pack gains its `few` forms.
+**The Volumes list now matches Finder on macOS**: no hidden *- Data*
+volumes, and *Macintosh HD* once.
 
 ## Also in this release
 
-- **The text editor stops hiding its own features.** Find and replace, reload
-  from disk, a line/column/encoding strip, and wrap and line-number toggles
-  all have buttons now.
-- **Closing Ferail actually ends it.** No more headless process to kill before
-  installing an update.
-- **Double-clicking a checksum file runs the check** instead of opening a
-  column of hashes.
-- **Entering a folder shows a real preview** of the row it selected for you,
-  and double-clicking a selected folder opens it instead of renaming it.
-- **Long text previews get a scrollbar.**
-- **Private Mode paints blurred stand-ins** instead of grey boxes, so a
-  screenshot of a real session still looks like Ferail. Every pixel is
-  invented; none of it comes from your files.
-- **Less memory over a long session**, about 90 MB per million files seen.
+- **The right-click menu fits what you clicked.** Edit no longer appears on
+  pictures, videos, archives or programs.
+- **List rows are centered vertically**, so sizes and dates line up with the
+  names beside them.
 
 ## Worth knowing
 
-The command palette (Cmd+/) no longer lets the list underneath steal your
-scroll wheel, but its own list still stops short of the end. **Use the arrow
-keys** to reach the last commands.
+The command palette's list still stops short of the end with the scroll
+wheel. **Use the arrow keys** to reach the last commands.
+
+A volume that has stopped answering can still leave a background thread
+waiting on it until the volume comes back or is unmounted; Ferail stays
+responsive, but ejecting the volume is the way to release it.
 
 The Windows build is not code-signed, so SmartScreen warns on first launch:
 choose **More info ▸ Run anyway**. The macOS DMG is signed and notarized.
