@@ -85,9 +85,9 @@ together; views must not grow independent hard-coded format lists.
 
 ## Opening and browsing
 
-**Show Contents** (Option+Enter) opens a recognised archive in the
-workbench; double-click still hands it to the system. **Open as Archive** is
-offered for every other single regular file. It reads and
+**Open** (double-click, Enter) opens a recognised archive in the workbench;
+Open With hands it to another app. **Open as Archive** is offered for every
+other single regular file. It reads and
 probes the table of contents on the background executor, then opens the
 workbench docked in the current tab. This keeps menu construction free of I/O
 while allowing extensionless and ZIP-based package files to work. The

@@ -892,9 +892,9 @@ const CATALOGUE: &[CommandSpec] = &[
     // Folder-only context action: open the right-clicked directory
     // in a new tab in the same window. Mirrors Finder's primary
     // folder-menu action.
-    // Look inside an item that opens as a whole: a package (an app, an
-    // installer, a document package) is navigated into like a folder, an
-    // archive opens in the archive workbench. Double-click keeps opening it.
+    // Look inside a package (an app, an installer, a document package):
+    // navigate into it like the folder it is on disk. Double-click keeps
+    // opening it as a whole.
     CommandSpec {
         id: CommandId("file.show_contents"),
         title: msgid!("Show Contents"),

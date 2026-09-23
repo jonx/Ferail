@@ -2801,7 +2801,7 @@ impl Shell {
                         // The first click of this double-click may have armed
                         // a rename on an already-selected row; opening wins.
                         this.cancel_click_rename();
-                        this.activate_row(*row_ix, Some(window.window_handle()), cx);
+                        this.activate_row(*row_ix, window, cx);
                     }
                     TableEvent::RightClickedRow(row_ix) => {
                         if let Some(r) = *row_ix {
@@ -3203,7 +3203,7 @@ impl Shell {
             return;
         }
         if entries.len() == 1 {
-            self.activate_row(entries[0].0, Some(window.window_handle()), cx);
+            self.activate_row(entries[0].0, window, cx);
             return;
         }
         // FanOut: opening N items launches N apps / opens N folder tabs.
@@ -3219,11 +3219,18 @@ impl Shell {
             cx,
             move |this, window, cx| {
                 let mut files = Vec::new();
+                use crate::menu_plan::types::{TargetType, target_type};
                 for (_, entry, path) in entries {
-                    if matches!(entry.kind, EntryKind::Directory)
-                        && !ferail_core::packages::is_package_name(&entry.name)
-                    {
+                    let target = target_type(&entry);
+                    if target == TargetType::Folder {
                         this.open_path_in_new_tab(path, window, cx);
+                    } else if target == TargetType::Archive
+                        && let Some(parent) = path.parent()
+                    {
+                        // Each archive gets its own tab, browsed in the
+                        // workbench, the way each folder does.
+                        this.open_path_in_new_tab(parent.to_path_buf(), window, cx);
+                        this.dock_archive_view(path, window, cx);
                     } else {
                         files.push(path);
                     }
@@ -4048,9 +4055,9 @@ impl Shell {
     }
 
     /// Look inside the first selected item: a package is navigated into like
-    /// the folder it is on disk, an archive opens in the workbench. Anything
-    /// else is left alone: the menu only offers this for those two, and the
-    /// shortcut on a plain folder or file has nothing different to show.
+    /// the folder it is on disk. The menu offers this for packages only; the
+    /// shortcut on an archive browses it in the workbench, like Open, and on
+    /// anything else has nothing different to show.
     pub fn on_show_contents(
         &mut self,
         _: &ShowContents,
@@ -7349,14 +7356,12 @@ impl Shell {
         self.navigate_parent(cx);
     }
 
-    /// User activated a row (double-click or Enter). For directories
-    /// we navigate into them; for files we hand off to the OS opener.
-    pub fn activate_row(
-        &mut self,
-        row_ix: usize,
-        window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
-    ) {
+    /// User activated a row (double-click or Enter). Directories are
+    /// navigated into, archives Ferail can read open in the archive
+    /// workbench, and every other file goes to the OS opener (Open With is
+    /// the way to hand an archive to another app).
+    pub fn activate_row(&mut self, row_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let window_handle = Some(window.window_handle());
         // Archive rows are virtual: they have no on-disk path, and the
         // fallback below would otherwise synthesize `current_dir/<name>` and
         // try to open a file that doesn't exist. Activating a folder opens it
@@ -7402,9 +7407,13 @@ impl Shell {
                     e.mtime_unix,
                     crate::shell::verify::entry_is_manifest(e),
                     ferail_core::packages::is_package_name(&e.name),
+                    crate::menu_plan::types::target_type(e)
+                        == crate::menu_plan::types::TargetType::Archive,
                 )
             });
-        let Some((path, kind, node, size, mtime_unix, manifest, is_package)) = path_and_kind else {
+        let Some((path, kind, node, size, mtime_unix, manifest, is_package, is_archive)) =
+            path_and_kind
+        else {
             return;
         };
         #[cfg(not(windows))]
@@ -7423,7 +7432,7 @@ impl Shell {
                     byte_len: size,
                     modified_ns: Some(i128::from(mtime_unix) * 1_000_000_000),
                 },
-                window,
+                window_handle,
                 cx,
             );
             return;
@@ -7441,7 +7450,13 @@ impl Shell {
         // on disk that Finder shows as one item: double-clicking it opens it.
         // Show Contents (Option+Enter) is how to look inside.
         if matches!(kind, EntryKind::Directory) && is_package {
-            Self::spawn_open_with_feedback(path, window, cx);
+            Self::spawn_open_with_feedback(path, window_handle, cx);
+            return;
+        }
+        // An archive is browsed here, in the workbench, rather than handed to
+        // an app that would silently extract it next to itself.
+        if matches!(kind, EntryKind::File) && is_archive {
+            self.dock_archive_view(path, window, cx);
             return;
         }
         match kind {
@@ -7454,7 +7469,7 @@ impl Shell {
                 // ShellExecuteExW on Windows, and xdg-open on Linux. All can
                 // cross slow association/provider boundaries, so even this
                 // single-file action stays off the UI thread.
-                Self::spawn_open_with_feedback(path, window, cx);
+                Self::spawn_open_with_feedback(path, window_handle, cx);
             }
         }
     }

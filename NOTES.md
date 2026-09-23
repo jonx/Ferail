@@ -26,10 +26,12 @@ Fixes for issues #2, #3, #5, #8 and #10.
 - **Packages are recognised lexically.** Finder asks Launch Services, which
   blocks; a fixed extension list answers during row activation and menu
   building. Frameworks are left out on purpose: Finder browses into them.
-- **One gesture to look inside.** Show Contents (Option+Enter) navigates into
-  a package and opens an archive in the workbench, instead of a package-only
-  "Show Package Contents" next to "Open as Archive". Double-click keeps
-  opening the item, as Finder does; archives are unchanged there.
+- **Packages open, archives are browsed.** Double-click opens a package as
+  Finder does, and Show Contents (Option+Enter) navigates into it. An
+  archive goes the other way: double-click browses it in the workbench,
+  because the system default (Archive Utility) extracts silently next to
+  the file, which is not what a file manager should do on Open. Open With
+  is the way to hand an archive to another app.
 - **Commands declare the types they handle.** The surface decides what a menu
   can contain; `menu_plan::types` narrows it by what was right-clicked. The
   classification is the icon's (`classify_file`) plus Package, Archive and

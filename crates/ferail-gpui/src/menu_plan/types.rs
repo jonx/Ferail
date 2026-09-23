@@ -160,7 +160,8 @@ use TargetType as T;
 
 /// The table. A command absent from it handles every type.
 const RULES: &[Rule] = &[
-    rule(ids::SHOW_CONTENTS, Scope::Anchor, TypeSet::of(&[T::Package, T::Archive])),
+    // An archive needs no entry of its own: Open already browses it here.
+    rule(ids::SHOW_CONTENTS, Scope::Anchor, TypeSet::of(&[T::Package])),
     rule(ids::EDIT, Scope::Anchor, TEXT_LIKE),
     rule(ids::EDIT_IN_SYSTEM_EDITOR, Scope::Anchor, TEXT_LIKE),
     rule(ids::EDIT_IMAGE, Scope::Anchor, TypeSet::of(&[T::Image])),
@@ -173,7 +174,7 @@ const RULES: &[Rule] = &[
     rule(ids::CONVERT_ARCHIVE, Scope::Anchor, TypeSet::of(&[T::Archive])),
     // Any other file may still be an archive under a misleading name (a
     // .docx, a .jar, an extensionless download): the workbench probes its
-    // content. A recognised archive already has Show Contents.
+    // content. A recognised archive already opens in the workbench.
     rule(ids::OPEN_AS_ARCHIVE, Scope::Anchor, FILES.without(&[T::Archive])),
 ];
 
@@ -199,9 +200,9 @@ mod tests {
     }
 
     #[test]
-    fn show_contents_is_for_packages_and_archives_only() {
+    fn show_contents_is_for_packages_only() {
         assert!(handles(ids::SHOW_CONTENTS, &only(T::Package)));
-        assert!(handles(ids::SHOW_CONTENTS, &only(T::Archive)));
+        assert!(!handles(ids::SHOW_CONTENTS, &only(T::Archive)));
         assert!(!handles(ids::SHOW_CONTENTS, &only(T::Folder)));
         assert!(!handles(ids::SHOW_CONTENTS, &only(T::Document)));
     }

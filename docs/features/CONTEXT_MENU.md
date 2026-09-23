@@ -32,7 +32,7 @@ API, so we compose a faithful equivalent from `NSWorkspace`,
   latter additionally gated on `lock_diagnostics_available()`: Windows-only
   today, see `shell/lock_info.rs`).
 - List pane (per-row): full Finder-equivalent: Open, Open in New Tab
-  (folders/files), Show Contents (packages and archives), Edit in TextEdit/Notepad/Text Editor (one file), Open With submenu,
+  (folders/files), Show Contents (packages), Edit in TextEdit/Notepad/Text Editor (one file), Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
   Compress (submenu: ZIP / 7-Zip / TAR ▸ Gzip·Bzip2·XZ·Uncompressed),
   Extract (archive rows only; submenu: Extract Here / Extract To…),
@@ -258,7 +258,7 @@ matching subset of a selection):
 
 | Command | Scope | Handles |
 | --- | --- | --- |
-| Show Contents | anchor | Package, Archive |
+| Show Contents | anchor | Package |
 | Edit, Edit in TextEdit | anchor | any file except Image, Video, Audio, Archive, DiskImage, Executable |
 | Edit Image | anchor | Image |
 | Slideshow from Here, Generate SHA-256 | anchor | any file |
@@ -268,8 +268,8 @@ matching subset of a selection):
 | Convert Archive | anchor | Archive |
 | Open as Archive | anchor | any file except Archive |
 
-Open as Archive steps aside for a recognised archive, which has Show
-Contents; it stays for every other file because a `.docx`, a `.jar` or an
+Open as Archive steps aside for a recognised archive, which Open already
+browses in the workbench; it stays for every other file because a `.docx`, a `.jar` or an
 extensionless download may still be a ZIP underneath. A selection too large
 to classify while the menu opens counts as holding every type, which can only
 offer a subset command, never hide one.
@@ -282,10 +282,14 @@ they are about how many rows are targeted, not what they are.
 
 On macOS a package opens as a whole: double-click or Enter launches the app,
 runs the installer, opens the document, as Finder does. **Show Contents**
-(Option+Enter) navigates into it as the folder it is on disk. The same
-command on an archive opens the archive workbench, so looking inside
-anything that opens as a whole is one gesture. On other platforms the same
-directories are ordinary folders.
+(Option+Enter) navigates into it as the folder it is on disk. On other
+platforms the same directories are ordinary folders.
+
+Archives go the other way: Open (double-click, Enter) browses a recognised
+archive in the workbench instead of handing it to the system, whose default
+app would extract it silently next to itself. **Open With** is the way to
+give an archive to another app. Opening several archives at once gives each
+its own tab.
 
 #### Fan-out confirmation
 

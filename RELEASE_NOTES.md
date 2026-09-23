@@ -1,15 +1,20 @@
 # Ferail 0.7.8
 
-Apps launch, screenshots paste, and a dead volume no longer takes Ferail with
-it.
+Apps launch, archives open in place, screenshots paste, and a dead volume no
+longer takes Ferail with it.
 
 ## Apps open like apps
 
 **Double-clicking an application launches it** instead of walking into its
 folder. The same goes for installers and document packages such as Keynote
 files or the Photos library. To look inside, right-click and choose **Show
-Contents**, or press **Option+Enter**; on an archive the same command opens
-the archive browser.
+Contents**, or press **Option+Enter**.
+
+## Archives open in Ferail
+
+**Double-clicking a ZIP, 7-Zip or TAR file browses it in Ferail** instead of
+letting the system extract it next to itself. Open With still hands it to
+another app.
 
 ## Paste a picture as a file
 

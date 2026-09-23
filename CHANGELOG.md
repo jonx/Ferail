@@ -18,12 +18,18 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   document packages such as Keynote files or the Photos library opened as
   folders, because on disk they are folders. They now open the way Finder
   opens them. **Show Contents** (right-click, or Option+Enter) is how to look
-  inside, and it also works on archives, where it opens the archive browser.
+  inside.
+
+- **Double-clicking an archive browses it in Ferail.** It used to go to the
+  system's default app, which on a Mac extracts it next to itself without
+  asking. ZIP, 7-Zip, TAR and the other formats Ferail reads now open in the
+  archive browser, in place; opening several at once gives each its own tab.
+  **Open With** still hands an archive to another app.
 
 - **The right-click menu fits what you clicked.** Commands now say which
   kinds of file they apply to: Edit and Edit in TextEdit no longer appear on
-  pictures, videos, archives or programs, and Open as Archive gives way to
-  Show Contents on a file that is already a recognised archive.
+  pictures, videos, archives or programs, and Open as Archive no longer
+  appears on a file that is already a recognised archive.
 
 - **List rows are centered vertically.** Size, Format, Modified and
   Description sat at the top of each row while the name beside them was

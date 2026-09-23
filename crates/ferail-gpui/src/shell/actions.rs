@@ -225,9 +225,9 @@ actions!(
         /// Open the selected archive in the embedded workbench view (browse
         /// contents, cherry-pick extract).
         OpenAsArchive,
-        /// Look inside the selected item instead of opening it: navigate into
-        /// a package (an app, an installer, a document package), or open an
-        /// archive in the workbench. Option+Enter.
+        /// Look inside the selected package (an app, an installer, a
+        /// document package) instead of opening it. Option+Enter. On an
+        /// archive it does what Open does: browse it in the workbench.
         ShowContents,
         /// Convert one archive to a fresh archive in another supported format.
         ConvertArchive,
