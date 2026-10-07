@@ -53,6 +53,7 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "view.toggle_preview" => Box::new(TogglePreview),
         "view.toggle_hidden" => Box::new(ToggleHidden),
         "view.toggle_flat" => Box::new(ToggleFlatView),
+        "view.search_as_you_type" => Box::new(ToggleSearchAsYouType),
         "view.zoom_in" => Box::new(ZoomIn),
         "view.zoom_out" => Box::new(ZoomOut),
         "view.zoom_reset" => Box::new(ZoomReset),

@@ -665,6 +665,80 @@ pub struct FileListDelegate {
     /// `replace_entries()` like `slow_load`, so a new load can't paint
     /// the previous one's figure.
     pub filtered_out: usize,
+    /// Hidden entries the last completed load skipped (show-hidden off).
+    /// Same lifecycle as `filtered_out`; lets the empty state say the
+    /// folder's contents are hidden rather than that it is empty.
+    pub hidden_out: usize,
+}
+
+/// The empty-listing explanation: a headline and, when the rows exist but
+/// are held back, how to get them back. Shared by the list and the icon
+/// grid. A folder whose rows were all excluded by the filter field or the
+/// show-hidden switch is not an empty folder: saying so would send the user
+/// looking for missing files, so the cause is named with the count.
+/// "Filtered out" matches the status bar's chip wording.
+pub fn empty_state_text(
+    flat: bool,
+    filtered_out: usize,
+    hidden_out: usize,
+) -> (SharedString, Option<SharedString>) {
+    match (filtered_out, hidden_out) {
+        (0, 0) if flat => (
+            tr!("No files found in this location or its subfolders."),
+            None,
+        ),
+        (0, 0) => (tr!("This folder is empty."), None),
+        (n, 0) => (
+            trn!("{n} item filtered out.", "All {n} items filtered out.", n),
+            Some(tr!("Clear the filter to see them.")),
+        ),
+        (0, n) => (
+            trn!(
+                "This folder only holds {n} hidden item.",
+                "All {n} items in this folder are hidden.",
+                n
+            ),
+            Some(tr!("Turn on Show hidden in the status bar to see them.")),
+        ),
+        (filtered, hidden) => (
+            trn!(
+                "{n} item is hidden or filtered out.",
+                "All {n} items are hidden or filtered out.",
+                filtered + hidden
+            ),
+            Some(tr!("Clear the filter or turn on Show hidden to see them.")),
+        ),
+    }
+}
+
+/// Centred inbox glyph over the [`empty_state_text`] lines.
+pub fn empty_state_view(flat: bool, filtered_out: usize, hidden_out: usize, cx: &App) -> gpui::Div {
+    let (message, hint) = empty_state_text(flat, filtered_out, hidden_out);
+    gpui_component::v_flex()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap_3()
+        .child(
+            gpui::svg()
+                .path("icons/inbox.svg")
+                .icon_px(48.0)
+                .text_color(cx.theme().muted_foreground.opacity(0.5)),
+        )
+        .child(
+            div()
+                .text_scale_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(message),
+        )
+        .when_some(hint, |this, hint| {
+            this.child(
+                div()
+                    .text_scale_xs()
+                    .text_color(cx.theme().muted_foreground.opacity(0.8))
+                    .child(hint),
+            )
+        })
 }
 
 /// Render-only bridge from a tab delegate to the Shell-owned generic inline
@@ -1232,6 +1306,7 @@ impl FileListDelegate {
             cached_selected_size: std::cell::Cell::new(None),
             slow_load: None,
             filtered_out: 0,
+            hidden_out: 0,
         }
     }
 
@@ -1560,6 +1635,7 @@ impl FileListDelegate {
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
+        self.hidden_out = 0;
         // `Vec::clear` keeps the allocation. That is useful for an ordinary
         // directory reload, but after a multi-million-row Flat surface it can
         // leave ~600 MB of empty FileEntry capacity resident. The presence of
@@ -1598,6 +1674,7 @@ impl FileListDelegate {
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
+        self.hidden_out = 0;
         // A normal directory load leaves archive mode behind.
         self.archive_rows.clear();
         self.archive_view = None;
@@ -1680,6 +1757,11 @@ impl FileListDelegate {
     /// Start an empty Flat surface. The Path column is surface-specific: it is
     /// inserted while Flat is active and removed by [`Self::clear`], so normal
     /// directory layouts and their persisted column spec remain unchanged.
+    /// Whether the delegate holds a Flat (recursive, files-only) surface.
+    pub fn is_flat(&self) -> bool {
+        self.flat_paths.is_some()
+    }
+
     pub fn begin_flat(&mut self, root: PathBuf, id_base: u64) {
         self.clear();
         self.flat_paths = Some(FlatPathStore::new(root, id_base));
@@ -1928,6 +2010,7 @@ impl FileListDelegate {
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
+        self.hidden_out = 0;
         let n = entries.len();
         self.all_menu_caps = MenuCapCounts::from_entries(&entries);
         self.entries = entries;
@@ -3494,9 +3577,9 @@ impl TableDelegate for FileListDelegate {
             CreateChecksumFile, DeleteImmediately, Duplicate, EditFile, EditImage, EditTextFile,
             Extract, ExtractTo, GenerateSha256, GetInfo, MakeAlias, MoveToTrash, NewArchive,
             OpenAsArchive, OpenInNewTab, OpenSelected, OpenTerminalHere, QuickLook, RenameSelected,
-            RevealInFinder, ShowContents, ShowLockHolders, SlideshowFromHere, ToggleFavoriteForTarget,
-            ToggleTagBlue, ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple,
-            ToggleTagRed, ToggleTagYellow, VerifyChecksums,
+            RevealInFinder, ShowContents, ShowLockHolders, SlideshowFromHere,
+            ToggleFavoriteForTarget, ToggleTagBlue, ToggleTagGray, ToggleTagGreen, ToggleTagOrange,
+            ToggleTagPurple, ToggleTagRed, ToggleTagYellow, VerifyChecksums,
         };
         // Anchor keyboard-shortcut resolution to the shell's stable
         // dispatch path (carries SHELL_CONTEXT, always painted) so the
@@ -4012,37 +4095,12 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        // Phase 10 polish: a centred, two-line empty state with the
-        // Lucide inbox glyph above the copy reads "considered" rather
-        // than "we forgot to handle this case."
-        //
-        // A folder whose rows were all excluded by the filter field is
-        // not an empty folder, saying so sends the user looking for
-        // missing files. Name the filter as the cause instead.
-        // Same words as the status bar's chip: "hidden" is already
-        // taken by the show-hidden toggle and would read as that.
-        let message = match (self.flat_paths.is_some(), self.filtered_out) {
-            (true, 0) => tr!("No files found in this location or its subfolders."),
-            (_, 0) => tr!("This folder is empty."),
-            (_, n) => trn!("{n} item filtered out.", "All {n} items filtered out.", n),
-        };
-        gpui_component::v_flex()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .gap_3()
-            .child(
-                gpui::svg()
-                    .path("icons/inbox.svg")
-                    .icon_px(48.0)
-                    .text_color(cx.theme().muted_foreground.opacity(0.5)),
-            )
-            .child(
-                div()
-                    .text_scale_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(message),
-            )
+        empty_state_view(
+            self.flat_paths.is_some(),
+            self.filtered_out,
+            self.hidden_out,
+            cx,
+        )
     }
 
     /// Swap the whole table body for the loading view while a slow
@@ -5079,5 +5137,27 @@ mod menu_targets_tests {
         // No anchor → neither anchor rule fires.
         assert!(!Availability::When(avail_anchor_dir).allows(&targets(vec![])));
         assert!(!Availability::When(avail_anchor_file).allows(&targets(vec![])));
+    }
+}
+
+#[cfg(test)]
+mod empty_state_tests {
+    use super::empty_state_text;
+
+    #[test]
+    fn hidden_and_filtered_rows_are_not_an_empty_folder() {
+        assert_eq!(
+            empty_state_text(false, 0, 0).0.as_ref(),
+            "This folder is empty."
+        );
+        assert_eq!(
+            empty_state_text(false, 0, 4).0.as_ref(),
+            "All 4 items in this folder are hidden."
+        );
+        assert_eq!(
+            empty_state_text(false, 3, 2).0.as_ref(),
+            "All 5 items are hidden or filtered out."
+        );
+        assert!(empty_state_text(false, 7, 0).1.is_some());
     }
 }

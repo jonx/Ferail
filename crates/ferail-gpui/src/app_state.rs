@@ -180,6 +180,9 @@ pub struct AppState {
     /// Viewer slideshow auto-advance interval in seconds
     /// (docs/features/VIEWER.md). Clamped at load to [1, 60].
     pub viewer_slideshow_interval: Option<u64>,
+    /// Viewer "Media only" toggle: the playlist skips files that are not
+    /// images, video or audio. `None` == never set (off).
+    pub viewer_media_only: Option<bool>,
     /// Whether the Recents feature is on at all. `None` == never set
     /// (defaults to `true`). Off hides the sidebar section and stops
     /// pushing folders into the recents cache; the Ant Trail keeps its
@@ -214,6 +217,10 @@ pub struct AppState {
     pub search_match_path: Option<bool>,
     /// Include hidden / dot files in search results.
     pub search_include_hidden: Option<bool>,
+    /// Typing in the filter field searches the current folder and its
+    /// subfolders (after a short pause) instead of filtering the visible
+    /// listing. `None` == never set (off).
+    pub search_as_you_type: Option<bool>,
 
     // ---- Duplicate finder (docs/features/DUPLICATES.md) ----
     /// How duplicate results are presented: "grouped" (grouped rows in
@@ -470,6 +477,9 @@ fn load_from_disk() -> AppState {
                 out.viewer_slideshow_interval =
                     val.trim().parse::<u64>().ok().map(|n| n.clamp(1, 60));
             }
+            "viewer_media_only" => {
+                out.viewer_media_only = parse_bool(val);
+            }
             "recents_enabled" => {
                 out.recents_enabled = parse_bool(val);
             }
@@ -502,6 +512,9 @@ fn load_from_disk() -> AppState {
             }
             "search_include_hidden" => {
                 out.search_include_hidden = parse_bool(val);
+            }
+            "search_as_you_type" => {
+                out.search_as_you_type = parse_bool(val);
             }
             "dupe_presentation" => {
                 let v = val.trim().to_lowercase();
@@ -657,6 +670,9 @@ fn serialize(state: &AppState) -> String {
     if let Some(n) = state.viewer_slideshow_interval {
         s.push_str(&format!("viewer_slideshow_interval={n}\n"));
     }
+    if let Some(b) = state.viewer_media_only {
+        s.push_str(&format!("viewer_media_only={b}\n"));
+    }
     if let Some(b) = state.recents_enabled {
         s.push_str(&format!("recents_enabled={b}\n"));
     }
@@ -680,6 +696,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(b) = state.search_include_hidden {
         s.push_str(&format!("search_include_hidden={b}\n"));
+    }
+    if let Some(b) = state.search_as_you_type {
+        s.push_str(&format!("search_as_you_type={b}\n"));
     }
     if let Some(p) = &state.dupe_presentation {
         s.push_str(&format!("dupe_presentation={p}\n"));

@@ -1137,6 +1137,18 @@ impl Shell {
         let pane_w = f32::from(self.active_tab().grid_pane_width).max(cell_w);
         let cols = crate::grid::cols_per_row(pane_w, icon_px, gap);
         let entries_len = self.active_tab().table.read(cx).delegate().entries.len();
+        // Same explanation as the list's empty state once the load is done
+        // (mid-load, an empty grid is just rows still on their way).
+        if entries_len == 0 && self.active_tab().load_task.is_none() {
+            let delegate = self.active_tab().table.read(cx).delegate();
+            return crate::file_list::empty_state_view(
+                delegate.is_flat(),
+                delegate.filtered_out,
+                delegate.hidden_out,
+                cx,
+            )
+            .into_any_element();
+        }
         let row_count = entries_len.div_ceil(cols);
 
         let theme = cx.theme();
@@ -2664,6 +2676,44 @@ impl Shell {
                 .bg(cx.theme().popover)
                 .shadow_md()
                 .p_1();
+            // Header: how to drive the menu, and a close button for when it
+            // is simply in the way. Closing keeps it shut while typing
+            // continues (Shell::dismiss_filter_completion).
+            menu = menu.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .pl_2()
+                    .text_scale_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(tr!("Tab inserts, Esc closes")),
+                    )
+                    .child(
+                        Button::new("filter-completion-close")
+                            .xsmall()
+                            .ghost()
+                            .icon(gpui_component::Icon::empty().path("icons/close.svg"))
+                            .tooltip(tr!("Close suggestions"))
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .on_click({
+                                let weak = cx.weak_entity();
+                                move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    let _ = weak.update(cx, |this, cx| {
+                                        this.dismiss_filter_completion(filter_tab_id, cx);
+                                    });
+                                }
+                            }),
+                    ),
+            );
             for (index, suggestion) in filter_suggestions.items().iter().take(10).enumerate() {
                 let weak = cx.weak_entity();
                 let selected = index == filter_suggestions.selected_index();
@@ -4670,6 +4720,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_undock))
             .on_action(cx.listener(Self::on_toggle_hidden))
             .on_action(cx.listener(Self::on_toggle_flat_view))
+            .on_action(cx.listener(Self::on_toggle_search_as_you_type))
             .on_action(cx.listener(Self::on_toggle_performance_hud))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_copy_path))

@@ -5,8 +5,14 @@
 //! completion provider makes them discoverable: typing a prefix of a
 //! token key offers the keys (`loc` → `locked:`), and once a key is
 //! accepted the menu chains into its example values (`locked:` →
-//! `yes` / `no`). Clearing the field to empty shows the whole token
-//! list once, as a quiet cheat-sheet.
+//! `yes` / `no`).
+//!
+//! The menu is large, so it only opens by itself when the word being typed
+//! is clearly heading for a token: a key prefix of at least
+//! [`AUTO_MIN_PREFIX`] characters, or a key already typed with its colon.
+//! An empty field and a plain search word never open it. The whole token
+//! list, appendable after a search word, is one explicit Down-arrow away
+//! ([`Trigger::Explicit`]).
 //!
 //! Suggestions come from `filter_expr::TOKEN_HELP`: the same table
 //! the parser's tests round-trip, so the menu can never advertise a
@@ -39,12 +45,28 @@ fn current_word(upto: &str) -> (&str, usize) {
     (&upto[start..], start)
 }
 
+/// Shortest key prefix that opens the menu without being asked: one
+/// letter matches half the table and most ordinary file names.
+pub const AUTO_MIN_PREFIX: usize = 2;
+
+/// Why the menu is being computed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Trigger {
+    /// The field changed: only a word that is clearly a token offers
+    /// anything.
+    Typing,
+    /// The user asked (Down arrow): the full cheat-sheet, appendable after
+    /// a plain search word.
+    Explicit,
+}
+
 /// Suggestions for the compact toolbar input. Ranges are UTF-8 byte ranges,
 /// matching `InputState`; this deliberately avoids routing a one-line field
 /// through the document editor's LSP/UTF-16 machinery.
 pub fn single_line_suggestions(
     value: &str,
     cursor: usize,
+    trigger: Trigger,
 ) -> Vec<crate::single_line_complete::SingleLineSuggestion> {
     let cursor = cursor.min(value.len());
     if !value.is_char_boundary(cursor) {
@@ -52,6 +74,7 @@ pub fn single_line_suggestions(
     }
     let upto = &value[..cursor];
     let (word, word_start) = current_word(upto);
+    let explicit = trigger == Trigger::Explicit;
 
     if let Some((key, partial)) = word.split_once(':') {
         let key_lower = format!("{}:", key.to_lowercase());
@@ -80,13 +103,16 @@ pub fn single_line_suggestions(
         || KEY_ALIASES
             .iter()
             .any(|(alias, _)| alias.starts_with(&word_lower));
-    // A plain filename term is still useful search text. Once it no longer
-    // resembles a token prefix, keep the syntax menu open and make every
-    // choice append at the caret instead of replacing that search. This is
-    // what lets `disk` become `disk size:>1mb` without selecting/deleting the
-    // current query merely to make completion reappear.
+    // A plain filename term is still useful search text. When the menu is
+    // asked for after one, every choice appends at the caret instead of
+    // replacing that search: `disk` becomes `disk size:>1mb` without
+    // selecting/deleting the current query first.
     let append = !word.is_empty() && !matching_key_exists;
     let trailing_space = word.is_empty() && !upto.is_empty();
+    // Unasked, only a real key prefix is worth covering the listing for.
+    if !explicit && (word.chars().count() < AUTO_MIN_PREFIX || append) {
+        return Vec::new();
+    }
     let replacement = if append || trailing_space {
         cursor..cursor
     } else {
@@ -127,15 +153,27 @@ mod tests {
     use super::*;
 
     fn labels(upto: &str) -> Vec<String> {
-        single_line_suggestions(upto, upto.len())
+        single_line_suggestions(upto, upto.len(), Trigger::Typing)
             .into_iter()
             .map(|i| i.label.to_string())
             .collect()
     }
 
+    fn explicit(upto: &str) -> Vec<crate::single_line_complete::SingleLineSuggestion> {
+        single_line_suggestions(upto, upto.len(), Trigger::Explicit)
+    }
+
     #[test]
-    fn empty_input_lists_every_token() {
-        assert_eq!(labels("").len(), TOKEN_HELP.len() + KEY_ALIASES.len());
+    fn empty_input_stays_closed_until_asked() {
+        assert!(labels("").is_empty());
+        assert_eq!(explicit("").len(), TOKEN_HELP.len() + KEY_ALIASES.len());
+    }
+
+    #[test]
+    fn one_letter_or_a_plain_word_does_not_open_the_menu() {
+        assert!(labels("l").is_empty());
+        assert!(labels("te").is_empty());
+        assert!(labels("report ").is_empty());
     }
 
     #[test]
@@ -148,13 +186,13 @@ mod tests {
     }
 
     #[test]
-    fn plain_search_keeps_appendable_filter_tokens_visible() {
-        let items = single_line_suggestions("report", "report".len());
+    fn asked_after_a_plain_search_offers_appendable_tokens() {
+        let items = explicit("report");
         assert_eq!(items.len(), TOKEN_HELP.len() + KEY_ALIASES.len());
         assert_eq!(items[0].replacement, 6..6);
         assert!(items[0].insertion.starts_with(' '));
 
-        let after_space = single_line_suggestions("report ", "report ".len());
+        let after_space = explicit("report ");
         assert_eq!(after_space.len(), TOKEN_HELP.len() + KEY_ALIASES.len());
         assert_eq!(after_space[0].replacement, 7..7);
         assert!(!after_space[0].insertion.starts_with(' '));
@@ -178,7 +216,7 @@ mod tests {
 
     #[test]
     fn value_edit_replaces_only_the_value() {
-        let items = single_line_suggestions("big mod:t", "big mod:t".len());
+        let items = single_line_suggestions("big mod:t", "big mod:t".len(), Trigger::Typing);
         let today = items.iter().find(|i| i.label == "mod:today").unwrap();
         // "big mod:" is 8 bytes; the replacement starts after
         // the colon and covers just the typed value prefix.
@@ -190,7 +228,7 @@ mod tests {
     fn multibyte_prefix_ranges_are_utf8_bytes() {
         // "é🙂 " before the word: 2 + 4 + 1 UTF-8 bytes.
         let value = "é🙂 loc";
-        let items = single_line_suggestions(value, value.len());
+        let items = single_line_suggestions(value, value.len(), Trigger::Typing);
         assert_eq!(items[0].replacement.start, 7);
     }
 }

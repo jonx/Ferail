@@ -256,6 +256,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Task-panel dismiss | `icons/close.svg` ↑ | Lucide | task_panel.rs:101 |
 | Tab close | `icons/close.svg` ↑ | Lucide: shared "close" chrome glyph (replaced a literal `"x"` text char) | render.rs `tabstrip` |
 | Filter clear (✕ inside the filter field) | `IconName::Close` ↑ | Lucide: drawn by gpui-component's own `clear_button`, which `Input::cleanable(true)` turns on; we don't pass a glyph. Same "close" chrome family as the row above. | render.rs `title_bar` |
+| Filter suggestion menu close (✕ in the menu header) | `icons/close.svg` ↑ | Lucide: same shared "close" chrome glyph as tab and tool-result close; dismisses a popup, not a command. | render.rs `filter_completion_menu` |
 
 ### Preview-pane actions ([render.rs](../../crates/ferail-gpui/src/shell/render.rs))
 

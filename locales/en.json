@@ -144,6 +144,8 @@
     "Clear Recents…": "Clear Recents…",
     "Clear Tags": "Clear Tags",
     "Clear quarantine": "Clear quarantine",
+    "Clear the filter or turn on Show hidden to see them.": "Clear the filter or turn on Show hidden to see them.",
+    "Clear the filter to see them.": "Clear the filter to see them.",
     "Clearing quarantine…": "Clearing quarantine…",
     "Click the video to sample a colour.": "Click the video to sample a colour.",
     "Cloning {n} duplicate": {
@@ -157,6 +159,7 @@
     "Close Tab": "Close Tab",
     "Close Window": "Close Window",
     "Close results": "Close results",
+    "Close suggestions": "Close suggestions",
     "Closing a program this way can discard its unsaved changes.": "Closing a program this way can discard its unsaved changes.",
     "Closing programs…": "Closing programs…",
     "Collapse / Parent": "Collapse / Parent",
@@ -656,6 +659,8 @@
     "Match the system, or pick a side.": "Match the system, or pick a side.",
     "Maximum": "Maximum",
     "Media": "Media",
+    "Media Only": "Media Only",
+    "Media only": "Media only",
     "Medium (115%)": "Medium (115%)",
     "Menus": "Menus",
     "Minimize": "Minimize",
@@ -743,6 +748,7 @@
     "No selection": "No selection",
     "No similar images found.": "No similar images found.",
     "No subfolders": "No subfolders",
+    "No visible items": "No visible items",
     "None": "None",
     "Normal": "Normal",
     "Not downloaded": "Not downloaded",
@@ -1040,9 +1046,11 @@
     "Scroll tabs right": "Scroll tabs right",
     "Search": "Search",
     "Search & Duplicates": "Search & Duplicates",
+    "Search Subfolders While Typing": "Search Subfolders While Typing",
     "Search commands…": "Search commands…",
     "Search dot-files and otherwise-hidden items too.": "Search dot-files and otherwise-hidden items too.",
     "Search engine": "Search engine",
+    "Search this folder and subfolders…": "Search this folder and subfolders…",
     "Season": "Season",
     "Select All": "Select All",
     "Select in Ferail": "Select in Ferail",
@@ -1077,6 +1085,7 @@
     "Show installed Windows Subsystem for Linux distributions in the sidebar. Disabled by default; when disabled Ferail does not discover or start WSL distributions.": "Show installed Windows Subsystem for Linux distributions in the sidebar. Disabled by default; when disabled Ferail does not discover or start WSL distributions.",
     "Show largest-files panel": "Show largest-files panel",
     "Show matching files only": "Show matching files only",
+    "Show only images, videos and audio": "Show only images, videos and audio",
     "Show the full treemap and dim non-matches": "Show the full treemap and dim non-matches",
     "Showing info for the first {cap} of {total} items.": "Showing info for the first {cap} of {total} items.",
     "Showing {n} item in {app}": {
@@ -1156,6 +1165,7 @@
     "Symlink": "Symlink",
     "System": "System",
     "System ({loc})": "System ({loc})",
+    "Tab inserts, Esc closes": "Tab inserts, Esc closes",
     "Tag": "Tag",
     "Tags": "Tags",
     "Target": "Target",
@@ -1200,6 +1210,10 @@
     "This file is {size}, too large for the built-in editor.": "This file is {size}, too large for the built-in editor.",
     "This file isn't an archive Ferail can open.": "This file isn't an archive Ferail can open.",
     "This folder is empty.": "This folder is empty.",
+    "This folder only holds {n} hidden item.": {
+      "one": "This folder only holds {n} hidden item.",
+      "other": "All {n} items in this folder are hidden."
+    },
     "This image is {w}×{h}, too large for the built-in editor.": "This image is {w}×{h}, too large for the built-in editor.",
     "This is a structured ZIP package. The converted copy is a plain archive and may no longer work as an app or document.": "This is a structured ZIP package. The converted copy is a plain archive and may no longer work as an app or document.",
     "This location may have been moved, renamed, or unmounted.": "This location may have been moved, renamed, or unmounted.",
@@ -1237,6 +1251,7 @@
     },
     "Treemap HTML copied, paste into any page or document.": "Treemap HTML copied, paste into any page or document.",
     "Turn off the entries you never use, and drag them into the order you want. Hiding an entry never changes what Ferail can do: the command keeps its keyboard shortcut and stays in the command palette. Entries still appear only where they apply, so turning one on does not make it show up on files it cannot act on.": "Turn off the entries you never use, and drag them into the order you want. Hiding an entry never changes what Ferail can do: the command keeps its keyboard shortcut and stays in the command palette. Entries still appear only where they apply, so turning one on does not make it show up on files it cannot act on.",
+    "Turn on Show hidden in the status bar to see them.": "Turn on Show hidden in the status bar to see them.",
     "Type": "Type",
     "Type words to match names and formats. Add tokens to filter by value. Everything you type must match (AND).": "Type words to match names and formats. Add tokens to filter by value. Everything you type must match (AND).",
     "UI scale": "UI scale",
@@ -1479,6 +1494,10 @@
     "{n} item filtered out.": {
       "one": "{n} item filtered out.",
       "other": "All {n} items filtered out."
+    },
+    "{n} item is hidden or filtered out.": {
+      "one": "{n} item is hidden or filtered out.",
+      "other": "All {n} items are hidden or filtered out."
     },
     "{n} item needs administrator rights to delete.": {
       "one": "{n} item needs administrator rights to delete.",

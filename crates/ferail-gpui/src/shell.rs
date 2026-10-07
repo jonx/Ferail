@@ -1867,6 +1867,27 @@ const SLOW_LOAD_INDICATOR_DELAY: Duration = Duration::from_millis(300);
 /// How long the first window waits for its restored folder to answer before
 /// opening home instead.
 const START_PATH_TIMEOUT: Duration = Duration::from_secs(3);
+/// Pause in typing before the filter's token menu opens by itself. Long
+/// enough that ordinary typing never flashes it.
+const FILTER_MENU_DELAY: Duration = Duration::from_millis(600);
+/// Pause in typing before Search Subfolders While Typing launches the
+/// subtree search, so each keystroke does not start (and cancel) a walk.
+const SEARCH_AS_YOU_TYPE_DELAY: Duration = Duration::from_millis(450);
+
+/// The filter field's placeholder: what typing in it does, which depends on
+/// View > Search Subfolders While Typing.
+fn filter_placeholder() -> SharedString {
+    if crate::feature_settings::search_as_you_type() {
+        return tr!("Search this folder and subfolders\u{2026}");
+    }
+    // The return symbol U+23CE has no glyph in the AROS font stack
+    // (renders as a tofu box); use a plain word there.
+    #[cfg(target_os = "aros")]
+    let placeholder = tr!("Filter \u{2026}  Enter to search subfolders");
+    #[cfg(not(target_os = "aros"))]
+    let placeholder = tr!("Filter \u{2026}  \u{23CE} to search subfolders");
+    placeholder
+}
 
 const SIDEBAR_MIN_WIDTH: f32 = 180.0;
 const SIDEBAR_MAX_WIDTH: f32 = 520.0;
@@ -2842,15 +2863,9 @@ impl Shell {
         // when the user switches tabs. The closure captures `tab_id`
         // so only this tab's enumeration is re-triggered.
         let filter_input = cx.new(|cx| {
-            // The return symbol U+23CE has no glyph in the AROS font stack
-            // (renders as a tofu box); use a plain word there.
-            #[cfg(target_os = "aros")]
-            let placeholder = tr!("Filter \u{2026}  Enter to search subfolders");
-            #[cfg(not(target_os = "aros"))]
-            let placeholder = tr!("Filter \u{2026}  \u{23CE} to search subfolders");
             InputState::new(window, cx)
                 .submit_on_enter(true)
-                .placeholder(placeholder)
+                .placeholder(filter_placeholder())
         });
         // Read through the `state` parameter: a captured strong clone of the
         // subscribed entity is a self-cycle that leaks the input past quit
@@ -2865,8 +2880,10 @@ impl Shell {
                         let cursor = state.read(cx).selected_range().end;
                         if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
                             this.tabs[idx].filter_text = value.clone();
-                            this.tabs[idx].filter_suggestions.replace(
-                                crate::filter_complete::single_line_suggestions(&value, cursor),
+                            this.tabs[idx].filter_edit_epoch =
+                                this.tabs[idx].filter_edit_epoch.wrapping_add(1);
+                            this.refresh_filter_suggestions_after_edit(
+                                idx, &value, cursor, window, cx,
                             );
                             // Flat is an explicit recursive snapshot. Typing
                             // must not destroy it or launch another million-row
@@ -2901,6 +2918,16 @@ impl Shell {
                                 cx.notify();
                                 return;
                             }
+                            // Search Subfolders While Typing: a pause in
+                            // typing launches the same subtree search Enter
+                            // does. The listing stays as it is meanwhile, so
+                            // a keystroke never costs a directory reload.
+                            if crate::feature_settings::search_as_you_type()
+                                && !value.trim().is_empty()
+                            {
+                                this.schedule_search_as_you_type(idx, window, cx);
+                                return;
+                            }
                             // Editing the filter while showing a results
                             // view returns to the live directory, then
                             // applies the in-directory filter.
@@ -2918,6 +2945,10 @@ impl Shell {
                         // suggestion.
                         if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
                             this.tabs[idx].filter_suggestions.clear();
+                            // Enter runs now: a pending search-as-you-type
+                            // launch must not repeat it.
+                            this.tabs[idx].filter_edit_epoch =
+                                this.tabs[idx].filter_edit_epoch.wrapping_add(1);
                         }
                         let value = state.read(cx).value().to_string();
                         // Disk Usage owns a complete recursive snapshot
@@ -2942,6 +2973,7 @@ impl Shell {
                     InputEvent::Blur => {
                         if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
                             this.tabs[idx].filter_suggestions.clear();
+                            this.tabs[idx].filter_suggestions_dismissed = false;
                             cx.notify();
                         }
                     }
@@ -3603,13 +3635,155 @@ impl Shell {
     }
 
     fn move_filter_completion(&mut self, delta: isize, cx: &mut Context<Self>) -> bool {
-        let suggestions = &mut self.active_tab_mut().filter_suggestions;
-        if !suggestions.is_open() {
-            return false;
+        if !self.active_tab().filter_suggestions.is_open() {
+            // Down on a closed menu is the explicit request for it: the
+            // whole token list, appendable after a search word.
+            if delta <= 0 {
+                return false;
+            }
+            let (value, cursor) = {
+                let input = self.active_tab().filter_input.read(cx);
+                (input.value().to_string(), input.selected_range().end)
+            };
+            let items = crate::filter_complete::single_line_suggestions(
+                &value,
+                cursor,
+                crate::filter_complete::Trigger::Explicit,
+            );
+            if items.is_empty() {
+                return false;
+            }
+            self.active_tab_mut().filter_suggestions.replace(items);
+            cx.notify();
+            return true;
         }
-        suggestions.move_by(delta);
+        self.active_tab_mut().filter_suggestions.move_by(delta);
         cx.notify();
         true
+    }
+
+    /// Close the suggestion menu at the user's request (its close button)
+    /// and keep it shut while they type, until the field is emptied or
+    /// loses focus.
+    pub(crate) fn dismiss_filter_completion(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.filter_suggestions.clear();
+            tab.filter_suggestions_dismissed = true;
+            tab.filter_edit_epoch = tab.filter_edit_epoch.wrapping_add(1);
+            cx.notify();
+        }
+    }
+
+    /// Keep the token menu in step with an edit without letting it jump
+    /// into view mid-word. An open menu follows each keystroke at once
+    /// (narrowing, or closing when nothing matches); a closed one opens
+    /// only after typing pauses for [`FILTER_MENU_DELAY`], and only for a
+    /// word that is clearly a token (see `filter_complete::Trigger`).
+    fn refresh_filter_suggestions_after_edit(
+        &mut self,
+        idx: usize,
+        value: &str,
+        cursor: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::filter_complete::{Trigger, single_line_suggestions};
+        let tab = &mut self.tabs[idx];
+        if value.is_empty() {
+            tab.filter_suggestions_dismissed = false;
+            tab.filter_suggestions.clear();
+            return;
+        }
+        if tab.filter_suggestions_dismissed {
+            tab.filter_suggestions.clear();
+            return;
+        }
+        let items = single_line_suggestions(value, cursor, Trigger::Typing);
+        if tab.filter_suggestions.is_open() || items.is_empty() {
+            tab.filter_suggestions.replace(items);
+            return;
+        }
+        let tab_id = tab.id;
+        let epoch = tab.filter_edit_epoch;
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(FILTER_MENU_DELAY).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(idx) = this.tabs.iter().position(|tab| tab.id == tab_id) else {
+                    return;
+                };
+                let tab = &this.tabs[idx];
+                if tab.filter_edit_epoch != epoch || tab.filter_suggestions_dismissed {
+                    return;
+                }
+                let input = tab.filter_input.read(cx);
+                if !input.focus_handle(cx).is_focused(window) {
+                    return;
+                }
+                let items = single_line_suggestions(
+                    input.value().as_ref(),
+                    input.selected_range().end,
+                    Trigger::Typing,
+                );
+                this.tabs[idx].filter_suggestions.replace(items);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Search Subfolders While Typing: launch the subtree search for the
+    /// field's text once typing pauses for [`SEARCH_AS_YOU_TYPE_DELAY`].
+    /// Every edit bumps the tab's `filter_edit_epoch`, so only the last
+    /// keystroke's timer survives to launch anything.
+    fn schedule_search_as_you_type(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.tabs[idx].id;
+        let epoch = self.tabs[idx].filter_edit_epoch;
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(SEARCH_AS_YOU_TYPE_DELAY)
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(tab) = this.tabs.iter().find(|tab| tab.id == tab_id) else {
+                    return;
+                };
+                if tab.filter_edit_epoch != epoch {
+                    return;
+                }
+                let needle = tab.filter_text.clone();
+                this.start_subtree_search(tab_id, needle, Some(window.window_handle()), cx);
+            });
+        })
+        .detach();
+    }
+
+    fn on_toggle_search_as_you_type(
+        &mut self,
+        _: &ToggleSearchAsYouType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Toggle Search Subfolders While Typing");
+        let on = !crate::feature_settings::search_as_you_type();
+        let existing = app_state::load();
+        app_state::save(&app_state::AppState {
+            search_as_you_type: Some(on),
+            ..existing
+        });
+        crate::boot::refresh_window_menu(cx);
+        // The placeholder states what typing does; every tab's field says it.
+        let placeholder = filter_placeholder();
+        for tab in &self.tabs {
+            let placeholder = placeholder.clone();
+            tab.filter_input.update(cx, |state, cx| {
+                state.set_placeholder(placeholder, window, cx);
+            });
+        }
+        cx.notify();
     }
 
     fn accept_filter_completion(
@@ -5571,8 +5745,11 @@ impl Shell {
         // empty" when the needle matched nothing. Written after the
         // replace/clear above, which reset it.
         let filtered_out = filtered.count;
+        let hidden_out = hidden.count;
         self.tabs[idx].table.update(cx, |state, _cx| {
-            state.delegate_mut().filtered_out = filtered_out;
+            let delegate = state.delegate_mut();
+            delegate.filtered_out = filtered_out;
+            delegate.hidden_out = hidden_out;
         });
         let row_count = self.tabs[idx].table.read(cx).delegate().entries.len();
         if row_count == 0 {
@@ -8340,10 +8517,7 @@ mod tests {
             "{s}"
         );
         assert!(s.contains("Report.pdf: permission denied"), "{s}");
-        assert!(
-            s.contains("notes.txt: in use by another program"),
-            "{s}"
-        );
+        assert!(s.contains("notes.txt: in use by another program"), "{s}");
         // Permission denied dominates → elevation advice.
         assert!(s.contains("administrator"), "{s}");
     }

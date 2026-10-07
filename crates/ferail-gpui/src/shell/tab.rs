@@ -714,6 +714,14 @@ pub struct Tab {
     /// per-tab alongside the value/cursor and never invokes the document
     /// editor merely to show a completion popup.
     pub filter_suggestions: crate::single_line_complete::SingleLineSuggestions,
+    /// Bumped on every filter edit. The delayed menu open and the
+    /// search-as-you-type launch capture it and do nothing once a newer
+    /// keystroke has moved it on.
+    pub filter_edit_epoch: u64,
+    /// The user closed the suggestion menu with its close button. It then
+    /// stays shut while typing until the field is emptied or loses focus;
+    /// Down still opens it on request.
+    pub filter_suggestions_dismissed: bool,
     /// Subscription handle for this tab's table-event bridge into
     /// `Shell`. Owned by the tab so dropping the tab drops the
     /// subscription: important for Phase D's tab-close path.
@@ -825,6 +833,8 @@ impl Tab {
             filter_text: String::new(),
             filter_input,
             filter_suggestions: Default::default(),
+            filter_edit_epoch: 0,
+            filter_suggestions_dismissed: false,
             _table_subscription: table_subscription,
             _filter_subscription: filter_subscription,
         }

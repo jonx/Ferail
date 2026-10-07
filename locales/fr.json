@@ -144,6 +144,8 @@
     "Clear Recents…": "Effacer les récents…",
     "Clear Tags": "Retirer les tags",
     "Clear quarantine": "Lever la quarantaine",
+    "Clear the filter or turn on Show hidden to see them.": "Videz le filtre ou activez « Afficher les éléments masqués » pour les voir.",
+    "Clear the filter to see them.": "Videz le filtre pour les voir.",
     "Clearing quarantine…": "Levée de la quarantaine…",
     "Click the video to sample a colour.": "Cliquez sur la vidéo pour échantillonner une couleur.",
     "Cloning {n} duplicate": {
@@ -157,6 +159,7 @@
     "Close Tab": "Fermer l'onglet",
     "Close Window": "Fermer la fenêtre",
     "Close results": "Fermer les résultats",
+    "Close suggestions": "Fermer les suggestions",
     "Closing a program this way can discard its unsaved changes.": "Fermer un programme de cette manière peut faire perdre ses modifications non enregistrées.",
     "Closing programs…": "Fermeture des programmes…",
     "Collapse / Parent": "Réduire / Parent",
@@ -656,6 +659,8 @@
     "Match the system, or pick a side.": "Suivez le système ou choisissez un thème.",
     "Maximum": "Maximum",
     "Media": "Médias",
+    "Media Only": "Médias uniquement",
+    "Media only": "Médias uniquement",
     "Medium (115%)": "Moyen (115%)",
     "Menus": "Menus",
     "Minimize": "Minimiser",
@@ -743,6 +748,7 @@
     "No selection": "Aucune sélection",
     "No similar images found.": "Aucune image similaire trouvée.",
     "No subfolders": "Aucun sous-dossier",
+    "No visible items": "Aucun élément visible",
     "None": "Aucun",
     "Normal": "Normal",
     "Not downloaded": "Non téléchargé",
@@ -1040,9 +1046,11 @@
     "Scroll tabs right": "Faire défiler les onglets vers la droite",
     "Search": "Rechercher",
     "Search & Duplicates": "Recherche et doublons",
+    "Search Subfolders While Typing": "Rechercher dans les sous-dossiers pendant la saisie",
     "Search commands…": "Rechercher des commandes…",
     "Search dot-files and otherwise-hidden items too.": "Recherchez également des fichiers de points et des éléments autrement cachés.",
     "Search engine": "Moteur de recherche",
+    "Search this folder and subfolders…": "Rechercher dans ce dossier et ses sous-dossiers…",
     "Season": "Saison",
     "Select All": "Sélectionner tout",
     "Select in Ferail": "Sélectionner dans Ferail",
@@ -1077,6 +1085,7 @@
     "Show installed Windows Subsystem for Linux distributions in the sidebar. Disabled by default; when disabled Ferail does not discover or start WSL distributions.": "Afficher dans la barre latérale les distributions installées du Sous-système Windows pour Linux. Désactivé par défaut ; lorsque cette option est désactivée, Ferail ne recherche ni ne démarre aucune distribution WSL.",
     "Show largest-files panel": "Afficher le panneau des fichiers les plus volumineux",
     "Show matching files only": "Afficher uniquement les fichiers correspondants",
+    "Show only images, videos and audio": "N’afficher que les images, vidéos et fichiers audio",
     "Show the full treemap and dim non-matches": "Afficher tout le treemap et griser les autres fichiers",
     "Showing info for the first {cap} of {total} items.": "Affichage des informations pour les {cap} premiers éléments sur {total}.",
     "Showing {n} item in {app}": {
@@ -1156,6 +1165,7 @@
     "Symlink": "Lien symbolique",
     "System": "Système",
     "System ({loc})": "Système ({loc})",
+    "Tab inserts, Esc closes": "Tab insère, Échap ferme",
     "Tag": "Tag",
     "Tags": "Tags",
     "Target": "Cible",
@@ -1200,6 +1210,10 @@
     "This file is {size}, too large for the built-in editor.": "Ce fichier fait {size}, trop volumineux pour l’éditeur intégré.",
     "This file isn't an archive Ferail can open.": "Ce fichier n'est pas une archive que Ferail peut ouvrir.",
     "This folder is empty.": "Ce dossier est vide.",
+    "This folder only holds {n} hidden item.": {
+      "one": "Ce dossier ne contient que {n} élément masqué.",
+      "other": "Les {n} éléments de ce dossier sont masqués."
+    },
     "This image is {w}×{h}, too large for the built-in editor.": "Cette image fait {w}×{h}, trop grande pour l’éditeur intégré.",
     "This is a structured ZIP package. The converted copy is a plain archive and may no longer work as an app or document.": "Il s’agit d’un paquet ZIP structuré. La copie convertie est une archive ordinaire et peut ne plus fonctionner comme application ou document.",
     "This location may have been moved, renamed, or unmounted.": "Cet emplacement a peut-être été déplacé, renommé ou démonté.",
@@ -1237,6 +1251,7 @@
     },
     "Treemap HTML copied, paste into any page or document.": "Treemap HTML copié, collez-le dans n'importe quelle page ou document.",
     "Turn off the entries you never use, and drag them into the order you want. Hiding an entry never changes what Ferail can do: the command keeps its keyboard shortcut and stays in the command palette. Entries still appear only where they apply, so turning one on does not make it show up on files it cannot act on.": "Désactivez les entrées dont vous ne vous servez jamais, et faites-les glisser dans l’ordre qui vous convient. Masquer une entrée ne change rien à ce que Ferail sait faire : la commande garde son raccourci clavier et reste dans la palette de commandes. Les entrées n’apparaissent toujours que là où elles s’appliquent, donc en réactiver une ne la fera pas surgir sur des fichiers qu’elle ne peut pas traiter.",
+    "Turn on Show hidden in the status bar to see them.": "Activez « Afficher les éléments masqués » dans la barre d’état pour les voir.",
     "Type": "Type",
     "Type words to match names and formats. Add tokens to filter by value. Everything you type must match (AND).": "Tapez des mots correspondant aux noms et aux formats. Ajoutez des jetons pour filtrer par valeur. Tout ce que vous tapez doit correspondre (ET).",
     "UI scale": "Échelle de l’interface",
@@ -1479,6 +1494,10 @@
     "{n} item filtered out.": {
       "one": "Élément {n} filtré.",
       "other": "Tous les éléments {n} filtrés."
+    },
+    "{n} item is hidden or filtered out.": {
+      "one": "{n} élément est masqué ou filtré.",
+      "other": "Les {n} éléments sont masqués ou filtrés."
     },
     "{n} item needs administrator rights to delete.": {
       "one": "L'élément {n} nécessite des droits d'administrateur pour être supprimé.",

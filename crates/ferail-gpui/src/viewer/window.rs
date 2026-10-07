@@ -14,7 +14,7 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, WindowExt as _,
+    ActiveTheme, Disableable as _, Selectable, Sizable, WindowExt as _,
     button::Button,
     checkbox::Checkbox,
     h_flex,
@@ -101,6 +101,15 @@ fn window_opacity_range() -> crate::scrub_slider::ScrubRange {
 /// the video path for *any* backend. Everything else stays a Quick Look
 /// poster unless the mpv backend (broad set below) is active. [mac]
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov"];
+
+/// Still-image extensions the "Media only" playlist filter keeps, beside
+/// whatever plays as video or audio. Covers what the loader decodes plus
+/// the formats it shows through the platform thumbnailer (HEIC, RAW, PSD).
+const IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "jpe", "jfif", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif",
+    "avif", "jxl", "ico", "icns", "svg", "tga", "psd", "dng", "cr2", "cr3", "nef", "arw", "orf",
+    "rw2", "raf", "srw", "pef",
+];
 
 /// How long an open video stream gets to deliver its first frame before
 /// the stage declares the file undecodable. Corrupt files (recovery
@@ -565,7 +574,15 @@ fn resolve_default_zoom() -> ZoomMode {
 }
 
 pub struct ViewerWindow {
+    /// What the viewer steps through: `all_entries`, minus non-media files
+    /// while the "Media only" toggle is on.
     playlist: Vec<PlaylistEntry>,
+    /// The playlist as it was handed over, before the media filter.
+    all_entries: Vec<PlaylistEntry>,
+    /// "Media only" toggle (persisted): skip files that are not images,
+    /// video or audio. Ignored while the snapshot holds no media at all,
+    /// so the viewer never opens on nothing.
+    media_only: bool,
     index: usize,
     cache: loader::ViewerCache,
     /// Sticky zoom/pan: survives navigation by design.
@@ -822,9 +839,12 @@ impl ViewerWindow {
         })
         .detach();
         let default_zoom = resolve_default_zoom();
+        let start_path = playlist.get(start).map(|e| e.path.clone());
         let mut this = Self {
             index: start.min(playlist.len().saturating_sub(1)),
+            all_entries: playlist.clone(),
             playlist,
+            media_only: crate::app_state::load().viewer_media_only.unwrap_or(false),
             cache: loader::ViewerCache::default(),
             stage: StageState::reset(default_zoom),
             default_zoom,
@@ -890,6 +910,7 @@ impl ViewerWindow {
             process_inflight: false,
             video_adjusted: None,
         };
+        this.apply_media_filter(start_path);
         this.request_current(cx);
         this.prefetch_neighbors(cx);
         // "Slideshow from Here" opens straight into playback.
@@ -909,8 +930,11 @@ impl ViewerWindow {
         autoplay: bool,
         cx: &mut Context<Self>,
     ) {
+        let start_path = playlist.get(start).map(|e| e.path.clone());
         self.index = start.min(playlist.len().saturating_sub(1));
+        self.all_entries = playlist.clone();
         self.playlist = playlist;
+        self.apply_media_filter(start_path);
         // Fresh session → re-resolve the default-zoom pref too, so a
         // Settings change reaches a reused window on its next open.
         self.default_zoom = resolve_default_zoom();
@@ -934,6 +958,89 @@ impl ViewerWindow {
 
     fn current(&self) -> Option<&PlaylistEntry> {
         self.playlist.get(self.index)
+    }
+
+    /// Whether `path` is something the "Media only" playlist keeps: a still
+    /// image, or a file that plays as video or audio on the active backend.
+    fn is_media_path(&self, path: &std::path::Path) -> bool {
+        let is_image = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|ext| IMAGE_EXTS.contains(&ext.to_ascii_lowercase().as_str()));
+        is_image || self.is_video_path(path) || self.is_audio_path(path)
+    }
+
+    /// Rebuild `playlist` from `all_entries` for the current `media_only`
+    /// setting and land on `anchor`: the same file when it survived the
+    /// filter, else the next kept file after it in the original order
+    /// (wrapping). Pure bookkeeping on the in-memory snapshot, no I/O.
+    fn apply_media_filter(&mut self, anchor: Option<PathBuf>) {
+        let media: Vec<PlaylistEntry> = if self.media_only {
+            self.all_entries
+                .iter()
+                .filter(|e| self.is_media_path(&e.path))
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.playlist = if media.is_empty() {
+            self.all_entries.clone()
+        } else {
+            media
+        };
+        let Some(anchor) = anchor else {
+            self.index = self.index.min(self.playlist.len().saturating_sub(1));
+            return;
+        };
+        let anchor_ix = self
+            .all_entries
+            .iter()
+            .position(|e| e.path == anchor)
+            .unwrap_or(0);
+        let len = self.all_entries.len();
+        self.index = (0..len)
+            .map(|step| &self.all_entries[(anchor_ix + step) % len].path)
+            .find_map(|path| self.playlist.iter().position(|e| &e.path == path))
+            .unwrap_or(0);
+    }
+
+    /// True when the toggle can change anything: the snapshot mixes media
+    /// with other files.
+    fn media_filter_applicable(&self) -> bool {
+        let media = self
+            .all_entries
+            .iter()
+            .filter(|e| self.is_media_path(&e.path))
+            .count();
+        media > 0 && media < self.all_entries.len()
+    }
+
+    /// "Media only" checkbox: refilter around the current file and persist
+    /// the choice for the next viewer. Post-navigation steps match
+    /// [`Self::remove_playlist_entry`], since indexes shift the same way.
+    fn set_media_only(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.media_only == on {
+            return;
+        }
+        self.media_only = on;
+        let existing = crate::app_state::load();
+        crate::app_state::save(&crate::app_state::AppState {
+            viewer_media_only: Some(on),
+            ..existing
+        });
+        let anchor = self.current().map(|e| e.path.clone());
+        self.apply_media_filter(anchor);
+        self.rotated = None;
+        self.processed = None;
+        self.request_current(cx);
+        self.prefetch_neighbors(cx);
+        self.schedule_process(cx);
+        let epoch = self.playback.bump();
+        if self.playback.playing && !self.current_is_playable() {
+            self.arm_timer(epoch, cx);
+        }
+        cx.notify();
     }
 
     /// Whether any playlist entry lives under one of `roots`. The eject
@@ -2151,6 +2258,7 @@ impl ViewerWindow {
             return;
         };
         self.playlist.remove(ix);
+        self.all_entries.retain(|e| e.path != path);
         if self.playlist.is_empty() {
             cx.notify();
             return;
@@ -2516,6 +2624,8 @@ impl ViewerWindow {
         let transparent = self.transparent;
         let window_opacity = self.window_opacity;
         let has_item = self.current().is_some();
+        let media_only = self.media_only;
+        let media_filter_applicable = self.media_filter_applicable();
         let entity = cx.entity().clone();
         let t_entity = cx.entity().clone();
 
@@ -2530,7 +2640,7 @@ impl ViewerWindow {
         const W_BASE: f32 = 200.0; // padding + prev/counter/next + fullscreen
         const W_AV_BASIC: f32 = 68.0; // media play/pause + mute (always inline)
         const W_TOGGLES: f32 = 360.0; // stay-on-top + transparent + opacity scrub
-        const W_SLIDESHOW: f32 = 88.0; // slideshow play + interval
+        const W_SLIDESHOW: f32 = 196.0; // slideshow play + interval + media only
         const W_ACTIONS: f32 = 102.0; // rotate + adjust + trash
         const W_ZOOM: f32 = 175.0; // − / % / + / 1:1 + separator
         const W_AV_EXTRA_VIDEO: f32 = 164.0; // −1f / +1f / Loop
@@ -2616,6 +2726,18 @@ impl ViewerWindow {
                                     e.update(cx, |this, cx| this.cycle_interval(cx));
                                 }),
                             );
+                        if media_filter_applicable || media_only {
+                            let e = menu_entity.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(tr!("Media Only"))
+                                    .checked(media_only)
+                                    .on_click(move |_, _, cx| {
+                                        e.update(cx, |this, cx| {
+                                            this.set_media_only(!media_only, cx)
+                                        });
+                                    }),
+                            );
+                        }
                         sep = true;
                     }
                     if hide_zoom {
@@ -2786,6 +2908,19 @@ impl ViewerWindow {
                         .label(Playback::interval_label(self.playback.interval_secs))
                         .small()
                         .on_click(cx.listener(|this, _, _, cx| this.cycle_interval(cx))),
+                )
+                // Skip documents and other non-media files. Disabled when
+                // the folder is all media or has none: nothing to filter.
+                .child(
+                    Checkbox::new("viewer-media-only")
+                        .small()
+                        .label(tr!("Media only"))
+                        .checked(media_only)
+                        .disabled(!media_filter_applicable && !media_only)
+                        .tooltip(tr!("Show only images, videos and audio"))
+                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            this.set_media_only(*checked, cx);
+                        })),
                 )
             })
             .when(!hide_zoom, |bar| {

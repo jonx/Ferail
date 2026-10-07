@@ -272,7 +272,12 @@ impl Shell {
     /// after the moment it was pasted, then select it. PNG, JPEG, GIF and
     /// WebP keep their bytes as they are; TIFF and BMP, which is what many
     /// apps put on the clipboard, are converted to PNG, losslessly.
-    fn paste_clipboard_image(&mut self, image: gpui::Image, window: &mut Window, cx: &mut Context<Self>) {
+    fn paste_clipboard_image(
+        &mut self,
+        image: gpui::Image,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let dir = self.active_tab().current_dir.clone();
         let reload = dir.clone();
         // The template is translated here; the date is filled in on the
@@ -290,8 +295,9 @@ impl Shell {
                 let stem = template
                     .replace("{date}", date)
                     .replace("{time}", &time.replace(':', "."));
-                let path = ferail_fs_native::file_ops::write_new_file(&dir, stem.trim(), ext, &bytes)
-                    .map_err(|e| e.to_string())?;
+                let path =
+                    ferail_fs_native::file_ops::write_new_file(&dir, stem.trim(), ext, &bytes)
+                        .map_err(|e| e.to_string())?;
                 Ok(vec![path])
             },
             ferail_core::msgid!("Paste image"),
@@ -2703,10 +2709,7 @@ impl Shell {
                                 if let Some(db) = &put_back_db {
                                     if let Ok(db) = db.lock() {
                                         if let Err(error) = db.record_put_back(&trashed, path) {
-                                            crate::log_warn!(
-                                                90,
-                                                "put-back record failed: {error}"
-                                            );
+                                            crate::log_warn!(90, "put-back record failed: {error}");
                                         }
                                     }
                                 }

@@ -70,6 +70,13 @@ pub struct SearchConfig {
     pub include_hidden: bool,
 }
 
+/// Whether typing in the filter field searches subfolders (View > Search
+/// Subfolders While Typing) instead of filtering the visible listing.
+/// Reads the memoized AppState: cheap enough for handlers and menu builds.
+pub fn search_as_you_type() -> bool {
+    app_state::load().search_as_you_type.unwrap_or(false)
+}
+
 impl SearchConfig {
     pub fn from_state(s: &AppState) -> Self {
         Self {

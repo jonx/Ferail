@@ -8,6 +8,37 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The slideshow can skip everything that is not a picture, video or
+  song.** A *Media only* checkbox in the viewer toolbar leaves documents and
+  other files out of the playlist. The choice is remembered for the next
+  viewer.
+
+- **The filter's suggestion menu no longer jumps in your way.** It used to
+  open as soon as the field changed, even when it was empty or after clicking
+  × to clear it, and it listed every token after any plain word. It now opens
+  only when what you type looks like a filter token (such as `si` for
+  `size:`), after a short pause, and it has a close button. Press Down in the
+  field to see the whole list.
+
+- **Search subfolders as you type.** *View > Search Subfolders While Typing*
+  makes the filter field search the current folder and everything below it
+  after a short pause, instead of filtering only what is on screen. Enter
+  still does this when the option is off.
+
+- **A folder whose files are all hidden or filtered out says so.** The list
+  and the icon view said *This folder is empty* when every file was hidden; it
+  now says how many items are hidden or filtered out and how to show them, and
+  the status bar no longer says *Empty folder* next to the hidden count.
+
+- **The status bar's right side holds still while a folder is being
+  measured.** Background tasks starting and stopping made the free-space and
+  hidden-files figures, and their wording, shift back and forth.
+
+- **The Windows download instructions explain how to unblock it.** Windows
+  marks downloaded files as blocked, and a blocked Ferail cannot start its
+  helper processes. The README now shows the Properties > Unblock step, and
+  the PowerShell equivalent.
+
 - **The update window no longer shows the release name twice**, once as its
   heading and again, larger, at the top of the notes. Its buttons are also a
   little taller, so labels such as *Télécharger* no longer touch the bottom

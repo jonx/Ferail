@@ -12,13 +12,13 @@ use crate::{
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
-        ClearRecents, CloseTab, CloseWindow, CopyFiles, CopyPath, CreateChecksumFile,
-        CutFiles, CycleSidebarSize, DeleteImmediately, EditFile, EditImage, EmptyTrash,
-        FindDuplicates, FindSimilarImages, FocusFilter, GenerateSha256, GoHome, GoToFolder,
-        MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder,
-        NewTab, OpenDiskUsage, OpenSelected, OpenSettings, PasteFiles, Refresh, RenameSelected,
+        ClearRecents, CloseTab, CloseWindow, CopyFiles, CopyPath, CreateChecksumFile, CutFiles,
+        CycleSidebarSize, DeleteImmediately, EditFile, EditImage, EmptyTrash, FindDuplicates,
+        FindSimilarImages, FocusFilter, GenerateSha256, GoHome, GoToFolder, MovePasteFiles,
+        MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
+        OpenDiskUsage, OpenSelected, OpenSettings, PasteFiles, Refresh, RenameSelected,
         ResetSidebarOrder, RevealInFinder, Shell, ShowDesktop, ToggleFavoriteForTarget,
-        ToggleFlatView, ToggleHidden, TogglePreview, VerifyChecksums,
+        ToggleFlatView, ToggleHidden, TogglePreview, ToggleSearchAsYouType, VerifyChecksums,
     },
 };
 use ferail_core::commands::{CommandId, find};
@@ -786,6 +786,13 @@ pub(crate) fn install_app_menus(cx: &mut App) {
         title("view.toggle_flat", "Include Subfolders"),
         ToggleFlatView,
     ));
+    view_items.push(
+        MenuItem::action(
+            title("view.search_as_you_type", "Search Subfolders While Typing"),
+            ToggleSearchAsYouType,
+        )
+        .checked(crate::feature_settings::search_as_you_type()),
+    );
     view_items.push(MenuItem::separator());
     view_items.push(MenuItem::action(title("file.refresh", "Refresh"), Refresh));
 

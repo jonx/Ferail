@@ -144,6 +144,8 @@
     "Clear Recents…": "„Zuletzt benutzt“ leeren …",
     "Clear Tags": "Tags entfernen",
     "Clear quarantine": "Quarantäne aufheben",
+    "Clear the filter or turn on Show hidden to see them.": "Filter leeren oder „Versteckte anzeigen“ einschalten, um sie zu sehen.",
+    "Clear the filter to see them.": "Filter leeren, um sie zu sehen.",
     "Clearing quarantine…": "Quarantäne wird aufgehoben…",
     "Click the video to sample a colour.": "Klicke ins Video, um eine Farbe aufzunehmen.",
     "Cloning {n} duplicate": {
@@ -157,6 +159,7 @@
     "Close Tab": "Tab schließen",
     "Close Window": "Fenster schließen",
     "Close results": "Ergebnisse schließen",
+    "Close suggestions": "Vorschläge schließen",
     "Closing a program this way can discard its unsaved changes.": "Wird ein Programm auf diese Weise geschlossen, können seine ungespeicherten Änderungen verloren gehen.",
     "Closing programs…": "Programme werden geschlossen…",
     "Collapse / Parent": "Einklappen / Übergeordnet",
@@ -656,6 +659,8 @@
     "Match the system, or pick a side.": "Dem System folgen oder eine Seite wählen.",
     "Maximum": "Maximal",
     "Media": "Medien",
+    "Media Only": "Nur Medien",
+    "Media only": "Nur Medien",
     "Medium (115%)": "Mittel (115 %)",
     "Menus": "Menüs",
     "Minimize": "Minimieren",
@@ -743,6 +748,7 @@
     "No selection": "Keine Auswahl",
     "No similar images found.": "Keine ähnlichen Bilder gefunden.",
     "No subfolders": "Keine Unterordner",
+    "No visible items": "Keine sichtbaren Objekte",
     "None": "Keiner",
     "Normal": "Normal",
     "Not downloaded": "Nicht heruntergeladen",
@@ -1040,9 +1046,11 @@
     "Scroll tabs right": "Tabs nach rechts scrollen",
     "Search": "Suchen",
     "Search & Duplicates": "Suche & Duplikate",
+    "Search Subfolders While Typing": "Beim Tippen in Unterordnern suchen",
     "Search commands…": "Befehle suchen…",
     "Search dot-files and otherwise-hidden items too.": "Auch Punktdateien und anderweitig versteckte Objekte durchsuchen.",
     "Search engine": "Suchmaschine",
+    "Search this folder and subfolders…": "Diesen Ordner und Unterordner durchsuchen …",
     "Season": "Staffel",
     "Select All": "Alles auswählen",
     "Select in Ferail": "In Ferail auswählen",
@@ -1077,6 +1085,7 @@
     "Show installed Windows Subsystem for Linux distributions in the sidebar. Disabled by default; when disabled Ferail does not discover or start WSL distributions.": "Installierte Distributionen des Windows-Subsystems für Linux in der Seitenleiste anzeigen. Standardmäßig deaktiviert; wenn deaktiviert, sucht oder startet Ferail keine WSL-Distributionen.",
     "Show largest-files panel": "Panel „Größte Dateien“ anzeigen",
     "Show matching files only": "Nur passende Dateien anzeigen",
+    "Show only images, videos and audio": "Nur Bilder, Videos und Audio anzeigen",
     "Show the full treemap and dim non-matches": "Gesamte Treemap anzeigen und andere Dateien abblenden",
     "Showing info for the first {cap} of {total} items.": "Informationen für die ersten {cap} von {total} Objekten.",
     "Showing {n} item in {app}": {
@@ -1156,6 +1165,7 @@
     "Symlink": "Symlink",
     "System": "System",
     "System ({loc})": "System ({loc})",
+    "Tab inserts, Esc closes": "Tab fügt ein, Esc schließt",
     "Tag": "Tag",
     "Tags": "Tags",
     "Target": "Ziel",
@@ -1200,6 +1210,10 @@
     "This file is {size}, too large for the built-in editor.": "Diese Datei ist {size} groß, zu groß für den integrierten Editor.",
     "This file isn't an archive Ferail can open.": "Diese Datei ist kein Archiv, das Ferail öffnen kann.",
     "This folder is empty.": "Dieser Ordner ist leer.",
+    "This folder only holds {n} hidden item.": {
+      "one": "Dieser Ordner enthält nur {n} verstecktes Objekt.",
+      "other": "Alle {n} Objekte in diesem Ordner sind versteckt."
+    },
     "This image is {w}×{h}, too large for the built-in editor.": "Dieses Bild ist {w}×{h} groß, zu groß für den integrierten Editor.",
     "This is a structured ZIP package. The converted copy is a plain archive and may no longer work as an app or document.": "Dies ist ein strukturiertes ZIP-Paket. Die konvertierte Kopie ist ein gewöhnliches Archiv und funktioniert möglicherweise nicht mehr als App oder Dokument.",
     "This location may have been moved, renamed, or unmounted.": "Dieser Ort wurde möglicherweise bewegt, umbenannt oder ausgeworfen.",
@@ -1237,6 +1251,7 @@
     },
     "Treemap HTML copied, paste into any page or document.": "Treemap-HTML kopiert, in eine beliebige Seite oder ein Dokument einsetzen.",
     "Turn off the entries you never use, and drag them into the order you want. Hiding an entry never changes what Ferail can do: the command keeps its keyboard shortcut and stays in the command palette. Entries still appear only where they apply, so turning one on does not make it show up on files it cannot act on.": "Schalten Sie die Einträge ab, die Sie nie verwenden, und ziehen Sie sie in die Reihenfolge, die Sie möchten. Das Ausblenden eines Eintrags ändert nichts daran, was Ferail kann: der Befehl behält sein Tastenkürzel und bleibt in der Befehlspalette. Einträge erscheinen weiterhin nur dort, wo sie zutreffen, das Einschalten eines Eintrags lässt ihn also nicht bei Dateien auftauchen, die er nicht bearbeiten kann.",
+    "Turn on Show hidden in the status bar to see them.": "„Versteckte anzeigen“ in der Statusleiste einschalten, um sie zu sehen.",
     "Type": "Typ",
     "Type words to match names and formats. Add tokens to filter by value. Everything you type must match (AND).": "Tippe Wörter, um Namen und Formate zu finden. Füge Token hinzu, um nach Werten zu filtern. Alles Eingegebene muss zutreffen (UND).",
     "UI scale": "UI-Skalierung",
@@ -1479,6 +1494,10 @@
     "{n} item filtered out.": {
       "one": "{n} Objekt ausgefiltert.",
       "other": "Alle {n} Objekte ausgefiltert."
+    },
+    "{n} item is hidden or filtered out.": {
+      "one": "{n} Objekt ist versteckt oder ausgefiltert.",
+      "other": "Alle {n} Objekte sind versteckt oder ausgefiltert."
     },
     "{n} item needs administrator rights to delete.": {
       "one": "{n} Objekt braucht Administratorrechte zum Löschen.",

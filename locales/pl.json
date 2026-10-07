@@ -1582,6 +1582,25 @@
     "Show Contents": "Pokaż zawartość",
     "No files or image on the clipboard": "Brak plików i obrazu w schowku",
     "Pasted Image {date} at {time}": "Wklejony obraz {date} o {time}",
-    "Paste image": "Wklej obraz"
+    "Paste image": "Wklej obraz",
+    "Clear the filter or turn on Show hidden to see them.": "Wyczyść filtr lub włącz „Pokaż ukryte”, aby je zobaczyć.",
+    "Clear the filter to see them.": "Wyczyść filtr, aby je zobaczyć.",
+    "Close suggestions": "Zamknij podpowiedzi",
+    "Media Only": "Tylko multimedia",
+    "Media only": "Tylko multimedia",
+    "Search Subfolders While Typing": "Szukaj w podfolderach podczas pisania",
+    "Search this folder and subfolders…": "Szukaj w tym folderze i podfolderach…",
+    "Show only images, videos and audio": "Pokaż tylko obrazy, wideo i dźwięk",
+    "Tab inserts, Esc closes": "Tab wstawia, Esc zamyka",
+    "This folder only holds {n} hidden item.": {
+      "one": "Ten folder zawiera tylko {n} ukryty element.",
+      "other": "Wszystkie elementy w tym folderze są ukryte ({n})."
+    },
+    "Turn on Show hidden in the status bar to see them.": "Włącz „Pokaż ukryte” na pasku stanu, aby je zobaczyć.",
+    "{n} item is hidden or filtered out.": {
+      "one": "{n} element jest ukryty lub odfiltrowany.",
+      "other": "Wszystkie elementy są ukryte lub odfiltrowane ({n})."
+    },
+    "No visible items": "Brak widocznych elementów"
   }
 }

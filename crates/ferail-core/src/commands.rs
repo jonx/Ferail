@@ -534,6 +534,12 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[Shortcut::primary_shift("L")],
     },
     CommandSpec {
+        id: CommandId("view.search_as_you_type"),
+        title: msgid!("Search Subfolders While Typing"),
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
         id: CommandId("disk_usage.refresh"),
         title: msgid!("Refresh Disk Usage"),
         category: Category::View,

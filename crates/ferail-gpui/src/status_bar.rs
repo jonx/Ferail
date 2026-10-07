@@ -141,6 +141,12 @@ pub(crate) struct Segments {
     pub filtered: Option<String>,
     pub free: Option<String>,
     pub hidden: Option<String>,
+    /// `free` / `hidden` as worded with the widest size the formatter can
+    /// produce. Their boxes are sized from these, so a size that grows
+    /// while folder sizes are computed ("1.2 MB" → "245.3 MB") or free
+    /// space ticks down does not shift every segment to its left.
+    pub free_slot: Option<String>,
+    pub hidden_slot: Option<String>,
     pub stats: Option<StatsTexts>,
     /// `None` at [`Density::Minimal`]: the switch keeps its meaning
     /// through a tooltip there rather than a word.
@@ -244,7 +250,14 @@ pub(crate) fn count_labels(metrics: &StatusMetrics, density: Density) -> (String
     // a msgid whose whole body is "{n} · {size}" only invites
     // translators to disagree about the separator.
     if entries == 0 {
-        let label = if filtered == 0 {
+        let label = if filtered == 0 && metrics.hidden_count > 0 {
+            // Only hidden entries: the chip beside the switch counts them,
+            // and "Empty folder" would contradict it.
+            match density {
+                Density::Minimal => "0".to_string(),
+                _ => tr!("No visible items").to_string(),
+            }
+        } else if filtered == 0 {
             match density {
                 Density::Minimal => tr!("Empty").to_string(),
                 _ => tr!("Empty folder").to_string(),
@@ -390,14 +403,26 @@ fn stats_texts(parts: &crate::system_stats::SegmentParts, density: Density) -> S
     }
 }
 
+/// A byte count whose `humanize_bytes` form is the widest the formatter
+/// produces ("1023.9 GB"): the reference for the stable segment slots.
+const WIDEST_SIZE_BYTES: u64 = 1_099_404_825_805;
+
 /// Every segment's text at one density.
 pub(crate) fn segments(metrics: &StatusMetrics, density: Density) -> Segments {
     let (count, filtered) = count_labels(metrics, density);
+    let widest = StatusMetrics {
+        free_bytes: metrics.free_bytes.map(|_| WIDEST_SIZE_BYTES),
+        hidden_bytes: WIDEST_SIZE_BYTES,
+        stats: None,
+        ..metrics.clone()
+    };
     Segments {
         count,
         filtered,
         free: free_label(metrics, density).map(|s| s.to_string()),
         hidden: hidden_label(metrics, density),
+        free_slot: free_label(&widest, density).map(|s| s.to_string()),
+        hidden_slot: hidden_label(&widest, density),
         stats: metrics.stats.as_ref().map(|p| stats_texts(p, density)),
         switch_label: match density {
             Density::Full => Some(tr!("Show hidden")),
@@ -426,6 +451,12 @@ fn text_w(s: &str, font_px: f32) -> f32 {
     s.chars().count() as f32 * font_px * AVG_CHAR_W
 }
 
+/// Width of a segment that sits in a stable slot: the larger of its text
+/// and the slot's reference wording.
+fn slot_w(text: &str, slot: Option<&str>, font_px: f32) -> f32 {
+    text_w(text, font_px).max(slot.map_or(0.0, |slot| text_w(slot, font_px)))
+}
+
 /// Estimated width of the bar as `plan` would paint it, in logical px at
 /// `ui_scale == 1`.
 fn estimated_width(
@@ -451,7 +482,7 @@ fn estimated_width(
     if plan.show_free
         && let Some(t) = &seg.free
     {
-        boxes.push(text_w(t, font));
+        boxes.push(slot_w(t, seg.free_slot.as_deref(), font));
     }
     if plan.show_stats
         && let Some(st) = &seg.stats
@@ -471,7 +502,7 @@ fn estimated_width(
     if plan.show_hidden_chip
         && let Some(t) = &seg.hidden
     {
-        boxes.push(text_w(t, font));
+        boxes.push(slot_w(t, seg.hidden_slot.as_deref(), font));
     }
     if let Some(t) = &seg.switch_label {
         boxes.push(text_w(t, font));
@@ -606,13 +637,12 @@ pub fn render(
     // against the viewport in those same units: UI zoom shrinks the
     // room the bar has just as surely as a narrower window does.
     let avail = window.viewport_size().width.as_f32() / ui_scale.max(0.01);
-    let (plan, seg) = plan(
-        &metrics,
-        avail,
-        crate::text::BASE_REM_PX,
-        task_label.is_some(),
-        visible,
-    );
+    // Plan as if a task and its progress strip were always showing.
+    // Background work (folder sizes, indexing) starts and ends tasks
+    // constantly while a folder is open; fitting the bar around their
+    // presence would flip the wording ("free on Macintosh HD" ↔ "free")
+    // and make the right-hand segments jump each time.
+    let (plan, seg) = plan(&metrics, avail, crate::text::BASE_REM_PX, true, true);
 
     let shown_task_label = task_label.filter(|_| plan.show_task);
     let has_left_cluster = shown_task_label.is_some() || visible;
@@ -632,6 +662,20 @@ pub fn render(
     };
 
     let gap = plan.gap_px();
+    let font_px = ferail_design::TextTokens::BASE.get(plan.text_size());
+    // A right-aligned box at least as wide as the segment's widest
+    // wording, so its live figure can change without moving neighbours.
+    let slot = move |text: String, slot: Option<String>| {
+        let min_w = slot.map_or(0.0, |slot| text_w(&slot, font_px));
+        h_flex()
+            .flex_shrink_0()
+            .justify_end()
+            .min_w(rems(min_w / crate::text::BASE_REM_PX))
+            .text_color(theme_muted_fg.opacity(0.85))
+            .child(text)
+    };
+    let free_slot = seg.free_slot.clone();
+    let hidden_slot = seg.hidden_slot.clone();
     h_flex()
         .w_full()
         .flex_shrink_0()
@@ -693,12 +737,7 @@ pub fn render(
         // could query the volume info: non-macOS / sandboxed
         // builds skip it gracefully.
         .when_some(seg.free.filter(|_| plan.show_free), |this, label| {
-            this.child(
-                div()
-                    .flex_shrink_0()
-                    .text_color(theme_muted_fg.opacity(0.85))
-                    .child(label),
-            )
+            this.child(slot(label, free_slot))
         })
         // App-footprint stats (up · CPU · MEM · redraws/s), precomputed by
         // the off-thread sampler (system_stats.rs): render only
@@ -739,14 +778,7 @@ pub fn render(
         // would reveal. Same muted treatment as the free-space label.
         .when_some(
             seg.hidden.filter(|_| plan.show_hidden_chip),
-            |this, label| {
-                this.child(
-                    div()
-                        .flex_shrink_0()
-                        .text_color(theme_muted_fg.opacity(0.85))
-                        .child(label),
-                )
-            },
+            |this, label| this.child(slot(label, hidden_slot)),
         )
         // Phase 7 user ask: Show-Hidden moved out of the toolbar
         // and lives here next to the count + task summary. View-mode
@@ -952,6 +984,15 @@ mod count_label_tests {
     }
 
     #[test]
+    fn a_folder_of_hidden_files_is_not_called_empty() {
+        let m = StatusMetrics {
+            hidden_count: 2,
+            ..Default::default()
+        };
+        assert_eq!(count_labels(&m, Density::Full).0, "No visible items");
+    }
+
+    #[test]
     fn a_genuinely_empty_folder_still_says_so() {
         let (count, chip) = count_labels(&metrics(0, 0, 0, 0), Density::Full);
         assert_eq!(count, "Empty folder");
@@ -1089,5 +1130,31 @@ mod density_ladder_tests {
         let p = at(0.0);
         assert_eq!(p.density, Density::Full);
         assert!(p.show_stats);
+    }
+}
+
+#[cfg(test)]
+mod stable_slot_tests {
+    use super::{Density, StatusMetrics, WIDEST_SIZE_BYTES, humanize_bytes, segments};
+
+    #[test]
+    fn the_reference_size_is_the_widest_wording() {
+        assert_eq!(humanize_bytes(WIDEST_SIZE_BYTES), "1023.9 GB");
+    }
+
+    #[test]
+    fn slots_do_not_move_with_the_live_sizes() {
+        let at = |hidden_bytes: u64, free: u64| {
+            let m = StatusMetrics {
+                entries: 3,
+                hidden_count: 2,
+                hidden_bytes,
+                free_bytes: Some(free),
+                ..Default::default()
+            };
+            let seg = segments(&m, Density::Full);
+            (seg.hidden_slot.unwrap(), seg.free_slot.unwrap())
+        };
+        assert_eq!(at(1_200, 5 << 30), at(245 << 20, 3 << 40));
     }
 }

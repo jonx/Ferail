@@ -77,7 +77,7 @@ editor, and the Go to Folder prompt) follows one contract:
 
 | Key | Does |
 |---|---|
-| Up / Down | move the highlight inside the suggestion list |
+| Up / Down | move the highlight inside the suggestion list; Down on a closed filter menu opens the full token list |
 | Tab | accept the highlighted suggestion into the field |
 | Enter | run / navigate to **exactly what the field holds** |
 | Escape | close the suggestion list, then leave the field |
@@ -112,13 +112,28 @@ Grammar rules, all deliberate:
   load on the worker, so parsing is pure and testable.
 
 **Autocomplete** (`filter_complete.rs`): the compact filter input renders a
-small completion menu over `filter_expr::TOKEN_HELP`: typing a key prefix
-offers keys with a one-line description, accepting a key chains into its
-example values, and an empty field lists the whole token set as a cheat-sheet.
-After a plain-name term the menu stays available and appends a chosen token,
-so adding a criterion never replaces the search already typed. Static table
-lookup only, no I/O; parser tests round-trip `TOKEN_HELP` so the menu can't
-advertise syntax the parser rejects.
+small completion menu over `filter_expr::TOKEN_HELP`: a key prefix offers
+keys with a one-line description, and accepting a key chains into its
+example values. The menu covers the listing, so it opens by itself only for a
+word that is clearly heading for a token (a key prefix of at least two
+characters, or a key with its colon) and only after typing pauses for 600 ms;
+once open it follows each keystroke at once. An empty field and a plain search
+word never open it. Down opens the whole token set on request; after a
+plain-name term every choice appends at the caret, so adding a criterion never
+replaces the search already typed. A header row carries the key hints and a
+close button; closing keeps the menu shut while typing continues, until the
+field is emptied or loses focus. Static table lookup only, no I/O; parser
+tests round-trip `TOKEN_HELP` so the menu can't advertise syntax the parser
+rejects.
+
+**Search Subfolders While Typing** (View menu, `view.search_as_you_type`,
+persisted as `search_as_you_type`): typing in the filter field runs the
+subtree search Enter runs, 450 ms after the last keystroke, instead of
+filtering the visible listing. The listing stays as it is until the search
+replaces it, and emptying the field returns to the folder. Every edit bumps the
+tab's `filter_edit_epoch`, so only the last keystroke's timer launches a walk.
+The placeholder states which mode is active. Flat and Disk Usage surfaces keep
+filtering their own snapshot in either mode.
 
 **Cheat sheet** (`filter_help.rs`): a (?) button to the right of the filter
 field opens a `Dialog` listing every `TOKEN_HELP` entry with its examples

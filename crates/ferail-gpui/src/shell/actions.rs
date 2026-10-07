@@ -27,6 +27,9 @@ actions!(
         /// Toggle the active tab between the current directory and a
         /// recursive, files-only Flat snapshot.
         ToggleFlatView,
+        /// Toggle whether typing in the filter field searches the current
+        /// folder and its subfolders instead of filtering the listing.
+        ToggleSearchAsYouType,
         OpenSettings,
         CopyPath,
         /// Explicit-demand native Explorer context menu. On Windows this
