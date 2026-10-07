@@ -1,7 +1,7 @@
 # Upstream gpui / gpui-component: friction log
 
 Things in [`gpui`](https://github.com/zed-industries/zed) (Zed) and
-[`gpui-component`](https://github.com/longbridge/gpui-component) that cost us
+[`gpui-component`](https://github.com/longbridge/gpui-kit) that cost us
 extra work: limitations we had to work around, APIs we wish existed, and
 behavior we had to fork or duplicate. The goal is to (a) remember *why* a
 workaround exists so we don't "simplify" it back into breakage, and (b) have a
@@ -9,6 +9,18 @@ ready list of upstream issues/PRs to file when we get the time.
 
 Each entry: what we hit, the workaround we shipped, and what upstream could do
 to remove the need.
+
+**Upstream state checked 2026-10-07.** The gpui-component repository is now
+`longbridge/gpui-kit` (old URLs redirect); `gpui-component` remains the styled
+crate inside it, beside the unstyled `gpui-base` and the `gpui-kit` facade.
+Releases since our pin `e8f54eb` (0.5.2): v0.6.0 through v0.7.1 (2026-10-05).
+From v0.7.1 the kit depends on GPUI through `gpui-pre` crates.io snapshots at an
+exact version (`=0.3.8` is `zed@279fe07`), published weekly under Apache-2.0.
+Moving to them is a migration, not a lockfile bump: v0.7.0 replaces
+`Root::new` and the manual dialog/sheet/notification layers with
+`gpui_kit::open_window` and Root-owned overlay hosting, v0.6.0 redesigned the
+Dialog API and split text entry into Input / Textarea / Editor, and our Windows
+drag-out patch (#9) must be re-based onto `gpui-pre-windows`.
 
 ---
 
@@ -66,6 +78,11 @@ Ferail lock contains one Zed source and one gpui-component source; do not add a
 `rev` query to only one dependency, because Cargo treats that as a distinct
 source even when the commit hash is identical.
 
+**Update (2026-10-07, upstream only):** both requests landed. The `gpui-kit`
+facade re-exports the GPUI it builds against, and v0.7.1 pins GPUI to exact
+`gpui-pre` crates.io versions with a pin check in its CI. Adopting it ends the
+rev-matching rule above; until then the rule stands.
+
 **What upstream could do:**
 - gpui-component could re-export the `gpui` it builds against (e.g.
   `pub use gpui;`) so consumers depend on *its* gpui transitively instead of
@@ -81,6 +98,16 @@ source even when the commit hash is identical.
 ## 2. Table events don't carry click `Modifiers` - forced a full table fork
 
 **Filed upstream 2026-08-21:** [gpui-component#2795](https://github.com/longbridge/gpui-component/issues/2795).
+
+**Upstream answer (2026-09-30):** read modifiers by subscribing with
+`cx.subscribe_in(&table_state, window, ..)` and calling `window.modifiers()` in
+the callback (their earlier #2231 was closed for that reason). That gives the
+modifier state at handling time; it does not address the selection model, the
+empty-area click, drag-collapse or per-cell interception. On 2026-10-06 another
+application author proposed an opt-in row-set selection for `TableState`
+(`TableSelection::Rows { anchor, rows }`, Shift/Cmd semantics, `aria_selected`
+per row) and offered the PR. That is the part of our fork that matters most;
+the fork stays until something like it lands.
 
 **Hit during:** original multi-select work; re-confirmed during the `c112e7b`
 bump (the fork is `crates/ferail-gpui/src/multi_table/`).
@@ -146,6 +173,12 @@ next left mouse-down at the shell root (which is also how the menu dismisses).
 Works, but it's a bespoke state machine for something a callback would make a
 one-liner.
 
+**Upstream answer (2026-09-30):** `PopupMenu` already emits `DismissEvent`,
+and the context-menu builder receives `Context<PopupMenu>`, so a host can keep a
+subscription to that menu entity and clear its flag on dismissal instead of on
+the next left click. No open-state API or window-wide query exists. Adopting
+the subscription would replace our mouse-down reset with an exact signal.
+
 **What upstream could do:**
 - Add `.on_open_changed(|open| ...)` (or `.on_dismiss(...)`) to `context_menu`.
 - Or expose the open state through `Root` so consumers can query "is a context
@@ -183,8 +216,11 @@ The small element wrapper in `multi_table/context_menu.rs` remains only for a
 separate Windows rule: Shift+right-click belongs exclusively to the isolated
 native extended Shell menu. It no longer owns dynamic-content behavior.
 
-**Remaining upstream gap:** #2797 still applies to dynamic *root* menu content,
-but Ferail currently has no such need. The submenu API solves our real case.
+**Closed 2026-10-07.** Upstream pointed to `PopupMenu::rebuild` (#2609, in
+v0.6.0 and later), the API Ferail already uses. Dynamic *root* menu content is
+still unsupported, but Ferail has no such need. One caveat from the answer:
+`rebuild` resets `selected_index`, so a keyboard highlight does not survive the
+Open-With refresh.
 
 ## 5. `img` can't be rotated/transformed (only `svg` can)
 
@@ -304,8 +340,13 @@ stub as a no-op.
 
 **What upstream could do:** relicense the tracing shim permissively (it is
 ~60 lines of no-op glue outside profiling builds), or gate it behind an
-optional feature default-off. Tracked upstream as zed#55470 (acknowledged,
-stuck in legal).
+optional feature default-off. Tracked upstream as zed#55470.
+
+**Resolved upstream:** Zed relicensed `zlog`, `ztracing` and `ztracing_macro`
+under Apache-2.0 on 2026-09-01 (zed#63573), then removed the `ztracing`
+dependency from GPUI on 2026-09-15 (zed#64237). zed#55470 itself is still open.
+The `gpui-pre` snapshots carry the relicensed crates. The stub can be deleted
+when Ferail moves past those commits; it stays while we pin `f66ed399`.
 
 ## 9. External file drag-out finally exists - via `external_drag_payload` (zed #58161)
 
@@ -327,7 +368,7 @@ member drag-out directly with `NSFilePromiseProvider` on macOS; see #11 for
 the extra cross-window handoff this requires.
 
 The GPUI core contract is cross-platform, but the pinned Windows backend
-(and upstream `main` when checked on 2026-08-24) leaves
+(and upstream at `zed@279fe07`, checked 2026-10-07) leaves
 `can_start_external_drag`/`start_external_drag` at their default `false`.
 Ferail therefore carries a narrow `gpui_windows` patch: absolute PIDLs feed
 `SHCreateDataObject`, then `SHDoDragDrop` runs a normal OLE file drag with
@@ -347,7 +388,7 @@ run for every callback. The OLE return path always emits
 
 ## 10. Drag-out operation mask is hardcoded to Copy - no move, no modifiers
 
-**Raised upstream 2026-08-21:** [zed discussion #63013](https://github.com/zed-industries/zed/discussions/63013) (their tracker routes feature requests to Discussions; posted in the "Zed GPUI" category, offering the PR once the API shape is agreed).
+**Raised upstream 2026-08-21:** [zed discussion #63013](https://github.com/zed-industries/zed/discussions/63013) (their tracker routes feature requests to Discussions; posted in the "Zed GPUI" category, offering the PR once the API shape is agreed). No reply as of 2026-10-07; `zed@279fe07` still returns a Copy-only mask for the outside context, and the `GPUIWindow` / `GPUIPanel` selectors this workaround replaces are unchanged there. zed#64175 (stop synthetic mouse drags after button release) touches the same path as the Esc-cancel synthetic mouse-up below and must be retested on a bump.
 
 **Hit during:** "drag out only copies; can a modifier make it a move?":
 follow-up to #9.
@@ -516,6 +557,11 @@ focus/root/frame teardown sequence because it also protects current overlay and
 platform-handler ownership, and it must be revalidated on a native Windows
 close before any simplification. There is no upstream PR candidate here unless
 a new minimal reproducer demonstrates a remaining framework leak.
+
+**Upstream (2026-10-01):** zed#65043 makes `test-support` safe to enable in
+every build. Re-check on the next bump whether that separates the leak
+assertion from `render_to_image`, which would let packaged builds keep the
+offscreen screenshot path.
 
 **What upstream could do:** capture `WeakEntity<InputState>` in the
 `on_next_frame` reset closure and in `Root.focused_input`, or drain
