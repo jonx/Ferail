@@ -1,54 +1,52 @@
-# Ferail 0.7.8 - Apps launch, archives open in place, and dead volumes stay harmless
+# Ferail 0.7.9 - Media-only slideshows and a quieter filter
 
-Apps launch, archives open in place, screenshots paste, and a dead volume no
-longer takes Ferail with it.
+Slideshows can skip everything that is not media, the filter stops getting in
+the way, and it can search subfolders as you type.
 
-## Apps open like apps
+## Slideshows of pictures, videos and music only
 
-**Double-clicking an application launches it** instead of walking into its
-folder. The same goes for installers and document packages such as Keynote
-files or the Photos library. To look inside, right-click and choose **Show
-Contents**, or press **Option+Enter**.
+**A *Media only* checkbox in the viewer** leaves documents and other files out
+of the playlist, so a slideshow of a mixed folder shows only its pictures,
+videos and songs. The choice is remembered for the next viewer. In a narrow
+window it moves into the **…** menu with the other slideshow controls.
 
-## Archives open in Ferail
+## A filter that stays out of the way
 
-**Double-clicking a ZIP, 7-Zip or TAR file browses it in Ferail** instead of
-letting the system extract it next to itself. Open With still hands it to
-another app.
+**The suggestion menu under the filter field no longer pops up while you
+type ordinary text.** It used to open on an empty field, after clicking × to
+clear it, and after any plain word. It now opens only when what you type looks
+like a filter token, such as `si` for `size:`, after a short pause, and it has
+its own close button. Press **Down** in the field to see every token, or click
+**(?)** for the full cheat sheet.
 
-## Paste a picture as a file
+**Search subfolders as you type.** Turn on **View > Search Subfolders While
+Typing** and the filter field searches the current folder and everything below
+it after a short pause, instead of filtering only what is on screen. With the
+option off, Enter still runs that search.
 
-**Copy a screenshot or an image, press Cmd+V in a folder**, and Ferail saves
-it there as *Pasted Image* with the date and time, selected and ready to
-rename. Undo takes it back.
+## Clearer empty folders
 
-## Volumes you can trust
-
-**A network share, USB disk or FUSE filesystem that stops answering no
-longer freezes Ferail.** It stays in the sidebar, dimmed and marked *not
-responding*, with Eject offered, and every other volume keeps working.
-
-**The Volumes list now matches Finder on macOS**: no hidden *- Data*
-volumes, and *Macintosh HD* once.
+**A folder whose files are all hidden or filtered out says so**, with the
+count and how to show them, instead of *This folder is empty*. The status bar
+no longer says *Empty folder* beside the hidden count either.
 
 ## Also in this release
 
-- **The right-click menu fits what you clicked.** Edit no longer appears on
-  pictures, videos, archives or programs.
-- **List rows are centered vertically**, so sizes and dates line up with the
-  names beside them.
+- **The status bar's right side holds still** while a folder's sizes are being
+  measured; background tasks no longer make it shift back and forth.
+- **The viewer toolbar folds properly in French and German** instead of
+  pushing controls off the edge of a narrow window.
+- **The update window shows the release name once**, and its buttons have
+  room for longer labels.
 
 ## Worth knowing
 
 The command palette's list still stops short of the end with the scroll
 wheel. **Use the arrow keys** to reach the last commands.
 
-A volume that has stopped answering can still leave a background thread
-waiting on it until the volume comes back or is unmounted; Ferail stays
-responsive, but ejecting the volume is the way to release it.
-
 The Windows build is not code-signed, so SmartScreen warns on first launch:
-choose **More info ▸ Run anyway**. Unblock the download before extracting or
-installing it (right-click the file, **Properties**, tick **Unblock**, **OK**,
-or `Unblock-File` in PowerShell): a blocked copy cannot start its helper
-processes, and Windows may refuse to run it at all. The macOS DMG is signed and notarized.
+choose **More info ▸ Run anyway**. **Unblock the download before extracting or
+installing it**: right-click the file, choose **Properties**, tick **Unblock**,
+then **OK** (or run `Unblock-File` in PowerShell). A blocked copy cannot start
+its helper processes, and Windows may refuse to run it at all. The macOS DMG is
+signed and notarized.

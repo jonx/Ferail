@@ -6,7 +6,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
-## Unreleased
+## 0.7.9 - 2026-10-07
 
 - **The slideshow can skip everything that is not a picture, video or
   song.** A *Media only* checkbox in the viewer toolbar leaves documents and
