@@ -13,6 +13,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   other files out of the playlist. The choice is remembered for the next
   viewer.
 
+- **The viewer toolbar folds properly in French and German.** Its width was
+  estimated from the English labels, so longer translations such as
+  *Toujours au premier plan* pushed controls off the edge of a narrow window
+  instead of moving them into the *…* menu.
+
 - **The filter's suggestion menu no longer jumps in your way.** It used to
   open as soon as the field changed, even when it was empty or after clicking
   × to clear it, and it listed every token after any plain word. It now opens
