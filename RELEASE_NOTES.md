@@ -48,4 +48,7 @@ waiting on it until the volume comes back or is unmounted; Ferail stays
 responsive, but ejecting the volume is the way to release it.
 
 The Windows build is not code-signed, so SmartScreen warns on first launch:
-choose **More info ▸ Run anyway**. The macOS DMG is signed and notarized.
+choose **More info ▸ Run anyway**. Unblock the download before extracting or
+installing it (right-click the file, **Properties**, tick **Unblock**, **OK**,
+or `Unblock-File` in PowerShell): a blocked copy cannot start its helper
+processes, and Windows may refuse to run it at all. The macOS DMG is signed and notarized.

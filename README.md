@@ -206,6 +206,20 @@ macOS. ([details](docs/features/aros-port.md))
 > SmartScreen reporting that the file carries no Authenticode signature: it is
 > not a malware detection. Click **More info → Run anyway** to proceed.
 >
+> **Unblock the download first.** Windows marks every file that comes from
+> the internet, and every file extracted from a marked ZIP, as blocked. A
+> blocked Ferail cannot start its own helper processes (the elevated Fast
+> NTFS scanner, the context-menu broker), and Windows may refuse to run it at
+> all. Before extracting the ZIP or running the installer:
+>
+> 1. Right-click the downloaded file and choose **Properties**.
+> 2. On the **General** tab, tick **Unblock** at the bottom, then click **OK**.
+> 3. Extract the ZIP (or run the installer) only after that.
+>
+> The PowerShell equivalent is `Unblock-File .\Ferail-<version>-win-x64.zip`.
+> If you already extracted a blocked ZIP, unblock the extracted folder with
+> `Get-ChildItem -Recurse .\Ferail | Unblock-File`.
+>
 > Code-signing certificates cost a few hundred euros a year and, since 2023,
 > require a hardware token, so this project ships unsigned for now. **Verify the
 > download with its SHA-256 instead**: that catches a corrupted or tampered
