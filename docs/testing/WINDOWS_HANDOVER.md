@@ -166,6 +166,45 @@ OneDrive roots use Windows-owned location tokens only when no useful direct
 path exists.
 
 
+### E. Fast whole-volume search over the MFT
+
+Search, Flat and search-as-you-type use the directory walker on Windows; only
+Disk Usage reads the MFT. This step gives search the same speed. Design
+context: [Search § Rely on the OS index](../features/SEARCH.md#rely-on-the-os-index-where-it-exists)
+and [Fast NTFS § Architecture boundary](../features/WINDOWS_FAST_NTFS.md#architecture-boundary).
+Open item in [TODO.md § Search](../../TODO.md#search).
+
+Build it in this order, verifying each step on Windows before the next:
+
+1. **Scope choice in the filter field**, platform-neutral: *This folder* /
+   *Subfolders* / *Whole volume (C:)*, with Shift+Enter for the whole volume.
+   It runs on the existing walker (or Spotlight on macOS) before any MFT work,
+   so it can land and be tested on every platform.
+2. **A search request to the elevated helper.** A separate read-only adapter
+   that queries the in-memory MFT index by name and token predicates, returning
+   only matching rows. It must not share the Disk Usage request's helper
+   lifetime or index implicitly. First use explains the UAC prompt ("Ferail
+   uses the same helper as Disk Usage to index C: in a few seconds") before
+   asking. Declined elevation, a non-NTFS volume or a helper failure falls back
+   to the walker, labelled as such.
+3. **Session index.** Keep the index in memory for the session so later
+   queries, including Search Subfolders While Typing, answer from memory with
+   no walk. Never persist it to disk. Release it after an idle period, behind
+   a "Keep the volume index in memory" setting. An open Disk Usage scan of the
+   same volume serves as the index directly.
+4. **USN journal refresh.** Tail the journal to keep the session index current
+   instead of rebuilding it; on a journal gap or wrap, rebuild.
+5. **Engine label** in the results header: "NTFS index · 2.300.000 files ·
+   3 min ago", "Walker (slow)", so the user always knows which engine
+   answered. Hide the "Spotlight" engine choice in Settings off macOS.
+
+Acceptance on Windows: index C: with a few million records within the Fast
+NTFS budget; the first query after indexing and every keystroke afterwards
+stay under 100 ms with the UI responsive throughout; a file created or renamed
+in Explorer appears in results after the USN refresh; declining UAC returns
+walker results with the fallback label; killing the helper mid-query degrades
+to the walker without freezing the window.
+
 ## Performance invariants to check after every Windows feature
 
 - Normal navigation and right-click perform no Shell extension enumeration.
