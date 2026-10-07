@@ -14,7 +14,7 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable as _, Selectable, Sizable, WindowExt as _,
+    ActiveTheme, Selectable, Sizable, WindowExt as _,
     button::Button,
     checkbox::Checkbox,
     h_flex,
@@ -961,13 +961,24 @@ impl ViewerWindow {
     }
 
     /// Whether `path` is something the "Media only" playlist keeps: a still
-    /// image, or a file that plays as video or audio on the active backend.
+    /// image, video or audio. Every known media extension counts, whatever
+    /// the active backend: a clip the built-in player cannot decode still
+    /// shows its poster, and it is media to the user either way.
     fn is_media_path(&self, path: &std::path::Path) -> bool {
-        let is_image = path
-            .extension()
+        path.extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|ext| IMAGE_EXTS.contains(&ext.to_ascii_lowercase().as_str()));
-        is_image || self.is_video_path(path) || self.is_audio_path(path)
+            .map(|ext| ext.to_ascii_lowercase())
+            .is_some_and(|ext| {
+                [
+                    IMAGE_EXTS,
+                    VIDEO_EXTS,
+                    MPV_VIDEO_EXTS,
+                    AUDIO_EXTS,
+                    MPV_AUDIO_EXTS,
+                ]
+                .iter()
+                .any(|set| set.contains(&ext.as_str()))
+            })
     }
 
     /// Rebuild `playlist` from `all_entries` for the current `media_only`
@@ -1003,17 +1014,6 @@ impl ViewerWindow {
             .map(|step| &self.all_entries[(anchor_ix + step) % len].path)
             .find_map(|path| self.playlist.iter().position(|e| &e.path == path))
             .unwrap_or(0);
-    }
-
-    /// True when the toggle can change anything: the snapshot mixes media
-    /// with other files.
-    fn media_filter_applicable(&self) -> bool {
-        let media = self
-            .all_entries
-            .iter()
-            .filter(|e| self.is_media_path(&e.path))
-            .count();
-        media > 0 && media < self.all_entries.len()
     }
 
     /// "Media only" checkbox: refilter around the current file and persist
@@ -2625,7 +2625,6 @@ impl ViewerWindow {
         let window_opacity = self.window_opacity;
         let has_item = self.current().is_some();
         let media_only = self.media_only;
-        let media_filter_applicable = self.media_filter_applicable();
         let entity = cx.entity().clone();
         let t_entity = cx.entity().clone();
 
@@ -2639,8 +2638,12 @@ impl ViewerWindow {
         // changes the point at which the overflow menu appears.
         const W_BASE: f32 = 200.0; // padding + prev/counter/next + fullscreen
         const W_AV_BASIC: f32 = 68.0; // media play/pause + mute (always inline)
-        const W_TOGGLES: f32 = 360.0; // stay-on-top + transparent + opacity scrub
-        const W_SLIDESHOW: f32 = 196.0; // slideshow play + interval + media only
+        // Checkbox clusters are sized from their translated labels: French
+        // "Toujours au premier plan" is twice the English, and a fixed
+        // estimate let the bar clip instead of folding into the menu.
+        let checkbox_w = |label: &str| 26.0 + label.chars().count() as f32 * 6.8;
+        let w_toggles = checkbox_w(&tr!("Stay on top")) + checkbox_w(&tr!("Transparent")) + 150.0; // + opacity scrub
+        let w_slideshow = 88.0 + checkbox_w(&tr!("Media only")); // play + interval + media only
         const W_ACTIONS: f32 = 102.0; // rotate + adjust + trash
         const W_ZOOM: f32 = 175.0; // − / % / + / 1:1 + separator
         const W_AV_EXTRA_VIDEO: f32 = 164.0; // −1f / +1f / Loop
@@ -2660,8 +2663,8 @@ impl ViewerWindow {
         // acts on the current item; the media transport extras hold out
         // longest since they're the point of a video window.
         let tiers = [
-            W_TOGGLES,
-            W_SLIDESHOW,
+            w_toggles,
+            w_slideshow,
             if has_item { W_ACTIONS } else { 0.0 },
             W_ZOOM,
             w_av_extra,
@@ -2726,18 +2729,14 @@ impl ViewerWindow {
                                     e.update(cx, |this, cx| this.cycle_interval(cx));
                                 }),
                             );
-                        if media_filter_applicable || media_only {
-                            let e = menu_entity.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(tr!("Media Only"))
-                                    .checked(media_only)
-                                    .on_click(move |_, _, cx| {
-                                        e.update(cx, |this, cx| {
-                                            this.set_media_only(!media_only, cx)
-                                        });
-                                    }),
-                            );
-                        }
+                        let e = menu_entity.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(tr!("Media Only"))
+                                .checked(media_only)
+                                .on_click(move |_, _, cx| {
+                                    e.update(cx, |this, cx| this.set_media_only(!media_only, cx));
+                                }),
+                        );
                         sep = true;
                     }
                     if hide_zoom {
@@ -2909,14 +2908,14 @@ impl ViewerWindow {
                         .small()
                         .on_click(cx.listener(|this, _, _, cx| this.cycle_interval(cx))),
                 )
-                // Skip documents and other non-media files. Disabled when
-                // the folder is all media or has none: nothing to filter.
+                // Skip documents and other non-media files. Always enabled:
+                // it is a remembered preference, so ticking it in an
+                // all-photo folder still applies to the next mixed one.
                 .child(
                     Checkbox::new("viewer-media-only")
                         .small()
                         .label(tr!("Media only"))
                         .checked(media_only)
-                        .disabled(!media_filter_applicable && !media_only)
                         .tooltip(tr!("Show only images, videos and audio"))
                         .on_click(cx.listener(|this, checked: &bool, _, cx| {
                             this.set_media_only(*checked, cx);

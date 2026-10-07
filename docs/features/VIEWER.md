@@ -358,13 +358,14 @@ another entry keeps `{mode, center}` verbatim:
 - Default interval 3 s; persisted in `gpui-state.txt` as
   `viewer_slideshow_interval`.
 - **Media only** (toolbar checkbox, persisted as `viewer_media_only`): the
-  playlist skips files that are not still images (extension list
-  `IMAGE_EXTS`) or that do not play as video or audio on the active backend.
-  The viewer keeps the snapshot it was handed (`all_entries`) and refilters
-  it in memory, landing on the current file or the next kept one after it.
-  The checkbox is disabled when the snapshot is all media or has none, and
-  the filter is ignored for a snapshot without media, so the viewer never
-  opens on nothing.
+  playlist skips files whose extension is not a known image, video or audio
+  type, whatever the active playback backend. The viewer keeps the snapshot
+  it was handed (`all_entries`) and refilters it in memory, landing on the
+  current file or the next kept one after it. The checkbox is always enabled,
+  since it is a remembered preference; the filter is ignored for a snapshot
+  without media, so the viewer never opens on nothing. When the toolbar folds,
+  it moves into the overflow menu with the slideshow controls; the fold widths
+  are estimated from the translated checkbox labels.
 
 ### Shell integration
 
