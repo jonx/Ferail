@@ -5,7 +5,7 @@
 //! Phase 4.b will wire the sidebar to real Locations/Volumes. Phase
 //! 4.c brings the virtualized file list.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use crate::text::TextScale as _;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -912,6 +912,9 @@ pub fn init(cx: &mut App) {
     crate::multi_table::init(cx);
     crate::keymap::install(cx);
     crate::keymap::install_extras(cx);
+    // Escape reaches the open dialog even when focus was taken back from it
+    // (menu bar, toolbar click): see crate::overlay.
+    crate::overlay::install(cx);
     // Add highlight queries for grammars gpui-component ships without
     // one (C#, C, C++, Bash, Swift, CMake) so the preview pane colors
     // them. Process-global registry; runs once.
@@ -3909,6 +3912,14 @@ impl Shell {
     }
 
     fn intercept_inline_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // The keyboard-shortcuts palette is a Shell overlay, not a dialog.
+        // Its own Cancel binding only fires while focus is inside it, and
+        // opening it from the menu bar can leave focus behind it: close it
+        // here wherever focus is.
+        if self.shortcuts_help_filter.is_some() {
+            self.close_shortcuts_help(window, cx);
+            return true;
+        }
         // Dialog owns Escape. The filter input can remain the platform's
         // focused control behind the modal, so checking focus alone would
         // steal Escape before gpui-component's Dialog context sees it.

@@ -19,7 +19,7 @@
 //! fails midway, the sibling is left behind and the error toast names it as
 //! the recovery copy.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 

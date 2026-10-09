@@ -15,7 +15,7 @@
 //! instead of growing the backlog. Cancellation is cooperative via
 //! `AtomicBool` (also checked inside the backpressure wait).
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use crate::text::{TextScale as _, TruncateMiddle as _};
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};

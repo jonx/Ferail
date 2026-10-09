@@ -30,14 +30,6 @@ here and let [CHANGELOG.md](CHANGELOG.md) and git history carry the record.
 
 ## Known bugs
 
-- **The command palette cannot be scrolled to the end.** Cmd+/ lists 108
-  commands; the wheel stops around row 62 and will not go further. Measured:
-  60 and 200 wheel notches land on the identical row, shrinking the card's
-  `max_h` from 460 to 300 makes the reachable end *earlier*, and neither a
-  definite card height nor an active filter changes it. So the clamp tracks
-  the viewport, not the content length, inside gpui-component's `Command`
-  scroll handle. Arrow keys reach every row, which is the workaround shipped
-  in the 0.7.7 notes.
 - **Rows overlap while scrolling the list in Flat View.** Painted rows smear
   over each other during a fast scroll, yet clicking selects the correct row,
   so this is paint, not layout or hit-testing. Not reproduced headlessly yet;

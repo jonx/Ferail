@@ -18,7 +18,7 @@
 // the dupe body's styling calls resolve through traits already in scope
 // there. Keep the imports for the other platforms, silence that one leg.
 #[cfg_attr(target_os = "windows", allow(unused_imports))]
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use crate::text::{IconScale as _, TextScale as _};
 use std::{
     ops::Range,

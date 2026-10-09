@@ -23,7 +23,7 @@
 //!  - Platform (OS · arch), Author, clickable Website
 //!  - Copyright
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use crate::text::TextScale as _;
 use std::sync::Arc;
 

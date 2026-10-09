@@ -5,7 +5,7 @@
 //! store only. macOS/Linux providers return an empty list, which also proves
 //! that adding the capability creates no placeholder UI on those platforms.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

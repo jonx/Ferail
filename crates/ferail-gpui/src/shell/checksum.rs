@@ -5,7 +5,7 @@
 //! persisted. The expected digest is copied into dialog-local state, so
 //! clearing it never mutates the system clipboard.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};

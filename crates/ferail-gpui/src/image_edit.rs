@@ -16,7 +16,7 @@
 //! quality. Strokes are stored in full-image coordinates and scale
 //! losslessly between the preview and the save.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

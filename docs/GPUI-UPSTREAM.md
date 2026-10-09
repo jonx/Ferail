@@ -38,6 +38,7 @@ re-based onto `gpui-pre-windows` (#9).
 - [12. gpui-component `Input` paint leaked strong handles - upstream shape fixed, teardown containment retained](#12-gpui-component-input-paint-leaked-strong-handles---upstream-shape-fixed-teardown-containment-retained)
 - [13. Hidden windows receive no frames](#13-hidden-windows-receive-no-frames)
 - [14. Root-hosted overlays sit above Private Mode's shield](#14-root-hosted-overlays-sit-above-private-modes-shield)
+- [15. A dialog hears Escape only while focus is inside it](#15-a-dialog-hears-escape-only-while-focus-is-inside-it)
 
 <!-- /toc -->
 
@@ -594,7 +595,7 @@ Now they are drawn above everything the application renders, including the
 Private Mode interaction shield, and their state is crate-private
 (`WindowState`), so they can be neither hidden nor stashed from outside.
 
-**Workaround:** `private_mode::PrivateWindowExt` (`push_notice`, `open_modal`)
+**Workaround:** `overlay::OverlayWindowExt` (`push_notice`, `open_modal`)
 is the only way Ferail shows a notification or opens a dialog: while Private
 Mode is on it holds them and replays them on exit. Entering the mode closes the
 open dialogs and clears notifications (which still fade out over 200 ms).
@@ -604,5 +605,31 @@ Clippy's `disallowed-methods` denies the direct `WindowExt` calls in
 **What upstream could do:** let an application suppress or veto overlay
 presentation per window (a `Root` flag, or a `RootPlugin` hook that can hide
 the component layers), so a privacy mode does not need its own choke point.
+
+## 15. A dialog hears Escape only while focus is inside it
+
+**Hit during:** user testing of the gpui-component 0.7.1 branch (2026-10-09);
+the behaviour predates it.
+
+A gpui-component `Dialog` binds Escape to `Cancel` in its own key context, so
+it closes only when the focused element is inside it. Focus is taken back after
+a dialog opens more often than it looks: closing the macOS menu bar restores
+focus to the element the menu was opened from, after the command already ran,
+so a dialog opened from a menu item (File > New Folder) sat with focus in the
+file list and ignored Escape. Escape then cleared the filter behind it.
+
+**Workaround:** `overlay::OverlayWindowExt::open_modal` gives every dialog a
+zero-size dispatch anchor (`div().absolute().size_0().track_focus(..)`), and a
+keystroke interceptor installed by `overlay::install` sends `Cancel` from the
+newest rendered anchor when Escape arrives with a dialog open and no `Dialog`
+in the focused context stack. `Cancel` walks the dialog's own path, so its
+`on_cancel` handler runs. This is gpui-component's own `DialogClose` pattern
+(its crate-private `DialogDispatchAnchor`), applied to Escape. The
+keyboard-shortcuts palette, a Shell overlay rather than a dialog, closes on
+Escape from the Shell's own interceptor for the same reason.
+
+**What upstream could do:** handle Escape for the topmost dialog at the Root
+(the Root already knows the dialog stack), or expose the dialog's dispatch
+anchor so an application can route `Cancel` to it.
 
 <!-- Add new findings above this line as the bump surfaces them. -->

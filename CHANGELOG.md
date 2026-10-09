@@ -8,6 +8,16 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Escape closes dialogs and the command palette wherever focus is.** A
+  dialog opened from the menu bar, such as File > New Folder, ignored Escape:
+  closing the menu handed focus back to the file list, so Escape cleared the
+  filter behind the dialog instead. The same could happen to the command
+  palette.
+
+- **The command palette scrolls all the way, in both directions.** The wheel
+  used to stop partway down the list, so the last commands were reachable only
+  with the arrow keys. The fix comes with the newer UI toolkit.
+
 - **Notifications and dialogs no longer appear in Private Mode.** Turning
   Private Mode on closes the open dialogs and clears notifications, since they
   could show real file names; any that arrive while it is on wait and appear

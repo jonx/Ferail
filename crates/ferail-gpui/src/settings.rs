@@ -1742,7 +1742,7 @@ fn persist_show_linux_locations(value: bool, cx: &mut App) {
 
 #[cfg(target_os = "macos")]
 fn full_disk_access_setting() -> SettingItem {
-    use crate::private_mode::PrivateWindowExt as _;
+    use crate::overlay::OverlayWindowExt as _;
     let title = tr!("Full Disk Access");
     let description = tr!(
         "Optional. Lets Disk Usage include folders protected by macOS. Fast directory reading works without it; Ferail asks only when a scan encounters protected folders."

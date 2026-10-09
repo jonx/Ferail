@@ -23,7 +23,7 @@
 //! All I/O (format probe, table-of-contents read) happens on the background
 //! executor; render only reads cached state (Prime Directive).
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::collections::HashSet;
 use std::path::PathBuf;
 

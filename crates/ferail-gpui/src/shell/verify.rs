@@ -1,4 +1,4 @@
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use ferail_core::EntryKind;
 use gpui::{AppContext as _, Context, Window};
 use gpui_component::notification::Notification;

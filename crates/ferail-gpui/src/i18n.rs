@@ -14,7 +14,7 @@
 //! language synchronously during boot, before any window exists, same
 //! class of startup read as `app_state::load`.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::path::PathBuf;
 
 use ferail_core::i18n::{self as core, Catalog, LanguagePack, Text, ValidationReport};

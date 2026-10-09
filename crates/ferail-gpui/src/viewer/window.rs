@@ -6,7 +6,7 @@
 //! and view state. Keyboard goes through gpui actions gated on
 //! [`VIEWER_CONTEXT`] so Shell shortcuts can't fire here and vice versa.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use crate::text::TextScale as _;
 use std::path::PathBuf;
 use std::rc::Rc;

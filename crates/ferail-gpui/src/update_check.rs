@@ -38,7 +38,7 @@
 //! changes (checking → found → downloading → done) animate live without
 //! bespoke plumbing.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;

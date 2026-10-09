@@ -7,7 +7,7 @@
 //! by [`crate::dupe_cache::DbHashCache`] so rescans skip full hashing,
 //! and streams confirmed groups in.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{

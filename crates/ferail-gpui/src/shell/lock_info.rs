@@ -14,7 +14,7 @@
 //! Directive). Closing invalidates any in-flight scan and always rescans
 //! afterwards, so the list shows fresh truth, not an optimistic edit.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::path::PathBuf;
 
 use gpui::{

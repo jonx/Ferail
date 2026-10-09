@@ -4,7 +4,7 @@
 //! creation, validation, collision handling, and cleanup all happen through
 //! `ferail_fs_native::convert_archive` on the background executor.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::path::PathBuf;
 
 use gpui::prelude::FluentBuilder as _;

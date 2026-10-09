@@ -8,7 +8,7 @@
 //! token row. Static content, no I/O, no state: safe to open from
 //! any click handler.
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use crate::text::TextScale as _;
 use ferail_core::filter_expr::TOKEN_HELP;
 use gpui::prelude::FluentBuilder as _;

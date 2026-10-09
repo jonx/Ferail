@@ -77,7 +77,9 @@ look more interesting.
 - **Live input simulation**: `--breadcrumb <text>` (enters Cmd+L edit mode and
   *types* through the completion provider), `--keys "<gpui keystrokes>"`
   (dispatched through the real window key path; `pause` token waits out async UI
-  between keys), `--context-menu-row N` (synthesises a real mouse-move +
+  between keys, and `focus-shell` hands focus back to the Shell the way closing
+  the macOS menu bar does after a menu command opens a dialog; a frame is drawn
+  after every token, since the hidden capture window gets none of its own), `--context-menu-row N` (synthesises a real mouse-move +
   right-click over row N, so the row context menu builds exactly as it does for
   a user: it lives in a mouse-event listener, so no action can open it),
   `--context-menu-background` (same synthesis aimed at the file-list body's
@@ -94,8 +96,13 @@ look more interesting.
   (Software Update dialog seeded with `checking` / `uptodate` / `available` /
   `elsewhere` / `noasset` / `downloading` / `done` / `failed`: no network;
   `live` runs the real GitHub check, the one networked capture).
-- **Scrolling**: `--scroll-wheel <n>` synthesises n downward wheel notches at
-  the window centre, after every other step. Real `PlatformInput::ScrollWheel`
+- **Scrolling**: `--scroll-wheel <n[,n]>` synthesises wheel notches at the
+  window centre, before `--keys`: positive n scrolls down, negative up, and a
+  comma list runs in order (`200,-10` reaches the end, then comes back ten
+  notches). A frame is drawn after every notch, because scroll extents are
+  clamped while drawing and the hidden capture window receives no frames;
+  without it an overshoot past the end would look like a list that cannot
+  scroll back. Real `PlatformInput::ScrollWheel`
   through the window's own path, so whatever is under the pointer scrolls as it
   would for a user. It is the only way to test a **scroll extent** headlessly:
   a list that stops short of its end looks identical to a correct one in a

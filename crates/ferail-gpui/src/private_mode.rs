@@ -8,18 +8,13 @@
 //! Dialogs and notifications are drawn by gpui-component's window Root,
 //! above the shield and outside anything [`protect`] wraps, so they would
 //! show raw names. Entering the mode closes the open ones, and every
-//! notification or dialog goes through [`PrivateWindowExt`], which holds
-//! them back while the mode is on and replays them on exit. Clippy denies
-//! the direct `WindowExt` calls so nothing bypasses it.
+//! notification or dialog goes through [`crate::overlay::OverlayWindowExt`],
+//! which holds them back while the mode is on and replays them on exit.
 
-use std::cell::RefCell;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use gpui::AnyWindowHandle;
 use gpui_component::WindowExt as _;
-use gpui_component::dialog::Dialog;
-use gpui_component::notification::Notification;
 
 use ferail_core::private_presentation::{PrivateSession, PrivateValue};
 use gpui::{
@@ -82,7 +77,7 @@ pub fn enter(cx: &mut App) {
     let _ = session();
     STATE.store(ARMING, Ordering::Release);
     // Overlays sit above the shield and outside `protect`: drop the ones on
-    // screen now. Later ones are held by `PrivateWindowExt` until exit.
+    // screen now. Later ones are held by `OverlayWindowExt` until exit.
     for handle in cx.windows() {
         let _ = handle.update(cx, |_root, window, cx| {
             #[allow(clippy::disallowed_methods)]
@@ -125,78 +120,8 @@ pub fn exit(cx: &mut App) {
     crate::private_thumb::clear();
     crate::boot::install_app_menus(cx);
     crate::log_info!(90, "private mode: off");
-    replay_held_overlays(cx);
+    crate::overlay::replay_held(cx);
     cx.refresh_windows();
-}
-
-/// A notification or dialog that arrived while Private Mode was on.
-enum HeldOverlay {
-    Notice(Box<Notification>),
-    Dialog(Box<DialogBuilder>),
-}
-
-type DialogBuilder = dyn Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static;
-
-thread_local! {
-    /// UI-thread only, like every caller of `PrivateWindowExt`.
-    static HELD: RefCell<Vec<(AnyWindowHandle, HeldOverlay)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Show what Private Mode held back, in arrival order, in the windows it was
-/// meant for. A window closed in the meantime simply drops its share.
-fn replay_held_overlays(cx: &mut App) {
-    let held = HELD.with(|held| std::mem::take(&mut *held.borrow_mut()));
-    for (handle, overlay) in held {
-        let _ = handle.update(cx, |_root, window, cx| {
-            #[allow(clippy::disallowed_methods)]
-            match overlay {
-                HeldOverlay::Notice(note) => window.push_notification(*note, cx),
-                HeldOverlay::Dialog(build) => window.open_dialog(cx, build),
-            }
-        });
-    }
-}
-
-/// The only way Ferail shows a notification or opens a dialog. Outside
-/// Private Mode it is `WindowExt` unchanged; inside, the overlay is held and
-/// replayed on exit, so nothing is lost and nothing leaks a raw name.
-pub trait PrivateWindowExt {
-    fn push_notice(&mut self, note: impl Into<Notification>, cx: &mut App);
-    fn open_modal<F>(&mut self, cx: &mut App, build: F)
-    where
-        F: Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static;
-}
-
-impl PrivateWindowExt for Window {
-    fn push_notice(&mut self, note: impl Into<Notification>, cx: &mut App) {
-        let note = note.into();
-        if enabled() {
-            let handle = self.window_handle();
-            HELD.with(|held| {
-                held.borrow_mut()
-                    .push((handle, HeldOverlay::Notice(Box::new(note))))
-            });
-            return;
-        }
-        #[allow(clippy::disallowed_methods)]
-        self.push_notification(note, cx);
-    }
-
-    fn open_modal<F>(&mut self, cx: &mut App, build: F)
-    where
-        F: Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static,
-    {
-        if enabled() {
-            let handle = self.window_handle();
-            HELD.with(|held| {
-                held.borrow_mut()
-                    .push((handle, HeldOverlay::Dialog(Box::new(build))))
-            });
-            return;
-        }
-        #[allow(clippy::disallowed_methods)]
-        self.open_dialog(cx, build);
-    }
 }
 
 /// Normal app-level commands call this before doing work.  Root-level Shell

@@ -130,8 +130,9 @@ Result panels and popovers stay in their prepared state so they can be
 captured. They are frozen by the interaction gate and their values are
 presented privately. Dialogs and notifications are different: gpui-component's
 window Root draws them above the interaction shield and outside every
-protected surface, so entry closes the open ones and `PrivateWindowExt`
-(`push_notice`, `open_modal`) holds any that arrive while the mode is on.
+protected surface, so entry closes the open ones and
+`overlay::OverlayWindowExt` (`push_notice`, `open_modal`) holds any that
+arrive while the mode is on.
 Clippy denies the direct `WindowExt` calls. A notification already on screen
 fades out over its 200 ms exit animation. Native/external windows remain
 outside the promise above.

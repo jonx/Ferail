@@ -8,7 +8,7 @@
 //! (Spotlight-when-available, else the built-in recursive walker) is
 //! chosen per the user's [`SearchConfig`].
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{

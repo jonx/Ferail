@@ -53,6 +53,7 @@ pub mod locations_section;
 pub mod menu_plan;
 pub mod multi_table;
 pub mod obs;
+pub mod overlay;
 pub mod path_complete;
 pub mod performance_hud;
 pub mod platform_locations;

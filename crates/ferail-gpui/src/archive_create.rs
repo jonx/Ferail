@@ -12,7 +12,7 @@
 //! `Shell::spawn_archive_op` like every other archive operation (worker
 //! thread, progress bar, cancel button, undo).
 
-use crate::private_mode::PrivateWindowExt as _;
+use crate::overlay::OverlayWindowExt as _;
 use std::path::PathBuf;
 
 use gpui::{
