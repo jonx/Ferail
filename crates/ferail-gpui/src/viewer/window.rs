@@ -4102,9 +4102,6 @@ impl Render for ViewerWindow {
                 // doesn't render the layer: do it here so the trash
                 // success/failure toasts appear (same as the Get Info
                 // window).
-                .when(!private, |this| {
-                    this.children(gpui_component::Root::render_notification_layer(window, cx))
-                })
                 .into_any_element()
         } else {
             let toolbar = self.toolbar(window, cx);
@@ -4113,9 +4110,6 @@ impl Render for ViewerWindow {
                 .child(stage_area)
                 .child(status)
                 .when_some(panel, Div::child)
-                .when(!private, |this| {
-                    this.children(gpui_component::Root::render_notification_layer(window, cx))
-                })
                 .into_any_element()
         };
         crate::private_mode::protect(content, cx)

@@ -1207,9 +1207,6 @@ impl Render for EntryInfoView {
             )
             // This window's own Root holds the notification state but doesn't
             // render the layer: do it here so edit-error toasts appear.
-            .when(!crate::private_mode::enabled(), |this| {
-                this.children(Root::render_notification_layer(window, cx))
-            })
             .into_any_element();
         crate::private_mode::protect(content, cx)
     }

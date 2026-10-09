@@ -998,10 +998,6 @@ impl Render for TextEditorView {
             // This window's own Root holds dialog/notification state but
             // doesn't render the layers; do it here so the unsaved-changes
             // dialog and save-error toasts appear.
-            .children(Root::render_dialog_layer(window, cx))
-            .when(!crate::private_mode::enabled(), |this| {
-                this.children(Root::render_notification_layer(window, cx))
-            })
             .into_any_element();
         crate::private_mode::protect(content, cx)
     }

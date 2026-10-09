@@ -966,8 +966,14 @@ pub fn run(args: Args) -> Result<()> {
 async fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<image::RgbaImage> {
     #[cfg(feature = "screenshot-harness")]
     {
+        // A hidden window gets no frame callbacks from the platform, so
+        // the last rendered frame can predate everything the settle wait
+        // delivered. Draw once here so the capture is the current state.
         let rendered = cx
-            .update_window(*handle, |_, window, _| window.render_to_image())
+            .update_window(*handle, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.render_to_image()
+            })
             .map_err(|e| anyhow::anyhow!("update_window failed: {e}"))?;
 
         match rendered {

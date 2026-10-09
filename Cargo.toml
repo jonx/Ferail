@@ -113,26 +113,26 @@ filetime    = "0.2"
 # "crashes" were that assert firing at quit). Dev/test builds get it back
 # through ferail-gpui's default `screenshot-harness` feature; packaging
 # builds pass --no-default-features to strip it.
-gpui = { git = "https://github.com/zed-industries/zed", features = ["profiler"] }
+gpui = { package = "gpui-pre", version = "=0.3.8", features = ["profiler"] }
 # wayland + x11 enable gpui_linux's compositor backends (gpui_platform's
 # wayland/x11 features pull gpui_linux/wayland|x11). Without them the Linux
 # build compiles but panics at startup: guess_compositor() returns "Wayland"
 # and hits the unreachable arm. No-op on macOS/Windows (gpui_linux is
 # Linux-only there).
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "wayland", "x11"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = ["font-kit", "wayland", "x11", "runtime_shaders"] }
 # Real HTTP for gpui's `cx.http_client()` (gpui itself installs a
 # NullHttpClient). Same zed source as gpui: the lock resolves them to one
 # rev, and its `zed-reqwest`/tokio underpinnings are already in the graph
 # via gpui-component-assets, so this adds the thin wrapper only. Powers the
 # update check (docs/features/UPDATES.md).
-reqwest_client = { git = "https://github.com/zed-industries/zed" }
+reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.8" }
 # `tree-sitter-languages` pulls in the full tree-sitter grammar set so
 # the preview pane's TextView highlights fenced code blocks (and
 # markdown code) for every language (docs/features/PREVIEW.md). Each
 # grammar is a C-compiled crate: a real but one-time build cost.
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781", features = ["tree-sitter-languages"] }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781" }
-gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54ebf0af0b0d5773b38111bb5b5f308c57781" }
+gpui-component = { version = "=0.7.1", features = ["tree-sitter-languages"] }
+gpui-component-assets = { package = "gpui-kit-assets", version = "=0.7.1" }
+gpui-fps = { version = "=0.7.1" }
 
 # Zed-source patches allowed here are **in-repo** paths, committed and therefore
 # present in every clone and on CI.
@@ -149,13 +149,6 @@ gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "e8f54e
 #
 #     cargo tree -p ferail-gpui -i ztracing  # must print ONLY vendor/ztracing
 #     cargo tree -p ferail-gpui -i zlog      # must print nothing
-[patch."https://github.com/zed-industries/zed"]
-ztracing = { path = "vendor/ztracing" }
-# GPUI promotes native file drags on macOS/Wayland, but its Windows backend
-# leaves the platform hooks disabled. This narrow Apache-2.0 fork adds the
-# missing Shell/OLE handoff; see vendor/gpui_windows/README.md.
-gpui_windows = { path = "vendor/gpui_windows" }
-
 # `tar` gates its path<->bytes conversion, symlink, permission and xattr
 # helpers on cfg(unix)/cfg(windows)/wasm32, and AROS is none of those: the
 # crate simply does not compile for the target. `vendor/tar` is upstream

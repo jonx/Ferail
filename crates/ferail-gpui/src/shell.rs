@@ -2045,7 +2045,7 @@ impl Shell {
         // shell.
         focus_handle.focus(window, cx);
         let performance_monitor = crate::performance_hud::start_enabled()
-            .then(|| cx.new(|cx| gpui_fps::FpsMonitor::new(window, cx).continuous(false)));
+            .then(|| cx.new(|cx| gpui_fps::FpsMonitor::new(window, cx)));
 
         let inline_name_edit = crate::inline_edit::InlineEditModel::default();
         let inline_name_input = cx.new(|cx| {
@@ -4134,7 +4134,7 @@ impl Shell {
             self.performance_monitor = None;
         } else {
             self.performance_monitor =
-                Some(cx.new(|cx| gpui_fps::FpsMonitor::new(window, cx).continuous(false)));
+                Some(cx.new(|cx| gpui_fps::FpsMonitor::new(window, cx)));
         }
         cx.notify();
     }

@@ -1332,10 +1332,6 @@ impl Render for ImageEditView {
             .text_color(cx.theme().foreground)
             .when(!private, |this| this.child(self.toolbar(cx)))
             .child(stage)
-            .children(Root::render_dialog_layer(window, cx))
-            .when(!private, |this| {
-                this.children(Root::render_notification_layer(window, cx))
-            })
             .into_any_element();
         crate::private_mode::protect(content, cx)
     }

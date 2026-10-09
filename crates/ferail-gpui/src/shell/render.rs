@@ -5231,17 +5231,11 @@ impl Render for Shell {
             // Dialog overlay layer: rendered last so dialogs draw
             // above the shell content. Needed for the New Folder /
             // Rename modals (5.5.c).
-            .when(!crate::private_mode::enabled(), |this| {
-                this.children(Root::render_dialog_layer(window, cx))
-            })
             // Notification overlay (Stage 5.c): toasts pushed via
             // `Window::push_notification` show up in the corner the
             // active theme specifies. The outer `div().relative()`
             // gives the absolute-positioned notification list a
             // positioned ancestor to anchor against.
-            .when(!crate::private_mode::enabled(), |this| {
-                this.children(Root::render_notification_layer(window, cx))
-            })
             // Explicit diagnostics only. The monitor is configured with
             // continuous(false), so it observes Ferail's real redraw workload
             // rather than keeping the window artificially busy.
