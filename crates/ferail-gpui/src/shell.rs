@@ -966,10 +966,9 @@ pub struct Shell {
     /// True while a breadcrumb crumb's right-click context menu is open,
     /// so the crumb's hover tooltip (the full path) is suppressed and
     /// doesn't collide with the menu. gpui-component's `context_menu`
-    /// keeps its open/close state private with no callback
-    /// (docs/GPUI-UPSTREAM.md), so we track it ourselves: set when the
-    /// menu builder runs, cleared on the next left mouse-down at the
-    /// shell root (which is also how the menu dismisses).
+    /// keeps its open state private (docs/GPUI-UPSTREAM.md), so we track
+    /// it ourselves: set when the menu builder runs, cleared by the
+    /// menu's own `DismissEvent`.
     pub breadcrumb_menu_open: bool,
     /// Off-thread-warmed child-folder lists per breadcrumb segment path,
     /// backing each segment's "Go to Subfolder" submenu. `None` == an

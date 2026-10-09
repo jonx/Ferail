@@ -166,18 +166,18 @@ e.g. to suppress a sibling hover tooltip on the same element while the menu is
 up (the breadcrumb crumb showed its full-path tooltip overlapping its own
 right-click menu).
 
-**Workaround:** track it ourselves: set `Shell::breadcrumb_menu_open` in the
-menu builder closure (the one place upstream calls us when the menu opens),
-gate the crumb tooltip on `!breadcrumb_menu_open`, and clear the flag on the
-next left mouse-down at the shell root (which is also how the menu dismisses).
-Works, but it's a bespoke state machine for something a callback would make a
-one-liner.
+**Workaround:** track it ourselves: the menu builder (the one place upstream
+calls us when the menu opens) sets `Shell::breadcrumb_menu_open` and subscribes
+to the menu entity's `DismissEvent`, which every close path emits (item, click
+away, Escape); the crumb tooltip is gated on `!breadcrumb_menu_open`. Until
+2026-10-09 the flag was cleared on the next left mouse-down at the shell root,
+which missed Escape and left the tooltip suppressed.
 
 **Upstream answer (2026-09-30):** `PopupMenu` already emits `DismissEvent`,
 and the context-menu builder receives `Context<PopupMenu>`, so a host can keep a
 subscription to that menu entity and clear its flag on dismissal instead of on
-the next left click. No open-state API or window-wide query exists. Adopting
-the subscription would replace our mouse-down reset with an exact signal.
+the next left click. No open-state API or window-wide query exists. Ferail
+adopted the subscription on 2026-10-09 (see Workaround above).
 
 **What upstream could do:**
 - Add `.on_open_changed(|open| ...)` (or `.on_dismiss(...)`) to `context_menu`.

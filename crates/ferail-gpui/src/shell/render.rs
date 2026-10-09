@@ -3972,7 +3972,7 @@ impl Shell {
                 })
                 // Suppress the full-path tooltip while this crumb's
                 // context menu is open so the two don't overlap
-                // (docs/GPUI-UPSTREAM.md, no menu-open callback upstream).
+                // (docs/GPUI-UPSTREAM.md: no open-state API upstream).
                 .when(!self.breadcrumb_menu_open, |crumb| {
                     crumb.tooltip({
                         let t = SharedString::from(tooltip_path);
@@ -4064,6 +4064,7 @@ impl Shell {
                     }),
                 )
                 .context_menu(move |menu, window, cx| {
+                    let menu_entity = cx.entity();
                     let favorited_now = if let Some(s) = weak_for_crumb.upgrade() {
                         let already = s
                             .read(cx)
@@ -4075,8 +4076,14 @@ impl Shell {
                             shell.context_target = Some(path_for_menu.clone());
                             shell.favorites_context_path = Some(path_for_menu.clone());
                             // Hide the crumb tooltip for as long as this
-                            // menu is up; cleared on the next root click.
+                            // menu is up. Every way the menu closes (item,
+                            // click away, Escape) emits DismissEvent.
                             shell.breadcrumb_menu_open = true;
+                            cx.subscribe(&menu_entity, |shell, _, _: &DismissEvent, cx| {
+                                shell.breadcrumb_menu_open = false;
+                                cx.notify();
+                            })
+                            .detach();
                             cx.notify();
                         });
                         already
@@ -4696,19 +4703,6 @@ impl Render for Shell {
             // Runs only for characters no keybinding claimed (gpui
             // matches actions first), so it never shadows nav keys.
             .on_key_down(cx.listener(Self::on_typeahead_key))
-            // Any left-click dismisses an open breadcrumb context menu
-            // (picking an item or clicking away), so it's also the
-            // moment to re-enable the crumb tooltip we suppressed while
-            // the menu was open (docs/GPUI-UPSTREAM.md).
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _, _window, cx| {
-                    if this.breadcrumb_menu_open {
-                        this.breadcrumb_menu_open = false;
-                        cx.notify();
-                    }
-                }),
-            )
             .on_action(cx.listener(Self::on_navigate_parent))
             .on_action(cx.listener(Self::on_navigate_back))
             .on_action(cx.listener(Self::on_navigate_forward))
