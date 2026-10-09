@@ -2091,7 +2091,7 @@ fn menus_page() -> SettingPage {
     use crate::menu_plan::{MenuSurface, prefs};
     use gpui_component::{Disableable as _, Sizable as _, button::Button};
 
-    let mut page = SettingPage::new(tr!("Menus")).icon(Icon::empty().path("icons/list.svg"));
+    let mut page = SettingPage::new(tr!("Menus")).icon(Icon::empty().path("icons/menu.svg"));
     page = page.group(SettingGroup::new().title(tr!("Context menus")).item(
         SettingItem::render(|_options, _window, cx| {
             div()

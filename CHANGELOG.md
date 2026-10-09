@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The Menus page of Settings shows its icon.** The sidebar entry pointed at
+  an icon that does not exist, so it was blank.
+
 - **A folder's path tooltip in the path bar comes back after closing its menu
   with Escape.** Closing a path segment's right-click menu with Escape left
   the full-path tooltip of that segment switched off until the next click.

@@ -89,7 +89,7 @@ bump gpui-component:
 - **Theme / view**: `sun` `moon` `layout-dashboard` `chart-pie` (`eye` / `eye-off` now used by the checksum report's problems-only filter and the archive workbench)
 - **Text / search controls**: `case-sensitive` `asterisk` `dash` (`a-large-small` now used by the text-size control, `check` by the checksum report header, `replace` by the text editor's Find and Replace button)
 - **System / hardware**: `memory-stick` `square-terminal` `bot` `inspector` `loader` `loader-circle` `battery` (+ `-charging` `-full` `-medium` `-low` `-warning`) (`cpu` now used by the Settings → Performance page; `network` now used for network-mount volume rows)
-- **People / misc**: `user` `circle-user` `delete` `bell` `calendar` `book-open` `building-2` `globe` `github` `map` `menu` `ellipsis-vertical` `redo-2` (`undo` now used by the image editor, `undo-2` by the toolbar's Reset-icon-size button)
+- **People / misc**: `user` `circle-user` `delete` `bell` `calendar` `book-open` `building-2` `globe` `github` `map` `ellipsis-vertical` `redo-2` (`undo` now used by the image editor, `undo-2` by the toolbar's Reset-icon-size button, `menu` by the Menus settings page)
 
 ```sh
 # Regenerate after a gpui-component bump:
@@ -335,6 +335,7 @@ table's icon set. The one addition is the tree disclosure caret on folder rows.
 | Performance | `icons/cpu.svg` ↑ | Lucide (from the spare upstream pool) |
 | Layout | `icons/settings-2.svg` ↑ | Lucide |
 | Plugins | `icons/settings.svg` ↑ | Lucide |
+| Menus | `icons/menu.svg` ↑ | Lucide (from the spare upstream pool) |
 | Keyboard Shortcuts | `icons/keyboard.svg` | **In-house** Lucide `keyboard` (stroke 2, matches rail) |
 | Diagnostics | `icons/activity.svg` | **In-house** Lucide `activity` (heartbeat line; stroke 2, matches rail). Spare pool lacked a health/diagnostic glyph (only `circle-check`/`heart`, both taken). |
 | About | `icons/info.svg` ↑ | Lucide |
