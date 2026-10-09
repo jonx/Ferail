@@ -18,6 +18,7 @@
 // the dupe body's styling calls resolve through traits already in scope
 // there. Keep the imports for the other platforms, silence that one leg.
 #[cfg_attr(target_os = "windows", allow(unused_imports))]
+use crate::private_mode::PrivateWindowExt as _;
 use crate::text::{IconScale as _, TextScale as _};
 use std::{
     ops::Range,
@@ -1128,7 +1129,7 @@ impl Shell {
                 });
             }
             let _ = win.update(cx, |_, window, cx| match &error {
-                None => window.push_notification(
+                None => window.push_notice(
                     Notification::info(trn!(
                         "Moved {n} duplicate to Trash",
                         "Moved {n} duplicates to Trash",
@@ -1136,7 +1137,7 @@ impl Shell {
                     )),
                     cx,
                 ),
-                Some(e) => window.push_notification(
+                Some(e) => window.push_notice(
                     crate::shell::error_notification(
                         tr!("Trash failed: {detail}", detail = e).to_string(),
                     ),
@@ -1204,7 +1205,7 @@ impl Shell {
             let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
             let opened = win.update(cx, |_, window, cx| {
                 let tx = go_tx.clone();
-                window.open_dialog(cx, move |dialog, _window, _cx| {
+                window.open_modal(cx, move |dialog, _window, _cx| {
                     let tx_go = tx.clone();
                     let tx_cancel = tx.clone();
                     let body = trn!(
@@ -1277,7 +1278,7 @@ impl Shell {
                 });
             }
             let _ = win.update(cx, |_, window, cx| match &error {
-                None => window.push_notification(
+                None => window.push_notice(
                     Notification::info(trn!(
                         "Replaced {n} copy with clones",
                         "Replaced {n} copies with clones",
@@ -1285,7 +1286,7 @@ impl Shell {
                     )),
                     cx,
                 ),
-                Some(e) => window.push_notification(
+                Some(e) => window.push_notice(
                     crate::shell::error_notification(
                         tr!("Dedup failed: {detail}", detail = e).to_string(),
                     ),

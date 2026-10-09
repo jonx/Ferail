@@ -8,6 +8,7 @@
 //! (Spotlight-when-available, else the built-in recursive walker) is
 //! chosen per the user's [`SearchConfig`].
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{
@@ -19,7 +20,6 @@ use ferail_core::filter_expr::FilterExpr;
 use ferail_core::{EnumerationError, FileEntry};
 use ferail_fs_native::{DEFAULT_SEARCH_BATCH, NativeFs};
 use gpui::{AnyWindowHandle, Context};
-use gpui_component::WindowExt;
 use std::path::Path;
 
 use super::Shell;
@@ -670,7 +670,7 @@ impl Shell {
                         super::enumeration_error_message(&tr!("Include Subfolders"), &error);
                     let _ = window.update(cx, |_, window, cx| {
                         use gpui_component::notification::Notification;
-                        window.push_notification(Notification::error(message), cx);
+                        window.push_notice(Notification::error(message), cx);
                     });
                 }
                 if visible {
@@ -901,7 +901,7 @@ impl Shell {
                         let message = super::enumeration_error_message(&tr!("Search"), &error);
                         let _ = window.update(cx, |_, window, cx| {
                             use gpui_component::notification::Notification;
-                            window.push_notification(Notification::error(message), cx);
+                            window.push_notice(Notification::error(message), cx);
                         });
                     } else if surfaced {
                         let message = trn!(
@@ -912,7 +912,7 @@ impl Shell {
                         );
                         let _ = window.update(cx, |_, window, cx| {
                             use gpui_component::notification::Notification;
-                            window.push_notification(Notification::success(message), cx);
+                            window.push_notice(Notification::success(message), cx);
                         });
                     }
                 }

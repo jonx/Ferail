@@ -16,7 +16,7 @@ instead.
 | Release | **0.7.9**, published on macOS, Windows and Linux |
 | Daily driver | macOS (Apple silicon), signed and notarized |
 | Toolchain | Rust `1.97.1`; MSRV `1.97` |
-| UI stack | gpui-component `e8f54eb`, Zed/GPUI `f66ed39` |
+| UI stack | gpui-component 0.7.1 (gpui-kit), GPUI `gpui-pre` 0.3.8 (Zed `279fe07`), both from crates.io |
 | Open work | [TODO.md](../TODO.md) |
 | Active campaign | [Windows reliability and compatibility](features/WINDOWS_COMPATIBILITY_PLAN.md) |
 

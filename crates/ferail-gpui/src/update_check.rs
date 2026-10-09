@@ -38,6 +38,7 @@
 //! changes (checking → found → downloading → done) animate live without
 //! bespoke plumbing.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -777,7 +778,7 @@ fn notify_available(version: String, cx: &mut App) {
         )
     );
     let _ = host.update(cx, |_, window, cx| {
-        window.push_notification(
+        window.push_notice(
             Notification::info(msg)
                 .title(tr!("Update available"))
                 .action(|_this, _window, cx| {
@@ -876,7 +877,7 @@ fn surface_download_done(path: &Path, cx: &mut App) {
         return;
     };
     let _ = host.update(cx, |_, window, cx| {
-        window.push_notification(
+        window.push_notice(
             Notification::success(tr!(
                 "Downloaded {name} to {folder}.",
                 name = name,
@@ -1034,7 +1035,7 @@ pub fn open_update_dialog(cx: &mut App) {
         for host in candidates {
             let opened = host
                 .update(cx, |_, window, cx| {
-                    window.open_dialog(cx, move |dialog, _window, cx| build_dialog(dialog, cx));
+                    window.open_modal(cx, move |dialog, _window, cx| build_dialog(dialog, cx));
                 })
                 .is_ok();
             if opened {

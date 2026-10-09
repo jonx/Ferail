@@ -14,6 +14,7 @@
 //! language synchronously during boot, before any window exists, same
 //! class of startup read as `app_state::load`.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::PathBuf;
 
 use ferail_core::i18n::{self as core, Catalog, LanguagePack, Text, ValidationReport};
@@ -482,7 +483,6 @@ pub enum Outcome {
 /// revealed on demand and can be copied, same shape as the shell's error
 /// toasts.
 pub fn notify(outcome: Outcome, window: &mut Window, cx: &mut App) {
-    use gpui_component::WindowExt as _;
     use gpui_component::notification::Notification;
     let note = match outcome {
         Outcome::Ok {
@@ -502,7 +502,7 @@ pub fn notify(outcome: Outcome, window: &mut Window, cx: &mut App) {
             details: Some(d),
         } => with_details(Notification::error(headline), d),
     };
-    window.push_notification(note, cx);
+    window.push_notice(note, cx);
 }
 
 fn with_details(

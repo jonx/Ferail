@@ -1,5 +1,6 @@
 //! "Create Checksum File…" dialog and background generation orchestration.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,7 +11,7 @@ use gpui::{
     Styled, Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
     button::{Button, ButtonGroup, ButtonVariants as _},
     dialog::{DialogAction, DialogClose, DialogFooter},
     h_flex,
@@ -176,7 +177,7 @@ pub fn open_dialog(
     let state = cx.new(|cx| CreateChecksumView::new(root, selected, window, cx));
     let shell = cx.entity();
     let state_for_dialog = state.clone();
-    window.open_dialog(cx, move |dialog, _, _| {
+    window.open_modal(cx, move |dialog, _, _| {
         let state = state_for_dialog.clone();
         let shell = shell.clone();
         dialog
@@ -297,7 +298,7 @@ impl Shell {
                                 cx,
                             );
                             let _ = win.update(cx, |_, window, cx| {
-                                window.push_notification(
+                                window.push_notice(
                                     Notification::success(trn!(
                                         "Created checksum file with {n} entry",
                                         "Created checksum file with {n} entries",
@@ -317,7 +318,7 @@ impl Shell {
                             .borrow_mut()
                             .end_failed(task_id, message.clone());
                         let _ = win.update(cx, |_, window, cx| {
-                            window.push_notification(
+                            window.push_notice(
                                 crate::shell::error_notification(message.to_string()),
                                 cx,
                             );

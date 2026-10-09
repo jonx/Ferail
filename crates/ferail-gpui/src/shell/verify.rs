@@ -1,6 +1,7 @@
+use crate::private_mode::PrivateWindowExt as _;
 use ferail_core::EntryKind;
 use gpui::{AppContext as _, Context, Window};
-use gpui_component::{WindowExt as _, notification::Notification};
+use gpui_component::notification::Notification;
 
 use super::{CreateChecksumFile, Shell, VerifyChecksums, tab::ToolResultSurface};
 
@@ -50,7 +51,7 @@ impl Shell {
         crate::trail::command("Verify checksums");
         let targets = self.action_entries_visible_order(cx);
         if targets.len() != 1 {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!("Select one checksum manifest to verify.")),
                 cx,
             );
@@ -60,7 +61,7 @@ impl Shell {
             return;
         };
         if matches!(entry.kind, EntryKind::Directory) {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!("Select one checksum manifest to verify.")),
                 cx,
             );

@@ -23,6 +23,7 @@
 //! All I/O (format probe, table-of-contents read) happens on the background
 //! executor; render only reads cached state (Prime Directive).
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -498,7 +499,7 @@ impl ArchiveView {
         let name = row.name.clone();
         let path = row.path.clone();
         let this = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let (path, this) = (path.clone(), this.clone());
             dialog
                 .title(tr!("Preview this file?"))
@@ -1124,7 +1125,7 @@ impl ArchiveView {
 
     fn show_edit_rejection(&self, window: &mut Window, cx: &mut App) {
         if let Some(reason) = self.edit_rejection() {
-            window.push_notification(
+            window.push_notice(
                 gpui_component::notification::Notification::warning(reason),
                 cx,
             );
@@ -1175,7 +1176,7 @@ impl ArchiveView {
                         existing.contains(normalized_archive_path(&entry.path))
                     });
                     if let Some(entry) = collision {
-                        window.push_notification(
+                        window.push_notice(
                             gpui_component::notification::Notification::warning(tr!(
                                 "Can't add “{name}” because an entry with that name already exists.",
                                 name = entry.path
@@ -1188,7 +1189,7 @@ impl ArchiveView {
                     this.pending_entries.extend(entries);
                     this.refresh_edit_projection(cx);
                 }
-                Err(message) => window.push_notification(
+                Err(message) => window.push_notice(
                     gpui_component::notification::Notification::error(tr!(
                         "Couldn't prepare these items for the archive: {message}",
                         message = message
@@ -1293,7 +1294,7 @@ impl ArchiveView {
         let save_view = view.clone();
         let discard_target = target.clone();
         let save_target = target;
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let cancel_view = cancel_view.clone();
             let discard_view = discard_view.clone();
             let save_view = save_view.clone();
@@ -1407,7 +1408,7 @@ impl ArchiveView {
         let input = cx.new(|cx| InputState::new(window, cx).default_value(leaf.clone()));
         let view = cx.entity().downgrade();
         let input_for_dialog = input.clone();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let input = input_for_dialog.clone();
             let current = current.clone();
             let view = view.clone();
@@ -1424,7 +1425,7 @@ impl ArchiveView {
                         || name == ".."
                         || name.chars().any(|ch| matches!(ch, '/' | '\\' | '\0'))
                     {
-                        window.push_notification(
+                        window.push_notice(
                             gpui_component::notification::Notification::warning(tr!(
                                 "Archive entry names can't contain slashes or be “.” or “..”."
                             )),
@@ -1448,7 +1449,7 @@ impl ArchiveView {
                         })
                         .unwrap_or(false);
                     if !staged {
-                        window.push_notification(
+                        window.push_notice(
                             gpui_component::notification::Notification::warning(tr!(
                                 "An archive entry with that name already exists."
                             )),
@@ -1517,7 +1518,7 @@ impl ArchiveView {
             return;
         }
         if let Some(reason) = self.edit_rejection() {
-            window.push_notification(
+            window.push_notice(
                 gpui_component::notification::Notification::warning(reason),
                 cx,
             );

@@ -19,6 +19,7 @@
 //! fails midway, the sibling is left behind and the error toast names it as
 //! the recovery copy.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -426,7 +427,7 @@ impl TextEditorView {
                             }
                         }
                         Err(error) => {
-                            window.push_notification(
+                            window.push_notice(
                                 Notification::error(tr!(
                                     "Could not save {name}: {error}",
                                     name = crate::private_mode::present_leaf_str(&view.name, false),
@@ -480,8 +481,8 @@ impl TextEditorView {
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.reloading = true;
         cx.notify();
-        let cursor = matches!(self.load, LoadState::Ready)
-            .then(|| self.editor.read(cx).cursor_position());
+        let cursor =
+            matches!(self.load, LoadState::Ready).then(|| self.editor.read(cx).cursor_position());
         let path = self.path.clone();
         let handle = window.window_handle();
         cx.spawn(async move |this, cx| {
@@ -499,7 +500,12 @@ impl TextEditorView {
         .detach();
     }
 
-    fn on_toggle_wrap(&mut self, _: &EditorToggleWrap, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_toggle_wrap(
+        &mut self,
+        _: &EditorToggleWrap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.soft_wrap = !self.soft_wrap;
         let wrap = self.soft_wrap;
         self.editor
@@ -669,19 +675,22 @@ impl TextEditorView {
                     .small()
                     .tooltip(tr!("More"))
                     .disabled(!ready)
-                    .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _window, _cx| {
-                        menu.action_context(view_focus.clone())
-                            .menu_with_check(
-                                tr!("Wrap Lines"),
-                                soft_wrap,
-                                Box::new(EditorToggleWrap),
-                            )
-                            .menu_with_check(
-                                tr!("Line Numbers"),
-                                line_numbers,
-                                Box::new(EditorToggleLineNumbers),
-                            )
-                    }),
+                    .dropdown_menu_with_anchor(
+                        gpui::Anchor::TopRight,
+                        move |menu, _window, _cx| {
+                            menu.action_context(view_focus.clone())
+                                .menu_with_check(
+                                    tr!("Wrap Lines"),
+                                    soft_wrap,
+                                    Box::new(EditorToggleWrap),
+                                )
+                                .menu_with_check(
+                                    tr!("Line Numbers"),
+                                    line_numbers,
+                                    Box::new(EditorToggleLineNumbers),
+                                )
+                        },
+                    ),
             )
             .child(div().flex_1())
             .when(self.dirty, |bar| {
@@ -754,7 +763,7 @@ impl TextEditorView {
         }
         let weak = cx.weak_entity();
         let name = crate::private_mode::present_leaf_str(&self.name, false);
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let weak_save = weak.clone();
             let weak_discard = weak.clone();
             dialog
@@ -811,7 +820,7 @@ impl TextEditorView {
         }
         let weak = cx.weak_entity();
         let name = crate::private_mode::present_leaf_str(&self.name, false);
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let weak_reload = weak.clone();
             dialog
                 .title(tr!("Reload from Disk"))
@@ -859,7 +868,7 @@ impl TextEditorView {
                 .await;
             if let Err(error) = result {
                 let _ = window.update(cx, |_, window, cx| {
-                    window.push_notification(
+                    window.push_notice(
                         Notification::error(tr!(
                             "Could not open text editor: {error}",
                             error = error

@@ -6,6 +6,7 @@
 //! and view state. Keyboard goes through gpui actions gated on
 //! [`VIEWER_CONTEXT`] so Shell shortcuts can't fire here and vice versa.
 
+use crate::private_mode::PrivateWindowExt as _;
 use crate::text::TextScale as _;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, WindowExt as _,
+    ActiveTheme, Selectable, Sizable,
     button::Button,
     checkbox::Checkbox,
     h_flex,
@@ -2222,7 +2223,7 @@ impl ViewerWindow {
                             // Nothing left to view.
                             window.remove_window();
                         } else {
-                            window.push_notification(
+                            window.push_notice(
                                 Notification::info(tr!(
                                     "Moved \u{201C}{name}\u{201D} to Trash",
                                     name = entry.name
@@ -2234,7 +2235,7 @@ impl ViewerWindow {
                 }
                 Err(e) => {
                     let _ = win.update(cx, move |_, window, cx| {
-                        window.push_notification(
+                        window.push_notice(
                             crate::shell::error_notification(
                                 tr!("Move to Trash failed: {detail}", detail = e).to_string(),
                             ),

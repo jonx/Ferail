@@ -15,11 +15,13 @@ why).
 > process*: `darwin-aarch64` hosted AROS. Nothing here targets real Amiga
 > hardware, and several trees are moving research code, not releases.
 
-> **Dependency migration checkpoint (2026-08-28).** Desktop Ferail now uses
-> Zed `f66ed399` and gpui-component `e8f54eb`. The sibling AROS forks still
-> need to be rebased and revalidated before this recipe is current again; see
-> [the migration handover](../memos/gpui-migration-2026-08.md#aros). Do not treat a
-> host macOS build as proof that the AROS source overrides still interoperate.
+> **On standby.** Desktop Ferail builds against the crates.io `gpui-pre`
+> 0.3.8 snapshots (Zed `279fe07`) and gpui-component 0.7.1. The AROS overrides
+> in `packaging/aros/` still patch the old git sources (Zed `f66ed399`,
+> gpui-component `e8f54eb`), which are no longer in the graph, so this recipe
+> does not build until the sibling forks are rebased onto the crates.io
+> packages and the patches move to `[patch.crates-io]`; see
+> [the migration handover](../memos/gpui-migration-2026-08.md#aros).
 
 ---
 

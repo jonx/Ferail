@@ -7,6 +7,7 @@
 //! by [`crate::dupe_cache::DbHashCache`] so rescans skip full hashing,
 //! and streams confirmed groups in.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -22,7 +23,6 @@ use ferail_fs_native::{
     SimilarImageIndexEntry,
 };
 use gpui::{AnyWindowHandle, Context, Pixels, SharedString};
-use gpui_component::WindowExt;
 
 use super::Shell;
 use super::tab::{
@@ -483,7 +483,7 @@ impl Shell {
                         let message = super::enumeration_error_message(&title, &error);
                         let _ = window.update(cx, |_, window, cx| {
                             use gpui_component::notification::Notification;
-                            window.push_notification(Notification::error(message), cx);
+                            window.push_notice(Notification::error(message), cx);
                         });
                     } else if surfaced {
                         let message = if mode == DupeMode::Similar && groups == 0 {
@@ -507,7 +507,7 @@ impl Shell {
                         };
                         let _ = window.update(cx, |_, window, cx| {
                             use gpui_component::notification::Notification;
-                            window.push_notification(Notification::success(message), cx);
+                            window.push_notice(Notification::success(message), cx);
                         });
                     }
                 }

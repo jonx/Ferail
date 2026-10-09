@@ -16,6 +16,7 @@
 //! quality. Strokes are stored in full-image coordinates and scale
 //! losslessly between the preview and the save.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -775,7 +776,7 @@ impl ImageEditView {
         }
         let weak = cx.weak_entity();
         let name = crate::private_mode::present_leaf_str(&self.name, false);
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_modal(cx, move |dialog, _, _| {
             let weak = weak.clone();
             dialog
                 .title(tr!("Overwrite Image?"))
@@ -826,7 +827,7 @@ impl ImageEditView {
                         Ok(written) => {
                             view.saved_rev = rev;
                             if !overwrite && let Some(leaf) = written.file_name() {
-                                window.push_notification(
+                                window.push_notice(
                                     Notification::info(tr!(
                                         "Saved {name}",
                                         name = crate::private_mode::present_leaf_str(
@@ -852,7 +853,7 @@ impl ImageEditView {
                             }
                         }
                         Err(error) => {
-                            window.push_notification(
+                            window.push_notice(
                                 Notification::error(tr!(
                                     "Could not save {name}: {error}",
                                     name = crate::private_mode::present_leaf_str(&view.name, false),
@@ -895,7 +896,7 @@ impl ImageEditView {
         }
         let weak = cx.weak_entity();
         let name = crate::private_mode::present_leaf_str(&self.name, false);
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_modal(cx, move |dialog, _, _| {
             let weak_save = weak.clone();
             let weak_discard = weak.clone();
             dialog

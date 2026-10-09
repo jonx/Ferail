@@ -28,63 +28,26 @@ Per Apache-2.0 §4(d), the upstream attribution notices are preserved below.
   (The `gpui` crate is deliberately licensed Apache-2.0, separate from the
   GPL-licensed Zed editor crates in the same repository.)
 
-- **gpui-component**, **gpui-component-assets**: the UI primitives and the
-  bundled icon assets. <https://github.com/longbridge/gpui-component>
+- **gpui-component**, **gpui-kit-assets** (used as `gpui-component-assets`):
+  the UI primitives and the bundled icon assets, from GPUI Kit.
+  <https://github.com/longbridge/gpui-kit>
   Copyright © 2024–2025 Longbridge. Licensed under Apache-2.0.
 
-### GPL-3.0 severance (gpui → ztracing)
+### GPL-3.0 crates in GPUI (resolved upstream)
 
-**The current build contains no GPL-licensed code, because this repository
-severs the edge itself.** That is an active measure, not an upstream fix.
+**The build contains no GPL-licensed code.** GPUI used to reach three small
+GPL-3.0 crates from the Zed repository (`ztracing`, `ztracing_macro`, `zlog`),
+which Ferail severed with a clean-room stub. Zed relicensed all three under
+Apache-2.0 on 2026-09-01 (zed#63573) and removed GPUI's direct `ztracing`
+dependency on 2026-09-15 (zed#64237). The `gpui-pre` crates.io snapshots Ferail
+builds against carry the Apache-2.0 crates (`gpui-pre-ztracing`,
+`gpui-pre-ztracing-macro`, `gpui-pre-zlog`), and the stub is gone.
 
-`gpui` reaches three small **GPL-3.0-or-later** crates from the Zed
-repository: `ztracing` and, through it, `zlog` and `ztracing_macro`: which
-would place copyleft obligations on any redistributed binary, despite `gpui`
-itself being Apache-2.0. Outside Zed's own `--cfg ztracing` profiling builds
-those crates are pure no-ops, so nothing is lost by removing them.
-
-The dependency **is present in the `gpui` revision resolved here**, and since
-zed `00cba838a` (2026-08-05) it is a *direct* `gpui → ztracing` edge, no
-longer just `gpui → sum_tree → ztracing`. It is severed by
-[`vendor/ztracing`](vendor/ztracing/README.md): a **clean-room MIT/Apache
-no-op stub** with the same public surface, written from the API contract
-rather than derived from the GPL source: wired in through a `[patch]` in the
-workspace `Cargo.toml`. Patching `ztracing` at the root keeps `zlog` and
-`ztracing_macro` out of the graph entirely, and retired the earlier
-`vendor/sum-tree` fork (a copy of Apache-2.0 `sum_tree` minus its ztracing
-use, sufficient only while `sum_tree` was ztracing's sole consumer: see git
-history for that crate).
-
-> **Correction (0.2.2).** An earlier revision of this section stated the edge
-> was already gone upstream, on the evidence that `ztracing` appeared nowhere in
-> `Cargo.lock`. That evidence was misleading: the committed lockfile had been
-> generated on a machine whose `[patch]` entries redirected `gpui` to an AROS
-> fork that happened to drop `ztracing`. A normal clone re-resolved against
-> upstream and pulled the GPL crates straight back in. **Do not treat the
-> lockfile alone as proof of the licence surface**: verify against the
-> resolved graph.
-
-Verification, which should print nothing:
-
-```sh
-cargo tree -p ferail-gpui -i ztracing
-cargo tree -p ferail-gpui -i zlog
-```
-
-Consequences worth knowing:
-
-- When bumping the `gpui` pin, re-sync `vendor/sum-tree` against the new
-  upstream sources (procedure in its README) and re-run the commands above.
-  Their empty output is what keeps a redistributable binary MIT/Apache.
-- Upstream tracks the same inconsistency at
-  <https://github.com/zed-industries/zed/issues/55470>. It is acknowledged but
-  stuck in legal: do not assume it lands on a timeline. If it does, delete
-  `vendor/sum-tree` and the `[patch]` block.
-
-Ferail's own source is MIT/Apache-2.0 regardless; this matters for the
-**prebuilt binaries** published from 0.2.2 onward.
-
----
+`cargo deny check licenses` (configuration in `deny.toml`, with an empty
+exception list) is what catches a copyleft crate reappearing after a bump.
+Audit the resolved graph, not the lockfile alone: a lockfile generated with the
+AROS `[patch]` entries active once hid a GPL edge that a normal clone pulled
+back in.
 
 ## Vendored crates carrying AROS support (MIT / Apache-2.0)
 

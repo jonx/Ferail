@@ -14,6 +14,7 @@
 //! Directive). Closing invalidates any in-flight scan and always rescans
 //! afterwards, so the list shows fresh truth, not an optimistic edit.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::PathBuf;
 
 use gpui::{
@@ -21,7 +22,7 @@ use gpui::{
     Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Sizable as _,
     button::{Button, ButtonVariants as _},
     dialog::{DialogClose, DialogFooter},
     h_flex,
@@ -351,7 +352,7 @@ fn open_lock_dialog(
     let state = cx.new(|_| LockInfoView::new(target_label, paths));
     state.update(cx, |view, cx| view.start_scan(cx));
     let state_for_dialog = state.clone();
-    window.open_dialog(cx, move |dialog, _window, _cx| {
+    window.open_modal(cx, move |dialog, _window, _cx| {
         dialog
             .title(tr!("What’s Locking This?"))
             .w(px(520.))

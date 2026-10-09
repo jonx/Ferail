@@ -13,6 +13,7 @@
 //! overlay-click / focus-trap come for free (same primitive as the About
 //! box). Editing is layered on top in a later pass; today the panel reads.
 
+use crate::private_mode::PrivateWindowExt as _;
 use crate::text::{TextScale as _, TruncateMiddle as _, elide_label};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,10 +31,9 @@ use ferail_core::platform_properties::{
 };
 #[cfg(windows)]
 use ferail_core::platform_shortcuts::{ShortcutInfo, ShortcutResolver as _, ShortcutTarget};
-use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Root, Sizable, WindowExt as _,
+    ActiveTheme, Root, Sizable,
     button::Button,
     checkbox::Checkbox,
     h_flex,
@@ -902,7 +902,7 @@ impl EntryInfoView {
                 }
                 self.refresh(cx);
             }
-            Err(e) => window.push_notification(Notification::error(e), cx),
+            Err(e) => window.push_notice(Notification::error(e), cx),
         }
     }
 
@@ -1019,7 +1019,7 @@ impl EntryInfoView {
         let input_for_dialog = input.clone();
         let view = cx.entity();
         let field = crate::i18n::tr_static(kind.label()).to_string();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let input = input_for_dialog.clone();
             let view = view.clone();
             dialog
@@ -1030,7 +1030,7 @@ impl EntryInfoView {
                     let timestamp = match ferail_fs_native::stat_info::parse_local_datetime(&raw) {
                         Ok(timestamp) => timestamp,
                         Err(_) => {
-                            window.push_notification(
+                            window.push_notice(
                                 Notification::error(tr!(
                                     "Enter a valid local date and time as YYYY-MM-DD HH:MM:SS."
                                 )),

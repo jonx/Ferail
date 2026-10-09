@@ -19,10 +19,13 @@ That is the right architecture for no-flash screenshots because it samples the
 renderer output instead of asking Windows to capture an onscreen HWND.
 
 Windows support is upstream as of Zed PR
-[#63012](https://github.com/zed-industries/zed/pull/63012). Ferail pins Zed
-`f66ed399`, which contains that merge. The in-repo `gpui_windows` fork is based
-on the same revision and differs only for outbound Shell/OLE file dragging; it
-does not duplicate the DirectX readback implementation. The historical patch
+[#63012](https://github.com/zed-industries/zed/pull/63012). Ferail builds
+against the `gpui-pre` 0.3.8 snapshot (Zed `279fe07`), which contains that
+merge. The in-repo `gpui_windows` fork is based on the same snapshot and
+differs only for outbound Shell/OLE file dragging; it does not duplicate the
+DirectX readback implementation. A hidden window receives no frames from the
+platform, so the harness calls `Window::draw` immediately before
+`render_to_image`; without it the capture is the window's first frame. The historical patch
 under `patches/` is review provenance and is not wired into Cargo.
 
 ## Work to finish

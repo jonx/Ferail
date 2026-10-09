@@ -50,9 +50,12 @@ file. **Consequence worth remembering:** a path like `icons/folder.svg` (no
   local SVGs and the upstream bundle. Our local copies are Lucide glyphs
   re-saved at `stroke-width="1.75"` (Lucide ships them at `2`); a few are
   in-house glyphs drawn in the same style (listed below).
-- **`gpui-component-assets`** (longbridge/gpui-component, pinned rev
-  `e8f54eb`): Apache-2.0. Its `crates/assets/assets/icons/*.svg` are
-  Lucide-derived (`class="lucide lucide-…"`, stroke 2). 99 icons; we reference
+- **`gpui-component-assets`** (the crates.io package `gpui-kit-assets` 0.7.1
+  from longbridge/gpui-kit, renamed back in the workspace manifest):
+  Apache-2.0. Its default `Assets` source holds 101 Lucide-derived icons
+  (`class="lucide lucide-…"`, stroke 2), listed in the package's
+  `default-icons.txt`; the full 1.830-glyph catalogue is only embedded through
+  `AllAssets`, which Ferail does not register. We reference
   40 of them by path, plus a few gpui-component draws itself through its
   `IconName` enum (the sidebar toggle's `panel-left-*`, the sort header's
   `chevrons-up-down`), which a path grep misses.
@@ -70,7 +73,7 @@ SVG bundles; Apache-2.0 covers the upstream crate.
 
 ## Spare upstream icons (check here before vendoring)
 
-The upstream `gpui-component-assets` bundle ships **99 Lucide glyphs**; we
+The upstream `gpui-component-assets` bundle ships **101 Lucide glyphs**; we
 reference 40 by path. The ~56 genuinely free ones are **already compiled into
 the binary**: reference any with
 `icons/<name>.svg` at zero cost (no new file, no normalization), they just render
@@ -78,9 +81,11 @@ at Lucide's heavier stroke `2`. **When you need a new icon, look here first**: a
 spare-pool glyph is free; a local copy is only worth it for primary chrome that
 needs the 1.75 weight, or for a glyph the pool lacks.
 
-Recomputed at the pinned rev `e8f54eb` (bundle minus every `icons/<name>.svg`
+Recomputed at `gpui-kit-assets` 0.7.1 (bundle minus every `icons/<name>.svg`
 the crate references that has no local file). Re-run the listing below if you
 bump gpui-component:
+
+- **Added in 0.7.1**: `ban` `circle-alert` `file-text` `mic` `refresh-cw`
 
 - **Arrows / chevrons**: `arrow-down` `arrow-left` `arrow-right` `chevron-up` (`chevron-down` now used by the file list's tree caret)
 - **Stars / reactions**: `star` `star-fill` `star-off` `heart` `heart-off` `thumbs-up` `thumbs-down`

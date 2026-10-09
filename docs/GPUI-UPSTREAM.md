@@ -10,17 +10,14 @@ ready list of upstream issues/PRs to file when we get the time.
 Each entry: what we hit, the workaround we shipped, and what upstream could do
 to remove the need.
 
-**Upstream state checked 2026-10-07.** The gpui-component repository is now
-`longbridge/gpui-kit` (old URLs redirect); `gpui-component` remains the styled
-crate inside it, beside the unstyled `gpui-base` and the `gpui-kit` facade.
-Releases since our pin `e8f54eb` (0.5.2): v0.6.0 through v0.7.1 (2026-10-05).
-From v0.7.1 the kit depends on GPUI through `gpui-pre` crates.io snapshots at an
-exact version (`=0.3.8` is `zed@279fe07`), published weekly under Apache-2.0.
-Moving to them is a migration, not a lockfile bump: v0.7.0 replaces
-`Root::new` and the manual dialog/sheet/notification layers with
-`gpui_kit::open_window` and Root-owned overlay hosting, v0.6.0 redesigned the
-Dialog API and split text entry into Input / Textarea / Editor, and our Windows
-drag-out patch (#9) must be re-based onto `gpui-pre-windows`.
+**Current pins (2026-10-09).** gpui-component 0.7.1 from crates.io (the
+repository is now `longbridge/gpui-kit`; `gpui-component` remains its styled
+crate, beside the unstyled `gpui-base` and the `gpui-kit` facade), and GPUI from
+the `gpui-pre` 0.3.8 crates.io snapshots of `zed@279fe07`, every pin exact. The
+move from git revs (`e8f54eb` / `f66ed399`) changed little code: the Root hosts
+dialogs and notifications itself (#14), the FPS monitor no longer drives frames,
+hidden windows stop receiving frames (#13), and the Windows drag-out patch was
+re-based onto `gpui-pre-windows` (#9).
 
 ---
 
@@ -39,6 +36,8 @@ drag-out patch (#9) must be re-based onto `gpui-pre-windows`.
 - [10. Drag-out operation mask is hardcoded to Copy - no move, no modifiers](#10-drag-out-operation-mask-is-hardcoded-to-copy---no-move-no-modifiers)
 - [11. Native file promises are rejected by GPUI drop destinations](#11-native-file-promises-are-rejected-by-gpui-drop-destinations)
 - [12. gpui-component `Input` paint leaked strong handles - upstream shape fixed, teardown containment retained](#12-gpui-component-input-paint-leaked-strong-handles---upstream-shape-fixed-teardown-containment-retained)
+- [13. Hidden windows receive no frames](#13-hidden-windows-receive-no-frames)
+- [14. Root-hosted overlays sit above Private Mode's shield](#14-root-hosted-overlays-sit-above-private-modes-shield)
 
 <!-- /toc -->
 
@@ -78,10 +77,13 @@ Ferail lock contains one Zed source and one gpui-component source; do not add a
 `rev` query to only one dependency, because Cargo treats that as a distinct
 source even when the commit hash is identical.
 
-**Update (2026-10-07, upstream only):** both requests landed. The `gpui-kit`
-facade re-exports the GPUI it builds against, and v0.7.1 pins GPUI to exact
-`gpui-pre` crates.io versions with a pin check in its CI. Adopting it ends the
-rev-matching rule above; until then the rule stands.
+**Resolved (2026-10-09):** both requests landed upstream. The `gpui-kit`
+facade re-exports the GPUI it builds against, and gpui-component 0.7.1 pins
+GPUI to exact `gpui-pre` crates.io versions with a pin check in its CI. Ferail
+moved to those crates.io packages: the rule is now to bump gpui-component and
+the `gpui-pre` snapshot together, to the snapshot version the gpui-component
+release declares (root `Cargo.toml` comment). There are no git revs left to
+mirror.
 
 **What upstream could do:**
 - gpui-component could re-export the `gpui` it builds against (e.g.
@@ -305,10 +307,11 @@ macOS. The merged implementation renders into the existing DirectX target,
 copies through a CPU-readable staging texture, and converts BGRA to RGBA without
 showing the window.
 
-Ferail now pins Zed `f66ed399`, which contains the merged change. Our vendored
-`gpui_windows` is based on that exact revision and carries only the separate
-outbound Shell/OLE drag delta documented in its README; it does not carry a
-second render-to-image implementation. The historical patch file remains only
+Ferail builds against `gpui-pre` 0.3.8 (Zed `279fe07`), which contains the
+merged change. Our vendored `gpui_windows` is that snapshot's
+`gpui-pre-windows` package and carries only the separate outbound Shell/OLE
+drag delta documented in its README; it does not carry a second
+render-to-image implementation. The historical patch file remains only
 as review provenance and is not applied by Cargo.
 
 The macOS host can compile the ordinary workspace but cannot complete the
@@ -328,15 +331,9 @@ forking `sum_tree` (the old `vendor/sum-tree`). With `ztracing` in `gpui`'s
 own `[dependencies]`, that fork stopped being sufficient, and forking gpui
 itself is not a maintainable option.
 
-**Workaround:** patch `ztracing` at the source root with a clean-room
-MIT/Apache no-op stub, [`vendor/ztracing`](../vendor/ztracing/README.md).
-Outside Zed's `--cfg ztracing` profiling builds the real crate is pure no-ops,
-so the stub is behaviourally identical; it also drops GPL `ztracing_macro` and
-`zlog` from the graph and retired the `sum_tree` fork (no more per-bump
-re-sync). Instrumentation edges may keep spreading through zed's crates; the
-stub covers all of them at once, but a bump that fails on an unresolved
-`ztracing::…` item means upstream grew the API: add the missing name to the
-stub as a no-op.
+**Former workaround:** a clean-room MIT/Apache no-op stub of `ztracing`,
+patched in at the source root (removed with the move to `gpui-pre`; see git
+history for `vendor/ztracing`).
 
 **What upstream could do:** relicense the tracing shim permissively (it is
 ~60 lines of no-op glue outside profiling builds), or gate it behind an
@@ -345,8 +342,8 @@ optional feature default-off. Tracked upstream as zed#55470.
 **Resolved upstream:** Zed relicensed `zlog`, `ztracing` and `ztracing_macro`
 under Apache-2.0 on 2026-09-01 (zed#63573), then removed the `ztracing`
 dependency from GPUI on 2026-09-15 (zed#64237). zed#55470 itself is still open.
-The `gpui-pre` snapshots carry the relicensed crates. The stub can be deleted
-when Ferail moves past those commits; it stays while we pin `f66ed399`.
+The `gpui-pre` snapshots carry the relicensed crates, and Ferail deleted the
+stub when it moved to them.
 
 ## 9. External file drag-out finally exists - via `external_drag_payload` (zed #58161)
 
@@ -367,8 +364,8 @@ exists yet for promise-based/deferred content. Ferail implements archive
 member drag-out directly with `NSFilePromiseProvider` on macOS; see #11 for
 the extra cross-window handoff this requires.
 
-The GPUI core contract is cross-platform, but the pinned Windows backend
-(and upstream at `zed@279fe07`, checked 2026-10-07) leaves
+The GPUI core contract is cross-platform, but the Windows backend (upstream
+at `zed@279fe07`, the `gpui-pre` 0.3.8 snapshot) leaves
 `can_start_external_drag`/`start_external_drag` at their default `false`.
 Ferail therefore carries a narrow `gpui_windows` patch: absolute PIDLs feed
 `SHCreateDataObject`, then `SHDoDragDrop` runs a normal OLE file drag with
@@ -568,5 +565,44 @@ offscreen screenshot path.
 `next_frame_callbacks` on window teardown; and consider splitting
 `leak-detection` out of `test-support` so `render_to_image` doesn't drag the
 exit assert into production builds.
+
+## 13. Hidden windows receive no frames
+
+**Hit during:** the move to `gpui-pre` 0.3.8 (2026-10-09).
+
+GPUI now tracks window visibility (zed#64107, #64269) and an invisible window
+gets no frame callbacks from the platform. `Window::render_to_image` samples the
+last rendered frame, so the headless screenshot harness, which keeps its window
+hidden, captured the window's first frame: an empty listing, no free-space
+label, no sidebar badges, although every background result had arrived.
+
+**Workaround:** the harness calls `Window::draw` (public) and clears the
+returned arena token right before `render_to_image`.
+
+**What upstream could do:** document the interaction on `render_to_image`, or
+draw a fresh frame there when the window is not visible. zed#64969's headless
+windowing API may become the proper route once it has a macOS implementation.
+
+## 14. Root-hosted overlays sit above Private Mode's shield
+
+**Hit during:** the move to gpui-component 0.7.1 (2026-10-09).
+
+v0.7.0 made the window Root host dialogs, sheets and notifications itself and
+removed `Root::render_dialog_layer` / `render_notification_layer`. Ferail used
+to render those layers inside its own content, which let Private Mode skip them.
+Now they are drawn above everything the application renders, including the
+Private Mode interaction shield, and their state is crate-private
+(`WindowState`), so they can be neither hidden nor stashed from outside.
+
+**Workaround:** `private_mode::PrivateWindowExt` (`push_notice`, `open_modal`)
+is the only way Ferail shows a notification or opens a dialog: while Private
+Mode is on it holds them and replays them on exit. Entering the mode closes the
+open dialogs and clears notifications (which still fade out over 200 ms).
+Clippy's `disallowed-methods` denies the direct `WindowExt` calls in
+`ferail-gpui`.
+
+**What upstream could do:** let an application suppress or veto overlay
+presentation per window (a `Root` flag, or a `RootPlugin` hook that can hide
+the component layers), so a privacy mode does not need its own choke point.
 
 <!-- Add new findings above this line as the bump surfaces them. -->

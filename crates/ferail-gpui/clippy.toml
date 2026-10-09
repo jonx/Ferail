@@ -20,4 +20,8 @@ disallowed-methods = [
     { path = "std::process::Command::status", reason = "forks and BLOCKS waiting for the child. Run on the background executor (Prime Directive)" },
     { path = "notify::Watcher::watch", reason = "notify's FSEvents watch() canonicalizes internally (blocks on sleeping drives). Go through crate::fs_watcher::FsWatcher, whose worker thread owns the notify watcher" },
     { path = "notify::Watcher::unwatch", reason = "watch-set mutation belongs to the fs-watcher worker thread. Go through crate::fs_watcher::FsWatcher" },
+    # Not a Prime Directive rule: Private Mode. gpui-component's Root draws
+    # these overlays above the Private Mode shield.
+    { path = "gpui_component::WindowExt::push_notification", reason = "would show raw names in Private Mode. Use crate::private_mode::PrivateWindowExt::push_notice" },
+    { path = "gpui_component::WindowExt::open_dialog", reason = "would show raw names in Private Mode. Use crate::private_mode::PrivateWindowExt::open_modal" },
 ]

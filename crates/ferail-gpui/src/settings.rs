@@ -16,6 +16,7 @@
 //!
 //! Internally everything below is now thin glue around the primitive.
 
+use crate::private_mode::PrivateWindowExt as _;
 use crate::text::TextScale as _;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{Axis, *};
@@ -1774,10 +1775,10 @@ fn full_disk_access_setting() -> SettingItem {
                             .outline()
                             .small()
                             .on_click(|_, window, cx| {
-                                use gpui_component::{WindowExt as _, notification::Notification};
+                                use gpui_component::notification::Notification;
                                 if let Some(path) = crate::platform_shell::app_bundle_path() {
                                     cx.write_to_clipboard(ClipboardItem::new_string(path));
-                                    window.push_notification(
+                                    window.push_notice(
                                         Notification::info(tr!(
                                             "Ferail's path is copied. Add it in Full Disk Access, then relaunch Ferail."
                                         ))
@@ -2235,13 +2236,7 @@ fn menu_editor_row(
                 },
                 |payload, _offset, _window, cx| cx.new(|_| payload.clone()),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .h(px(1.0))
-                    .mx_2()
-                    .bg(theme.border),
-            )
+            .child(div().flex_1().h(px(1.0)).mx_2().bg(theme.border))
             .child(
                 Button::new(SharedString::from(format!("menu-sep-remove-{key}-{index}")))
                     .label(tr!("Remove"))

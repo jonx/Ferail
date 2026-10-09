@@ -22,6 +22,7 @@
 //! needed since the plan is pure string work and the `regex` crate is
 //! linear-time.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -31,7 +32,7 @@ use gpui::{
     Render, SharedString, Styled, Subscription, Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Selectable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Selectable as _, Sizable as _,
     button::{Button, ButtonGroup, ButtonVariants as _},
     checkbox::Checkbox,
     dialog::{DialogAction, DialogClose, DialogFooter},
@@ -574,8 +575,7 @@ impl BulkRenameView {
         // `tr!` placeholders, there are no arguments, so nothing is filled
         // and the braces render as typed.
         let template_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(tr!("{name} {n}.{ext}, leave empty to skip"))
+            InputState::new(window, cx).placeholder(tr!("{name} {n}.{ext}, leave empty to skip"))
         });
         let start_input = cx.new(|cx| InputState::new(window, cx).default_value("1"));
         let pad_input = cx.new(|cx| InputState::new(window, cx).default_value("3"));
@@ -886,7 +886,7 @@ pub fn open(
     let shell_entity = cx.entity();
     let state_for_dialog = state.clone();
     let title: SharedString = trn!("Rename {n} Item", "Rename {n} Items", count);
-    window.open_dialog(cx, move |dialog, _window, _cx| {
+    window.open_modal(cx, move |dialog, _window, _cx| {
         let state = state_for_dialog.clone();
         let shell = shell_entity.clone();
         dialog
@@ -1009,7 +1009,7 @@ fn apply(
         let _ = win.update(cx, |_, window, cx| {
             use gpui_component::notification::Notification;
             if failed == 0 {
-                window.push_notification(
+                window.push_notice(
                     Notification::success(trn!(
                         "Renamed {n} item",
                         "Renamed {n} items",
@@ -1018,7 +1018,7 @@ fn apply(
                     cx,
                 );
             } else {
-                window.push_notification(
+                window.push_notice(
                     crate::shell::error_notification(
                         tr!(
                             "Renamed {renamed} items, {failed} failed: {detail}",

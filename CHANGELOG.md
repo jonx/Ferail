@@ -8,6 +8,15 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Notifications and dialogs no longer appear in Private Mode.** Turning
+  Private Mode on closes the open dialogs and clears notifications, since they
+  could show real file names; any that arrive while it is on wait and appear
+  when you leave it. Notifications also gain a *Copy* button for their text.
+
+- **Building Ferail no longer needs Xcode's Metal compiler.** The UI toolkit
+  moved to its crates.io releases (gpui-component 0.7.1 and the matching GPUI
+  snapshot), and its shaders now compile when the app starts.
+
 - **The Menus page of Settings shows its icon.** The sidebar entry pointed at
   an icon that does not exist, so it was blank.
 

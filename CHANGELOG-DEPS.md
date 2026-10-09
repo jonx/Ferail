@@ -1,17 +1,31 @@
-# Dependency changelog (pinned git revs)
+# Dependency changelog
 
-`gpui` (zed) and `gpui-component` are git dependencies with no crates.io
-releases, so reproducibility comes from the committed `Cargo.lock` plus this
-log of the locked revs at each deliberate bump. See the pinning-strategy
-comment in the root `Cargo.toml` and the friction log in
-[docs/GPUI-UPSTREAM.md](docs/GPUI-UPSTREAM.md).
+GPUI and gpui-component come from crates.io at exact versions, and this log
+records each deliberate bump. See the pinning-strategy comment in the root
+`Cargo.toml` and the friction log in [docs/GPUI-UPSTREAM.md](docs/GPUI-UPSTREAM.md).
 
-Pinning rule: the graph must hold a single gpui source (see GPUI-UPSTREAM.md
-#1), so our `gpui` / `gpui_platform` declaration mirrors *how* gpui-component
-declares gpui at the pinned rev: when gpui-component pins an explicit zed rev,
-copy that exact rev; when it leaves gpui unpinned (the style since ~2026-07),
-leave ours unpinned too and let the committed `Cargo.lock` carry the actual
-zed rev: bumped deliberately with `cargo update -p gpui`.
+Pinning rule: bump gpui-component and the `gpui-pre` snapshot together, to the
+snapshot version the gpui-component release declares in its own workspace
+manifest (`gpui = { package = "gpui-pre", version = "=…" }`). Two snapshots in
+the graph are two incompatible GPUIs.
+
+## 2026-10-09 - gpui-component 0.7.1 and GPUI `gpui-pre` 0.3.8 from crates.io
+
+- gpui-component `e8f54eb` (git, 0.5.2) → **0.7.1** from crates.io. The
+  repository is now `longbridge/gpui-kit`; `gpui-component-assets` is the
+  `gpui-kit-assets` package and `gpui-fps` follows at 0.7.1.
+- Zed/GPUI `f66ed399` (git) → the **`gpui-pre` 0.3.8** snapshots of
+  `zed@279fe07`, published Apache-2.0 on crates.io and renamed back to `gpui`,
+  `gpui_platform` and `reqwest_client` in the workspace manifest.
+  `gpui_platform` gains `runtime_shaders`, so builds no longer need Xcode's
+  `metal` compiler.
+- `vendor/ztracing` removed: Zed relicensed `ztracing`, `ztracing_macro` and
+  `zlog` under Apache-2.0 (zed#63573) and dropped GPUI's direct `ztracing`
+  edge (zed#64237).
+- `vendor/gpui_windows` re-based onto `gpui-pre-windows` 0.3.8 and patched in
+  through `[patch.crates-io]` (the outbound Shell/OLE drag delta only).
+- The AROS overrides in `packaging/aros/` still target the old git sources and
+  do not build until the AROS forks are rebased (port on standby).
 
 ## 2026-09-01 - add `thumbhash` for Private Mode stand-in thumbnails
 

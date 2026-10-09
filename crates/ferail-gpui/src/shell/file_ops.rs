@@ -118,7 +118,7 @@ impl Shell {
         use gpui_component::notification::Notification;
         const MAX_SYSTEM_CLIPBOARD_FILES: usize = 20_000;
         if self.action_target_count(cx) > MAX_SYSTEM_CLIPBOARD_FILES {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!(
                     "The system file clipboard can't safely hold this many items. Use Copy File List for their paths."
                 )),
@@ -145,7 +145,7 @@ impl Shell {
         let refs: Vec<(&std::path::Path, bool)> =
             items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
         if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
-            window.push_notification(
+            window.push_notice(
                 Notification::error(tr!("File clipboard isn't available on this platform yet.")),
                 cx,
             );
@@ -160,7 +160,7 @@ impl Shell {
             ),
             many => trn!("Copied {n} item", "Copied {n} items", many.len()),
         };
-        window.push_notification(Notification::success(msg), cx);
+        window.push_notice(Notification::success(msg), cx);
         cx.notify();
     }
 
@@ -176,7 +176,7 @@ impl Shell {
         use gpui_component::notification::Notification;
         const MAX_SYSTEM_CLIPBOARD_FILES: usize = 20_000;
         if self.action_target_count(cx) > MAX_SYSTEM_CLIPBOARD_FILES {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!(
                     "The system file clipboard can't safely hold this many items. Use Copy File List for their paths."
                 )),
@@ -203,7 +203,7 @@ impl Shell {
         if !crate::platform_shell::clipboard_cut_file_urls(&refs) {
             // Don't dim rows for a Cut that can never complete its
             // move: the stub platform has no file clipboard.
-            window.push_notification(
+            window.push_notice(
                 Notification::error(tr!("File clipboard isn't available on this platform yet.")),
                 cx,
             );
@@ -218,7 +218,7 @@ impl Shell {
             many => trn!("Cut {n} item", "Cut {n} items", many.len()),
         };
         *self.process.cut_marker.borrow_mut() = paths;
-        window.push_notification(Notification::info(msg), cx);
+        window.push_notice(Notification::info(msg), cx);
         cx.notify();
     }
 
@@ -246,7 +246,7 @@ impl Shell {
                 self.paste_clipboard_image(image, window, cx);
                 return;
             }
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!("No files or image on the clipboard")),
                 cx,
             );
@@ -337,7 +337,7 @@ impl Shell {
         // boundary as Quick Look, never from render.
         let sources = crate::platform_shell::clipboard_read_file_urls();
         if sources.is_empty() {
-            window.push_notification(Notification::info(tr!("No files on the clipboard")), cx);
+            window.push_notice(Notification::info(tr!("No files on the clipboard")), cx);
             return;
         }
         let dest = self.active_tab().current_dir.clone();
@@ -643,7 +643,7 @@ impl Shell {
                 Err(e) => {
                     end_task(cx);
                     let _ = win.update(cx, |_, window, cx| {
-                        window.push_notification(
+                        window.push_notice(
                             crate::shell::error_notification(transfer_failed_message(mode, &e)),
                             cx,
                         );
@@ -694,7 +694,7 @@ impl Shell {
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_else(|| dest.display().to_string());
                     let _ = win.update(cx, |_, window, cx| {
-                        window.push_notification(
+                        window.push_notice(
                             crate::shell::error_notification(
                                 tr!(
                                     "Not enough space on \u{201c}{dest}\u{201d}: needs {needed}, only {free} free",
@@ -762,7 +762,7 @@ impl Shell {
                     let tx = choice_tx.clone();
                     let flag = apply_all.clone();
                     let name = name.clone();
-                    window.open_dialog(cx, move |dialog, _window, _cx| {
+                    window.open_modal(cx, move |dialog, _window, _cx| {
                         let tx_keep = tx.clone();
                         let tx_replace = tx.clone();
                         let tx_skip = tx.clone();
@@ -1016,7 +1016,7 @@ impl Shell {
                                 .cloned()
                                 .collect();
                             if retry_sources.is_empty() {
-                                window.push_notification(error_notification(summary), cx);
+                                window.push_notice(error_notification(summary), cx);
                             } else {
                                 let elevation_recoverable = outcome
                                     .failed
@@ -1041,7 +1041,7 @@ impl Shell {
                                     elevation_recoverable,
                                     locked,
                                 };
-                                window.push_notification(
+                                window.push_notice(
                                     crate::shell::transfer_failure_notification(summary, retry),
                                     cx,
                                 );
@@ -1080,10 +1080,10 @@ impl Shell {
                         } else {
                             Notification::success(msg)
                         };
-                        window.push_notification(note, cx);
+                        window.push_notice(note, cx);
                     }
                     Err(e) => {
-                        window.push_notification(
+                        window.push_notice(
                             crate::shell::error_notification(transfer_failed_message(mode, e)),
                             cx,
                         );
@@ -1142,7 +1142,7 @@ impl Shell {
 
             let _ = win.update(cx, |_, window, cx| match result {
                 Ok(r) if r.failures.is_empty() => {
-                    window.push_notification(
+                    window.push_notice(
                         Notification::success(trn!(
                             "Completed {n} item as administrator",
                             "Completed {n} items as administrator",
@@ -1165,16 +1165,14 @@ impl Shell {
                             .unwrap_or_else(|| path.display().to_string());
                         msg.push_str(&format!("\n\u{2022} {name}: {}", kind.summary()));
                     }
-                    window.push_notification(error_notification(msg), cx);
+                    window.push_notice(error_notification(msg), cx);
                 }
                 Err(e) if e == "cancelled" => {
-                    window.push_notification(
-                        Notification::info(tr!("Administrator retry cancelled")),
-                        cx,
-                    );
+                    window
+                        .push_notice(Notification::info(tr!("Administrator retry cancelled")), cx);
                 }
                 Err(e) => {
-                    window.push_notification(
+                    window.push_notice(
                         error_notification(
                             tr!("Retry as administrator failed: {detail}", detail = e).to_string(),
                         ),
@@ -1243,7 +1241,7 @@ impl Shell {
                                     note.dismiss(window, cx);
                                 }))
                         });
-                    window.push_notification(note, cx);
+                    window.push_notice(note, cx);
                     return;
                 }
                 let names = holders
@@ -1273,7 +1271,7 @@ impl Shell {
                             }))
                     },
                 );
-                window.push_notification(note, cx);
+                window.push_notice(note, cx);
             });
         })
         .detach();
@@ -1307,7 +1305,7 @@ impl Shell {
                     });
                 }
                 Err(e) => {
-                    window.push_notification(
+                    window.push_notice(
                         error_notification(
                             tr!("Couldn't close the apps: {detail}", detail = e).to_string(),
                         ),
@@ -1350,7 +1348,7 @@ impl Shell {
                 paths.len()
             )
         };
-        window.push_notification(Notification::success(msg), cx);
+        window.push_notice(Notification::success(msg), cx);
     }
 
     pub(super) fn on_show_windows_context_menu(
@@ -1364,7 +1362,7 @@ impl Shell {
             const MAX_SYSTEM_CONTEXT_MENU_FILES: usize = 20_000;
             if self.action_target_count(cx) > MAX_SYSTEM_CONTEXT_MENU_FILES {
                 self.context_row = None;
-                window.push_notification(
+                window.push_notice(
                     gpui_component::notification::Notification::error(tr!(
                         "Too many items selected for the Windows context menu"
                     )),
@@ -1384,7 +1382,7 @@ impl Shell {
                 .iter()
                 .any(|path| crate::platform_shell::is_wsl_path(path))
             {
-                window.push_notification(
+                window.push_notice(
                     gpui_component::notification::Notification::error(tr!(
                         "The Windows context menu is not available for Linux files"
                     )),
@@ -1418,7 +1416,7 @@ impl Shell {
                     }
                     Err(error) => {
                         let _ = win.update(cx, |_, window, cx| {
-                            window.push_notification(
+                            window.push_notice(
                                 crate::shell::error_notification(
                                     tr!(
                                         "Windows context menu unavailable: {detail}",
@@ -1469,7 +1467,7 @@ impl Shell {
             const ROWS_PER_TICK: usize = 8_192;
             let tab_id = self.active_tab().id;
             let win = window.window_handle();
-            window.push_notification(Notification::info(tr!("Preparing file list…")), cx);
+            window.push_notice(Notification::info(tr!("Preparing file list…")), cx);
             cx.spawn(async move |this, cx| {
                 let mut items: Vec<(PathBuf, bool)> = Vec::new();
                 let mut start = 0usize;
@@ -1513,7 +1511,7 @@ impl Shell {
                     .await;
                 let _ = win.update(cx, |_, window, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    window.push_notification(
+                    window.push_notice(
                         Notification::success(copy_file_list_toast(count, recursive)),
                         cx,
                     );
@@ -1542,7 +1540,7 @@ impl Shell {
         }
         if recursive {
             let win = window.window_handle();
-            window.push_notification(Notification::info(tr!("Preparing file list…")), cx);
+            window.push_notice(Notification::info(tr!("Preparing file list…")), cx);
             cx.spawn(async move |_this, cx| {
                 let (text, count) = cx
                     .background_executor()
@@ -1550,10 +1548,8 @@ impl Shell {
                     .await;
                 let _ = win.update(cx, |_, window, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    window.push_notification(
-                        Notification::success(copy_file_list_toast(count, true)),
-                        cx,
-                    );
+                    window
+                        .push_notice(Notification::success(copy_file_list_toast(count, true)), cx);
                 });
             })
             .detach();
@@ -1561,7 +1557,7 @@ impl Shell {
         }
         let (text, count) = build_file_list_text(&items, false, include_hidden);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        window.push_notification(
+        window.push_notice(
             Notification::success(copy_file_list_toast(count, false)),
             cx,
         );
@@ -1640,9 +1636,9 @@ impl Shell {
                         .await;
                     let _ = win.update(cx, |_, window, cx| {
                         if result == 0 {
-                            window.push_notification(Notification::info(msg), cx);
+                            window.push_notice(Notification::info(msg), cx);
                         } else {
-                            window.push_notification(
+                            window.push_notice(
                                 Notification::error(trn!(
                                     "Could not reveal {n} item",
                                     "Could not reveal {n} items",
@@ -1823,7 +1819,7 @@ impl Shell {
             name = name
         );
         let only_label = tr!("Eject \u{201C}{name}\u{201D} Only", name = name);
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let tx_all = choice_tx.clone();
             let tx_one = choice_tx.clone();
             let tx_cancel = choice_tx.clone();
@@ -2147,7 +2143,7 @@ impl Shell {
                         [name] => tr!("Ejected \u{201C}{name}\u{201D}", name = name),
                         names => trn!("Ejected {n} volume", "Ejected {n} volumes", names.len()),
                     };
-                    window.push_notification(Notification::info(msg), cx);
+                    window.push_notice(Notification::info(msg), cx);
                 }
                 for failure in failures {
                     // No blocker we can name → the platform error is all
@@ -2163,7 +2159,7 @@ impl Shell {
                             what = failure.what,
                             detail = failure.err
                         );
-                        window.push_notification(Notification::error(msg), cx);
+                        window.push_notice(Notification::error(msg), cx);
                         continue;
                     }
                     let msg = tr!(
@@ -2195,7 +2191,7 @@ impl Shell {
                                 }))
                                 .into_any_element()
                         });
-                    window.push_notification(note, cx);
+                    window.push_notice(note, cx);
                 }
             });
         })
@@ -2298,7 +2294,7 @@ impl Shell {
                 // structured "N of M · why" report as the other mutations.
                 let summary = crate::shell::file_op_failure_report(&tr!("Tag"), done, 0, &failures);
                 let _ = win.update(cx, |_, window, cx| {
-                    window.push_notification(super::error_notification(summary), cx);
+                    window.push_notice(super::error_notification(summary), cx);
                 });
             }
             let _ = this.update(cx, |this, cx| {
@@ -2480,7 +2476,7 @@ impl Shell {
                 .await;
             if let Err(error) = result {
                 let _ = window.update(cx, |_, window, cx| {
-                    window.push_notification(
+                    window.push_notice(
                         gpui_component::notification::Notification::error(tr!(
                             "Could not open text editor: {error}",
                             error = error
@@ -2642,7 +2638,7 @@ impl Shell {
             .iter()
             .any(|path| crate::platform_shell::is_wsl_path(path))
         {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!(
                     "Moving WSL files to the Recycle Bin is not supported. Use Delete Immediately only if you intend permanent deletion."
                 )),
@@ -2750,7 +2746,7 @@ impl Shell {
                     } else {
                         trn!("Moved {n} item to Trash", "Moved {n} items to Trash", count)
                     };
-                    window.push_notification(Notification::info(msg), cx);
+                    window.push_notice(Notification::info(msg), cx);
                     return;
                 }
                 // The structured "N of M · why" report shared with the
@@ -2775,7 +2771,7 @@ impl Shell {
                     sources: recoverable,
                     delete: false,
                 };
-                window.push_notification(
+                window.push_notice(
                     crate::shell::trash_failure_notification(
                         summary.clone(),
                         format!("{summary}\n\n{detail}"),
@@ -2849,11 +2845,11 @@ impl Shell {
                             n
                         )
                     };
-                    window.push_notification(Notification::success(note), cx);
+                    window.push_notice(Notification::success(note), cx);
                 }
                 Ok(r) => {
                     let done = total.saturating_sub(r.failed.len());
-                    window.push_notification(
+                    window.push_notice(
                         super::error_notification(
                             tr!(
                                 "As administrator: {done} done \u{00b7} {failed} still failed",
@@ -2866,13 +2862,13 @@ impl Shell {
                     );
                 }
                 Err(e) if e == "cancelled" => {
-                    window.push_notification(
+                    window.push_notice(
                         Notification::info(tr!("Administrator action cancelled")),
                         cx,
                     );
                 }
                 Err(e) => {
-                    window.push_notification(
+                    window.push_notice(
                         super::error_notification(
                             tr!("Elevated action failed: {detail}", detail = e).to_string(),
                         ),
@@ -2922,7 +2918,7 @@ impl Shell {
             let opened = win.update(cx, |_, window, cx| {
                 let tx = go_tx.clone();
                 let name = name.clone();
-                window.open_dialog(cx, move |dialog, _window, _cx| {
+                window.open_modal(cx, move |dialog, _window, _cx| {
                     let tx_go = tx.clone();
                     let tx_ok = tx.clone();
                     let tx_cancel = tx.clone();
@@ -3026,7 +3022,7 @@ impl Shell {
             Shell::broadcast_reload_for_process(&process, vec![cur], cx);
             let _ = win.update(cx, move |_, window, cx| {
                 match first_err {
-                    None => window.push_notification(
+                    None => window.push_notice(
                         Notification::success(trn!(
                             "Deleted {n} item",
                             "Deleted {n} items",
@@ -3057,7 +3053,7 @@ impl Shell {
                             sources: failed_perm,
                             delete: true,
                         };
-                        window.push_notification(
+                        window.push_notice(
                             crate::shell::trash_failure_notification(headline, detail, retry),
                             cx,
                         )
@@ -3093,7 +3089,7 @@ impl Shell {
             return;
         }
         let Some(db) = self.process.db_snapshot() else {
-            window.push_notification(
+            window.push_notice(
                 Notification::error(tr!("Ferail cannot reach its database to restore items.")),
                 cx,
             );
@@ -3177,7 +3173,7 @@ impl Shell {
             Shell::broadcast_reload_for_process(&process, touched, cx);
             let _ = win.update(cx, move |_, window, cx| {
                 if !restored.is_empty() {
-                    window.push_notification(
+                    window.push_notice(
                         Notification::success(trn!(
                             "Put {n} item back",
                             "Put {n} items back",
@@ -3190,7 +3186,7 @@ impl Shell {
                 // came from is not the same as failing to move it, and the
                 // user can do nothing about the first.
                 if unknown > 0 {
-                    window.push_notification(
+                    window.push_notice(
                         Notification::info(trn!(
                             "{n} item was not put in the Trash by Ferail, so its original location is unknown.",
                             "{n} items were not put in the Trash by Ferail, so their original locations are unknown.",
@@ -3200,7 +3196,7 @@ impl Shell {
                     );
                 }
                 if let Some(failure) = failures.first() {
-                    window.push_notification(
+                    window.push_notice(
                         Notification::error(tr!(
                             "Could not put everything back: {detail}",
                             detail = failure.to_string()
@@ -3256,14 +3252,14 @@ impl Shell {
             let (dirs, items, unreadable) = preview;
             if items == 0 && !unreadable {
                 let _ = win.update(cx, |_, window, cx| {
-                    window.push_notification(Notification::info(tr!("Trash is already empty")), cx);
+                    window.push_notice(Notification::info(tr!("Trash is already empty")), cx);
                 });
                 return;
             }
             let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
             let opened = win.update(cx, |_, window, cx| {
                 let tx = go_tx.clone();
-                window.open_dialog(cx, move |dialog, _window, _cx| {
+                window.open_modal(cx, move |dialog, _window, _cx| {
                     let tx_go = tx.clone();
                     let tx_cancel = tx.clone();
                     let body = if items > 0 {
@@ -3362,7 +3358,7 @@ impl Shell {
             let _ = win.update(cx, move |_, window, cx| {
                 if failures.is_empty() {
                     if deleted == 0 && unreadable {
-                        window.push_notification(
+                        window.push_notice(
                             Notification::error(tr!(
                                 "Couldn't read the Trash (permission denied). Grant Ferail \
                                  Files & Folders access and try again."
@@ -3370,7 +3366,7 @@ impl Shell {
                             cx,
                         );
                     } else {
-                        window.push_notification(
+                        window.push_notice(
                             Notification::success(trn!(
                                 "Emptied Trash: {n} item deleted",
                                 "Emptied Trash: {n} items deleted",
@@ -3406,7 +3402,7 @@ impl Shell {
                     sources: failed_perm,
                     delete: true,
                 };
-                window.push_notification(
+                window.push_notice(
                     crate::shell::trash_failure_notification(
                         summary.clone(),
                         format!("{summary}\n\n{detail}"),
@@ -3450,7 +3446,7 @@ impl Shell {
         let ok_label = ok_label.into();
         let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
         let win = window.window_handle();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let tx_go = go_tx.clone();
             let tx_cancel = go_tx.clone();
             let body = body.clone();
@@ -3606,7 +3602,7 @@ impl Shell {
         let on_commit = std::rc::Rc::new(on_commit);
         let shell = cx.entity();
         let input = input_state.clone();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let input = input.clone();
             let shell = shell.clone();
             let original = original.clone();
@@ -3625,7 +3621,7 @@ impl Shell {
                     if validate_as_filename {
                         let disk = ferail_fs_native::paths::on_disk_leaf(&new_name);
                         if let Err(msg) = ferail_fs_native::paths::validate_leaf(&disk) {
-                            window.push_notification(
+                            window.push_notice(
                                 gpui_component::notification::Notification::error(msg),
                                 cx,
                             );
@@ -4771,7 +4767,7 @@ impl Shell {
                                         }
                                     });
                                 }
-                                window.push_notification(note, cx);
+                                window.push_notice(note, cx);
                             });
                         }
                     }
@@ -4784,8 +4780,7 @@ impl Shell {
                     }
                     crate::log_warn!(90, "{failure_label} failed: {e}");
                     let _ = win.update(cx, |_, window, cx| {
-                        window
-                            .push_notification(file_op_error_notification(&failure_label, &e), cx);
+                        window.push_notice(file_op_error_notification(&failure_label, &e), cx);
                     });
                 }
             }
@@ -5015,7 +5010,7 @@ impl Shell {
                 // rather than racing it.
                 cx.defer(move |cx| {
                     let _ = settle_window.update(cx, |_, window, cx| {
-                        window.push_notification(
+                        window.push_notice(
                             gpui_component::notification::Notification::warning(
                                 message.to_string(),
                             ),
@@ -5441,18 +5436,18 @@ impl Shell {
                     cleared
                 )
             };
-            window.push_notification(Notification::success(msg), cx);
+            window.push_notice(Notification::success(msg), cx);
         }
         // With partial failures, leave visible badges conservative until
         // Refresh re-reads them instead of claiming the entire subtree won.
         if cleared == 0 && failures.is_empty() && !cancelled {
-            window.push_notification(Notification::info(tr!("No quarantine marks found")), cx);
+            window.push_notice(Notification::info(tr!("No quarantine marks found")), cx);
         }
         if !failures.is_empty() {
             // Per-item failures through the same structured report the
             // copy/move path uses (Copy button + expandable detail via
             // the shared error toast).
-            window.push_notification(
+            window.push_notice(
                 super::error_notification(crate::shell::file_op_failure_report(
                     &tr!("Clear quarantine"),
                     usize::try_from(cleared).unwrap_or(usize::MAX),

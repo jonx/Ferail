@@ -93,19 +93,14 @@ filetime    = "0.2"
 
 # External: new stack (ferail-gpui).
 #
-# Pinning strategy: `gpui-component` is pinned to a specific rev (it
-# is our higher-level coupling and we want updates to be deliberate).
-# `gpui` must resolve to ONE source shared with gpui-component's own
-# gpui dependency, or cargo resolves two/three incompatible gpui
-# copies (see docs/GPUI-UPSTREAM.md §1). How to share it depends on
-# how gpui-component declares gpui at the rev we pin:
-#   - unpinned (no rev, like current main): leave ours unpinned too;
-#     both float and unify, and the committed Cargo.lock is the real
-#     pin. Bump with `cargo update -p gpui` (drags the whole zed set).
-#   - pinned to an explicit rev (the c112e7b-era style): mirror that
-#     exact rev here.
-# When bumping gpui-component, read its Cargo.toml `gpui = { ... }`
-# and match its style. Reproducibility comes from committing Cargo.lock.
+# Pinning strategy: GPUI comes from the `gpui-pre-*` crates.io snapshots
+# of Zed (renamed back to `gpui`, `gpui_platform`, `reqwest_client` here),
+# and gpui-component from its crates.io release. Every pin is exact (`=`):
+# each gpui-component release compiles against exactly one snapshot, and
+# any snapshot may change GPUI's API. Bump them together, to the snapshot
+# the gpui-component release declares in its own workspace Cargo.toml
+# (`gpui = { package = "gpui-pre", version = "=…" }`); a mismatch puts two
+# incompatible GPUIs in the graph (see docs/GPUI-UPSTREAM.md §1).
 # test-support: enables `Window::render_to_image` + the matching impl
 # in `gpui_macos` so the headless screenshot CLI in ferail-gpui works.
 # test-support is NOT enabled here: it drags in gpui's leak-detection,
@@ -119,12 +114,12 @@ gpui = { package = "gpui-pre", version = "=0.3.8", features = ["profiler"] }
 # build compiles but panics at startup: guess_compositor() returns "Wayland"
 # and hits the unreachable arm. No-op on macOS/Windows (gpui_linux is
 # Linux-only there).
+# runtime_shaders compiles the Metal shaders at launch instead of at build
+# time, so building does not need Xcode's `metal` compiler.
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = ["font-kit", "wayland", "x11", "runtime_shaders"] }
 # Real HTTP for gpui's `cx.http_client()` (gpui itself installs a
-# NullHttpClient). Same zed source as gpui: the lock resolves them to one
-# rev, and its `zed-reqwest`/tokio underpinnings are already in the graph
-# via gpui-component-assets, so this adds the thin wrapper only. Powers the
-# update check (docs/features/UPDATES.md).
+# NullHttpClient). Same snapshot as gpui. Powers the update check
+# (docs/features/UPDATES.md).
 reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.8" }
 # `tree-sitter-languages` pulls in the full tree-sitter grammar set so
 # the preview pane's TextView highlights fenced code blocks (and
@@ -134,21 +129,6 @@ gpui-component = { version = "=0.7.1", features = ["tree-sitter-languages"] }
 gpui-component-assets = { package = "gpui-kit-assets", version = "=0.7.1" }
 gpui-fps = { version = "=0.7.1" }
 
-# Zed-source patches allowed here are **in-repo** paths, committed and therefore
-# present in every clone and on CI.
-#
-# `ztracing` (and its satellites `ztracing_macro` and `zlog`) are GPL-3.0,
-# and gpui depends on ztracing directly as of zed 00cba838a: previously the
-# only edge was via `sum_tree`, which we severed with a vendored fork (see
-# git history for vendor/sum-tree). Outside Zed's own `--cfg ztracing`
-# profiling builds the crate is pure no-ops, so `vendor/ztracing` is a
-# clean-room MIT/Apache no-op stub: behaviourally identical, not
-# GPL-derived. Patching it also drops ztracing_macro and zlog from the
-# graph and made the sum_tree fork unnecessary. See vendor/ztracing/README.md.
-# Verify with:
-#
-#     cargo tree -p ferail-gpui -i ztracing  # must print ONLY vendor/ztracing
-#     cargo tree -p ferail-gpui -i zlog      # must print nothing
 # `tar` gates its path<->bytes conversion, symlink, permission and xattr
 # helpers on cfg(unix)/cfg(windows)/wasm32, and AROS is none of those: the
 # crate simply does not compile for the target. `vendor/tar` is upstream
@@ -156,6 +136,10 @@ gpui-fps = { version = "=0.7.1" }
 # the sibling-checkout patches this one is safe (and required) on every
 # platform and stays in the shared manifest. See vendor/tar/README.md.
 [patch.crates-io]
+# GPUI promotes native file drags on macOS/Wayland, but its Windows backend
+# leaves the platform hooks disabled. This narrow Apache-2.0 fork adds the
+# missing Shell/OLE handoff; see vendor/gpui_windows/README.md.
+gpui-pre-windows = { path = "vendor/gpui_windows" }
 tar = { path = "vendor/tar" }
 # The legacy Objective-C `block` crate still sits below cocoa/metal in GPUI's
 # macOS graph. Its empty-enum declaration for `_NSConcreteStackBlock` triggers

@@ -15,6 +15,7 @@
 //! instead of growing the backlog. Cancellation is cooperative via
 //! `AtomicBool` (also checked inside the backpressure wait).
 
+use crate::private_mode::PrivateWindowExt as _;
 use crate::text::{TextScale as _, TruncateMiddle as _};
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
@@ -69,7 +70,7 @@ use ferail_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, ElementExt, Root, Selectable, Sizable, WindowExt as _,
+    ActiveTheme, Disableable, ElementExt, Root, Selectable, Sizable,
     button::{Button, ButtonGroup},
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -1802,7 +1803,7 @@ impl DiskUsageView {
                                 use gpui_component::notification::Notification;
                                 if let Some(path) = crate::platform_shell::app_bundle_path() {
                                     cx.write_to_clipboard(ClipboardItem::new_string(path));
-                                    window.push_notification(
+                                    window.push_notice(
                                         Notification::info(tr!(
                                             "Ferail's path is copied. Add it in Full Disk Access, then relaunch Ferail."
                                         ))
@@ -2586,7 +2587,7 @@ impl DiskUsageView {
             return;
         }
         if paths.len() > GET_INFO_CAP {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!(
                     "Showing info for the first {cap} of {total} items.",
                     cap = GET_INFO_CAP,
@@ -2618,7 +2619,7 @@ impl DiskUsageView {
         let refs: Vec<(&std::path::Path, bool)> =
             items.iter().map(|(p, d, _)| (p.as_path(), *d)).collect();
         if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
-            window.push_notification(
+            window.push_notice(
                 Notification::error(tr!("File clipboard isn't available on this platform yet.")),
                 cx,
             );
@@ -2632,7 +2633,7 @@ impl DiskUsageView {
         } else {
             trn!("Copied {n} item", "Copied {n} items", items.len())
         };
-        window.push_notification(Notification::success(msg), cx);
+        window.push_notice(Notification::success(msg), cx);
     }
 
     fn on_du_copy_paths(&mut self, _: &DuCopyPaths, window: &mut Window, cx: &mut Context<Self>) {
@@ -2648,7 +2649,7 @@ impl DiskUsageView {
             .join("\n");
         crate::platform_shell::copy_to_clipboard(&text);
         let msg = trn!("Copied path", "Copied {n} paths", items.len());
-        window.push_notification(Notification::success(msg), cx);
+        window.push_notice(Notification::success(msg), cx);
     }
 
     fn on_du_trash(&mut self, _: &DuTrash, window: &mut Window, cx: &mut Context<Self>) {
@@ -2703,9 +2704,9 @@ impl DiskUsageView {
             let _ = win.update(cx, |_, window, cx| {
                 if failed.is_empty() {
                     let msg = trn!("Moved {n} item to Trash", "Moved {n} items to Trash", ok);
-                    window.push_notification(Notification::success(msg), cx);
+                    window.push_notice(Notification::success(msg), cx);
                 } else {
-                    window.push_notification(
+                    window.push_notice(
                         crate::shell::error_notification(
                             tr!(
                                 "Trashed {ok}, {failed} failed: {detail}",
@@ -2827,10 +2828,8 @@ impl DiskUsageView {
         // existing document/page (a full <!DOCTYPE> is for files).
         let html = self.export_html(target, false);
         crate::platform_shell::copy_to_clipboard(&html);
-        window.push_notification(
-            Notification::success(tr!(
-                "Treemap HTML copied, paste into any page or document."
-            )),
+        window.push_notice(
+            Notification::success(tr!("Treemap HTML copied, paste into any page or document.")),
             cx,
         );
     }
@@ -2896,7 +2895,7 @@ impl DiskUsageView {
             let ok = result.is_ok();
             let _ = win.update(cx, |_, window, cx| match &result {
                 Ok(()) => {
-                    window.push_notification(
+                    window.push_notice(
                         Notification::success(tr!(
                             "Saved {name}",
                             name = path.file_name().unwrap_or_default().to_string_lossy()
@@ -2905,7 +2904,7 @@ impl DiskUsageView {
                     );
                 }
                 Err(e) => {
-                    window.push_notification(
+                    window.push_notice(
                         crate::shell::error_notification(
                             tr!("Save failed: {detail}", detail = e).to_string(),
                         ),

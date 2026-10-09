@@ -4,6 +4,7 @@
 //! creation, validation, collision handling, and cleanup all happen through
 //! `ferail_fs_native::convert_archive` on the background executor.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::PathBuf;
 
 use gpui::prelude::FluentBuilder as _;
@@ -12,7 +13,7 @@ use gpui::{
     Styled, Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
     button::{Button, ButtonGroup, ButtonVariants as _},
     dialog::{DialogAction, DialogClose, DialogFooter},
     h_flex,
@@ -272,7 +273,7 @@ pub fn open_dialog(
     let state =
         cx.new(|cx| ConvertArchiveView::new(source, source_format, known_password, window, cx));
     let state_for_dialog = state.clone();
-    window.open_dialog(cx, move |dialog, _window, _cx| {
+    window.open_modal(cx, move |dialog, _window, _cx| {
         let state = state_for_dialog.clone();
         let shell = shell.clone();
         dialog

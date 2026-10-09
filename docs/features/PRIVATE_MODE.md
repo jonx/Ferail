@@ -126,10 +126,15 @@ Entry must be fail-closed:
 While `Arming`, roots already use the private presenter. The screenshot harness
 waits for `Active(generation)` and a settled render before capturing.
 
-Ferail-rendered dialogs, result panels and popovers stay in their prepared
-state so they can be captured. They are frozen by the interaction gate and
-their values are presented privately. Native/external windows remain outside
-the promise above.
+Result panels and popovers stay in their prepared state so they can be
+captured. They are frozen by the interaction gate and their values are
+presented privately. Dialogs and notifications are different: gpui-component's
+window Root draws them above the interaction shield and outside every
+protected surface, so entry closes the open ones and `PrivateWindowExt`
+(`push_notice`, `open_modal`) holds any that arrive while the mode is on.
+Clippy denies the direct `WindowExt` calls. A notification already on screen
+fades out over its 200 ms exit animation. Native/external windows remain
+outside the promise above.
 
 ### 2.2 While active
 
@@ -171,6 +176,8 @@ On exit:
 - retain only the process-session key (there is no whole-model alias cache);
 - restore prior per-window opacity;
 - resume ordinary Viewer and viewport preview painting;
+- show the notifications and open the dialogs held while the mode was on, in
+  arrival order, in the windows they were meant for;
 - remove the interaction gate and repaint all windows.
 
 No state is written to app settings. Relaunch always starts non-private.

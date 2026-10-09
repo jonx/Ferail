@@ -472,19 +472,10 @@ Net-new, but each sits on plumbing that already exists.
   local `scripts/package-mac.sh` run plus `gh release upload`. Linux .debs
   already release from CI on `v*` tags; the Windows ZIP is still a local
   `scripts/package-win.ps1` run.
-- **`cargo-deny` for licence and advisory drift.** There is no `deny.toml`, so
-  a future `gpui` rev bump that changes the transitive licence surface would
-  not be caught mechanically. The GPL edge is severed today through
-  [`vendor/ztracing`](vendor/ztracing/README.md); the lesson that made it
-  necessary is worth keeping: **do not audit the licence surface from the
-  lockfile alone**, resolve the graph. A lockfile generated with the AROS
-  `[patch]` active dropped `ztracing` entirely and made THIRD-PARTY-NOTICES.md
-  record the edge as fixed upstream when it never was.
-- **One published zed fork** referenced by `git =` URL, carrying both the GPL
-  severance and the `gpui_windows::render_to_image` patch. It would retire
-  `vendor/sum-tree` and the local screenshot path override. Upstream fix
-  tracked at <https://github.com/zed-industries/zed/issues/55470>, acknowledged
-  but stuck in legal: do **not** assume it lands on a timeline.
+- **`cargo-deny` in CI.** `deny.toml` exists but no workflow runs it, and
+  `cargo deny check licenses` fails today on `webpki-roots` /
+  `webpki-root-certs` (CDLA-Permissive-2.0, the Mozilla CA bundle), which the
+  allow list does not name. Decide on that licence, then add the check to CI.
 - Visual polish still missing from the GPUI shell: vibrancy and materials,
   titlebar hit testing, sharper row density, empty and error illustrations, and
   an animation-budget review.

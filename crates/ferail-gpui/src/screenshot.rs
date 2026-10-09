@@ -14,13 +14,14 @@
 //! Roughly 20 flags drive navigation, selection, and overlays so a
 //! single off-screen frame can be captured for visual verification.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::PathBuf;
 
 use crate::assets::FeraAssets;
 use anyhow::{Context as _, Result};
 use ferail_fs_native::home_dir;
 use gpui::*;
-use gpui_component::{Theme, ThemeMode, WindowExt as _};
+use gpui_component::{Theme, ThemeMode};
 
 use crate::settings::{SettingsView, category_from_arg};
 use crate::shell::Shell;
@@ -574,10 +575,7 @@ pub fn run(args: Args) -> Result<()> {
     // Before any menu is built, and only when asked: a capture never reads or
     // writes the user's own menu customization.
     if args.menu_hidden.is_some() || args.menu_layout.is_some() {
-        crate::menu_plan::prefs::init(
-            args.menu_hidden.as_deref(),
-            args.menu_layout.as_deref(),
-        );
+        crate::menu_plan::prefs::init(args.menu_hidden.as_deref(), args.menu_layout.as_deref());
     }
     let path = args
         .screenshot
@@ -1366,8 +1364,7 @@ impl ShellArgs {
                 .timer(std::time::Duration::from_millis(400))
                 .await;
             shell.update(cx, |shell, cx| {
-                let (provider, initial) =
-                    crate::platform_namespace::DemoNamespaceProvider::new();
+                let (provider, initial) = crate::platform_namespace::DemoNamespaceProvider::new();
                 if let Err(kind) = shell.open_platform_namespace(provider, initial, cx) {
                     crate::log_warn!(90, "--platform-namespace: {kind:?}");
                 }
@@ -1480,10 +1477,7 @@ impl ShellArgs {
             for _ in 0..notches.max(0) {
                 let _ = cx.update_window((*handle).into(), |_, window, cx| {
                     let bounds = window.bounds();
-                    let position = gpui::point(
-                        bounds.size.width / 2.0,
-                        bounds.size.height / 2.0,
-                    );
+                    let position = gpui::point(bounds.size.width / 2.0, bounds.size.height / 2.0);
                     let _ = window.dispatch_event(
                         gpui::PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
                             position,
@@ -1894,7 +1888,7 @@ impl ShellArgs {
         // The toast still surfaces correctly in the live window.
         if let Some(text) = self.simulate_toast.clone() {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
-                window.push_notification(crate::shell::error_notification(text), cx);
+                window.push_notice(crate::shell::error_notification(text), cx);
             });
         }
         if self.splitter.is_some() {

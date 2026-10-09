@@ -12,6 +12,7 @@
 //! `Shell::spawn_archive_op` like every other archive operation (worker
 //! thread, progress bar, cancel button, undo).
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::path::PathBuf;
 
 use gpui::{
@@ -19,7 +20,7 @@ use gpui::{
     SharedString, Styled, Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
     button::{Button, ButtonGroup, ButtonVariants as _},
     dialog::{DialogAction, DialogClose, DialogFooter},
     h_flex,
@@ -232,7 +233,7 @@ pub fn open_dialog(sources: Vec<PathBuf>, window: &mut Window, cx: &mut Context<
     let state = cx.new(|cx| NewArchiveView::new(sources, window, cx));
     let shell_entity = cx.entity();
     let state_for_dialog = state.clone();
-    window.open_dialog(cx, move |dialog, _window, _cx| {
+    window.open_modal(cx, move |dialog, _window, _cx| {
         let state = state_for_dialog.clone();
         let shell = shell_entity.clone();
         dialog

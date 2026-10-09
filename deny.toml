@@ -6,18 +6,13 @@
 #
 #   cargo deny check licenses advisories
 #
-# There is currently NO copyleft in the graph - by active severance, not
-# upstream accident. gpui depends on GPL-3.0 `ztracing` directly (since
-# zed 00cba838a), and `sum_tree` does too; both resolve to the clean-room
-# MIT/Apache no-op stub `vendor/ztracing` via the `[patch]` in the root
-# Cargo.toml, which also keeps GPL `ztracing_macro` and `zlog` out of the
-# graph entirely. So: a `ztracing` row in Cargo.lock pointing at
-# `vendor/ztracing` is CORRECT; ztracing from the zed git source, or any
-# appearance of ztracing_macro / zlog, means the severance broke. The
-# exception list below is EMPTY on purpose - any GPL crate that appears
-# after a gpui/gpui-component rev bump must fail this check rather than
-# inherit a stale allowance. See THIRD-PARTY-NOTICES.md (and upstream
-# zed#55470, still open) before re-adding anything here.
+# There is currently NO copyleft in the graph. Zed relicensed `ztracing`,
+# `ztracing_macro` and `zlog` under Apache-2.0 (zed#63573) and removed
+# GPUI's direct `ztracing` edge (zed#64237); the `gpui-pre-*` snapshots
+# Ferail builds against carry those Apache-2.0 crates. The exception list
+# below is EMPTY on purpose: any GPL crate that appears after a GPUI or
+# gpui-component bump must fail this check rather than inherit a stale
+# allowance. See THIRD-PARTY-NOTICES.md before re-adding anything here.
 
 [graph]
 all-features = false

@@ -5,6 +5,7 @@
 //! store only. macOS/Linux providers return an empty list, which also proves
 //! that adding the capability creates no placeholder UI on those platforms.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,7 +16,6 @@ use ferail_core::platform_locations::{
     PlatformRootId, PlatformRootsStore,
 };
 use gpui::{App, Context, Window};
-use gpui_component::WindowExt as _;
 use gpui_component::notification::Notification;
 
 use crate::shell::Shell;
@@ -305,7 +305,7 @@ impl Shell {
                 match result {
                     Err(PlatformRootErrorKind::Cancelled) => {}
                     Err(kind) => {
-                        window.push_notification(Notification::error(failure_message(kind)), cx);
+                        window.push_notice(Notification::error(failure_message(kind)), cx);
                     }
                     Ok(_) => {
                         let Some(path) = ready else { return };

@@ -10,7 +10,7 @@
 //! Surface: [`open_about_dialog`]: call from any App-level handler
 //! (menu / accelerator). It defers the actual open until the next app
 //! tick so app-menu dispatch has finished unwinding, then resolves a
-//! host window and routes `window.open_dialog(...)`.
+//! host window and routes `window.open_modal(...)`.
 //!
 //! Singleton: a `Global` boolean guards against stacked Abouts when
 //! the menu item is clicked twice in a row. The flag is cleared in
@@ -23,12 +23,12 @@
 //!  - Platform (OS · arch), Author, clickable Website
 //!  - Copyright
 
+use crate::private_mode::PrivateWindowExt as _;
 use crate::text::TextScale as _;
 use std::sync::Arc;
 
 use gpui::*;
 use gpui_component::{
-    WindowExt as _,
     dialog::{Dialog, DialogButtonProps},
     h_flex, v_flex,
 };
@@ -85,7 +85,7 @@ fn open_about_dialog_now(cx: &mut App) -> bool {
         return false;
     };
     host.update(cx, |_, window, cx| {
-        window.open_dialog(cx, move |dialog, _window, _cx| build_dialog(dialog));
+        window.open_modal(cx, move |dialog, _window, _cx| build_dialog(dialog));
     })
     .is_ok()
 }

@@ -8,12 +8,13 @@
 //! token row. Static content, no I/O, no state: safe to open from
 //! any click handler.
 
+use crate::private_mode::PrivateWindowExt as _;
 use crate::text::TextScale as _;
 use ferail_core::filter_expr::TOKEN_HELP;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, WindowExt as _,
+    ActiveTheme as _,
     dialog::{Dialog, DialogButtonProps},
     h_flex, v_flex,
 };
@@ -21,7 +22,7 @@ use gpui_component::{
 /// Open the cheat sheet as a modal in `window`. Esc, the close button,
 /// and an overlay click dismiss it.
 pub fn open_filter_help_dialog(window: &mut Window, cx: &mut App) {
-    window.open_dialog(cx, move |dialog, _window, cx| build_dialog(dialog, cx));
+    window.open_modal(cx, move |dialog, _window, cx| build_dialog(dialog, cx));
 }
 
 fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {

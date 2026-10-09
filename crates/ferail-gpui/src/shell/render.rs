@@ -430,7 +430,7 @@ impl Shell {
             let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
             let opened = win.update(cx, |_, window, cx| {
                 let tx = go_tx.clone();
-                window.open_dialog(cx, move |dialog, _window, _cx| {
+                window.open_modal(cx, move |dialog, _window, _cx| {
                     let tx_go = tx.clone();
                     let tx_cancel = tx.clone();
                     dialog
@@ -994,7 +994,7 @@ impl Shell {
                             // Access "+" sheet via Go to Folder.
                             if let Some(path) = crate::platform_shell::app_bundle_path() {
                                 cx.write_to_clipboard(ClipboardItem::new_string(path));
-                                window.push_notification(
+                                window.push_notice(
                                     Notification::info(tr!(
                                         "Ferail's path is copied. In the picker, click \
                                          \"+\", press \u{2318}\u{21e7}G, paste, and add it."
@@ -4877,7 +4877,7 @@ impl Render for Shell {
                     if let Some(fav) = removed_for_undo {
                         this.push_undo(UndoOp::RemoveFavorite(fav));
                     }
-                    window.push_notification(
+                    window.push_notice(
                         Notification::info(tr!(
                             "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo",
                             label = label

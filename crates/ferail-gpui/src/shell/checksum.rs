@@ -5,6 +5,7 @@
 //! persisted. The expected digest is copied into dialog-local state, so
 //! clearing it never mutates the system clipboard.
 
+use crate::private_mode::PrivateWindowExt as _;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ use gpui::{
     SharedString, Styled, Subscription, Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Sizable as _,
     button::Button,
     dialog::{DialogClose, DialogFooter},
     h_flex,
@@ -216,87 +217,87 @@ impl Render for ChecksumView {
         let muted = cx.theme().muted_foreground;
         let expected_is_empty = self.expected.read(cx).value().trim().is_empty();
 
-        let generated =
-            match &self.phase {
-                HashPhase::Computing { done, total } => {
-                    let fraction = if *total == 0 {
-                        0.0
-                    } else {
-                        (*done as f32 / *total as f32).clamp(0.0, 1.0)
-                    };
-                    v_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_between()
-                                .child(tr!("Calculating…"))
-                                .child(div().text_scale_xs().text_color(muted).child(
-                                    if *total == 0 {
+        let generated = match &self.phase {
+            HashPhase::Computing { done, total } => {
+                let fraction = if *total == 0 {
+                    0.0
+                } else {
+                    (*done as f32 / *total as f32).clamp(0.0, 1.0)
+                };
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(tr!("Calculating…"))
+                            .child(
+                                div()
+                                    .text_scale_xs()
+                                    .text_color(muted)
+                                    .child(if *total == 0 {
                                         tr!("Reading file…")
                                     } else {
                                         format!("{:.0}%", fraction * 100.0).into()
-                                    },
-                                )),
-                        )
-                        .child(
-                            Progress::new("sha256-progress")
-                                .small()
-                                .loading(*total == 0)
-                                .value(fraction * 100.0),
-                        )
-                        .into_any_element()
-                }
-                HashPhase::Ready(hash) => {
-                    let copy = hash.clone();
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .px_3()
-                                .py_2()
-                                .rounded(cx.theme().radius)
-                                .bg(cx.theme().secondary.opacity(0.5))
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .text_scale_xs()
-                                .whitespace_nowrap()
-                                .child(hash.clone()),
-                        )
-                        .child(
-                            Button::new("copy-sha256")
-                                .label(tr!("Copy"))
-                                .small()
-                                .on_click(move |_, window, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
-                                    window.push_notification(
-                                        Notification::success(tr!("SHA-256 copied")),
-                                        cx,
-                                    );
-                                }),
-                        )
-                        .into_any_element()
-                }
-                HashPhase::Failed(message) => div()
+                                    }),
+                            ),
+                    )
+                    .child(
+                        Progress::new("sha256-progress")
+                            .small()
+                            .loading(*total == 0)
+                            .value(fraction * 100.0),
+                    )
+                    .into_any_element()
+            }
+            HashPhase::Ready(hash) => {
+                let copy = hash.clone();
+                h_flex()
                     .w_full()
-                    .px_3()
-                    .py_2()
-                    .rounded(cx.theme().radius)
-                    .bg(cx.theme().danger.opacity(0.08))
-                    .text_scale_sm()
-                    .text_color(cx.theme().danger)
-                    .child(message.clone())
-                    .into_any_element(),
-                HashPhase::Cancelled => div()
-                    .text_scale_sm()
-                    .text_color(muted)
-                    .child(tr!("Calculation cancelled."))
-                    .into_any_element(),
-            };
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .px_3()
+                            .py_2()
+                            .rounded(cx.theme().radius)
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_scale_xs()
+                            .whitespace_nowrap()
+                            .child(hash.clone()),
+                    )
+                    .child(
+                        Button::new("copy-sha256")
+                            .label(tr!("Copy"))
+                            .small()
+                            .on_click(move |_, window, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
+                                window
+                                    .push_notice(Notification::success(tr!("SHA-256 copied")), cx);
+                            }),
+                    )
+                    .into_any_element()
+            }
+            HashPhase::Failed(message) => div()
+                .w_full()
+                .px_3()
+                .py_2()
+                .rounded(cx.theme().radius)
+                .bg(cx.theme().danger.opacity(0.08))
+                .text_scale_sm()
+                .text_color(cx.theme().danger)
+                .child(message.clone())
+                .into_any_element(),
+            HashPhase::Cancelled => div()
+                .text_scale_sm()
+                .text_color(muted)
+                .child(tr!("Calculation cancelled."))
+                .into_any_element(),
+        };
 
         let expected = self.expected.clone();
         let view = cx.entity();
@@ -373,21 +374,21 @@ impl Shell {
         crate::trail::command("Generate SHA-256");
         let targets = self.action_entries_visible_order(cx);
         if targets.len() != 1 {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!("Select one file to generate its SHA-256.")),
                 cx,
             );
             return;
         }
         let Some((_, entry, path)) = targets.into_iter().next() else {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!("Select one file to generate its SHA-256.")),
                 cx,
             );
             return;
         };
         if matches!(entry.kind, EntryKind::Directory) {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!("Select one file to generate its SHA-256.")),
                 cx,
             );
@@ -413,7 +414,7 @@ impl Shell {
 
         let state_for_dialog = state.clone();
         let cancel_for_dialog = cancel.clone();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             dialog
                 .title(tr!("SHA-256 checksum"))
                 .w(px(680.))

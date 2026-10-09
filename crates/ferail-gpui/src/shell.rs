@@ -5,6 +5,7 @@
 //! Phase 4.b will wire the sidebar to real Locations/Volumes. Phase
 //! 4.c brings the virtualized file list.
 
+use crate::private_mode::PrivateWindowExt as _;
 use crate::text::TextScale as _;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -28,7 +29,7 @@ use ferail_core::{EntryKind, EnumerationError, FileEntry, NodeId};
 use ferail_fs_native::{NativeFs, home_dir};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, Root, Selectable, Sizable, TitleBar, WindowExt,
+    ActiveTheme, Disableable, Selectable, Sizable, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -1287,7 +1288,7 @@ impl Shell {
         }
         let (provider, initial) = crate::platform_shell::WindowsNamespaceProvider::new(root);
         if let Err(kind) = self.open_platform_namespace(provider, initial, cx) {
-            window.push_notification(
+            window.push_notice(
                 gpui_component::notification::Notification::error(match kind {
                     PlatformLocationErrorKind::Unavailable => tr!("Windows location unavailable"),
                     _ => tr!("Could not open the Windows location"),
@@ -1419,7 +1420,7 @@ impl Shell {
             > 128
         {
             let _ = window.update(cx, |_, window, cx| {
-                window.push_notification(
+                window.push_notice(
                     gpui_component::notification::Notification::error(if restoring {
                         tr!("Too many items selected to restore at once")
                     } else {
@@ -1454,7 +1455,7 @@ impl Shell {
                 Ok(_) | Err(PlatformLocationErrorKind::Cancelled) => {}
                 Err(_) => {
                     let _ = window.update(cx, |_, window, cx| {
-                        window.push_notification(
+                        window.push_notice(
                             gpui_component::notification::Notification::error(if restoring {
                                 tr!("Could not restore the selected items")
                             } else {
@@ -3204,7 +3205,7 @@ impl Shell {
         if self.active_tab().platform_namespace.is_none() {
             return false;
         }
-        window.push_notification(
+        window.push_notice(
             gpui_component::notification::Notification::info(tr!(
                 "This command is not available for Windows virtual items. Use More… for supported Windows actions."
             )),
@@ -3283,7 +3284,7 @@ impl Shell {
                             .await;
                         if failures > 0 {
                             let _ = win.update(cx, |_, window, cx| {
-                                window.push_notification(
+                                window.push_notice(
                                     gpui_component::notification::Notification::error(trn!(
                                         "Could not open {n} item",
                                         "Could not open {n} items",
@@ -3463,7 +3464,7 @@ impl Shell {
                 // AppKit handles setFrame: on a native-fullscreen window
                 // poorly (Space bookkeeping); refuse instead of glitching.
                 if crate::platform_shell::window_is_fullscreen(ns_view) {
-                    window.push_notification(
+                    window.push_notice(
                         gpui_component::notification::Notification::info(tr!(
                             "Exit full screen before docking the window."
                         )),
@@ -4000,7 +4001,7 @@ impl Shell {
             )
         });
         let dialog_prompt = prompt.clone();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let prompt_for_go = dialog_prompt.clone();
             dialog
                 .title(tr!("Go to Folder"))
@@ -4133,8 +4134,7 @@ impl Shell {
         if self.performance_monitor.is_some() {
             self.performance_monitor = None;
         } else {
-            self.performance_monitor =
-                Some(cx.new(|cx| gpui_fps::FpsMonitor::new(window, cx)));
+            self.performance_monitor = Some(cx.new(|cx| gpui_fps::FpsMonitor::new(window, cx)));
         }
         cx.notify();
     }
@@ -4521,7 +4521,7 @@ impl Shell {
             }
             Err(e) => {
                 crate::log_warn!(90, "disk-usage: pop-out failed: {e:?}");
-                window.push_notification(
+                window.push_notice(
                     error_notification(
                         tr!(
                             "Could not pop out Disk Usage: {detail}",
@@ -4667,7 +4667,7 @@ impl Shell {
         }
         if playlist.is_empty() {
             use gpui_component::notification::Notification;
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!("No files to view in this folder")),
                 cx,
             );
@@ -4709,7 +4709,7 @@ impl Shell {
         }
         if playlist.is_empty() {
             use gpui_component::notification::Notification;
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!("No files to view in this folder")),
                 cx,
             );
@@ -6543,7 +6543,7 @@ impl Shell {
                         if surfaced {
                             let _ = win.update(cx, |_, window, cx| {
                                 use gpui_component::notification::Notification;
-                                window.push_notification(Notification::success(message), cx);
+                                window.push_notice(Notification::success(message), cx);
                             });
                         }
                     }
@@ -6551,7 +6551,7 @@ impl Shell {
                 Err(e) => {
                     crate::log_warn!(90, "{failure_label} failed: {e}");
                     let _ = win.update(cx, |_, window, cx| {
-                        window.push_notification(
+                        window.push_notice(
                             file_op_error_notification(&crate::i18n::tr_static(failure_label), &e),
                             cx,
                         );
@@ -6577,7 +6577,7 @@ impl Shell {
         crate::trail::command("Undo");
         use gpui_component::notification::Notification;
         let Some(op) = self.process.undo_stack.borrow_mut().pop_back() else {
-            window.push_notification(Notification::info(tr!("Nothing to undo")), cx);
+            window.push_notice(Notification::info(tr!("Nothing to undo")), cx);
             return;
         };
         let label = op.label();
@@ -6586,13 +6586,13 @@ impl Shell {
                 self.process.favorites().update(cx, |f, cx| {
                     f.remove(id, cx);
                 });
-                window.push_notification(Notification::success(label.clone()), cx);
+                window.push_notice(Notification::success(label.clone()), cx);
             }
             UndoOp::RemoveFavorite(fav) => {
                 self.process.favorites().update(cx, |f, cx| {
                     f.restore(fav, cx);
                 });
-                window.push_notification(Notification::success(label.clone()), cx);
+                window.push_notice(Notification::success(label.clone()), cx);
             }
             fs_op => {
                 // Prime Directive: `apply_fs` is an arbitrary-size
@@ -6628,12 +6628,12 @@ impl Shell {
                         Ok(()) => {
                             Shell::broadcast_reload_for_process(&process, reload, cx);
                             let _ = win.update(cx, |_, window, cx| {
-                                window.push_notification(Notification::success(label.clone()), cx);
+                                window.push_notice(Notification::success(label.clone()), cx);
                             });
                         }
                         Err(e) => {
                             let _ = win.update(cx, |_, window, cx| {
-                                window.push_notification(
+                                window.push_notice(
                                     Notification::error(tr!("Undo failed: {detail}", detail = e)),
                                     cx,
                                 );
@@ -6678,7 +6678,7 @@ impl Shell {
         use gpui_component::notification::Notification;
         let target = self.resolve_favorite_target(cx);
         let Some((path, kind)) = target else {
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!("No folder available to add to Favorites.")),
                 cx,
             );
@@ -6702,7 +6702,7 @@ impl Shell {
                 .detach();
             }
             FavoriteResolved::NotAFolder => {
-                window.push_notification(
+                window.push_notice(
                     Notification::info(tr!("Only folders can be added to Favorites.")),
                     cx,
                 );
@@ -6743,7 +6743,7 @@ impl Shell {
             if let Some(fav) = removed_for_undo {
                 self.push_undo(UndoOp::RemoveFavorite(fav));
             }
-            window.push_notification(
+            window.push_notice(
                 Notification::info(tr!(
                     "Removed \u{201C}{label}\u{201D} from Favorites · Cmd+Z to undo",
                     label = label
@@ -6769,7 +6769,7 @@ impl Shell {
             if let Some(id) = added_id {
                 self.push_undo(UndoOp::AddFavorite(id));
             }
-            window.push_notification(
+            window.push_notice(
                 Notification::success(tr!(
                     "Added \u{201C}{label}\u{201D} to Favorites",
                     label = label
@@ -7080,7 +7080,7 @@ impl Shell {
                 ),
             ),
         };
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_modal(cx, move |dialog, _window, _cx| {
             let shell_locate = shell.clone();
             let shell_remove = shell.clone();
             let title = title.clone();
@@ -7120,7 +7120,7 @@ impl Shell {
                                             s.push_undo(UndoOp::RemoveFavorite(fav));
                                         }
                                     });
-                                    window.push_notification(
+                                    window.push_notice(
                                         Notification::info(tr!(
                                             "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo",
                                             label = label
@@ -7234,7 +7234,7 @@ impl Shell {
         self.remove_favorite_collapsing(id, cx);
         self.push_undo(UndoOp::RemoveFavorite(fav));
         self.focused_favorite = None;
-        window.push_notification(
+        window.push_notice(
             Notification::info(tr!(
                 "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo",
                 label = label
@@ -7664,7 +7664,7 @@ impl Shell {
                 && let Some(window) = window
             {
                 let _ = window.update(cx, |_, window, cx| {
-                    window.push_notification(
+                    window.push_notice(
                         gpui_component::notification::Notification::error(tr!(
                             "Could not open item: {error}",
                             error = error
@@ -7796,7 +7796,7 @@ impl Shell {
                         ShortcutFailureKind::Failed => tr!("Could not resolve the shortcut"),
                     };
                     let _ = window.update(cx, |_, window, cx| {
-                        window.push_notification(
+                        window.push_notice(
                             gpui_component::notification::Notification::error(message),
                             cx,
                         );
