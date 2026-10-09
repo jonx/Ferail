@@ -59,6 +59,27 @@ pub fn session() -> Arc<PrivateSession> {
         .clone()
 }
 
+/// App-level Private Mode actions, from the init shared by the app and the
+/// screenshot harness.
+///
+/// Escape is bound to [`ExitPrivateMode`] with no context so the mode stays
+/// reachable from every window. GPUI ranks a context-free binding at the
+/// deepest level and the later binding first, so this one is tried before
+/// every Dialog, PopupMenu, Input or viewer Escape binding: outside Private
+/// Mode the handler must hand the keystroke on, or Escape closes nothing
+/// anywhere in the app.
+pub fn init(cx: &mut App) {
+    cx.bind_keys([gpui::KeyBinding::new("escape", ExitPrivateMode, None)]);
+    cx.on_action(|_: &TogglePrivateMode, cx| toggle(cx));
+    cx.on_action(|_: &ExitPrivateMode, cx| {
+        if enabled() {
+            exit(cx);
+        } else {
+            cx.propagate();
+        }
+    });
+}
+
 pub fn toggle(cx: &mut App) {
     if enabled() {
         exit(cx);

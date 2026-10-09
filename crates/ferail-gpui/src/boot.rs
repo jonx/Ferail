@@ -6,7 +6,7 @@
 //! the desktop `main()`, and the AROS port's staticlib wrapper
 //! (`ferail-aros-app`), where a C harness owns `main()` and calls in.
 
-use crate::private_mode::{ExitPrivateMode, TogglePrivateMode};
+use crate::private_mode::TogglePrivateMode;
 use crate::{
     assets::FeraAssets,
     screenshot,
@@ -268,16 +268,6 @@ pub fn run_gui(args: screenshot::Args) {
         // the menu item below can advertise the shortcut hint).
         cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| quit_after_dev_cleanup(cx));
-        // Private Mode is process-global and must remain reachable from every
-        // Ferail window. Escape is a global fallback; context-specific Escape
-        // bindings still win while the mode is off.
-        cx.bind_keys([KeyBinding::new("escape", ExitPrivateMode, None)]);
-        cx.on_action(|_: &TogglePrivateMode, cx| crate::private_mode::toggle(cx));
-        cx.on_action(|_: &ExitPrivateMode, cx| {
-            if crate::private_mode::enabled() {
-                crate::private_mode::exit(cx);
-            }
-        });
         // Phase C: process stays resident at zero windows (Finder /
         // Safari model). Quit only via Cmd+Q or the app menu. A future
         // preference may toggle this back to "quit on last window."

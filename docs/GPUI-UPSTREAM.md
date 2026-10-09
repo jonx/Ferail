@@ -628,6 +628,16 @@ in the focused context stack. `Cancel` walks the dialog's own path, so its
 keyboard-shortcuts palette, a Shell overlay rather than a dialog, closes on
 Escape from the Shell's own interceptor for the same reason.
 
+**Not upstream, and the bigger half of the symptom:** Ferail's own
+context-free `escape` → `ExitPrivateMode` binding. GPUI ranks a binding with no
+context predicate at the deepest depth (`binding_enabled` returns
+`contexts.len()`) and breaks ties by keymap order, latest first, so that
+binding was tried before every Dialog, PopupMenu and Input Escape binding, and
+its handler consumed the keystroke even with Private Mode off. It now calls
+`cx.propagate()` outside Private Mode (`private_mode::init`, run from the init
+the app and the screenshot harness share, so captures exercise the same
+keymap). A context-free binding is never a "fallback" in GPUI.
+
 **What upstream could do:** handle Escape for the topmost dialog at the Root
 (the Root already knows the dialog stack), or expose the dialog's dispatch
 anchor so an application can route `Cancel` to it.

@@ -915,6 +915,9 @@ pub fn init(cx: &mut App) {
     // Escape reaches the open dialog even when focus was taken back from it
     // (menu bar, toolbar click): see crate::overlay.
     crate::overlay::install(cx);
+    // After the keymap: its context-free Escape binding must be ranked
+    // exactly as it is in the app (see private_mode::init).
+    crate::private_mode::init(cx);
     // Add highlight queries for grammars gpui-component ships without
     // one (C#, C, C++, Bash, Swift, CMake) so the preview pane colors
     // them. Process-global registry; runs once.
