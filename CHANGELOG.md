@@ -8,6 +8,19 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Going up to a parent folder selects the folder you came from and scrolls
+  it into view, whichever way you go up.** Backspace and Back already did
+  this; clicking a breadcrumb segment, a folder in the sidebar tree, or typing
+  an ancestor path now does too, so the folder you just left is highlighted
+  and centred in a long listing instead of the list starting at the top.
+
+- **Folder sizes are measured once you settle on a folder, not the instant it
+  opens.** The background walk that sums each subfolder used to start on every
+  listing, so clicking through several folders quickly kept starting and
+  throwing away heavy disk work that competed with the folder you were reading.
+  It now waits about a second and a half of quiet, with no key, click, scroll
+  or folder still loading, before it starts. Refresh still measures right away.
+
 - **Escape closes dialogs, menus and popups again.** The Private Mode
   shortcut took Escape before anything else in the app and, with Private Mode
   off, simply dropped it, so no dialog, menu or popup closed with Escape. It
