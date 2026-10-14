@@ -14,6 +14,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   an ancestor path now does too, so the folder you just left is highlighted
   and centred in a long listing instead of the list starting at the top.
 
+- **Leaving an archive selects the archive file.** Closing the archive view
+  with Escape, Backspace or Back returns to the folder that holds the archive
+  with that file highlighted and scrolled into view, like leaving a subfolder.
+  Backspace used to climb one level above the archive's folder instead.
+
 - **Folder sizes are measured once you settle on a folder, not the instant it
   opens.** The background walk that sums each subfolder used to start on every
   listing, so clicking through several folders quickly kept starting and

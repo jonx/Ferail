@@ -4493,12 +4493,50 @@ impl Shell {
     }
 
     pub(super) fn close_active_tool_result(&mut self, cx: &mut Context<Self>) {
+        if self.leave_archive_workbench(cx) {
+            return;
+        }
         if self.active_tab().tool_result.is_none() {
             return;
         }
         self.active_tab_mut().tool_result = None;
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
+    }
+
+    /// Leave a docked archive workbench the way leaving a subfolder works:
+    /// back to the folder that holds the archive, with the archive file
+    /// selected and scrolled into view. Browsing an archive is navigation
+    /// *into* a file, so Escape, Backspace and Back all land here. Returns
+    /// `false` when the active tab is not showing an archive.
+    pub(super) fn leave_archive_workbench(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(archive) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.archive_mode())
+            .map(|mode| mode.archive.clone())
+        else {
+            return false;
+        };
+        let archive_id = self.process.fs.id_for_path(&archive);
+        let path = {
+            let tab = self.active_tab_mut();
+            tab.tool_result = None;
+            tab.clear_selection();
+            tab.selection.insert(archive_id);
+            tab.anchor = Some(archive_id);
+            tab.lead = Some(archive_id);
+            tab.pending_reveal = Some(archive_id);
+            tab.pending_select_first = false;
+            tab.filtered_out.clear();
+            tab.range_live = false;
+            tab.current_dir.clone()
+        };
+        // `load_path` keeps the seeded selection; the streaming reconcile
+        // applies it and `Done` centres the row (same as going up a folder).
+        self.load_path(path, cx);
+        true
     }
 
     fn on_close_tool_result(
@@ -5029,6 +5067,12 @@ impl Shell {
     }
 
     pub fn navigate_back(&mut self, cx: &mut Context<Self>) {
+        // Inside an archive, Back leaves the archive first: opening it
+        // pushed no history entry, so stepping the history would skip the
+        // folder the archive lives in.
+        if self.leave_archive_workbench(cx) {
+            return;
+        }
         if self.active_tab().platform_namespace.is_some() {
             let tab_id = self.active_tab().id;
             let request = self
@@ -7942,6 +7986,12 @@ impl Shell {
     /// Navigate to the parent of the current directory (Backspace
     /// keybind in 4.c.2). No-op when already at the filesystem root.
     pub fn navigate_parent(&mut self, cx: &mut Context<Self>) {
+        // Inside an archive the "parent" is the folder holding the archive,
+        // which is already `current_dir`: leave the workbench rather than
+        // climbing one level above it.
+        if self.leave_archive_workbench(cx) {
+            return;
+        }
         let cur = self.active_tab().current_dir.clone();
         if let Some(parent) = cur.parent() {
             let parent = parent.to_path_buf();
