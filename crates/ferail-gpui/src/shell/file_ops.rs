@@ -3304,48 +3304,59 @@ impl Shell {
                 tr!("Emptying Trash"),
                 false,
             );
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    let mut deleted = 0usize;
-                    // Every item that couldn't be removed, classified:
-                    // feeds the shared "N of M · why" report, and its
-                    // permission-denied subset is exactly what an
-                    // elevated retry can finish (root-owned trash).
-                    let mut failures: Vec<ferail_fs_native::file_ops::FileOpError> = Vec::new();
-                    for d in &dirs {
-                        let Ok(rd) = std::fs::read_dir(d) else {
-                            continue;
-                        };
-                        for dirent in rd.flatten() {
-                            let p = dirent.path();
-                            let removed = match std::fs::symlink_metadata(&p) {
-                                Ok(m) if m.is_dir() && !m.is_symlink() => {
-                                    std::fs::remove_dir_all(&p)
-                                }
-                                Ok(_) => std::fs::remove_file(&p),
-                                Err(e) => Err(e),
-                            };
-                            match removed {
-                                Ok(()) => deleted += 1,
-                                Err(e) => failures
-                                    .push(ferail_fs_native::file_ops::FileOpError::from_io(&e, &p)),
+            // Progress flows back while the worker deletes: the status bar
+            // names how much is gone, and any tab showing the Trash reloads
+            // as items disappear, so a large Trash visibly empties instead
+            // of sitting unchanged until the very end.
+            let (progress_tx, progress_rx) =
+                async_channel::unbounded::<ferail_fs_native::trash_empty::EmptyProgress>();
+            let reload_dirs = dirs.clone();
+            let work = cx.background_executor().spawn(async move {
+                let outcome = ferail_fs_native::trash_empty::empty_dirs(&dirs, &mut |progress| {
+                    let _ = progress_tx.try_send(*progress);
+                });
+                drop(progress_tx);
+                if let Some(db) = &put_back_db {
+                    if let Ok(db) = db.lock() {
+                        for dir in &dirs {
+                            if let Err(error) = db.forget_put_back_under(dir) {
+                                crate::log_warn!(90, "put-back cleanup failed: {error}");
                             }
                         }
                     }
-                    if let Some(db) = &put_back_db {
-                        if let Ok(db) = db.lock() {
-                            for dir in &dirs {
-                                if let Err(error) = db.forget_put_back_under(dir) {
-                                    crate::log_warn!(90, "put-back cleanup failed: {error}");
-                                }
-                            }
-                        }
+                }
+                (outcome, dirs)
+            });
+            let mut last_reload = std::time::Instant::now();
+            let mut reloaded_at_done = 0usize;
+            while let Ok(mut progress) = progress_rx.recv().await {
+                while let Ok(newer) = progress_rx.try_recv() {
+                    progress = newer;
+                }
+                {
+                    let mut tasks = process.tasks.borrow_mut();
+                    tasks.set_label(task_id, empty_trash_progress_label(&progress));
+                    if progress.items_total > 0 {
+                        tasks.update(
+                            task_id,
+                            progress.items_done as f32 / progress.items_total as f32,
+                        );
                     }
-                    (deleted, failures, dirs)
-                })
-                .await;
-            let (deleted, failures, dirs) = result;
+                }
+                if progress.items_done != reloaded_at_done
+                    && last_reload.elapsed() >= std::time::Duration::from_secs(1)
+                {
+                    reloaded_at_done = progress.items_done;
+                    last_reload = std::time::Instant::now();
+                    Shell::broadcast_reload_for_process(&process, reload_dirs.clone(), cx);
+                }
+                let _ = win.update(cx, |_, window, _| window.refresh());
+            }
+            let (outcome, dirs) = work.await;
+            let deleted = outcome.items_deleted;
+            let freed = outcome.progress.bytes_freed;
+            let unreadable = unreadable || !outcome.unreadable.is_empty();
+            let failures = outcome.failures;
             match failures.first() {
                 Some(f) => process
                     .tasks
@@ -3368,9 +3379,10 @@ impl Shell {
                     } else {
                         window.push_notice(
                             Notification::success(trn!(
-                                "Emptied Trash: {n} item deleted",
-                                "Emptied Trash: {n} items deleted",
-                                deleted
+                                "Emptied Trash: {n} item deleted, {size} freed",
+                                "Emptied Trash: {n} items deleted, {size} freed",
+                                deleted,
+                                size = crate::status_bar::humanize_bytes(freed)
                             )),
                             cx,
                         );
@@ -5592,6 +5604,18 @@ pub(crate) async fn pick_destination_folder(
         .ok()?
         .ok()?
         .and_then(|paths| paths.into_iter().next())
+}
+
+/// Status-bar label while the Trash empties: how much is gone so far. The
+/// top-level item count drives the progress fraction separately, since one
+/// huge folder can be most of the work.
+fn empty_trash_progress_label(progress: &ferail_fs_native::trash_empty::EmptyProgress) -> String {
+    tr!(
+        "Emptying Trash: {entries} deleted, {size} freed",
+        entries = ferail_core::counts::format_count(progress.entries_deleted),
+        size = crate::status_bar::humanize_bytes(progress.bytes_freed)
+    )
+    .to_string()
 }
 
 #[cfg(test)]

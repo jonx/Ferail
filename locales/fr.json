@@ -427,9 +427,9 @@
     "Ejected “{name}”": "« {name} » éjecté",
     "Elevated action failed: {detail}": "Échec de l'action élevée : {detail}",
     "Embedded in photo": "Intégrée à la photo",
-    "Emptied Trash: {n} item deleted": {
-      "one": "Corbeille vidée, {n} élément supprimé",
-      "other": "Corbeille vidée, {n} éléments supprimés"
+    "Emptied Trash: {n} item deleted, {size} freed": {
+      "one": "Corbeille vidée : {n} élément supprimé, {size} libérés",
+      "other": "Corbeille vidée : {n} éléments supprimés, {size} libérés"
     },
     "Empty": "Vide",
     "Empty Trash": "Vider la corbeille",
@@ -437,6 +437,7 @@
     "Empty Trash…": "Vider la corbeille…",
     "Empty folder": "Dossier vide",
     "Emptying Trash": "Vider la corbeille",
+    "Emptying Trash: {entries} deleted, {size} freed": "Vidage de la corbeille : {entries} supprimés, {size} libérés",
     "Enclosing Folder": "Dossier englobant",
     "English": "Anglais",
     "Enhance": "Améliorer",

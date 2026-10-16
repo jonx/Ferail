@@ -327,7 +327,15 @@ always appears (even sub-150 ms ops) and carries actions to **cope**:
   elevated retry over the permission-denied subset, as before).
 - **Empty Trash**: partial results per item ("Empty Trash: N of M done ·
   why") instead of first-error-only, with the same elevated retry over
-  root-owned leftovers.
+  root-owned leftovers. The deletion is `ferail_fs_native::trash_empty`, a
+  depth-first walker rather than `remove_dir_all`: it reports entries and
+  bytes as it goes (the status-bar task label and a fraction over top-level
+  items), Trash tabs reload at most once a second while it runs, it clears
+  user flags (`uchg`, `uappnd`) on an entry and its parent when a removal is
+  refused, as Finder does for locked items, and it never follows symlinks.
+  A trash directory that cannot be listed (`~/.Trash` without Full Disk
+  Access) is reported as unreadable rather than as a failure, so the
+  elevated retry is never offered on the Trash directory itself.
 - **Clear Quarantine**: was a count-only warning; per-item failures now
   surface through the shared expandable/copyable error toast.
 - **Tag toggle** (context-menu tags): was log-only; failures now toast as

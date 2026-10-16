@@ -424,10 +424,6 @@
     "Ejected “{name}”": "Wysunięto „{name}”",
     "Elevated action failed: {detail}": "Działanie z podwyższonymi uprawnieniami nie powiodło się: {detail}",
     "Embedded in photo": "Osadzone w zdjęciu",
-    "Emptied Trash: {n} item deleted": {
-      "one": "Opróżniono kosz: usunięto {n} element",
-      "other": "Opróżniono kosz: usunięto {n} elementów"
-    },
     "Empty": "Pusty",
     "Empty Trash": "Opróżnij kosz",
     "Empty Trash?": "Opróżnić kosz?",
@@ -1601,6 +1597,11 @@
       "one": "{n} element jest ukryty lub odfiltrowany.",
       "other": "Wszystkie elementy są ukryte lub odfiltrowane ({n})."
     },
-    "No visible items": "Brak widocznych elementów"
+    "No visible items": "Brak widocznych elementów",
+    "Emptying Trash: {entries} deleted, {size} freed": "Opróżnianie kosza: usunięto {entries}, zwolniono {size}",
+    "Emptied Trash: {n} item deleted, {size} freed": {
+      "one": "Opróżniono kosz: usunięto {n} element, zwolniono {size}",
+      "other": "Opróżniono kosz: usunięto {n} elementów, zwolniono {size}"
+    }
   }
 }

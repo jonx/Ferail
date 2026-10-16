@@ -427,9 +427,9 @@
     "Ejected “{name}”": "Ejected “{name}”",
     "Elevated action failed: {detail}": "Elevated action failed: {detail}",
     "Embedded in photo": "Embedded in photo",
-    "Emptied Trash: {n} item deleted": {
-      "one": "Emptied Trash: {n} item deleted",
-      "other": "Emptied Trash: {n} items deleted"
+    "Emptied Trash: {n} item deleted, {size} freed": {
+      "one": "Emptied Trash: {n} item deleted, {size} freed",
+      "other": "Emptied Trash: {n} items deleted, {size} freed"
     },
     "Empty": "Empty",
     "Empty Trash": "Empty Trash",
@@ -437,6 +437,7 @@
     "Empty Trash…": "Empty Trash…",
     "Empty folder": "Empty folder",
     "Emptying Trash": "Emptying Trash",
+    "Emptying Trash: {entries} deleted, {size} freed": "Emptying Trash: {entries} deleted, {size} freed",
     "Enclosing Folder": "Enclosing Folder",
     "English": "English",
     "Enhance": "Enhance",

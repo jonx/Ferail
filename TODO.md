@@ -431,6 +431,13 @@ Net-new, but each sits on plumbing that already exists.
 
 ## Packaging and polish
 
+- **Signed builds cannot send Apple Events.** `Ferail.entitlements` lacks
+  `com.apple.security.automation.apple-events` and Info.plist has no
+  `NSAppleEventsUsageDescription`, so under the hardened runtime macOS refuses
+  every AppleScript Ferail sends to another app, without a prompt. The
+  administrator terminal (`open_terminal_with`, `tell application "Terminal"`)
+  is affected. Add both, then check the consent prompt in a notarized build.
+
 - Rework the app icon to macOS conventions and generate the iconset. The bundle
   script already builds `.icns` from a PNG source; the icon *art* is the gap.
 - **Bundle an LGPL libmpv inside the `.app`** so mpv playback works out of the

@@ -427,9 +427,9 @@
     "Ejected “{name}”": "„{name}“ ausgeworfen",
     "Elevated action failed: {detail}": "Aktion mit erhöhten Rechten fehlgeschlagen: {detail}",
     "Embedded in photo": "Im Foto eingebettet",
-    "Emptied Trash: {n} item deleted": {
-      "one": "Papierkorb entleert, {n} Objekt gelöscht",
-      "other": "Papierkorb entleert, {n} Objekte gelöscht"
+    "Emptied Trash: {n} item deleted, {size} freed": {
+      "one": "Papierkorb geleert: {n} Objekt gelöscht, {size} freigegeben",
+      "other": "Papierkorb geleert: {n} Objekte gelöscht, {size} freigegeben"
     },
     "Empty": "Leer",
     "Empty Trash": "Papierkorb entleeren",
@@ -437,6 +437,7 @@
     "Empty Trash…": "Papierkorb entleeren …",
     "Empty folder": "Leerer Ordner",
     "Emptying Trash": "Papierkorb wird entleert",
+    "Emptying Trash: {entries} deleted, {size} freed": "Papierkorb wird geleert: {entries} gelöscht, {size} freigegeben",
     "Enclosing Folder": "Übergeordneter Ordner",
     "English": "Englisch",
     "Enhance": "Verbessern",

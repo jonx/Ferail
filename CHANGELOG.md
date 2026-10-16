@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Emptying a large Trash shows its progress.** Ferail deleted each Trash
+  item in one go with nothing on screen until the end, so a big Trash looked
+  as if nothing was happening for minutes. The status bar now counts the files
+  and space freed as they go, the Trash view empties as you watch, and the
+  final message says how much space was freed. Items locked in Finder are
+  unlocked and deleted instead of stopping the item they sit in.
+
 - **Escape closes dialogs, menus and popups again.** The Private Mode
   shortcut took Escape before anything else in the app and, with Private Mode
   off, simply dropped it, so no dialog, menu or popup closed with Escape. It

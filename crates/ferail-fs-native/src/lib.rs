@@ -33,6 +33,7 @@ pub mod paths;
 pub mod perceptual;
 mod search;
 pub mod stat_info;
+pub mod trash_empty;
 pub mod verify;
 mod volumes;
 pub mod xattr_info;
