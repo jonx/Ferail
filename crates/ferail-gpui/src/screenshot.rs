@@ -745,7 +745,7 @@ pub fn run(args: Args) -> Result<()> {
                         }
                         let view = cx.new(|cx| {
                             crate::viewer::ViewerWindow::new(
-                                playlist, 0, false, process, window, cx,
+                                playlist, 0, false, process, None, window, cx,
                             )
                         });
                         if viewer_adjust {
@@ -856,8 +856,69 @@ pub fn run(args: Args) -> Result<()> {
             // Read before `apply` consumes shell_args below.
             let capture_newest_window = shell_args.properties;
             let shell_for_late_flags = shell_entity.clone();
+            // Windows other than the Shell (viewer, editors) take `--keys`
+            // too: dispatched once the window has had time to load, with a
+            // frame drawn after each keystroke as for the Shell.
+            let window_keys = shell_entity
+                .is_none()
+                .then(|| shell_args.keys.clone())
+                .flatten();
             if let Some(shell) = shell_entity {
                 shell_args.apply(&shell, &handle, cx).await;
+            }
+            if let Some(keys) = window_keys {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(400))
+                    .await;
+                for k in keys.split_whitespace() {
+                    if k == "pause" {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(300))
+                            .await;
+                        continue;
+                    }
+                    // `right-click`: move to the window centre, let a frame
+                    // register the hover, then a real right mouse-down.
+                    if k == "right-click" {
+                        for down in [false, true] {
+                            let _ = cx.update_window(handle.into(), |_, window, cx| {
+                                let size = window.viewport_size();
+                                let position = gpui::point(size.width / 2.0, size.height / 2.0);
+                                let event = if down {
+                                    gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                                        button: gpui::MouseButton::Right,
+                                        position,
+                                        modifiers: gpui::Modifiers::default(),
+                                        click_count: 1,
+                                        first_mouse: false,
+                                    })
+                                } else {
+                                    gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                                        position,
+                                        modifiers: gpui::Modifiers::default(),
+                                        pressed_button: None,
+                                    })
+                                };
+                                let _ = window.dispatch_event(event, cx);
+                                window.draw(cx).clear(cx);
+                            });
+                        }
+                        continue;
+                    }
+                    let _ = cx.update_window(handle.into(), |_, window, cx| {
+                        if let Ok(ks) = gpui::Keystroke::parse(k) {
+                            window.dispatch_keystroke(ks, cx);
+                            window.draw(cx).clear(cx);
+                        }
+                    });
+                }
+                // A key that closed the window (Escape in the viewer) is a
+                // result, not a crash: say so and stop, without a capture.
+                if cx.update_window(handle.into(), |_, _, _| ()).is_err() {
+                    eprintln!("window closed by --keys; no capture");
+                    cx.update(|cx| cx.quit());
+                    return;
+                }
             }
 
             // Give async prefetch (magic / quarantine) time to land

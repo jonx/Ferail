@@ -789,7 +789,11 @@ impl Shell {
         if playlist.is_empty() {
             return false;
         }
-        crate::viewer::open_viewer(playlist, start, window, cx);
+        let origin = Some(crate::viewer::ViewerOrigin {
+            shell: cx.weak_entity(),
+            tab: self.active_tab().id,
+        });
+        crate::viewer::open_viewer(playlist, start, origin, window, cx);
         true
     }
 

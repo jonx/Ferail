@@ -79,7 +79,10 @@ look more interesting.
   (dispatched through the real window key path; `pause` token waits out async UI
   between keys, and `focus-shell` hands focus back to the Shell the way closing
   the macOS menu bar does after a menu command opens a dialog; a frame is drawn
-  after every token, since the hidden capture window gets none of its own), `--context-menu-row N` (synthesises a real mouse-move +
+  after every token, since the hidden capture window gets none of its own;
+  windows other than the Shell, such as `--viewer`, take `--keys` too, plus a
+  `right-click` token at the window centre, and a key that closes the window
+  ends the run with "window closed by --keys" instead of a capture), `--context-menu-row N` (synthesises a real mouse-move +
   right-click over row N, so the row context menu builds exactly as it does for
   a user: it lives in a mouse-event listener, so no action can open it),
   `--context-menu-background` (same synthesis aimed at the file-list body's

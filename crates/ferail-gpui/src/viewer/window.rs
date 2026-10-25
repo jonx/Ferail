@@ -19,7 +19,7 @@ use gpui_component::{
     button::Button,
     checkbox::Checkbox,
     h_flex,
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     v_flex,
 };
 
@@ -54,9 +54,25 @@ actions!(
         ViewerRotateCcw,
         ViewerToggleAdjust,
         ViewerDelete,
-        ViewerDismiss
+        ViewerDismiss,
+        /// Select the current file in the Ferail tab the viewer came from.
+        ViewerReveal,
+        /// Put the current file on the clipboard, as Cmd+C does in a list.
+        ViewerCopy,
+        ViewerCopyPath,
+        /// Close the viewer window outright (Esc steps out of the adjust
+        /// panel and fullscreen first).
+        ViewerClose
     ]
 );
+
+/// The Ferail tab a viewer was opened from, so "Show in Ferail" selects the
+/// file there instead of opening a new tab.
+#[derive(Clone)]
+pub struct ViewerOrigin {
+    pub shell: gpui::WeakEntity<crate::shell::Shell>,
+    pub tab: crate::shell::TabId,
+}
 
 /// One playlist item, snapshotted from the file list at open time.
 /// The viewer never re-reads the directory (prime directive: the
@@ -733,6 +749,10 @@ pub struct ViewerWindow {
     /// Process singleton: the shared 512 px preview cache doubles as
     /// an instant placeholder while the full-res decode is in flight.
     process: Rc<ProcessState>,
+    /// Where the viewer was opened from; `None` for surfaces without a tab.
+    origin: Option<ViewerOrigin>,
+    /// Escape fallback for this window (see [`Self::new`]).
+    _escape_intercept: gpui::Subscription,
     /// Ephemeral view rotation in clockwise quarter-turns (1 = 90°,
     /// 2 = 180°, 3 = 270°). Window-level and carried across navigation
     /// like the grade, so a rotation set once applies to every item you
@@ -816,11 +836,42 @@ impl ViewerWindow {
         start: usize,
         autoplay: bool,
         process: Rc<ProcessState>,
+        origin: Option<ViewerOrigin>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
+        // Escape closes the viewer even when focus has left the viewer's own
+        // key context (a toolbar control took it), as long as nothing that
+        // owns Escape itself is focused: a menu, a field or a dialog.
+        let this_window = window.window_handle();
+        let weak = cx.weak_entity();
+        let escape_intercept = cx.intercept_keystrokes(move |event, window, cx| {
+            let keystroke = &event.keystroke;
+            if window.window_handle() != this_window
+                || keystroke.key != "escape"
+                || keystroke.modifiers.modified()
+            {
+                return;
+            }
+            use gpui_component::WindowExt as _;
+            if window.has_active_dialog(cx) {
+                return;
+            }
+            let owned = window.context_stack().iter().any(|ctx| {
+                ctx.contains(VIEWER_CONTEXT) || ctx.contains("PopupMenu") || ctx.contains("Input")
+            });
+            if owned {
+                return;
+            }
+            if weak
+                .update(cx, |this, cx| this.on_dismiss(&ViewerDismiss, window, cx))
+                .is_ok()
+            {
+                cx.stop_propagation();
+            }
+        });
         // Re-render on window resize so the image/video refit (the fit
         // modes recompute from the live viewport) and the native video
         // overlay repositions to the new stage.
@@ -892,6 +943,8 @@ impl ViewerWindow {
             seek_drag: None,
             video_ended_tx,
             process,
+            origin,
+            _escape_intercept: escape_intercept,
             rotation: 0,
             rotated: None,
             adjust: ColorAdjust::default(),
@@ -2177,6 +2230,62 @@ impl ViewerWindow {
         }
     }
 
+    /// Cmd+W / context menu: close this viewer window.
+    fn on_close(&mut self, _: &ViewerClose, window: &mut Window, _cx: &mut Context<Self>) {
+        window.remove_window();
+    }
+
+    /// Cmd+Up / context menu: select the current file in Ferail. Back in the
+    /// tab the viewer came from when it still exists, else the usual
+    /// new-tab reveal. The viewer stays open.
+    fn on_reveal(&mut self, _: &ViewerReveal, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.current().map(|e| e.path.clone()) else {
+            return;
+        };
+        match self.origin.clone() {
+            Some(origin) if origin.shell.upgrade().is_some() => {
+                crate::shell::reselect_path_in_origin(cx, &origin.shell, origin.tab, path);
+            }
+            _ => crate::shell::reveal_path_in_app(cx, path),
+        }
+    }
+
+    /// Cmd+C / context menu: the current file on the system clipboard as a
+    /// file, exactly as Copy in a Ferail list, so it pastes into Finder, a
+    /// mail or a chat.
+    fn on_copy(&mut self, _: &ViewerCopy, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        let Some(entry) = self.current().cloned() else {
+            return;
+        };
+        if !crate::platform_shell::clipboard_copy_file_urls(&[(entry.path.as_path(), false)]) {
+            window.push_notice(
+                Notification::error(tr!("File clipboard isn't available on this platform yet.")),
+                cx,
+            );
+            return;
+        }
+        window.push_notice(
+            Notification::success(tr!(
+                "Copied \u{201c}{name}\u{201d}",
+                name = crate::private_mode::present_leaf_str(&entry.name, false)
+            )),
+            cx,
+        );
+    }
+
+    /// Cmd+Shift+C / context menu: the current file's full path as text.
+    fn on_copy_path(&mut self, _: &ViewerCopyPath, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        let Some(path) = self.current().map(|e| e.path.clone()) else {
+            return;
+        };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+            path.to_string_lossy().into_owned(),
+        ));
+        window.push_notice(Notification::success(tr!("Path copied to clipboard")), cx);
+    }
+
     /// Delete / Cmd+Backspace / toolbar trash: move the current file to
     /// the Trash and advance to the next slide, so a media browse can
     /// cull files without leaving the viewer. The trash call is
@@ -3179,15 +3288,6 @@ impl ViewerWindow {
             })
             .on_scroll_wheel(cx.listener(Self::on_stage_scroll))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_stage_mouse_down))
-            // Right-click anywhere on the stage opens (toggles) the
-            // colour-adjustments popup, same as `E`.
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, _, _, cx| {
-                    this.adjust_panel_open = !this.adjust_panel_open;
-                    cx.notify();
-                }),
-            )
             .on_mouse_move(cx.listener(Self::on_stage_mouse_move))
             .on_mouse_up(
                 MouseButton::Left,
@@ -4010,8 +4110,31 @@ impl Render for ViewerWindow {
                 .w_full()
                 .h(px(stage_h))
                 .bg(cx.theme().secondary.opacity(0.35))
+                .into_any_element()
         } else {
+            // Right-click on the stage: the current file's menu. Actions
+            // dispatch through the viewer's focus handle so the menu shows
+            // the same shortcuts the keymap binds in this window.
+            let focus = self.focus_handle.clone();
+            let adjust_open = self.adjust_panel_open;
             self.stage_area(stage_w, stage_h, cx)
+                .id("viewer-stage")
+                .context_menu(move |menu, _window, _cx| {
+                    menu.action_context(focus.clone())
+                        .menu(tr!("Show in Ferail"), Box::new(ViewerReveal))
+                        .separator()
+                        .menu(tr!("Copy"), Box::new(ViewerCopy))
+                        .menu(tr!("Copy Path"), Box::new(ViewerCopyPath))
+                        .separator()
+                        .menu_with_check(
+                            tr!("Adjust Colours"),
+                            adjust_open,
+                            Box::new(ViewerToggleAdjust),
+                        )
+                        .separator()
+                        .menu(tr!("Close Viewer"), Box::new(ViewerClose))
+                })
+                .into_any_element()
         };
 
         let root = v_flex()
@@ -4041,6 +4164,10 @@ impl Render for ViewerWindow {
             .on_action(cx.listener(Self::on_toggle_adjust))
             .on_action(cx.listener(Self::on_delete))
             .on_action(cx.listener(Self::on_dismiss))
+            .on_action(cx.listener(Self::on_close))
+            .on_action(cx.listener(Self::on_reveal))
+            .on_action(cx.listener(Self::on_copy))
+            .on_action(cx.listener(Self::on_copy_path))
             .relative()
             .size_full()
             .bg(if self.transparent {

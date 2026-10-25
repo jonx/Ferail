@@ -4699,7 +4699,11 @@ impl Shell {
             );
             return;
         }
-        crate::viewer::open_viewer(playlist, start, window, cx);
+        let origin = Some(crate::viewer::ViewerOrigin {
+            shell: cx.weak_entity(),
+            tab: self.active_tab().id,
+        });
+        crate::viewer::open_viewer(playlist, start, origin, window, cx);
     }
 
     /// File-list context action: open the viewer anchored to the
@@ -4741,7 +4745,11 @@ impl Shell {
             );
             return;
         }
-        crate::viewer::open_viewer_playing(playlist, start, window, cx);
+        let origin = Some(crate::viewer::ViewerOrigin {
+            shell: cx.weak_entity(),
+            tab: self.active_tab().id,
+        });
+        crate::viewer::open_viewer_playing(playlist, start, origin, window, cx);
     }
 
     /// Cmd+P: toggle preview-pane visibility. The pane defaults to

@@ -23,7 +23,7 @@ use gpui::{
 };
 use gpui_component::Root;
 
-pub use window::{PlaylistEntry, ViewerWindow};
+pub use window::{PlaylistEntry, ViewerOrigin, ViewerWindow};
 
 /// Cascade counter so each new viewer window is offset from the last
 /// instead of stacking exactly on top of it.
@@ -33,8 +33,14 @@ static VIEWER_CASCADE: AtomicU32 = AtomicU32::new(0);
 /// *new* window (cascaded from the previous one), so several files can be
 /// viewed side by side; closing a window just drops its entity. `window` is
 /// the window the viewer is opened from: the new window lands on its display.
-pub fn open_viewer(playlist: Vec<PlaylistEntry>, start: usize, window: &Window, cx: &mut App) {
-    open_viewer_inner(playlist, start, false, window, cx);
+pub fn open_viewer(
+    playlist: Vec<PlaylistEntry>,
+    start: usize,
+    origin: Option<ViewerOrigin>,
+    window: &Window,
+    cx: &mut App,
+) {
+    open_viewer_inner(playlist, start, false, origin, window, cx);
 }
 
 /// Like [`open_viewer`] but begins the slideshow immediately: used by
@@ -42,16 +48,18 @@ pub fn open_viewer(playlist: Vec<PlaylistEntry>, start: usize, window: &Window, 
 pub fn open_viewer_playing(
     playlist: Vec<PlaylistEntry>,
     start: usize,
+    origin: Option<ViewerOrigin>,
     window: &Window,
     cx: &mut App,
 ) {
-    open_viewer_inner(playlist, start, true, window, cx);
+    open_viewer_inner(playlist, start, true, origin, window, cx);
 }
 
 fn open_viewer_inner(
     playlist: Vec<PlaylistEntry>,
     start: usize,
     autoplay: bool,
+    origin: Option<ViewerOrigin>,
     window: &Window,
     cx: &mut App,
 ) {
@@ -102,8 +110,17 @@ fn open_viewer_inner(
     };
     let mut weak_view = None;
     let handle = cx.open_window(opts, |window, cx| {
-        let view =
-            cx.new(|cx| ViewerWindow::new(playlist, start, autoplay, process.clone(), window, cx));
+        let view = cx.new(|cx| {
+            ViewerWindow::new(
+                playlist,
+                start,
+                autoplay,
+                process.clone(),
+                origin,
+                window,
+                cx,
+            )
+        });
         weak_view = Some(view.downgrade());
         // gpui_component's Root paints an opaque theme background; override it
         // to transparent so the viewer's own (toggle-controlled) background is

@@ -1602,6 +1602,7 @@
     "Emptied Trash: {n} item deleted, {size} freed": {
       "one": "Opróżniono kosz: usunięto {n} element, zwolniono {size}",
       "other": "Opróżniono kosz: usunięto {n} elementów, zwolniono {size}"
-    }
+    },
+    "Close Viewer": "Zamknij przeglądarkę"
   }
 }

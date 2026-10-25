@@ -8,6 +8,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The viewer has a right-click menu for the current file.** *Show in
+  Ferail* (Cmd+Up) selects it in the tab the viewer was opened from, *Copy*
+  (Cmd+C) puts the file on the clipboard to paste into Finder, a mail or a
+  chat, *Copy Path* (Cmd+Shift+C) copies its full path, and *Close Viewer*
+  (Cmd+W) closes the window. Escape closes the viewer too, even after you
+  clicked one of its toolbar buttons. The colour adjustments, which a
+  right-click used to open, are in the same menu and still on E.
+
 - **Keyboard shortcuts keep working after entering a folder path.** Pressing
   Enter in Edit Path returns focus to the file browser, so the next Paste,
   Find or Edit Path command works without an extra click.

@@ -34,9 +34,10 @@ use crate::shell::{
     ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
-    VIEWER_CONTEXT, ViewerActualSize, ViewerDelete, ViewerDismiss, ViewerLeft, ViewerNext,
-    ViewerPrev, ViewerRight, ViewerRotateCcw, ViewerRotateCw, ViewerToggleAdjust,
-    ViewerToggleFullscreen, ViewerTogglePlay, ViewerZoomIn, ViewerZoomOut, ViewerZoomReset,
+    VIEWER_CONTEXT, ViewerActualSize, ViewerClose, ViewerCopy, ViewerCopyPath, ViewerDelete,
+    ViewerDismiss, ViewerLeft, ViewerNext, ViewerPrev, ViewerReveal, ViewerRight, ViewerRotateCcw,
+    ViewerRotateCw, ViewerToggleAdjust, ViewerToggleFullscreen, ViewerTogglePlay, ViewerZoomIn,
+    ViewerZoomOut, ViewerZoomReset,
 };
 
 /// Install keybindings for every command in `ferail_core::commands`
@@ -480,6 +481,10 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("ctrl-left", ViewerPrev, Some(VIEWER_CONTEXT)),
         KeyBinding::new("ctrl-right", ViewerNext, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", ViewerDismiss, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-w", ViewerClose, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-up", ViewerReveal, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-c", ViewerCopy, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-shift-c", ViewerCopyPath, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", EntryInfoDismiss, Some(ENTRY_INFO_CONTEXT)),
         // Built-in text editor window (docs/features/TEXT_EDITOR.md).
         // Esc / Cmd+W close through the unsaved-changes guard; Cmd+S

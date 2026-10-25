@@ -215,6 +215,9 @@ another entry keeps `{mode, center}` verbatim:
 - **Fullscreen**: `window.toggle_fullscreen()`; binding `Cmd+Ctrl+F`
   **[mac convention; win-parity F11]**. In fullscreen the toolbar hides;
   hovering the top ~48 px strip shows it (pure hover state, no timers).
+- **Context menu** (right-click on the stage): Show in Ferail, Copy, Copy
+  Path, Adjust Colours, Close Viewer. Its actions dispatch through the
+  viewer's focus handle, so it shows the shortcuts below.
 - **Input map** (context `"Viewer"`, registered in `keymap.rs
   install_extras`, so Shell shortcuts can't fire here):
   - `Up/Down`: previous/next entry (always)
@@ -223,12 +226,23 @@ another entry keeps `{mode, center}` verbatim:
     navigation so a video is still reachable from the keyboard.
   - `Space`: toggle the **video's** play/pause on a video, else toggle
     slideshow play/pause
-  - `Esc`: exit fullscreen if fullscreen, else close window
+  - `Esc`: close the Adjustments popup, else exit fullscreen, else close
+    the window. A keystroke interceptor applies the same steps when focus
+    has left the `"Viewer"` context (a toolbar control took it), unless a
+    menu, a text field or a dialog is focused, since those own Escape.
+  - `Cmd+W` **[mac; win-parity Ctrl]**: close the window outright
+  - `Cmd+Up`: **Show in Ferail**, select the current file in the tab the
+    viewer was opened from (`ViewerOrigin`, passed by `open_viewer`), or
+    reveal it in a new tab when that tab is gone or there was none. The
+    viewer stays open.
+  - `Cmd+C`: copy the current file to the clipboard as a file, as Copy does
+    in a list (pastes into Finder, mail, chat)
+  - `Cmd+Shift+C`: copy the current file's full path
   - `Cmd+=` / `Cmd+-` / `Cmd+0` **[mac; win-parity Ctrl]**: zoom in/out/reset
   - `Cmd+Ctrl+F` **[mac]**: fullscreen
   - `R` / `Shift+R`: rotate clockwise / counter-clockwise (sticky: the
     rotation carries to the next/previous item until the viewer closes)
-  - `E`: toggle the **Adjustments** popup (also a right-click on the stage,
+  - `E`: toggle the **Adjustments** popup (also the stage's context menu,
     or the palette toolbar button). `Esc` closes the popup first; a click
     elsewhere on the stage dismisses it.
   - `Cmd+Backspace` / `Delete` **[mac canonical / universal alternate]**:
