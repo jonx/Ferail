@@ -149,3 +149,8 @@ objc2-app-kit = { version = "0.2", features = [
     "NSGraphics",
     "NSGraphicsContext",
 ] }
+
+# The AROS volume glue (c/aros_volumes.c, build.rs): the DOS volume list and
+# Info() for sizes. Compiled only when targeting AROS with AROS_SDK set.
+[build-dependencies]
+cc = "1"

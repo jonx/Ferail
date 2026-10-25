@@ -132,7 +132,7 @@ impl Render for ConvertArchiveView {
         let source_name = self
             .source
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
+            .map(|name| ferail_fs_native::paths::os_to_display(name).into_owned())
             .unwrap_or_default();
         let source_format: SharedString = self
             .source_format
@@ -333,9 +333,8 @@ pub fn open_dialog(
 }
 
 fn archive_stem(source: &std::path::Path, source_format: Option<Format>) -> String {
-    let leaf = source
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
+    let leaf = ferail_fs_native::paths::os_file_name(source)
+        .map(|name| ferail_fs_native::paths::os_to_display(name).into_owned())
         .unwrap_or_else(|| "Archive".into());
     let format = source_format.or_else(|| Format::from_path(&leaf));
     if let Some(format) = format {
@@ -344,9 +343,8 @@ fn archive_stem(source: &std::path::Path, source_format: Option<Format>) -> Stri
             return leaf[..leaf.len() - suffix.len()].to_string();
         }
     }
-    source
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
+    ferail_fs_native::paths::os_file_stem(source)
+        .map(|stem| ferail_fs_native::paths::os_to_display(stem).into_owned())
         .filter(|stem| !stem.is_empty())
         .unwrap_or_else(|| "Archive".into())
 }

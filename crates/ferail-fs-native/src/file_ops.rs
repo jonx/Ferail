@@ -429,8 +429,8 @@ pub enum NameScheme {
 /// operation failed with "no free name".
 pub fn pick_available_name(dest_dir: &Path, name: &OsStr, scheme: NameScheme) -> Option<PathBuf> {
     let as_path = Path::new(name);
-    let stem = as_path.file_stem().unwrap_or(name).to_string_lossy();
-    let ext = as_path.extension().map(|e| e.to_string_lossy());
+    let stem = crate::paths::os_to_display(as_path.file_stem().unwrap_or(name));
+    let ext = as_path.extension().map(crate::paths::os_to_display);
     for n in 1..=9999u32 {
         let candidate_stem = match scheme {
             NameScheme::Copy if n == 1 => format!("{stem} copy"),
@@ -442,7 +442,7 @@ pub fn pick_available_name(dest_dir: &Path, name: &OsStr, scheme: NameScheme) ->
             Some(e) => format!("{candidate_stem}.{e}"),
             None => candidate_stem,
         };
-        let candidate = dest_dir.join(candidate_name);
+        let candidate = crate::paths::join_display_leaf(dest_dir, &candidate_name).ok()?;
         if !candidate.exists() {
             return Some(candidate);
         }
@@ -1640,8 +1640,12 @@ pub fn write_new_file(dir: &Path, stem: &str, ext: &str, bytes: &[u8]) -> std::i
         } else {
             format!("{stem} {n}.{ext}")
         };
-        let candidate = dir.join(name);
-        match fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+        let candidate = crate::paths::join_display_leaf(dir, &name)?;
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
             Ok(mut file) => {
                 if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
                     drop(file);

@@ -650,6 +650,11 @@ fn notes_markdown(notes: &[ReleaseNotes]) -> String {
 // Checking
 // ============================================================================
 
+/// Whether this build can check for updates at all. AROS has no HTTP client
+/// in the graph (see ferail-gpui's manifest): the menu entry and the
+/// Settings toggle are absent there and the daily loop never starts.
+pub const AVAILABLE: bool = cfg!(not(target_os = "aros"));
+
 /// Menu entry point: open the dialog and refresh the state behind it.
 /// A check already in flight, or a download in progress / completed, is
 /// left alone, reopening the dialog must not clobber a 90%-done
@@ -671,6 +676,13 @@ pub fn manual_check(cx: &mut App) {
 /// daily. Re-reads the setting every wake so the Settings toggle takes
 /// effect without a relaunch.
 pub fn start_auto_loop(cx: &mut App) {
+    if !AVAILABLE {
+        crate::log_info!(
+            90,
+            "update check: not available on this platform; no daily check"
+        );
+        return;
+    }
     cx.spawn(async move |cx| {
         cx.background_executor().timer(AUTO_FIRST_DELAY).await;
         loop {
@@ -1867,6 +1879,7 @@ mod tests {
     /// Exercises the whole download path: redirect-following GET,
     /// content-length accounting, `.part` write, rename.
     #[test]
+    #[cfg(not(target_os = "aros"))]
     #[ignore = "network: downloads a real GitHub release asset"]
     fn download_worker_fetches_a_real_asset() {
         let client: Arc<dyn HttpClient> =

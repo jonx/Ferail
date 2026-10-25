@@ -15,31 +15,33 @@ use ferail_fs_native::{
 use ferail_gpui::screenshot;
 
 fn main() -> Result<()> {
+    #[cfg(target_os = "aros")]
+    let _clipboard_session = ferail_gpui::platform_shell::FileClipboardSession::default();
     // Disposable Windows hang-dump broker. This must be the very first
     // dispatch: the parent UI may be wedged while holding arbitrary locks,
     // so the child must reach MiniDumpWriteDump without initializing GPUI,
     // logging, settings, or Shell providers.
     if let Some(code) = run_windows_hang_dump_broker() {
-        std::process::exit(code);
+        exit_program(code);
     }
     // Disposable Windows Shell-menu broker. Dispatch before String-based CLI
     // parsing so every NTFS path survives as its original OsString and before
     // GPUI/observability startup so third-party extensions stay isolated.
     if let Some(code) = run_windows_context_menu_broker() {
-        std::process::exit(code);
+        exit_program(code);
     }
     if let Some(code) = run_windows_namespace_broker() {
-        std::process::exit(code);
+        exit_program(code);
     }
     if let Some(code) = run_windows_properties_broker() {
-        std::process::exit(code);
+        exit_program(code);
     }
     // Pre-event-loop CLI handlers: run before the window opens.
     if let Some(code) = ferail_gpui::reset_db::handle_reset_db_cli() {
-        std::process::exit(code);
+        exit_program(code);
     }
     if let Some(code) = handle_cli_subcommand()? {
-        std::process::exit(code);
+        exit_program(code);
     }
     ferail_gpui::obs::init();
     // Honor the persisted diagnostics-privacy preference (defaults to on) before
@@ -77,6 +79,14 @@ fn main() -> Result<()> {
     run_gui(args);
     ferail_gpui::log_info!(90, "event loop exited");
     Ok(())
+}
+
+fn exit_program(code: i32) -> ! {
+    #[cfg(target_os = "aros")]
+    if let Err(error) = ferail_gpui::platform_shell::shutdown_file_clipboard() {
+        eprintln!("{error}");
+    }
+    std::process::exit(code)
 }
 
 fn run_windows_hang_dump_broker() -> Option<i32> {

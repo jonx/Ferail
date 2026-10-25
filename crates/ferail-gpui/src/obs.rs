@@ -67,8 +67,8 @@ pub fn init() {
     // host process, so `eprintln!` never reaches the `aros-ctl` log. And gpui's
     // `.log_err()` (e.g. the swallowed `paint_svg` failure) routes through the
     // `log` crate, which is a no-op until a logger is installed, nothing
-    // installs one on AROS. Bridge the `log` facade into the MacRW file sink so
-    // both are actually observable on the host (~/AROS/Shared/ferail-log.txt).
+    // installs one on AROS. Bridge the `log` facade into the file sink so
+    // both are observable after the fact (see `aros_diag_path`).
     #[cfg(target_os = "aros")]
     {
         // Info by default: at Trace, cosmic_text shapes and notify rescans
@@ -83,7 +83,10 @@ pub fn init() {
         let _ = log::set_logger(&AROS_LOGGER).map(|()| log::set_max_level(max));
         line(
             "info",
-            format_args!("MacRW:ferail-log.txt sink open; `log` crate bridged (max={max})"),
+            format_args!(
+                "{} sink open; `log` crate bridged (max={max})",
+                aros_diag_path("ferail-log.txt").display()
+            ),
         );
     }
 }
@@ -101,9 +104,9 @@ pub fn line(level: &str, args: std::fmt::Arguments) {
     // console, the console lives on its own Intuition screen, and a write
     // can yank that screen in front of the app's (observed 2026-07-21:
     // every `navigate:` line swapped screens mid-click, which reads as
-    // "the listview stopped updating" and eats the next clicks). The
-    // MacRW file sink is the log surface there; stderr stays for panics,
-    // where the app is dying anyway and surfacing the console is fine.
+    // "the listview stopped updating" and eats the next clicks). The file
+    // sink is the log surface there; stderr stays for panics, where the app
+    // is dying anyway and surfacing the console is fine.
     #[cfg(target_os = "aros")]
     aros_sink(&msg);
     #[cfg(not(target_os = "aros"))]
@@ -120,11 +123,25 @@ pub fn stderr_line(msg: &str) {
     let _ = writeln!(std::io::stderr(), "{msg}");
 }
 
-/// AROS-only host-visible diagnostic sink. Appends each line to
-/// `MacRW:ferail-log.txt`: the host-shared volume, readable on macOS as
-/// `~/AROS/Shared/ferail-log.txt`. Truncated on first write each boot. This
-/// is the same host-durable trick the panic hook uses (`ferail-panic.txt`),
-/// needed because AROS stderr never reaches the `aros-ctl` log.
+/// Where the AROS diagnostic files go: `FERAIL_LOG_DIR` when set (a
+/// directory path, for a run that must keep its log past a reboot), else
+/// the `T:` temporary assign of the running system. The log, panic and
+/// hang files share it; a DOS path ends in `:` or `/`, so the name is
+/// appended without a separator for a bare device.
+#[cfg(target_os = "aros")]
+pub fn aros_diag_path(name: &str) -> std::path::PathBuf {
+    let dir = std::env::var("FERAIL_LOG_DIR").unwrap_or_else(|_| "T:".to_string());
+    if dir.ends_with(':') || dir.ends_with('/') {
+        std::path::PathBuf::from(format!("{dir}{name}"))
+    } else {
+        std::path::Path::new(&dir).join(name)
+    }
+}
+
+/// AROS-only diagnostic sink. Appends each line to `ferail-log.txt` in
+/// [`aros_diag_path`], truncated on first write each run. This is the same
+/// durable trick the panic hook uses (`ferail-panic.txt`), needed because
+/// the console the program was started from is not where a log is read.
 #[cfg(target_os = "aros")]
 pub fn aros_sink(msg: &str) {
     use std::io::Write;
@@ -134,7 +151,7 @@ pub fn aros_sink(msg: &str) {
             .create(true)
             .write(true)
             .truncate(true)
-            .open("MacRW:ferail-log.txt")
+            .open(aros_diag_path("ferail-log.txt"))
             .ok();
         Mutex::new(f)
     });
@@ -145,7 +162,7 @@ pub fn aros_sink(msg: &str) {
     }
 }
 
-/// Forwards the `log` crate facade into [`line`] (stderr + the MacRW sink).
+/// Forwards the `log` crate facade into [`line`] (the AROS file sink).
 /// Installed only on AROS; on the desktop the app's own binary owns logging.
 #[cfg(target_os = "aros")]
 struct ArosLogger;
@@ -269,7 +286,7 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("MacRW:ferail-panic.txt")
+            .open(aros_diag_path("ferail-panic.txt"))
         {
             let _ = writeln!(
                 f,
@@ -350,7 +367,7 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("MacRW:ferail-panic.txt")
+            .open(aros_diag_path("ferail-panic.txt"))
         {
             let _ = writeln!(f, "{detailed}");
             let _ = f.flush();

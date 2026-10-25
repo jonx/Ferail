@@ -8,6 +8,24 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Keyboard shortcuts keep working after entering a folder path.** Pressing
+  Enter in Edit Path returns focus to the file browser, so the next Paste,
+  Find or Edit Path command works without an extra click.
+
+- **Copy, Cut and Paste use the native AROS file clipboard.** Files and raw
+  DOS names pass through `clipboard.device`, with Copy/Move metadata rather
+  than an in-process fallback. Device work runs on a worker; plain text from
+  another application clears the file list, and write failures are surfaced.
+  The worker is closed and joined before the AROS command can unload.
+
+- **Accented AROS filenames appear in every folder listing and search result.**
+  The synchronous listing and metadata lookup decode native Latin-1 names
+  using the same rule as the streaming reader.
+
+- **Archive extraction on AROS rejects volume and assign paths.** Members
+  containing an AROS volume or assign prefix are skipped before any file is
+  opened, keeping extraction inside its chosen destination.
+
 - **Emptying a large Trash shows its progress.** Ferail deleted each Trash
   item in one go with nothing on screen until the end, so a big Trash looked
   as if nothing was happening for minutes. The status bar now counts the files

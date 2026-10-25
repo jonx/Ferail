@@ -362,11 +362,7 @@ fn portable_for_each(
             break;
         }
         let child_path = dirent.path();
-        let Some(name) = child_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(str::to_owned)
-        else {
+        let Some(name) = crate::paths::row_file_name(&child_path) else {
             continue;
         };
         // On Windows this comes from WIN32_FIND_DATA cached by enumeration and

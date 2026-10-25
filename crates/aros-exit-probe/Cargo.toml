@@ -1,0 +1,15 @@
+[package]
+name = "aros-exit-probe"
+version.workspace = true
+license.workspace = true
+edition = "2021"
+publish = false
+
+# Process-exit conformance for the AROS Rust runtime: does a program end when
+# `main` returns while helper threads are still alive, and when a helper
+# thread calls `std::process::exit`? See docs/features/aros-port.md.
+[[bin]]
+name = "ExitProbe"
+path = "src/main.rs"
+
+[dependencies]

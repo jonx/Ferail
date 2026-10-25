@@ -3,26 +3,30 @@ name = "ferail-aros-app"
 version.workspace = true
 license.workspace = true
 repository.workspace = true
-# Edition 2024 to match ferail-gpui (and the `unsafe(no_mangle)` /
-# `unsafe extern` syntax used in lib.rs).
+# Edition 2024 to match ferail-gpui.
 edition = "2024"
 rust-version.workspace = true
 publish = false
 
-# The AROS entry point: a staticlib the collect-aros link script combines
-# with a C harness (which owns AROS startup / argc / argv) into the
-# `C:Ferail` command. See docs/features/aros-port.md and link-aros.sh.
-[lib]
-crate-type = ["staticlib"]
+# The AROS entry point: the `Ferail` command. A Rust `bin` linked through the
+# crosstools clang's AROS driver (scripts/aros-cargo.sh): AROS's C start-up
+# hands argc/argv to std and runs the constructors, and `main` boots the
+# shared GUI in ferail-gpui. See docs/features/aros-port.md.
+[[bin]]
+name = "Ferail"
+path = "src/main.rs"
 
 [dependencies]
-# Not in [workspace.dependencies] - ferail-gpui is the leaf app crate;
-# this wrapper is its only dependent.
-ferail-gpui = { path = "../ferail-gpui" }
-# getrandom's custom-backend hook type (the .cargo/config selects
-# `getrandom_backend="custom"` for the AROS target; the final binary must
-# provide __getrandom_v03_custom - ours rides posixc arc4random_buf).
-getrandom = "0.3"
+# Small objects from size-class slabs instead of the C library (exec pools
+# behind a semaphore and Forbid/Permit on every call); see the crate.
+aros-alloc = { path = "../aros-alloc" }
+# No default features: the screenshot harness (gpui test-support) is a
+# macOS/Windows capture path, and on AROS its proptest/tempfile tail has no
+# platform arm. AROS runs are observed on the running system instead.
+ferail-gpui = { path = "../ferail-gpui", default-features = false }
+
+[build-dependencies]
+cc = "1"
 
 [lints.rust.unexpected_cfgs]
 level = "warn"

@@ -187,7 +187,11 @@ impl UndoOp {
     fn apply_fs(&self) -> Result<(), String> {
         match self {
             UndoOp::Rename { current, original } => {
-                std::fs::rename(current, original).map_err(|e| e.to_string())
+                #[cfg(target_os = "aros")]
+                let renamed = ferail_fs_native::rename::rename_no_replace(current, original);
+                #[cfg(not(target_os = "aros"))]
+                let renamed = std::fs::rename(current, original);
+                renamed.map_err(|e| e.to_string())
             }
             UndoOp::DeleteFolder(p) => std::fs::remove_dir(p).map_err(|e| e.to_string()),
             UndoOp::MoveBack(pairs) => {
@@ -2107,7 +2111,7 @@ impl Shell {
         let breadcrumb_subscription = cx.subscribe_in(
             &breadcrumb_input,
             window,
-            move |this, state, ev: &InputEvent, _window, cx| match ev {
+            move |this, state, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Change if this.breadcrumb_edit.is_active() => {
                     let value = state.read(cx).value().to_string();
                     let cursor = state.read(cx).selected_range().end;
@@ -2146,6 +2150,10 @@ impl Shell {
                     crate::log_info!(90, "breadcrumb: commit {raw:?}");
                     let path = parse_breadcrumb_path(&raw);
                     this.breadcrumb_edit.clear();
+                    // The path Input is about to unmount. Return focus now,
+                    // before async navigation, so Shell shortcuts stay live.
+                    this.focus_handle.focus(window, cx);
+                    cx.notify();
                     // External boundary: typed input canonicalizes on
                     // a worker before navigation registers identity.
                     this.navigate_external(path, cx);
@@ -3965,7 +3973,11 @@ impl Shell {
             .and_then(|surface| surface.archive_mode())
             .map(|archive| archive.view.clone());
         if let Some(archive) = archive {
-            archive.update(cx, |archive, cx| archive.request_dismiss(window, cx));
+            // The keystroke interceptor owns a Shell update. Dismissal can
+            // update that Shell again, so release it before entering Archive.
+            window.defer(cx, move |window, cx| {
+                archive.update(cx, |archive, cx| archive.request_dismiss(window, cx));
+            });
             return true;
         }
         if self.preview_visible {

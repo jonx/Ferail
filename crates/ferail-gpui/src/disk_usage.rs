@@ -2616,6 +2616,56 @@ impl DiskUsageView {
         if items.is_empty() {
             return;
         }
+        #[cfg(target_os = "aros")]
+        {
+            if let Some(shell) = self.shell.clone() {
+                let items = items.into_iter().map(|(p, d, _)| (p, d)).collect();
+                let _ = shell.update(cx, |shell, cx| {
+                    shell.write_aros_file_clipboard(
+                        items,
+                        crate::platform_shell::ClipboardFileOperation::Copy,
+                        window,
+                        cx,
+                    );
+                });
+            } else {
+                let items = items.into_iter().map(|(p, d, _)| (p, d)).collect();
+                let pending = crate::platform_shell::reserve_file_clipboard().and_then(|job| {
+                    let sequence = job.sequence();
+                    job.begin_write(items, crate::platform_shell::ClipboardFileOperation::Copy)
+                        .map(|pending| (sequence, pending))
+                });
+                match pending {
+                    Ok((sequence, pending)) => {
+                        cx.spawn_in(window, async move |this, cx| {
+                            let result = pending.await;
+                            let _ = this.update_in(cx, move |_, window, cx| {
+                                let current =
+                                    crate::platform_shell::accept_file_clipboard_result(sequence);
+                                match result {
+                                    Ok(()) => {
+                                        if current {
+                                            window.push_notice(
+                                                Notification::success(tr!("Copy")),
+                                                cx,
+                                            );
+                                        }
+                                    }
+                                    Err(error) => {
+                                        window.push_notice(Notification::error(error), cx)
+                                    }
+                                }
+                            });
+                        })
+                        .detach();
+                    }
+                    Err(error) => {
+                        window.push_notice(Notification::error(error), cx);
+                    }
+                }
+            }
+            return;
+        }
         let refs: Vec<(&std::path::Path, bool)> =
             items.iter().map(|(p, d, _)| (p.as_path(), *d)).collect();
         if !crate::platform_shell::clipboard_copy_file_urls(&refs) {

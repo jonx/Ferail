@@ -289,6 +289,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aros-alloc"
+version = "0.7.9"
+
+[[package]]
+name = "aros-exit-probe"
+version = "0.7.9"
+
+[[package]]
 name = "arraydeque"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2053,8 +2061,9 @@ dependencies = [
 name = "ferail-aros-app"
 version = "0.7.9"
 dependencies = [
+ "aros-alloc",
+ "cc",
  "ferail-gpui",
- "getrandom 0.3.4",
 ]
 
 [[package]]
@@ -2085,6 +2094,7 @@ version = "0.7.9"
 dependencies = [
  "blake3",
  "bzip2 0.6.1",
+ "cc",
  "crc32fast",
  "delharc",
  "ferail-archive",
@@ -2191,7 +2201,9 @@ dependencies = [
 name = "ferail-shell-aros"
 version = "0.7.9"
 dependencies = [
- "ferail-shell-linux",
+ "cc",
+ "ferail-core",
+ "zip",
 ]
 
 [[package]]

@@ -239,7 +239,7 @@ impl MetadataDb {
     pub fn open(path: &Path) -> Result<Self> {
         let mut wipe = false;
         if path.exists() {
-            match Connection::open(path) {
+            match open_connection(path) {
                 Ok(conn) => {
                     let stored: Option<u32> = conn
                         .query_row(
@@ -282,7 +282,7 @@ impl MetadataDb {
                 }
             }
         }
-        let conn = Connection::open(path)?;
+        let conn = open_connection(path)?;
         // A second Ferail process (or `--reset-db` racing a live app)
         // holds the write lock briefly; without a timeout every busy
         // conflict surfaces as an instant SQLITE_BUSY error, and a
@@ -1205,6 +1205,22 @@ impl MetadataDb {
             .flatten()
             .map(|v| v == "1")
             .unwrap_or(false)
+    }
+}
+
+/// Open the database file. On AROS through SQLite's `unix-none` VFS: the
+/// C library has no POSIX advisory locks (`fcntl` locking fails), and the
+/// default VFS reports that failure as a disk I/O error. One process owns
+/// the database there; the busy timeout below still covers a second
+/// process on the platforms that lock.
+fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
+    #[cfg(target_os = "aros")]
+    {
+        Connection::open_with_flags_and_vfs(path, rusqlite::OpenFlags::default(), "unix-none")
+    }
+    #[cfg(not(target_os = "aros"))]
+    {
+        Connection::open(path)
     }
 }
 

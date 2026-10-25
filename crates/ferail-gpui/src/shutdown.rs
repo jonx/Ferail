@@ -126,16 +126,32 @@ pub fn arm(trigger: &'static str) {
             return;
         }
         std::thread::sleep(exit_after);
-        crate::log_warn!(
-            90,
-            "shutdown: forcing exit; {} window(s) never closed",
-            WINDOWS_OPEN.load(Ordering::Acquire)
-        );
-        // The alternative is a process with no window, no taskbar entry, and
-        // no way out but Task Manager, holding its own .exe against an
-        // update. Everything that owns unsaved work has already been asked to
-        // finish: this path is only reached because it did not.
-        std::process::exit(0);
+        // On AROS a helper thread cannot end the process: `exit` jumps to
+        // the program's exit point in the main task's context, which this
+        // thread is not. The report above is the whole remedy; the main
+        // task's own return is what ends the process.
+        #[cfg(target_os = "aros")]
+        {
+            crate::log_warn!(
+                90,
+                "shutdown: forced exit is not available on AROS; {} window(s) never closed",
+                WINDOWS_OPEN.load(Ordering::Acquire)
+            );
+            return;
+        }
+        #[cfg(not(target_os = "aros"))]
+        {
+            crate::log_warn!(
+                90,
+                "shutdown: forcing exit; {} window(s) never closed",
+                WINDOWS_OPEN.load(Ordering::Acquire)
+            );
+            // The alternative is a process with no window, no taskbar entry,
+            // and no way out but Task Manager, holding its own .exe against an
+            // update. Everything that owns unsaved work has already been asked
+            // to finish: this path is only reached because it did not.
+            std::process::exit(0);
+        }
     });
 }
 

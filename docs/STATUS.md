@@ -27,7 +27,7 @@ instead.
 | **macOS** | Primary | Feature-complete for everyday use. The DMG is Developer ID signed and notarized, so it opens without a warning. |
 | **Windows** | Active port | Broad native parity: clipboard, Recycle Bin with Restore, thumbnails, Open With, Media Foundation video, UAC elevation, Restart Manager lock diagnostics, and native context-menu verbs on explicit demand. Builds, runs and screenshots on real hardware. Unsigned, so SmartScreen warns on first launch. Indexed search and window docking are planned. ([notes](features/windows-port.md)) |
 | **Linux** | Early port | Builds and runs; volumes, Trash and Open With are real; clipboard, thumbnails and video are stubbed. Ubuntu 22.04-compatible amd64 and arm64 `.deb` packages ship. ([notes](features/linux-port.md)) |
-| **AROS** | Research port | Boots and runs as a browsable, themed file manager through a from-scratch GPUI platform backend. Not at parity: several features are gated pending native shell integration. Distributed inside the **Macaros** releases as the `C:Ferail` command of the AROS image, not as a Ferail download. ([notes](features/aros-port.md)) |
+| **AROS** | Native port | The `Ferail` command for native AROS (AArch64) links against the AROS SDK and runs on the AROS desktop: window, volume list, navigation, archives, log in `T:`. Its own GPUI backend over Intuition, a shell crate over Workbench, openurl, ASL, the clipboard and DOS. Parity (see the capability list) is open. ([notes](features/aros-port.md)) |
 
 ## Windows campaign
 
@@ -54,8 +54,8 @@ the rest is tracked in [TODO.md](../TODO.md).
 | --- | --- | --- |
 | [ANT_TRAIL.md](features/ANT_TRAIL.md) | Shipped with follow-ups | Folder visit counts, sidebar heat, recents hydration, and DB persistence ship; prediction and decay remain open. |
 | [ARCHIVES.md](features/ARCHIVES.md) | Shipped with follow-ups | Browse `.zip`/`.7z`/`.tar.*`/`.lha` in place, extract a selection, compress to ZIP/7z/TAR, and edit a plain ZIP as a reviewable transaction; the embedded workbench view remains open. |
-| [aros-building.md](features/aros-building.md) | Reference | The AROS cross-build: toolchain, hosted target, and how to run the result. |
-| [aros-port.md](features/aros-port.md) | Research port | Ferail boots and runs as a browsable, themed file manager on AROS through a from-scratch GPUI platform backend; native shell integration gates the rest. |
+| [aros-building.md](features/aros-building.md) | Reference | The native AROS build: the installed official Rust SDK, the native AROS driver, the patched crates, and the three stages with their verdicts. |
+| [aros-port.md](features/aros-port.md) | Native port in progress | What the native AROS port is made of: the GPUI backend over Intuition, the shell crate over the AROS libraries, the DOS volume list, and the capabilities AROS does and does not provide. |
 | [BULK_RENAME.md](features/BULK_RENAME.md) | Shipped with follow-ups | Pattern-rule bulk rename modal: literal/regex find-replace, case transforms, {name}/{ext}/{n}/{date} template, live preview, chain-aware apply, and batch undo ship; dimensions token, presets, and a keybinding remain open. |
 | [CHECKSUMS.md](features/CHECKSUMS.md) | Shipped with follow-ups | Streaming single-file SHA-256 comparison plus safe multi-file SFV/checksum verification and atomic SFV/SHA256SUMS generation ship; compact million-entry reports remain open. |
 | [CONTEXT_MENU.md](features/CONTEXT_MENU.md) | Shipped with follow-ups | Data-driven menu plans per surface, Open With, tags, Quick Look, a Trash-specific menu, and a Settings editor that hides, reorders and adds separators; a Services/Quick Actions submenu, a Share submenu and async Open With prewarm remain open. |

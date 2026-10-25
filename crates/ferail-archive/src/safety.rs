@@ -16,7 +16,7 @@ pub enum UnsafePath {
     Absolute,
     /// The path contains a `..` component that escapes the destination root.
     Traversal,
-    /// The path carries a Windows drive prefix or UNC root (`C:\`, `\\host`).
+    /// The path carries a Windows drive/UNC root, or an AROS volume/assign root.
     DrivePrefix,
     /// The path is empty or resolves to nothing.
     Empty,
@@ -65,6 +65,10 @@ pub fn safe_relative_path(entry_path: &str) -> Result<String, UnsafePath> {
             "" | "." => continue,
             ".." => return Err(UnsafePath::Traversal),
             other if other.contains('\0') => return Err(UnsafePath::InvalidCharacter),
+            // DOS treats colon-bearing names as volume/assign paths. Reject
+            // them in every component before joining to the destination.
+            #[cfg(target_os = "aros")]
+            other if other.contains(':') => return Err(UnsafePath::DrivePrefix),
             other => parts.push(other),
         }
     }
@@ -80,4 +84,53 @@ pub fn safe_relative_path(entry_path: &str) -> Result<String, UnsafePath> {
 fn is_drive_component(comp: &str) -> bool {
     let bytes = comp.as_bytes();
     bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+#[cfg(test)]
+mod aros_path_tests {
+    use super::{safe_relative_path, UnsafePath};
+
+    #[cfg(target_os = "aros")]
+    #[test]
+    fn aros_assign_and_volume_prefixes_cannot_escape() {
+        for name in [
+            "SYS:escaped",
+            "RAM:escaped",
+            "T:escaped",
+            "Work:dir/file",
+            "dir/SYS:escaped",
+            "dir/name:leaf",
+        ] {
+            assert_eq!(
+                safe_relative_path(name),
+                Err(UnsafePath::DrivePrefix),
+                "{name}"
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "aros"))]
+    #[test]
+    fn unix_literal_colons_are_preserved() {
+        assert_eq!(
+            safe_relative_path("notes:2026.txt").unwrap(),
+            "notes:2026.txt"
+        );
+    }
+
+    #[test]
+    fn ordinary_nested_paths_remain_relative() {
+        assert_eq!(
+            safe_relative_path("./dossier été/./file.txt").unwrap(),
+            "dossier été/file.txt"
+        );
+        assert_eq!(
+            safe_relative_path("dir/../file"),
+            Err(UnsafePath::Traversal)
+        );
+        assert_eq!(
+            safe_relative_path("C:/escaped"),
+            Err(UnsafePath::DrivePrefix)
+        );
+    }
 }

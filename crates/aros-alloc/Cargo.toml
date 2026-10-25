@@ -1,0 +1,14 @@
+[package]
+name = "aros-alloc"
+version.workspace = true
+license.workspace = true
+edition = "2021"
+publish = false
+
+# A size-class allocator for native AROS. The C library's malloc goes
+# through exec's pooled allocator, a semaphore and Forbid/Permit on every
+# call, and on AArch64 AROS each Permit costs a supervisor check and a
+# scheduler pass: measured as two thirds of Ferail's UI-thread time under
+# GPUI's layout. Small objects come from slabs here instead; see lib.rs.
+
+[dependencies]

@@ -7,5 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Pure archive model: format identity, per-format capability matrix, and the archive table-of-contents entry model. No I/O, no platform deps: codec work lives in ferail-fs-native."
 
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("aros"))']
+
 [dependencies]
 ferail-core.workspace = true

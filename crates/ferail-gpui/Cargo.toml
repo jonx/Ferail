@@ -57,8 +57,10 @@ gpui-component.workspace = true
 gpui-component-assets.workspace = true
 gpui-fps.workspace = true
 # HttpClient impl behind cx.http_client() - see the workspace Cargo.toml
-# note. Update check only; everything else stays offline.
-reqwest_client.workspace = true
+# note. Update check only; everything else stays offline. Not on AROS: its
+# reqwest/tokio/rustls stack assumes a BSD socket ABI and an OS poller the
+# target does not offer, and the update check is an unavailable capability
+# there (update_check::AVAILABLE).
 # Phase 1 (next-level plan): bundle our own SVG icons alongside
 # the upstream gpui-component icon pack. Same major as the upstream
 # crate uses so we stay single-copy in the graph.
@@ -166,6 +168,14 @@ ferail-video-mpv = { workspace = true, optional = true }
 # AROS (branch aros-port): the shell-linux stub scaffold re-exported under
 # the AROS name. No mpv - libmpv has no AROS build, so the `mpv` feature
 # stays a no-op there.
+# HttpClient impl behind cx.http_client() (workspace Cargo.toml note). Update
+# check only; everything else stays offline. Not on AROS: the reqwest / tokio /
+# rustls stack assumes a BSD socket ABI and an OS poller the target does not
+# offer, and the update check is an unavailable capability there
+# (update_check::AVAILABLE).
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+reqwest_client.workspace = true
+
 [target.'cfg(target_os = "aros")'.dependencies]
 ferail-shell-aros.workspace = true
 

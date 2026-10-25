@@ -4,10 +4,6 @@ use std::os::unix::prelude::*;
 use std::os::windows::prelude::*;
 // AROS is not `cfg(unix)`, but its std exposes the same OsStrExt/OsStringExt
 // (literally `#[path]`-included from the unix pal) plus a MetadataExt, under
-// `std::os::aros`. See vendor/tar/README.md.
-#[cfg(target_os = "aros")]
-use std::os::aros::prelude::*;
-
 use std::borrow::Cow;
 use std::fmt;
 use std::fs;
@@ -25,10 +21,7 @@ use crate::EntryType;
 ///
 /// This value, chosen after careful deliberation, corresponds to _Jul 23, 2006_,
 /// which is the date of the first commit for what would become Rust.
-#[cfg(any(
-    all(any(unix, windows), not(target_arch = "wasm32")),
-    target_os = "aros"
-))]
+#[cfg(all(any(unix, windows), not(target_arch = "wasm32")))]
 pub const DETERMINISTIC_TIMESTAMP: u64 = 1153704088;
 
 pub(crate) const BLOCK_SIZE: u64 = 512;
@@ -845,42 +838,6 @@ impl Header {
                 _ => EntryType::new(b' '),
             }
         }
-    }
-
-    #[cfg(target_os = "aros")]
-    fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        // AROS is single-user and its MetadataExt exposes neither uid nor gid,
-        // so ownership is always recorded as root:root. The entry type comes
-        // from `file_type()` rather than the raw `S_IF*` bits the unix arm
-        // matches on: AROS is not `cfg(unix)`, so those libc constants do not
-        // exist here.
-        match mode {
-            HeaderMode::Complete => {
-                self.set_mtime(meta.mtime() as u64);
-                self.set_uid(0);
-                self.set_gid(0);
-                self.set_mode(meta.mode());
-            }
-            HeaderMode::Deterministic => {
-                self.set_mtime(DETERMINISTIC_TIMESTAMP);
-                self.set_uid(0);
-                self.set_gid(0);
-                let fs_mode = if meta.is_dir() || (0o100 & meta.mode() == 0o100) {
-                    0o755
-                } else {
-                    0o644
-                };
-                self.set_mode(fs_mode);
-            }
-        }
-
-        self.set_entry_type(if meta.is_dir() {
-            EntryType::dir()
-        } else if meta.file_type().is_symlink() {
-            EntryType::symlink()
-        } else {
-            EntryType::file()
-        });
     }
 
     #[cfg(windows)]
@@ -1725,7 +1682,7 @@ fn ends_with_slash(p: &Path) -> bool {
     last == Some(b'/' as u16) || last == Some(b'\\' as u16)
 }
 
-#[cfg(any(all(unix, not(target_arch = "wasm32")), target_os = "aros"))]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 fn ends_with_slash(p: &Path) -> bool {
     p.as_os_str().as_bytes().ends_with(b"/")
 }
@@ -1752,8 +1709,8 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<'_, [u8]>> {
         })
 }
 
-#[cfg(any(all(unix, not(target_arch = "wasm32")), target_os = "aros"))]
-/// On unix and AROS this will never fail
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+/// On unix this will never fail
 pub fn path2bytes(p: &Path) -> io::Result<Cow<'_, [u8]>> {
     Ok(Cow::Borrowed(p.as_os_str().as_bytes()))
 }
@@ -1781,8 +1738,8 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     }
 }
 
-#[cfg(any(all(unix, not(target_arch = "wasm32")), target_os = "aros"))]
-/// On unix and AROS this operation can never fail.
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+/// On unix this operation can never fail.
 pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     use std::ffi::{OsStr, OsString};
 

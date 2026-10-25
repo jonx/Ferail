@@ -387,14 +387,14 @@ pub fn write_hang_report(reason: &str) {
         crate::obs::stderr_line(&body);
     }
     // AROS: stderr is console-bound and the config dir may not exist:
-    // persist to the host-shared volume like the panic hook does.
+    // persist next to the log, like the panic hook does.
     #[cfg(target_os = "aros")]
     {
         use std::io::Write as _;
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("MacRW:ferail-hang.txt")
+            .open(crate::obs::aros_diag_path("ferail-hang.txt"))
         {
             let _ = writeln!(f, "{body}");
             let _ = f.flush();

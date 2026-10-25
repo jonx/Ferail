@@ -593,7 +593,7 @@ impl<'a> EntryFields<'a> {
             }
             return Ok(Unpacked::__Nonexhaustive);
 
-            #[cfg(any(target_arch = "wasm32", target_os = "aros"))]
+            #[cfg(target_arch = "wasm32")]
             #[allow(unused_variables)]
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
@@ -730,7 +730,9 @@ impl<'a> EntryFields<'a> {
             })
         }
 
-        #[cfg(all(unix, not(target_arch = "wasm32")))]
+        // AROS: single-user, its C library has no fchown(); ownership is
+        // not restored there (the stub below).
+        #[cfg(all(unix, not(target_arch = "wasm32"), not(target_os = "aros")))]
         fn _set_ownerships(
             dst: &Path,
             f: &Option<&mut std::fs::File>,
@@ -845,7 +847,7 @@ impl<'a> EntryFields<'a> {
             }
         }
 
-        #[cfg(any(target_arch = "wasm32", target_os = "aros"))]
+        #[cfg(target_arch = "wasm32")]
         #[allow(unused_variables)]
         fn _set_perms(
             dst: &Path,
@@ -857,7 +859,8 @@ impl<'a> EntryFields<'a> {
             Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
         }
 
-        #[cfg(all(unix, not(target_arch = "wasm32"), feature = "xattr"))]
+        // AROS: no extended attributes in its C library; the stub below.
+        #[cfg(all(unix, not(target_arch = "wasm32"), feature = "xattr", not(target_os = "aros")))]
         fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
             use std::ffi::OsStr;
             use std::os::unix::prelude::*;

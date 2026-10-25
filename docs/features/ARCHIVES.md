@@ -151,7 +151,9 @@ the archive name.
 Extraction always runs as a background file operation with progress and
 cooperative cancellation. Every member path passes through the shared
 zip-slip guard. Absolute paths, drive/UNC prefixes, `..` traversal, NUL bytes,
-empty paths, and other unsafe spellings never escape the destination.
+empty paths, and other unsafe spellings never escape the destination. On AROS,
+a colon in any component is rejected as a volume or assign path; Unix literal
+colons retain their normal filename semantics on other targets.
 
 Lexical validation is only the first containment layer. ZIP and TAR link
 entries are never materialized; 7-Zip Unix-mode/Windows-reparse metadata and

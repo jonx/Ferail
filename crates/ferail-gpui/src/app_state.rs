@@ -25,6 +25,7 @@ use std::path::PathBuf;
 /// scheduling, tests, and the public policy cannot silently drift apart.
 pub const DEFAULT_REDACT_DIAGNOSTICS: bool = true;
 pub const DEFAULT_UPDATE_CHECK: bool = false;
+#[cfg(not(target_os = "aros"))]
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Mutex, OnceLock};
 
@@ -40,6 +41,7 @@ fn cache() -> &'static Mutex<Option<AppState>> {
 /// Lazily-spawned writer thread. Bursts of saves (splitter drags)
 /// coalesce: the thread drains the queue and writes only the newest
 /// serialization.
+#[cfg(not(target_os = "aros"))]
 fn writer() -> &'static Sender<String> {
     static WRITER: OnceLock<Sender<String>> = OnceLock::new();
     WRITER.get_or_init(|| {
@@ -63,6 +65,36 @@ fn writer() -> &'static Sender<String> {
         }
         tx
     })
+}
+
+#[cfg(target_os = "aros")]
+#[path = "state_writer.rs"]
+mod state_writer;
+
+#[cfg(target_os = "aros")]
+fn native_writer() -> &'static state_writer::StateWriter {
+    static WRITER: OnceLock<state_writer::StateWriter> = OnceLock::new();
+    WRITER.get_or_init(state_writer::StateWriter::new)
+}
+
+/// Declared before the GUI app so its drop follows GUI/quit observers and the
+/// final state saves. No writer can remain executing when run_gui returns.
+#[cfg(target_os = "aros")]
+pub(crate) struct NativeWriterSession(std::marker::PhantomData<std::rc::Rc<()>>);
+#[cfg(target_os = "aros")]
+impl NativeWriterSession {
+    pub(crate) fn new() -> Self {
+        native_writer(); // establish main-thread ownership before any save
+        Self(std::marker::PhantomData)
+    }
+}
+#[cfg(target_os = "aros")]
+impl Drop for NativeWriterSession {
+    fn drop(&mut self) {
+        if let Err(error) = native_writer().shutdown() {
+            crate::obs::line("error", format_args!("state writer shutdown: {error}"));
+        }
+    }
 }
 
 fn write_atomic(contents: &str) {
@@ -327,7 +359,20 @@ pub fn config_dir() -> Option<PathBuf> {
     Some(p)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+/// AROS keeps per-user files under the `HOME:` assign, the user's home
+/// (`USERS:<name>` on the data volume, never `SYS:`, which a system update
+/// replaces as a whole): preferences as `HOME:Settings/<Name>/`. The assign
+/// is the whole contract; no environment variable and no fallback to `SYS:`
+/// or `RAM:`. Without `HOME:` nothing is persisted, and `save()` says so.
+#[cfg(target_os = "aros")]
+pub fn config_dir() -> Option<PathBuf> {
+    static HAS_HOME: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    HAS_HOME
+        .get_or_init(|| std::path::Path::new("HOME:").is_dir())
+        .then(|| PathBuf::from("HOME:Settings/Ferail"))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "aros")))]
 pub fn config_dir() -> Option<PathBuf> {
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         let mut p = PathBuf::from(xdg);
@@ -589,6 +634,11 @@ pub fn save(state: &AppState) {
         *guard = Some(state.clone());
     }
     let serialized = serialize(state);
+    #[cfg(target_os = "aros")]
+    if let Err(error) = native_writer().send(serialized.clone(), write_atomic) {
+        crate::obs::line("error", format_args!("state save rejected: {error}"));
+    }
+    #[cfg(not(target_os = "aros"))]
     if writer().send(serialized.clone()).is_err() {
         // Writer thread unavailable: degrade to a synchronous
         // atomic write rather than dropping the save.

@@ -20,9 +20,9 @@ use ferail_core::{
 };
 
 pub mod archive;
+pub mod deadline;
 mod directory_reader;
 mod disk_usage_scanner;
-pub mod deadline;
 mod dupes;
 pub mod file_ops;
 mod icons;
@@ -31,6 +31,7 @@ mod magic;
 pub mod media;
 pub mod paths;
 pub mod perceptual;
+pub mod rename;
 mod search;
 pub mod stat_info;
 pub mod trash_empty;
@@ -233,12 +234,10 @@ impl NativeFs {
     /// where results, e.g. Spotlight hits, arrive as bare paths from
     /// outside the current directory). Reads `symlink_metadata` so a
     /// symlink is reported as a link, never followed. Returns `None` for
-    /// non-UTF-8 names or unreadable metadata, matching enumerate policy.
+    /// unreadable metadata or names unrepresentable by the platform's row
+    /// policy. AROS decodes native Latin-1 names; other platforms require UTF-8.
     pub fn file_entry_for_path(&self, path: &Path) -> Option<FileEntry> {
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(str::to_owned)?;
+        let name = paths::row_file_name(path)?;
         let metadata = std::fs::symlink_metadata(path).ok()?;
         Some(self.file_entry_from_metadata(path, name, &metadata))
     }
@@ -441,7 +440,9 @@ pub fn list_subtree_paths(root: &Path, include_hidden: bool, out: &mut Vec<PathB
     let mut children: Vec<(String, PathBuf, bool)> = Vec::new();
     for dirent in read_dir.flatten() {
         let path = dirent.path();
-        let Some(name) = path.file_name().map(|s| s.to_string_lossy().into_owned()) else {
+        let Some(name) =
+            paths::os_file_name(&path).map(|raw| paths::os_to_display(raw).into_owned())
+        else {
             continue;
         };
         let Ok(metadata) = std::fs::symlink_metadata(&path) else {
@@ -494,11 +495,7 @@ impl FsBackend for NativeFs {
         let mut entries: Vec<FileEntry> = Vec::new();
         for dirent in read_dir.flatten() {
             let child_path = dirent.path();
-            let Some(name) = child_path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .map(str::to_owned)
-            else {
+            let Some(name) = paths::row_file_name(&child_path) else {
                 continue;
             };
             let metadata = match dirent.metadata() {
@@ -608,7 +605,10 @@ pub fn trash_dirs() -> Vec<PathBuf> {
         .map(|m| {
             let t = m.path.join(".Trashes").join(uid.to_string());
             let probe_path = t.clone();
-            (t, deadline::start(("trash-dir", m.path), move || probe_path.is_dir()))
+            (
+                t,
+                deadline::start(("trash-dir", m.path), move || probe_path.is_dir()),
+            )
         })
         .collect();
     for (t, probe) in probes {
@@ -673,7 +673,10 @@ pub fn trash_root_of(path: &Path) -> Option<PathBuf> {
         let name = format!(".Trash-{uid}");
         let mut walk = path;
         loop {
-            if walk.file_name().is_some_and(|component| component == name.as_str()) {
+            if walk
+                .file_name()
+                .is_some_and(|component| component == name.as_str())
+            {
                 return Some(walk.to_path_buf());
             }
             walk = walk.parent()?;
@@ -682,6 +685,9 @@ pub fn trash_root_of(path: &Path) -> Option<PathBuf> {
 
     #[cfg(target_os = "aros")]
     {
+        // A volume's `Trashcan` drawer is the trash: found by name, not by a
+        // root prefix.
+        let _ = &under;
         let mut walk = path;
         loop {
             if walk
@@ -909,13 +915,13 @@ pub(crate) fn aros_trashcan_for(path: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(format!("{dev}Trashcan")))
 }
 
-/// AROS: the per-volume Trashcan drawers that exist, for Empty Trash.
-/// Probes the standard mounted volumes' roots.
+/// AROS: the per-volume Trashcan drawers that exist, for Empty Trash, over
+/// the volumes DOS has mounted.
 #[cfg(target_os = "aros")]
 pub fn trash_dirs() -> Vec<PathBuf> {
-    ["SYS:", "RAM:", "MacRW:", "Work:"]
-        .iter()
-        .map(|v| PathBuf::from(format!("{v}Trashcan")))
+    crate::list_volumes()
+        .into_iter()
+        .map(|v| v.path.join("Trashcan"))
         .filter(|p| p.is_dir())
         .collect()
 }
@@ -1330,7 +1336,10 @@ mod tests {
         let home_trash = paths::home_dir().join(".Trash");
         assert!(is_in_trash(&home_trash));
         assert!(is_in_trash(&home_trash.join("victim.txt")));
-        assert_eq!(trash_root_of(&home_trash.join("deep/victim.txt")), Some(home_trash.clone()));
+        assert_eq!(
+            trash_root_of(&home_trash.join("deep/victim.txt")),
+            Some(home_trash.clone())
+        );
 
         // A volume trash is `<mount>/.Trashes/<uid>`: recognized by shape, so
         // an unplugged or sleeping volume costs nothing to answer about.

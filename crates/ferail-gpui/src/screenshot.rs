@@ -458,6 +458,10 @@ pub fn parse_args() -> Args {
             "--drag-ghost" => args.drag_ghost = iter.next().and_then(|s| s.parse().ok()),
             "--help" | "-h" => {
                 print_help();
+                #[cfg(target_os = "aros")]
+                if let Err(error) = crate::platform_shell::shutdown_file_clipboard() {
+                    eprintln!("{error}");
+                }
                 std::process::exit(0);
             }
             _ => {}
@@ -622,6 +626,7 @@ pub fn run(args: Args) -> Result<()> {
         crate::text::install_platform_font_families(cx);
         // Real HTTP client, as in boot.rs, only exercised by
         // `--update-dialog live`; every other capture stays offline.
+        #[cfg(not(target_os = "aros"))]
         if let Ok(client) = reqwest_client::ReqwestClient::user_agent(concat!(
             "Ferail/",
             env!("CARGO_PKG_VERSION"),

@@ -133,9 +133,10 @@ keep the UI off the I/O path.
 - [linux-port.md](linux-port.md): orientation for the Linux port:
   freedesktop/D-Bus/XDG mapping of the shell surface.
 - [mac_port.md](mac_port.md): Mac-side verification checklist after the port.
-- [aros-port.md](aros-port.md): the AROS research port and its GPUI platform
-  backend.
-- [aros-building.md](aros-building.md): the AROS cross-build and how to run
+- [aros-port.md](aros-port.md): the native AROS port: the GPUI backend over
+  Intuition, the shell crate over the AROS libraries, the capabilities AROS
+  does and does not provide.
+- [aros-building.md](aros-building.md): the native AROS build and how to run
   the result.
 - [SCREENSHOTS.md](SCREENSHOTS.md): the headless screenshot CLI and the
   visual dev loop: render any UI state to a PNG off-screen for verification.

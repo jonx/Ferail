@@ -1,15 +1,22 @@
 [package]
 name = "ferail-shell-aros"
 version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-edition = "2021"
+description = "AROS platform shell: Workbench, openurl, ASL, clipboard.device and DOS integration"
 publish = false
 
 [dependencies]
-# v1: the AROS shell rides ferail-shell-linux's portable scaffold - its
-# `cfg(not(target_os = "linux"))` arms are exactly the safe no-op surface a
-# new platform starts from, and the platform-neutral impls (zip compression)
-# are pure Rust. Real AROS integrations (workbench.library, icon.library,
-# clipboard.device file URLs) replace re-exports here incrementally.
-ferail-shell-linux.workspace = true
+ferail-core.workspace = true
+# compress_paths writes `.zip` archives: pure Rust, platform-neutral, the same
+# implementation the Linux and Windows shells carry.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[build-dependencies]
+cc = "1"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("aros"))']

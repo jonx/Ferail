@@ -39,6 +39,8 @@ use ferail_archive::{safe_relative_path, CompressionLevel, Format, Toc};
 use crate::file_ops::TransferProgress;
 
 mod lha;
+mod os_paths;
+pub use os_paths::entry_os_path;
 pub mod scratch;
 mod sevenz;
 mod single;
@@ -398,6 +400,20 @@ fn dispatch_extract(
     cancel: &AtomicBool,
 ) -> Result<ExtractOutcome, ArchiveError> {
     let format = probe_format(archive).ok_or(ArchiveError::UnsupportedFormat)?;
+    #[cfg(target_os = "aros")]
+    {
+        // A later unrepresentable name must not leave earlier output behind.
+        // Keep archive strings Unicode: only selected, lexically safe entries
+        // are checked for native representability; codecs still report unsafe
+        // names through their existing skipped-entry contract.
+        check_cancel(cancel)?;
+        for entry in read_toc(archive, opts.password)?.entries {
+            check_cancel(cancel)?;
+            if sel.includes(&entry.path) && safe_relative_path(&entry.path).is_ok() {
+                let _ = entry_os_path(dest, &entry.path)?;
+            }
+        }
+    }
     match format {
         Format::Zip => zip_codec::extract(archive, dest, sel, opts, progress, cancel),
         Format::SevenZ => sevenz::extract(archive, dest, sel, opts, progress, cancel),
@@ -431,13 +447,18 @@ pub(super) fn safe_or_skip(entry_path: &str, outcome: &mut ExtractOutcome) -> Op
     }
 }
 
-fn note_created_root(dest: &Path, safe_rel: &str, outcome: &mut ExtractOutcome) {
+fn note_created_root(
+    dest: &Path,
+    safe_rel: &str,
+    outcome: &mut ExtractOutcome,
+) -> Result<(), ArchiveError> {
     if let Some(top) = safe_rel.split('/').next() {
-        let p = dest.join(top);
+        let p = entry_os_path(dest, top)?;
         if !outcome.created.contains(&p) {
             outcome.created.push(p);
         }
     }
+    Ok(())
 }
 
 /// Create `dest/safe_rel` as a directory (and its parents).
@@ -446,11 +467,12 @@ pub(super) fn make_dir(
     safe_rel: &str,
     outcome: &mut ExtractOutcome,
 ) -> Result<(), ArchiveError> {
+    let _ = entry_os_path(dest, safe_rel)?;
     if !ensure_dir_beneath(dest, safe_rel)? {
         outcome.skip(safe_rel.to_string(), SkipReason::UnsafeDestinationLink);
         return Ok(());
     }
-    note_created_root(dest, safe_rel, outcome);
+    note_created_root(dest, safe_rel, outcome)?;
     Ok(())
 }
 
@@ -465,7 +487,7 @@ pub(super) fn write_file<R: Read>(
     cancel: &AtomicBool,
     outcome: &mut ExtractOutcome,
 ) -> Result<(), ArchiveError> {
-    let target = dest.join(safe_rel);
+    let target = entry_os_path(dest, safe_rel)?;
     let mut file = match open_file_beneath(dest, safe_rel, opts.overwrite)? {
         DestinationFile::Ready(file) => file,
         DestinationFile::Exists => {
@@ -490,7 +512,7 @@ pub(super) fn write_file<R: Read>(
     }
     progress.add_items(1);
     outcome.files_written += 1;
-    note_created_root(dest, safe_rel, outcome);
+    note_created_root(dest, safe_rel, outcome)?;
     Ok(())
 }
 
@@ -515,7 +537,6 @@ fn open_file_beneath(
     safe_rel: &str,
     overwrite: bool,
 ) -> Result<DestinationFile, ArchiveError> {
-    use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
 
     let Some((parent, leaf)) = safe_rel.rsplit_once('/') else {
@@ -524,12 +545,7 @@ fn open_file_beneath(
     let Some(parent_fd) = unix_walk_dirs(dest, parent)? else {
         return Ok(DestinationFile::UnsafeLink);
     };
-    let name = CString::new(leaf.as_bytes()).map_err(|_| {
-        ArchiveError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "archive entry contains a NUL byte",
-        ))
-    })?;
+    let name = os_paths::component_cstring(leaf)?;
     let flags = libc::O_WRONLY
         | libc::O_CREAT
         | libc::O_CLOEXEC
@@ -568,15 +584,9 @@ fn unix_open_leaf(
     leaf: &str,
     overwrite: bool,
 ) -> Result<DestinationFile, ArchiveError> {
-    use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
 
-    let name = CString::new(leaf.as_bytes()).map_err(|_| {
-        ArchiveError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "archive entry contains a NUL byte",
-        ))
-    })?;
+    let name = os_paths::component_cstring(leaf)?;
     let flags = libc::O_WRONLY
         | libc::O_CREAT
         | libc::O_CLOEXEC
@@ -638,23 +648,33 @@ fn unix_walk_dirs(
     dest: &Path,
     safe_rel: &str,
 ) -> Result<Option<std::os::fd::OwnedFd>, ArchiveError> {
-    use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
 
     let mut dir = unix_open_root(dest)?;
+    #[cfg(target_os = "aros")]
+    let mut so_far = dest.to_path_buf();
     for component in safe_rel.split('/').filter(|part| !part.is_empty()) {
-        let name = CString::new(component.as_bytes()).map_err(|_| {
-            ArchiveError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "archive entry contains a NUL byte",
-            ))
-        })?;
+        let name = os_paths::component_cstring(component)?;
         // SAFETY: descriptor and name are valid for this call.
+        #[cfg(not(target_os = "aros"))]
         let made = unsafe { libc::mkdirat(dir.as_raw_fd(), name.as_ptr(), 0o777) };
+        #[cfg(not(target_os = "aros"))]
         if made < 0 {
             let error = std::io::Error::last_os_error();
             if error.kind() != std::io::ErrorKind::AlreadyExists {
                 return Err(ArchiveError::Io(error));
+            }
+        }
+        // AROS: the C library has openat() but no mkdirat(); the directory is
+        // created by path and then opened relative to its parent as on the
+        // other platforms, so the link checks below still apply.
+        #[cfg(target_os = "aros")]
+        {
+            so_far = crate::paths::join_display_leaf(&so_far, component)?;
+            if let Err(error) = std::fs::create_dir(&so_far) {
+                if error.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(ArchiveError::Io(error));
+                }
             }
         }
         // SAFETY: descriptor and name are valid. O_DIRECTORY rejects regular
@@ -854,7 +874,11 @@ pub fn create_archive(
         )));
     }
 
+    // Cancellation must precede every writer: even an empty ZIP writer creates
+    // and may finalize its output when dropped. Preserve existing destinations.
+    check_cancel(cancel)?;
     let (items, total_bytes) = plan_inputs(inputs)?;
+    check_cancel(cancel)?;
     let file_count = items.iter().filter(|i| !i.is_dir).count() as u64;
     progress.begin_transfer(total_bytes, file_count);
 
@@ -917,7 +941,7 @@ pub fn materialize_archive_entry(
             outcome.skipped.len()
         )));
     }
-    let staged = stage.join(safe);
+    let staged = entry_os_path(&stage, &safe)?;
     if !staged.exists() {
         return Err(ArchiveError::Corrupt(format!(
             "archive entry was not materialized: {entry}"
@@ -1025,8 +1049,9 @@ pub fn convert_archive(
         return Err(ArchiveError::ConversionEncryptionUnsupported(opts.target));
     }
     let output_stem = validate_output_stem(output_stem)?;
-    let parent = source
-        .parent()
+    // Fail representability before creating a staging directory.
+    let _ = crate::paths::join_display_leaf(Path::new(""), &output_stem)?;
+    let parent = crate::paths::os_parent(source)
         .ok_or_else(|| ArchiveError::Codec("the source archive has no parent directory".into()))?;
     let before = archive_stamp(source)?;
     let source_toc = read_toc(source, opts.input_password)?;
@@ -1113,6 +1138,8 @@ pub fn convert_archive(
         &output_stem,
         opts.target.canonical_extension(),
     )?;
+    // DOS Rename consumes the partial; hard-link publication leaves it behind.
+    #[cfg(not(target_os = "aros"))]
     std::fs::remove_file(&partial)?;
     drop(partial_guard);
     Ok(ConvertOutcome {
@@ -1129,6 +1156,7 @@ fn validate_output_stem(stem: &str) -> Result<String, ArchiveError> {
         || stem.contains('/')
         || stem.contains('\\')
         || stem.contains('\0')
+        || (cfg!(target_os = "aros") && stem.contains(':'))
     {
         return Err(ArchiveError::ConversionInvalidName);
     }
@@ -1141,17 +1169,19 @@ fn unique_conversion_path(
     purpose: &str,
     extension: Option<&str>,
 ) -> Result<PathBuf, ArchiveError> {
-    let source_leaf = source
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
+    let source_leaf = crate::paths::os_file_name(source)
+        .map(|name| crate::paths::os_to_display(name).into_owned())
         .unwrap_or_else(|| "archive".into());
     for _ in 0..100 {
         let sequence = CONVERT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let suffix = extension.map_or_else(String::new, |ext| format!(".{ext}"));
-        let candidate = parent.join(format!(
-            ".{source_leaf}.ferail-convert-{purpose}-{}-{sequence}{suffix}",
-            std::process::id()
-        ));
+        let candidate = crate::paths::join_display_leaf(
+            parent,
+            &format!(
+                ".{source_leaf}.ferail-convert-{purpose}-{}-{sequence}{suffix}",
+                std::process::id()
+            ),
+        )?;
         if !candidate.exists() {
             return Ok(candidate);
         }
@@ -1174,8 +1204,8 @@ fn publish_conversion(
         } else {
             format!("{stem} {n}.{extension}")
         };
-        let candidate = parent.join(leaf);
-        match std::fs::hard_link(partial, &candidate) {
+        let candidate = crate::paths::join_display_leaf(parent, &leaf)?;
+        match publish_without_replacing(partial, &candidate) {
             Ok(()) => return Ok(candidate),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(ArchiveError::Io(error)),
@@ -1185,6 +1215,19 @@ fn publish_conversion(
         std::io::ErrorKind::AlreadyExists,
         "could not choose an unused converted archive name",
     )))
+}
+
+// std::fs::rename uses the C rename contract (replace destination), and link()
+// is unavailable on AROS. DOS Rename sends ACTION_RENAME_OBJECT, whose RAM
+// and AFS+ handlers reject an existing destination without removing it.
+#[cfg(not(target_os = "aros"))]
+fn publish_without_replacing(source: &Path, target: &Path) -> std::io::Result<()> {
+    std::fs::hard_link(source, target)
+}
+
+#[cfg(target_os = "aros")]
+fn publish_without_replacing(source: &Path, target: &Path) -> std::io::Result<()> {
+    crate::rename::rename_no_replace(source, target)
 }
 
 struct ConversionTemp {
@@ -1402,11 +1445,12 @@ pub fn add_to_archive(
 /// therefore left alone, and anything that still fails the shared safety rule
 /// (a component that is `.`/`..`, empty, or carries a separator or NUL) is
 /// dropped rather than archived under a dangerous name.
-fn archive_component(name: &str) -> String {
-    if name.contains('/') || ferail_archive::safe_relative_path(name).is_err() {
+fn archive_component(raw: &std::ffi::OsStr) -> String {
+    let name = crate::paths::os_to_display(raw);
+    if name.contains('/') || ferail_archive::safe_relative_path(&name).is_err() {
         return String::new();
     }
-    name.to_string()
+    name.into_owned()
 }
 
 /// Walk `inputs` into a flat list of planned entries. Uses `symlink_metadata`
@@ -1417,9 +1461,8 @@ fn plan_inputs(inputs: &[&Path]) -> Result<(Vec<PlannedItem>, u64), ArchiveError
     // Stack of (absolute path, archive-relative path).
     let mut stack: Vec<(PathBuf, String)> = Vec::new();
     for input in inputs {
-        let base = input
-            .file_name()
-            .map(|n| archive_component(&n.to_string_lossy()))
+        let base = crate::paths::os_file_name(input)
+            .map(archive_component)
             .unwrap_or_default();
         if base.is_empty() {
             continue;
@@ -1442,7 +1485,7 @@ fn plan_inputs(inputs: &[&Path]) -> Result<(Vec<PlannedItem>, u64), ArchiveError
             });
             for child in std::fs::read_dir(&abs)? {
                 let child = child?;
-                let name = archive_component(&child.file_name().to_string_lossy());
+                let name = archive_component(&child.file_name());
                 if name.is_empty() {
                     continue;
                 }

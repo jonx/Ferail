@@ -7,6 +7,7 @@
 //! that may not exist; on macOS/Unix by joining the standard subfolder name.
 
 use std::borrow::Cow;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
 /// Convert a raw on-disk filename *leaf* to the form the user should see.
@@ -47,6 +48,11 @@ pub fn display_leaf(raw: &str) -> Cow<'_, str> {
 /// the leaf-only [`display_leaf`]; the two compose (strip the prefix here, swap
 /// per-leaf separators there).
 pub fn display_path(path: &std::path::Path) -> String {
+    #[cfg(target_os = "aros")]
+    {
+        return os_to_display(path.as_os_str()).into_owned();
+    }
+    #[allow(unreachable_code)]
     let s = path.to_string_lossy();
     #[cfg(windows)]
     {
@@ -58,6 +64,114 @@ pub fn display_path(path: &std::path::Path) -> String {
         }
     }
     s.into_owned()
+}
+
+/// A name from the file system as the text the user sees.
+///
+/// AROS file names are ISO-8859-1 bytes: the Shell, Wanderer, the keymaps and
+/// the fonts all read them so, and a byte is a character. Decoding them as
+/// UTF-8 would hide every name with an accented letter written by an AROS
+/// program. Elsewhere names are UTF-8 (or WTF-8), shown lossily.
+pub fn os_to_display(raw: &OsStr) -> Cow<'_, str> {
+    #[cfg(target_os = "aros")]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        let bytes = raw.as_bytes();
+        if bytes.is_ascii() {
+            // ASCII is the same in both encodings: no allocation.
+            return Cow::Borrowed(std::str::from_utf8(bytes).unwrap_or_default());
+        }
+        return Cow::Owned(bytes.iter().map(|&b| b as char).collect());
+    }
+    #[allow(unreachable_code)]
+    raw.to_string_lossy()
+}
+
+/// A typed name leaf as the bytes to write on disk: [`on_disk_leaf`], then on
+/// AROS the ISO-8859-1 encoding of [`os_to_display`]. A character outside
+/// ISO-8859-1 cannot be written there; [`validate_leaf`] refuses it first.
+pub fn display_to_os(typed: &str) -> Result<OsString, String> {
+    let leaf = on_disk_leaf(typed);
+    validate_leaf(&leaf)?;
+    #[cfg(target_os = "aros")]
+    {
+        use std::os::unix::ffi::OsStringExt as _;
+        let mut bytes = Vec::with_capacity(leaf.len());
+        for c in leaf.chars() {
+            let code = c as u32;
+            if code > 0xFF {
+                return Err(format!(
+                    "A name can\u{2019}t contain the {c} character on AROS."
+                ));
+            }
+            bytes.push(code as u8);
+        }
+        return Ok(OsString::from_vec(bytes));
+    }
+    #[allow(unreachable_code)]
+    Ok(OsString::from(leaf.into_owned()))
+}
+
+/// Last OS filename, preserving AROS's `volume:leaf` root syntax.
+pub fn os_file_name(path: &std::path::Path) -> Option<&OsStr> {
+    #[cfg(target_os = "aros")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = path.as_os_str().as_bytes();
+        let start = bytes
+            .iter()
+            .rposition(|b| *b == b'/')
+            .or_else(|| bytes.iter().position(|b| *b == b':'))
+            .map_or(0, |i| i + 1);
+        return (!bytes[start..].is_empty()).then(|| OsStr::from_bytes(&bytes[start..]));
+    }
+    #[cfg(not(target_os = "aros"))]
+    path.file_name()
+}
+
+/// A filename for a row: AROS decodes its native Latin-1 bytes, while other
+/// platforms retain the policy of omitting names that are not UTF-8.
+pub(crate) fn row_file_name(path: &std::path::Path) -> Option<String> {
+    let raw = os_file_name(path)?;
+    #[cfg(target_os = "aros")]
+    return Some(os_to_display(raw).into_owned());
+    #[cfg(not(target_os = "aros"))]
+    raw.to_str().map(str::to_owned)
+}
+
+/// Raw OS parent; a volume-root child retains its trailing colon.
+pub fn os_parent(path: &std::path::Path) -> Option<&std::path::Path> {
+    #[cfg(target_os = "aros")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = path.as_os_str().as_bytes();
+        if let Some(i) = bytes.iter().rposition(|b| *b == b'/') {
+            return Some(std::path::Path::new(OsStr::from_bytes(&bytes[..i])));
+        }
+        if let Some(i) = bytes.iter().position(|b| *b == b':') {
+            return (!bytes[i + 1..].is_empty())
+                .then(|| std::path::Path::new(OsStr::from_bytes(&bytes[..=i])));
+        }
+    }
+    path.parent()
+}
+
+pub fn os_file_stem(path: &std::path::Path) -> Option<&OsStr> {
+    std::path::Path::new(os_file_name(path)?).file_stem()
+}
+
+/// Join one Unicode display/interchange filename to an existing OS parent.
+/// On AROS the leaf is encoded as Latin1 and volume-root syntax is retained.
+/// The existing parent is already an OS path and is never re-encoded.
+pub fn join_display_leaf(parent: &std::path::Path, leaf: &str) -> std::io::Result<PathBuf> {
+    #[cfg(target_os = "aros")]
+    {
+        let encoded = display_to_os(leaf)
+            .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
+        return crate::rename::child_native_path(parent, &encoded);
+    }
+    #[cfg(not(target_os = "aros"))]
+    Ok(parent.join(leaf))
 }
 
 /// Validate a *typed* filename leaf before it is used to create or rename a
@@ -96,7 +210,28 @@ pub fn validate_leaf(name: &str) -> Result<(), String> {
             return Err(format!("“{stem}” is a reserved Windows device name."));
         }
     }
-    #[cfg(not(windows))]
+    // AROS: `:` ends a volume or assign name and `/` is the parent, so
+    // either inside a name retargets the operation; a character outside
+    // ISO-8859-1 has no byte to be written as (see `os_to_display`).
+    #[cfg(target_os = "aros")]
+    {
+        if let Some(bad) = name
+            .chars()
+            .find(|c| matches!(c, ':' | '/') || c.is_control())
+        {
+            return Err(match bad {
+                ':' => "A name can\u{2019}t contain a colon.".to_string(),
+                '/' => "A name can\u{2019}t contain a slash.".to_string(),
+                _ => "A name can\u{2019}t contain control characters.".to_string(),
+            });
+        }
+        if let Some(c) = name.chars().find(|c| (*c as u32) > 0xFF) {
+            return Err(format!(
+                "A name can\u{2019}t contain the {c} character on AROS."
+            ));
+        }
+    }
+    #[cfg(not(any(windows, target_os = "aros")))]
     let _ = name;
     Ok(())
 }
@@ -151,7 +286,28 @@ pub fn home_dir() -> PathBuf {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("C:\\"))
     }
-    #[cfg(not(windows))]
+    // AROS: the per-user `HOME:` assign is the home; without it the system
+    // volume. No environment variable: DOS, not the shell, names the home.
+    #[cfg(target_os = "aros")]
+    {
+        // Probed once: the assign is set before the program starts, and
+        // a DOS lock per call would land in render paths.
+        static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        HOME.get_or_init(|| {
+            // Resolved to the drawer it names: std joins a child as
+            // `HOME:/name`, which DOS reads as the parent of the volume, so
+            // a listing of the bare assign finds nothing.
+            let home = if std::path::Path::new("HOME:").is_dir() {
+                "HOME:"
+            } else {
+                "SYS:"
+            };
+            #[allow(clippy::disallowed_methods)]
+            std::fs::canonicalize(home).unwrap_or_else(|_| PathBuf::from(home))
+        })
+        .clone()
+    }
+    #[cfg(not(any(windows, target_os = "aros")))]
     {
         std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -747,5 +903,90 @@ mod win_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod display_codec_tests {
+    use super::*;
+
+    #[test]
+    fn ascii_round_trips_without_change() {
+        let os = display_to_os("report 2026.txt").unwrap();
+        assert_eq!(os_to_display(&os), "report 2026.txt");
+    }
+
+    #[test]
+    fn non_ascii_round_trips() {
+        let typed = "caf\u{e9} \u{fc}n\u{ef}code.txt";
+        let os = display_to_os(typed).unwrap();
+        assert_eq!(os_to_display(&os), typed);
+    }
+}
+
+#[cfg(all(test, target_os = "aros"))]
+mod aros_write_contract_tests {
+    use super::*;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    #[test]
+    fn displayed_latin1_names_write_original_bytes_including_at_volume_root() {
+        let bytes = b"caf\xe9 \xfc-\xff.txt";
+        let raw = OsString::from_vec(bytes.to_vec());
+        let displayed = os_to_display(&raw);
+        assert_eq!(displayed, "café ü-ÿ.txt");
+        let encoded = display_to_os(&displayed).unwrap();
+        assert_eq!(encoded.as_bytes(), bytes);
+        let child =
+            crate::rename::child_native_path(std::path::Path::new("RAM:"), &encoded).unwrap();
+        assert_eq!(
+            child.as_os_str().as_bytes(),
+            [b"RAM:".as_slice(), bytes].concat()
+        );
+        let sibling =
+            crate::rename::sibling_native_path(std::path::Path::new("WORK:dir/old"), &encoded)
+                .unwrap();
+        assert_eq!(
+            sibling.as_os_str().as_bytes(),
+            [b"WORK:dir/".as_slice(), bytes].concat()
+        );
+    }
+
+    #[test]
+    fn unrepresentable_or_retargeting_typed_names_fail_before_writing() {
+        for name in [
+            "emoji 😀",
+            "euro €",
+            "a:b",
+            "a/b",
+            "a\0b",
+            "a\nb",
+            "a\u{7f}b",
+            "a\u{85}b",
+        ] {
+            assert!(display_to_os(name).is_err(), "must reject {name:?}");
+        }
+    }
+
+    #[test]
+    fn every_printable_latin1_byte_round_trips_as_one_byte() {
+        for byte in 0x20u8..=0xff {
+            if matches!(byte, b'/' | b':') || (byte as char).is_control() {
+                continue;
+            }
+            let raw = OsString::from_vec(vec![byte]);
+            let displayed = os_to_display(&raw);
+            assert_eq!(display_to_os(&displayed).unwrap().as_bytes(), &[byte]);
+        }
+    }
+    #[test]
+    fn native_root_filename_parent_and_stem_are_raw_os_slices() {
+        let path = std::path::Path::new(OsStr::from_bytes(b"RAM:caf\xe9.zip"));
+        assert_eq!(os_file_name(path).unwrap().as_bytes(), b"caf\xe9.zip");
+        assert_eq!(os_file_stem(path).unwrap().as_bytes(), b"caf\xe9");
+        assert_eq!(os_parent(path).unwrap(), std::path::Path::new("RAM:"));
+        let nested = std::path::Path::new(OsStr::from_bytes(b"WORK:dir/caf\xe9.tar.gz"));
+        assert_eq!(os_parent(nested).unwrap(), std::path::Path::new("WORK:dir"));
+        assert_eq!(os_file_stem(nested).unwrap().as_bytes(), b"caf\xe9.tar");
     }
 }

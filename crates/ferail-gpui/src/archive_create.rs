@@ -64,9 +64,8 @@ impl NewArchiveView {
         // Default name mirrors the one-click Compress convention: the item's
         // own name for a single source, "Archive" for several.
         let default_name = if sources.len() == 1 {
-            sources[0]
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
+            ferail_fs_native::paths::os_file_stem(&sources[0])
+                .map(|s| ferail_fs_native::paths::os_to_display(s).into_owned())
                 .unwrap_or_else(|| "Archive".to_string())
         } else {
             "Archive".to_string()
@@ -89,20 +88,21 @@ impl NewArchiveView {
     /// The archive path this dialog would create: `<parent>/<name>.<ext>`,
     /// deduped with a `" 2"` suffix if taken. `None` when the name is empty or
     /// the sources have no parent.
-    fn output_path(&self, cx: &App) -> Option<PathBuf> {
+    fn output_path(&self, cx: &App) -> Result<Option<PathBuf>, String> {
         let name = self.name_input.read(cx).value().trim().to_string();
         if name.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let parent = self.sources.first()?.parent()?.to_path_buf();
+        let Some(parent) = self.sources.first().and_then(|source| ferail_fs_native::paths::os_parent(source)) else { return Ok(None); };
+        let parent = parent.to_path_buf();
         let ext = self.format.canonical_extension();
-        let mut candidate = parent.join(format!("{name}.{ext}"));
+        let mut candidate = ferail_fs_native::paths::join_display_leaf(&parent, &format!("{name}.{ext}")).map_err(|error| error.to_string())?;
         let mut n = 2;
         while candidate.exists() {
-            candidate = parent.join(format!("{name} {n}.{ext}"));
+            candidate = ferail_fs_native::paths::join_display_leaf(&parent, &format!("{name} {n}.{ext}")).map_err(|error| error.to_string())?;
             n += 1;
         }
-        Some(candidate)
+        Ok(Some(candidate))
     }
 
     fn password(&self, cx: &App) -> Option<String> {
@@ -264,9 +264,13 @@ pub fn open_dialog(sources: Vec<PathBuf>, window: &mut Window, cx: &mut Context<
             )
             .on_ok(move |_, window, cx: &mut App| {
                 let plan = state.read(cx);
-                let Some(output) = plan.output_path(cx) else {
-                    // Empty name: keep the dialog open so it can be fixed.
-                    return false;
+                let output = match plan.output_path(cx) {
+                    Ok(Some(path)) => path,
+                    Ok(None) => return false,
+                    Err(error) => {
+                        window.push_notice(gpui_component::notification::Notification::error(error), cx);
+                        return false;
+                    }
                 };
                 let sources = plan.sources.clone();
                 let format = plan.format;

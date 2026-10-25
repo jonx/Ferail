@@ -657,7 +657,7 @@ impl ArchiveView {
                         &cancel,
                     )
                     .ok()?;
-                    let extracted = scratch.join(&entry);
+                    let extracted = ferail_fs_native::archive::entry_os_path(&scratch, &entry).ok()?;
                     if !extracted.is_file() {
                         return None;
                     }
@@ -673,7 +673,7 @@ impl ArchiveView {
                     // the folder names don't linger either.
                     if let Some(top) = entry.split('/').next() {
                         if top != entry {
-                            let _ = std::fs::remove_dir_all(scratch.join(top));
+                            let _ = std::fs::remove_dir_all(ferail_fs_native::archive::entry_os_path(&scratch, top).ok()?);
                         }
                     }
                     Some((staged, scratch))
@@ -1995,10 +1995,8 @@ pub(crate) fn unproject_archive_path(
 }
 
 pub(crate) fn archive_addition_root(addition: &ferail_fs_native::ArchiveAddition) -> String {
-    let leaf = addition
-        .source
-        .file_name()
-        .map(|name| name.to_string_lossy().replace('\\', "/"))
+    let leaf = ferail_fs_native::paths::os_file_name(&addition.source)
+        .map(|name| ferail_fs_native::paths::os_to_display(name).replace('\\', "/"))
         .unwrap_or_default();
     let destination = normalized_archive_path(&addition.destination);
     if destination.is_empty() {
@@ -2014,7 +2012,7 @@ impl Render for ArchiveView {
             let raw_name = self
                 .archive_path
                 .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
+                .map(|s| ferail_fs_native::paths::os_to_display(s).into_owned())
                 .unwrap_or_default();
             window.set_window_title(&tr!(
                 "Archive: {name}",
@@ -2277,7 +2275,7 @@ pub fn open_existing_window(
     view.update(cx, |view, cx| view.set_dock_owner(dock_owner, cx));
     let raw_name = archive
         .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
+        .map(|s| ferail_fs_native::paths::os_to_display(s).into_owned())
         .unwrap_or_default();
     let menu_label = tr!(
         "Archive: {name}",

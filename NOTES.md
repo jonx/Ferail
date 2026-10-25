@@ -7,6 +7,40 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-10-25 Native AROS port
+
+Ferail runs as a native AROS command on AArch64. The port is the
+`ferail-aros-app` command and the `ferail-shell-aros` crate, plus AROS arms
+in `ferail-fs-native` and `ferail-gpui`; its parts outside this repository
+are public: the GPUI backend in [pomaros/gpui-aros](https://github.com/pomaros/gpui-aros),
+gpui-kit's AROS port in [pomaros/gpui-kit](https://github.com/pomaros/gpui-kit),
+and the Rust toolchain and crate patches in [pomaros/rust-aros](https://github.com/pomaros/rust-aros).
+The map is [aros-port.md](docs/features/aros-port.md), the recipe
+[aros-building.md](docs/features/aros-building.md).
+
+The decisions that shaped it:
+
+- **Native, not imitated.** Where AROS has a facility (Workbench, ASL,
+  clipboard.device, DOS volumes through `Info()`), Ferail uses it; where it
+  has none, the feature reports itself unavailable.
+- **Files under `HOME:`.** Preferences in `HOME:Settings/Ferail`, the
+  metadata database in `HOME:Data/Ferail`; no environment variable, no
+  fallback to `SYS:`.
+- **An allocator in front of the C library.** `crates/aros-alloc` serves
+  small allocations from user-space size classes: the C library's pooled
+  allocator takes a semaphore and a scheduler pass per call, and GPUI's
+  layout allocates thousands of objects per frame.
+- **Process exit.** A helper thread cannot end the process on AROS, so the
+  shutdown watchdog's forced exit is an explicit unavailability; the C
+  library ends workers that never reach a cancellation point.
+- **Probe threads are kept.** Bounded filesystem probes reuse their threads:
+  on AROS a thread is a process with its own C runtime bases.
+- **Its own lockfile.** The AROS graph resolves patched crates to the crate
+  store in `packaging/aros/Cargo.lock`; the root `Cargo.lock` stays the
+  other platforms' resolution.
+
+---
+
 # 2026-09-23 Volumes, packages and a command-to-type table
 
 Fixes for issues #2, #3, #5, #8 and #10.

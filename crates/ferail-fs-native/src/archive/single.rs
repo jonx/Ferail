@@ -22,9 +22,8 @@ use crate::file_ops::TransferProgress;
 /// compression suffix stripped (`report.csv.gz` → `report.csv`). Falls back to
 /// the whole leaf if the suffix is somehow absent.
 fn member_name(archive: &Path, format: Format) -> String {
-    let leaf = archive
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
+    let leaf = crate::paths::os_file_name(archive)
+        .map(|s| crate::paths::os_to_display(s).into_owned())
         .unwrap_or_default();
     let dot_ext = format!(".{}", format.canonical_extension());
     match leaf

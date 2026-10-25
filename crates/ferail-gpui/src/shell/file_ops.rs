@@ -108,6 +108,142 @@ fn copy_file_list_toast(count: usize, recursive: bool) -> gpui::SharedString {
 }
 
 impl Shell {
+    #[cfg(target_os = "aros")]
+    pub(crate) fn write_aros_file_clipboard(
+        &mut self,
+        items: Vec<(PathBuf, bool)>,
+        operation: crate::platform_shell::ClipboardFileOperation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let job = match crate::platform_shell::reserve_file_clipboard() {
+            Ok(job) => job,
+            Err(error) => {
+                window.push_notice(file_op_error_notification(&tr!("Copy"), &error), cx);
+                return;
+            }
+        };
+        let sequence = job.sequence();
+        let paths = items.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>();
+        let moving = operation == crate::platform_shell::ClipboardFileOperation::Move;
+        let message = if paths.len() == 1 {
+            let name = ferail_fs_native::paths::os_file_name(&paths[0])
+                .map(|name| ferail_fs_native::paths::os_to_display(name).into_owned())
+                .unwrap_or_default();
+            if moving {
+                tr!("Cut \u{201c}{name}\u{201d}", name = name)
+            } else {
+                tr!("Copied \u{201c}{name}\u{201d}", name = name)
+            }
+        } else if moving {
+            trn!("Cut {n} item", "Cut {n} items", paths.len())
+        } else {
+            trn!("Copied {n} item", "Copied {n} items", paths.len())
+        };
+        let pending = match job.begin_write(items, operation) {
+            Ok(pending) => pending,
+            Err(error) => {
+                window.push_notice(file_op_error_notification(&tr!("Copy"), &error), cx);
+                return;
+            }
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let result = pending.await;
+            let _ = this.update_in(cx, move |this, window, cx| {
+                let update_marker = crate::platform_shell::accept_file_clipboard_result(sequence);
+                match result {
+                    Ok(()) => {
+                        if !update_marker {
+                            return;
+                        }
+                        if moving {
+                            *this.process.cut_marker.borrow_mut() = paths;
+                        } else {
+                            this.process.cut_marker.borrow_mut().clear();
+                        }
+                        window.push_notice(Notification::success(message), cx);
+                    }
+                    Err(error) => {
+                        if update_marker {
+                            this.process.cut_marker.borrow_mut().clear();
+                        }
+                        window.push_notice(file_op_error_notification(&tr!("Copy"), &error), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(target_os = "aros")]
+    fn read_aros_file_clipboard(
+        &mut self,
+        forced: Option<TransferMode>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let job = match crate::platform_shell::reserve_file_clipboard() {
+            Ok(job) => job,
+            Err(error) => {
+                window.push_notice(file_op_error_notification(&tr!("Paste"), &error), cx);
+                return;
+            }
+        };
+        let sequence = job.sequence();
+        // Snapshot now: an asynchronous read must never paste into a later tab.
+        let destination = self.active_tab().current_dir.clone();
+        let pending = match job.begin_read() {
+            Ok(pending) => pending,
+            Err(error) => {
+                window.push_notice(file_op_error_notification(&tr!("Paste"), &error), cx);
+                return;
+            }
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let result = pending.await;
+            let _ = this.update_in(cx, move |this, window, cx| {
+                let update_marker = crate::platform_shell::accept_file_clipboard_result(sequence);
+                match result {
+                    Ok((sources, operation)) => {
+                        if update_marker {
+                            if operation == crate::platform_shell::ClipboardFileOperation::Move {
+                                *this.process.cut_marker.borrow_mut() = sources.clone();
+                            } else {
+                                this.process.cut_marker.borrow_mut().clear();
+                            }
+                        }
+                        if sources.is_empty() {
+                            window.push_notice(
+                                Notification::info(tr!("No files on the clipboard")),
+                                cx,
+                            );
+                        } else {
+                            let mode = forced.unwrap_or(
+                                if operation == crate::platform_shell::ClipboardFileOperation::Move
+                                {
+                                    TransferMode::Move
+                                } else {
+                                    TransferMode::Copy
+                                },
+                            );
+                            this.spawn_transfer_op(sources, destination, mode, window, cx);
+                        }
+                    }
+                    Err(error) => {
+                        if update_marker {
+                            this.process.cut_marker.borrow_mut().clear();
+                        }
+                        window.push_notice(file_op_error_notification(&tr!("Paste"), &error), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
     /// Cmd+C: write the selection's file URLs to the pasteboard.
     pub(super) fn on_copy_files(
         &mut self,
@@ -140,6 +276,16 @@ impl Shell {
             })
             .collect();
         if items.is_empty() {
+            return;
+        }
+        #[cfg(target_os = "aros")]
+        {
+            self.write_aros_file_clipboard(
+                items,
+                crate::platform_shell::ClipboardFileOperation::Copy,
+                window,
+                cx,
+            );
             return;
         }
         let refs: Vec<(&std::path::Path, bool)> =
@@ -198,6 +344,16 @@ impl Shell {
         if items.is_empty() {
             return;
         }
+        #[cfg(target_os = "aros")]
+        {
+            self.write_aros_file_clipboard(
+                items,
+                crate::platform_shell::ClipboardFileOperation::Move,
+                window,
+                cx,
+            );
+            return;
+        }
         let refs: Vec<(&std::path::Path, bool)> =
             items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
         if !crate::platform_shell::clipboard_cut_file_urls(&refs) {
@@ -232,6 +388,11 @@ impl Shell {
     ) {
         crate::trail::command("Paste");
         if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
+        #[cfg(target_os = "aros")]
+        {
+            self.read_aros_file_clipboard(None, window, cx);
             return;
         }
         use gpui_component::notification::Notification;
@@ -331,6 +492,11 @@ impl Shell {
     ) {
         use gpui_component::notification::Notification;
         if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
+        #[cfg(target_os = "aros")]
+        {
+            self.read_aros_file_clipboard(Some(mode), window, cx);
             return;
         }
         // Pasteboard read is a semantic event (action handler), same
@@ -3141,7 +3307,11 @@ impl Shell {
                             ));
                             continue;
                         }
-                        match std::fs::rename(path, &target) {
+                        #[cfg(target_os = "aros")]
+                        let renamed = ferail_fs_native::rename::rename_no_replace(path, &target);
+                        #[cfg(not(target_os = "aros"))]
+                        let renamed = std::fs::rename(path, &target);
+                        match renamed {
                             Ok(()) => {
                                 if let Ok(db) = db.lock() {
                                     let _ = db.forget_put_back(path);
@@ -3538,9 +3708,29 @@ impl Shell {
                 // A typed `/` is the Finder-displayed slash → store a `:` on
                 // disk (macOS). Also keeps the name a single leaf, so New
                 // Folder never silently descends into an existing subdir.
-                let disk = ferail_fs_native::paths::on_disk_leaf(&name).into_owned();
-                let mut path = parent.clone();
-                path.push(&disk);
+                let disk = match ferail_fs_native::paths::display_to_os(&name) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        window.push_notice(
+                            gpui_component::notification::Notification::error(error),
+                            cx,
+                        );
+                        return;
+                    }
+                };
+                #[cfg(target_os = "aros")]
+                let path = match ferail_fs_native::rename::child_native_path(&parent, &disk) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        window.push_notice(
+                            gpui_component::notification::Notification::error(error.to_string()),
+                            cx,
+                        );
+                        return;
+                    }
+                };
+                #[cfg(not(target_os = "aros"))]
+                let path = parent.join(&disk);
                 let cur = parent.clone();
                 let op_path = path.clone();
                 let undo_path = path.clone();
@@ -3631,8 +3821,7 @@ impl Shell {
                     // correct it. Validate the on-disk form (identity on
                     // Windows; the macOS `/`↔`:` swap happens in on_commit).
                     if validate_as_filename {
-                        let disk = ferail_fs_native::paths::on_disk_leaf(&new_name);
-                        if let Err(msg) = ferail_fs_native::paths::validate_leaf(&disk) {
+                        if let Err(msg) = ferail_fs_native::paths::display_to_os(&new_name) {
                             window.push_notice(
                                 gpui_component::notification::Notification::error(msg),
                                 cx,
@@ -3843,9 +4032,8 @@ impl Shell {
         let validation = if value.trim().is_empty() {
             crate::inline_edit::InlineEditValidation::Error(tr!("A name can’t be empty."))
         } else {
-            let disk = ferail_fs_native::paths::on_disk_leaf(value);
-            match ferail_fs_native::paths::validate_leaf(&disk) {
-                Ok(()) => crate::inline_edit::InlineEditValidation::Valid,
+            match ferail_fs_native::paths::display_to_os(value) {
+                Ok(_) => crate::inline_edit::InlineEditValidation::Valid,
                 Err(message) => crate::inline_edit::InlineEditValidation::Error(message.into()),
             }
         };
@@ -3896,9 +4084,37 @@ impl Shell {
             (path, tab.current_dir.clone())
         };
 
-        let disk = ferail_fs_native::paths::on_disk_leaf(&new_name).into_owned();
-        let mut new_path = old_path.clone();
-        new_path.set_file_name(&disk);
+        let disk = match ferail_fs_native::paths::display_to_os(&new_name) {
+            Ok(name) => name,
+            Err(error) => {
+                self.inline_name_edit.update(&session.target, |session| {
+                    session.validation =
+                        crate::inline_edit::InlineEditValidation::Error(error.into());
+                });
+                self.refresh_inline_name_surface(session.target, cx);
+                return;
+            }
+        };
+        #[cfg(target_os = "aros")]
+        let new_path = match ferail_fs_native::rename::sibling_native_path(&old_path, &disk) {
+            Ok(path) => path,
+            Err(error) => {
+                self.inline_name_edit.update(&session.target, |session| {
+                    session.validation = crate::inline_edit::InlineEditValidation::Error(tr!(
+                        "Rename failed: {detail}",
+                        detail = error.to_string()
+                    ));
+                });
+                self.refresh_inline_name_surface(session.target, cx);
+                return;
+            }
+        };
+        #[cfg(not(target_os = "aros"))]
+        let new_path = {
+            let mut path = old_path.clone();
+            path.set_file_name(&disk);
+            path
+        };
         if new_path == old_path {
             self.cancel_inline_name_edit(window, cx);
             return;
@@ -3915,7 +4131,12 @@ impl Shell {
         self.spawn_file_op_with_settled(
             parent,
             move || {
-                std::fs::rename(&op_old_path, &op_new_path).map_err(|e| e.to_string())?;
+                #[cfg(target_os = "aros")]
+                let renamed =
+                    ferail_fs_native::rename::rename_no_replace(&op_old_path, &op_new_path);
+                #[cfg(not(target_os = "aros"))]
+                let renamed = std::fs::rename(&op_old_path, &op_new_path);
+                renamed.map_err(|e| e.to_string())?;
                 Ok(vec![op_new_path])
             },
             ferail_core::msgid!("Rename"),
@@ -4466,9 +4687,8 @@ impl Shell {
         ) -> Option<PathBuf> {
             let ext = format.canonical_extension();
             let stem = if paths.len() == 1 {
-                paths[0]
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
+                ferail_fs_native::paths::os_file_stem(&paths[0])
+                    .map(|s| ferail_fs_native::paths::os_to_display(s).into_owned())
                     .unwrap_or_else(|| "Archive".to_string())
             } else {
                 "Archive".to_string()
@@ -4479,7 +4699,7 @@ impl Shell {
                 } else {
                     format!("{stem} {n}.{ext}")
                 };
-                let candidate = parent.join(&name);
+                let candidate = ferail_fs_native::paths::join_display_leaf(parent, &name).ok()?;
                 if !candidate.exists() {
                     return Some(candidate);
                 }
@@ -4490,8 +4710,7 @@ impl Shell {
         self.spawn_archive_op(
             cur,
             move |progress, cancel| {
-                let parent = paths[0]
-                    .parent()
+                let parent = ferail_fs_native::paths::os_parent(&paths[0])
                     .ok_or_else(|| {
                         tr!("no parent directory for {path}", path = paths[0].display()).to_string()
                     })?
@@ -5122,9 +5341,10 @@ impl Shell {
                 let mut staged: Vec<PathBuf> = Vec::with_capacity(entries.len());
                 for entry in &entries {
                     let relative = entry.trim_end_matches('/');
-                    let path = relative
-                        .split('/')
-                        .fold(staging.clone(), |acc, part| acc.join(part));
+                    let path = match ferail_fs_native::archive::entry_os_path(&staging, relative) {
+                        Ok(path) => path,
+                        Err(error) => return cleanup(Err(error.to_string())),
+                    };
                     if path.exists() {
                         staged.push(path);
                     }
@@ -5209,10 +5429,10 @@ impl Shell {
             dest_parent.clone(),
             move |progress, cancel| {
                 /// First free `name`, `name (2)`, … in `dir`.
-                fn unique_in(dir: &std::path::Path, name: &str) -> PathBuf {
-                    let candidate = dir.join(name);
+                fn unique_in(dir: &std::path::Path, name: &str) -> std::io::Result<PathBuf> {
+                    let candidate = ferail_fs_native::paths::join_display_leaf(dir, name)?;
                     if !candidate.exists() {
-                        return candidate;
+                        return Ok(candidate);
                     }
                     let (stem, ext) = match name.rsplit_once('.') {
                         Some((s, e)) if !s.is_empty() => (s, Some(e)),
@@ -5220,11 +5440,17 @@ impl Shell {
                     };
                     for n in 2u32.. {
                         let alt = match ext {
-                            Some(e) => dir.join(format!("{stem} ({n}).{e}")),
-                            None => dir.join(format!("{stem} ({n})")),
+                            Some(e) => ferail_fs_native::paths::join_display_leaf(
+                                dir,
+                                &format!("{stem} ({n}).{e}"),
+                            )?,
+                            None => ferail_fs_native::paths::join_display_leaf(
+                                dir,
+                                &format!("{stem} ({n})"),
+                            )?,
                         };
                         if !alt.exists() {
-                            return alt;
+                            return Ok(alt);
                         }
                     }
                     unreachable!()
@@ -5277,16 +5503,25 @@ impl Shell {
                     let Some(leaf) = relative.rsplit('/').next().filter(|l| !l.is_empty()) else {
                         continue;
                     };
-                    let staged = relative
-                        .split('/')
-                        .fold(staging.clone(), |path, part| path.join(part));
+                    let staged = match ferail_fs_native::archive::entry_os_path(&staging, relative)
+                    {
+                        Ok(path) => path,
+                        Err(error) => return cleanup(Err(error.to_string())),
+                    };
                     // A member the extractor skipped (zip-slip guard, link
                     // entry, cancelled midway) simply has nothing to publish.
                     if !staged.exists() {
                         continue;
                     }
-                    let target = unique_in(&dest_parent, leaf);
-                    if let Err(e) = std::fs::rename(&staged, &target) {
+                    let target = match unique_in(&dest_parent, leaf) {
+                        Ok(path) => path,
+                        Err(error) => return cleanup(Err(error.to_string())),
+                    };
+                    #[cfg(target_os = "aros")]
+                    let published = ferail_fs_native::rename::rename_no_replace(&staged, &target);
+                    #[cfg(not(target_os = "aros"))]
+                    let published = std::fs::rename(&staged, &target);
+                    if let Err(e) = published {
                         return cleanup(Err(e.to_string()));
                     }
                     created.push(target);

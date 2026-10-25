@@ -1645,3 +1645,72 @@ fn members_extracted_from_one_archive_can_be_appended_to_another() {
     // Leaf, not `payload/inner/gamma.txt`.
     assert!(names.contains(&"gamma.txt"), "{names:?}");
 }
+
+#[test]
+fn precancelled_creation_never_creates_or_changes_an_output() {
+    let dir = TempDir::new("precancel-create");
+    let input = dir.path().join("input.txt");
+    fs::write(&input, b"original input").unwrap();
+    for format in [
+        Format::Zip,
+        Format::SevenZ,
+        Format::Tar,
+        Format::TarGz,
+        Format::TarBz2,
+        Format::TarXz,
+        Format::Gzip,
+    ] {
+        let output = dir
+            .path()
+            .join(format!("cancelled.{}", format.canonical_extension()));
+        let cancel = AtomicBool::new(true);
+        let progress = TransferProgress::new();
+        for existing in [false, true] {
+            if existing {
+                fs::write(&output, b"existing destination must survive").unwrap();
+            }
+            assert!(
+                matches!(
+                    create_archive(
+                        format,
+                        &[&input],
+                        &output,
+                        CreateOptions::default(),
+                        &progress,
+                        &cancel
+                    ),
+                    Err(ArchiveError::Cancelled)
+                ),
+                "{} existing={existing}",
+                format.label()
+            );
+            if existing {
+                assert_eq!(
+                    fs::read(&output).unwrap(),
+                    b"existing destination must survive"
+                );
+            } else {
+                assert!(!output.exists());
+            }
+        }
+    }
+    assert_eq!(fs::read(input).unwrap(), b"original input");
+}
+
+#[test]
+fn conversion_publication_rejects_collision_without_touching_either_file() {
+    let dir = TempDir::new("publish-no-clobber");
+    let source = dir.path().join("partial archive with spaces");
+    let target = dir.path().join("existing archive with spaces");
+    fs::write(&source, b"new archive bytes").unwrap();
+    fs::write(&target, b"old archive bytes").unwrap();
+    let error = super::publish_without_replacing(&source, &target).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(fs::read(&source).unwrap(), b"new archive bytes");
+    assert_eq!(fs::read(&target).unwrap(), b"old archive bytes");
+    fs::remove_file(&target).unwrap();
+    super::publish_without_replacing(&source, &target).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"new archive bytes");
+    #[cfg(target_os = "aros")]
+    assert!(!source.exists());
+}

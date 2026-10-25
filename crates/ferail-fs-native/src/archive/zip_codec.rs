@@ -566,19 +566,20 @@ fn renamed_path(original: &str, renames: &[super::ArchiveRename]) -> Result<Stri
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn unique_sibling(archive: &Path, purpose: &str) -> Result<PathBuf, ArchiveError> {
-    let parent = archive
-        .parent()
+    let parent = crate::paths::os_parent(archive)
         .ok_or_else(|| ArchiveError::Codec("the archive has no parent directory".to_string()))?;
-    let leaf = archive
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
+    let leaf = crate::paths::os_file_name(archive)
+        .map(|name| crate::paths::os_to_display(name).into_owned())
         .unwrap_or_else(|| "archive.zip".to_string());
     for _ in 0..100 {
         let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(
-            ".{leaf}.ferail-{purpose}-{}-{sequence}.tmp",
-            std::process::id()
-        ));
+        let candidate = crate::paths::join_display_leaf(
+            parent,
+            &format!(
+                ".{leaf}.ferail-{purpose}-{}-{sequence}.tmp",
+                std::process::id()
+            ),
+        )?;
         if !candidate.exists() {
             return Ok(candidate);
         }

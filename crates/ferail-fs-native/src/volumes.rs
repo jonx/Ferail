@@ -572,44 +572,74 @@ fn statvfs_bytes(path: &str) -> (Option<u64>, Option<u64>, bool) {
     (total, avail, st.f_flag & libc::ST_RDONLY != 0)
 }
 
-/// AROS volumes for the sidebar's Volumes section. AROS has no `/proc/mounts`
-/// or `/Volumes` to enumerate, and iterating the DOS device list needs
-/// dos.library FFI we don't bind yet, so probe the volumes a stock hosted
-/// AROS mounts by default and keep the ones that resolve. `exists()` stats
-/// (never `open()`s), so this can't trip the posixc open() fault. Colon-
-/// terminated AROS volume names double as their root path.
+/// The volumes DOS has mounted: the volume list (`LockDosList`), each with
+/// its size, free space, write protection and filesystem type from `Info()`
+/// (the glue in `c/aros_volumes.c`). A volume whose medium is out has no
+/// handler task and is skipped, so no "please insert volume" requester can
+/// appear. Colon-terminated volume names double as their root path.
 #[cfg(target_os = "aros")]
 pub fn list_volumes() -> Vec<VolumeInfo> {
-    // Only volumes/assigns that resolve without a "Please insert volume"
-    // requester: SYS:/RAM: are always mounted; MacRO:/MacRW: are assigns that
-    // fail cleanly when absent. A stock named volume like Work: would pop the
-    // AmigaOS insert-media requester when unmounted, so it is intentionally out.
-    const CANDIDATES: &[(&str, &str)] = &[
-        ("System", "SYS:"),
-        ("Ram Disk", "RAM:"),
-        ("Mac (read-only)", "MacRO:"),
-        ("Mac (read/write)", "MacRW:"),
-    ];
-    CANDIDATES
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct FsnVolume {
+        name: [u8; 64],
+        total_bytes: u64,
+        free_bytes: u64,
+        dos_type: u32,
+        read_only: i32,
+        sizes_known: i32,
+    }
+    unsafe extern "C" {
+        fn fsn_aros_volumes(out: *mut FsnVolume, cap: i32) -> i32;
+    }
+    const CAP: usize = 64;
+    let mut raw = [FsnVolume {
+        name: [0; 64],
+        total_bytes: 0,
+        free_bytes: 0,
+        dos_type: 0,
+        read_only: 0,
+        sizes_known: 0,
+    }; CAP];
+    // SAFETY: the glue writes at most CAP entries and returns how many.
+    let n = unsafe { fsn_aros_volumes(raw.as_mut_ptr(), CAP as i32) }.clamp(0, CAP as i32) as usize;
+    raw[..n]
         .iter()
-        .filter(|(_, path)| std::path::Path::new(path).exists())
-        .map(|&(name, path)| VolumeInfo {
-            name: name.to_string(),
-            path: std::path::PathBuf::from(path),
-            total_bytes: None,
-            available_bytes: None,
-            is_local: true,
-            is_removable: false,
-            format: None,
-            // MacRO: is the host-folder assign mounted without write
-            // access: the name already says so; the flag makes the
-            // status bar say it too.
-            read_only: path == "MacRO:",
-            bsd_device: None,
-            device_id: None,
-            responding: true,
+        .map(|v| {
+            let len = v.name.iter().position(|&b| b == 0).unwrap_or(v.name.len());
+            let name = String::from_utf8_lossy(&v.name[..len]).into_owned();
+            VolumeInfo {
+                path: std::path::PathBuf::from(format!("{name}:")),
+                name,
+                total_bytes: (v.sizes_known != 0).then_some(v.total_bytes),
+                available_bytes: (v.sizes_known != 0).then_some(v.free_bytes),
+                is_local: true,
+                is_removable: false,
+                format: (v.sizes_known != 0).then(|| aros_dos_type_name(v.dos_type)),
+                read_only: v.read_only != 0,
+                bsd_device: None,
+                device_id: None,
+                responding: true,
+            }
         })
         .collect()
+}
+
+/// The filesystem name behind a DOS type identifier: the four identifier
+/// bytes as text, the way `Info` shows them (`DOS\x01`, `AFS\x00`), with the
+/// non-printable version byte spelled as a digit.
+#[cfg(target_os = "aros")]
+fn aros_dos_type_name(dos_type: u32) -> String {
+    let bytes = dos_type.to_be_bytes();
+    let mut out = String::new();
+    for b in bytes {
+        if b.is_ascii_graphic() {
+            out.push(b as char);
+        } else {
+            out.push_str(&b.to_string());
+        }
+    }
+    out
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "aros", windows)))]
@@ -752,10 +782,15 @@ mod tests {
     #[test]
     fn the_live_list_has_the_boot_volume_once_and_no_hidden_volumes() {
         let volumes = list_volumes();
-        let roots = volumes.iter().filter(|v| v.path == std::path::Path::new("/")).count();
+        let roots = volumes
+            .iter()
+            .filter(|v| v.path == std::path::Path::new("/"))
+            .count();
         assert_eq!(roots, 1, "{volumes:?}");
         assert!(
-            volumes.iter().all(|v| v.path != std::path::Path::new("/System/Volumes/Data")),
+            volumes
+                .iter()
+                .all(|v| v.path != std::path::Path::new("/System/Volumes/Data")),
             "{volumes:?}"
         );
         assert!(volumes.iter().all(|v| v.responding), "{volumes:?}");

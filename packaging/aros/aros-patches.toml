@@ -2,65 +2,79 @@
 #
 # Passed explicitly by the AROS scripts and nothing else:
 #
-#     cargo --config packaging/aros/aros-patches.toml build --target ...aros.json
+#     cargo --config packaging/aros/aros-patches.toml check --target ...aros.json
 #
 # That scoping is the point. `[patch]` is global to a build, so putting these
-# in `.cargo/config.toml` would feed the sibling forks to the macOS and Windows
-# builds on the same machine - including release packaging, where it would also
-# shadow the `vendor/ztracing` patch that severs the GPL-3.0 ztracing edge
-# (gpui-from-zed-aros brings its own ztracing). Here they only reach AROS.
+# in `.cargo/config.toml` would feed the sibling forks to the macOS, Windows and
+# Linux builds on the same machine, release packaging included. Here they only
+# reach AROS.
 #
-# **Paths below are relative to the PARENT of this file's directory** - i.e.
-# to `packaging/`, not to `packaging/aros/` and not to the repo root. That is
+# **Paths below are relative to the PARENT of this file's directory**, i.e. to
+# `packaging/`, not to `packaging/aros/` and not to the repo root. That is
 # cargo's rule for config files (it assumes the usual `<root>/.cargo/` layout
-# and resolves relative to `<root>`), and getting it wrong fails with a path
-# one level off. So `../../zed-aros` is `~/Source/zed-aros` for a checkout at
-# `~/Source/Ferail`. Sibling layout: docs/features/aros-building.md
+# and resolves relative to `<root>`). So `../../aros-project/gpui-aros`
+# is `~/Source/aros-project/gpui-aros` for a checkout at
+# `~/Source/Ferail-aros`. Sibling layout: docs/features/aros-building.md
 # § "Checkout layout".
 #
-# This list is deliberately short. The AROS graph stays reactor-free: gpui
-# takes `http_client` with `default-features = false`, which drops
-# `github_download` and util's smol half, and with them async-io (errno /
-# rustix / polling / async-std), which has no AROS arm. The libc and stacker
-# entries below are target shims, not an invitation to mirror the rest of
-# zed-aros/vendor-aros. If a future bump drags the reactor back in, remove that
-# edge instead of growing this patch set.
+# Every entry overrides a crates.io package with a fork of the *same version*
+# the committed Cargo.lock resolves, so the override is never silently dropped
+# (cargo does not downgrade or upgrade to a patch). The AROS scripts re-assert
+# the pins that differ from what a host `cargo update` would pick (libc,
+# getrandom 0.4).
 
-# gpui + gpui_platform from the zed fork. After the 2026-08-28 desktop bump,
-# that sibling must be rebased onto Zed f66ed399 before the AROS gate is
-# considered valid; the path remains the same because it also owns gpui_aros.
-[patch."https://github.com/zed-industries/zed"]
-gpui = { path = "../../zed-aros/crates/gpui" }
-gpui_platform = { path = "../../zed-aros/crates/gpui_platform" }
-
-# gpui-component must likewise be based on e8f54eb. Its AROS delta remains the
-# narrow `smol::channel` -> `async-channel` substitution, now split across the
-# upstream base/ui crates. Do not point this at the older c112e7b worktree.
-[patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { path = "../../gpui-component-aros/crates/ui" }
-gpui-component-assets = { path = "../../gpui-component-aros/crates/assets" }
-
-# libc, for AROS only. Upstream compiles to an empty module on this target
-# (AROS is not cfg(unix)), which is fine until something actually imports from
-# it - lzma-sys does, for `c_char`/`c_uchar`/`size_t`/`c_uint`, so xz cannot
-# build without this. zed-aros vendors 0.2.186 with an additive AROS module.
-#
-# Scoped here rather than patched globally like the small crates below: libc is
-# large and security-relevant, and pointing macOS/Windows/Linux release builds
-# at a fork is a much bigger blast radius than a stack-probe shim. The cost of
-# that choice is the inertness trap described below - the vendored copy is
-# 0.2.186, so `Cargo.lock` must stay on 0.2.186 or this patch is silently
-# dropped and the AROS build fails with "unresolved imports `libc::c_char`".
-# Re-pin with `cargo update -p libc --precise 0.2.186`.
 [patch.crates-io]
-libc = { path = "../../zed-aros/vendor-aros/libc" }
+# GPUI's platform crate: the published gpui-pre-platform 0.3.8 source plus one
+# `target_os = "aros"` arm selecting `gpui_aros::ArosPlatform` (the Intuition /
+# CyberGraphics / tiny-skia backend next to it). Nothing else in the gpui-pre
+# 0.3.8 graph needs a fork for AROS.
+gpui-pre-platform = { path = "../../aros-project/gpui-aros/crates/gpui_platform_aros" }
 
-# The standard f66ed399 GPUI graph no longer enables stack growth, so Ferail's
-# shared manifest intentionally has no global stacker patch. The older AROS
-# backend fork still references stacksafe while it is being rebased; keep its
-# no-op implementation scoped to the AROS build. Cargo.lock must remain on
-# 0.1.23 until the rebased AROS GPUI proves this edge is gone too.
-stacker = { path = "../../zed-aros/vendor-aros/stacker" }
+# gpui-kit at v0.7.1 with the narrow AROS delta: `async-channel` instead of the
+# `smol` facade (smol's async-io reactor has no AROS arm) and no client-side
+# window controls on the server-decorated Intuition window.
+gpui-component = { path = "../../aros-project/gpui-component-aros-0.7.1/crates/component" }
+gpui-base = { path = "../../aros-project/gpui-component-aros-0.7.1/crates/base" }
+# Unchanged in the fork, but its workspace members reach them by path, and a
+# second copy of the assets crate would clash on its `links` key.
+gpui-kit-assets = { path = "../../aros-project/gpui-component-aros-0.7.1/crates/assets" }
+gpui-component-macros = { path = "../../aros-project/gpui-component-aros-0.7.1/crates/component-macros" }
 
-# filetime remains globally patched from Ferail/vendor/filetime because notify
-# uses it on every desktop graph; no AROS-only override is needed here.
+# The AROS crate store built by crates/store.py of pomaros/rust-aros: each
+# crate is the crates.io package with its AROS patch. getrandom takes its
+# getentropy() backend in its three lines, parking_lot_core the realtime-clock
+# condvar. The cargo wrapper selects the native application libc 0.2.190,
+# independently of std's locked libc; both bind to one native C provider.
+# Only each entry's last path component matters: the wrapper looks it up in
+# AROS_CRATE_STORE.
+getrandom = { path = "../../aros-project/crate-store/getrandom-0.4.3" }
+getrandom03 = { package = "getrandom", path = "../../aros-project/crate-store/getrandom-0.3.4" }
+getrandom02 = { package = "getrandom", path = "../../aros-project/crate-store/getrandom-0.2.17" }
+parking_lot_core = { path = "../../aros-project/crate-store/parking_lot_core-0.9.12" }
+
+# Crates the GPUI graph pulls, from the same store:
+# memmap2 takes its own unsupported-platform stub on AROS (no mmap; mapping
+# fails with Unsupported, never a fake mapping); ctor and inventory place
+# life-before-main constructors in `.init_array`, which collect-aros gathers
+# into the INIT_ARRAY symbol set and autoinit runs at startup.
+# backtrace: AROS links no unwinder (the std patch makes panics abort and its
+# own backtrace a no-op); the crate's frame walk and symbolizer take their
+# no-op arms as well.
+backtrace = { path = "../../aros-project/crate-store/backtrace-0.3.76" }
+memmap2 = { path = "../../aros-project/crate-store/memmap2-0.9.10" }
+ctor = { path = "../../aros-project/crate-store/ctor-1.0.12" }
+inventory = { path = "../../aros-project/crate-store/inventory-0.3.24" }
+# SQLite (bundled by rusqlite): its unix VFS takes an AROS device or assign
+# path as absolute instead of prefixing the current directory to it.
+libsqlite3-sys = { path = "../../aros-project/crate-store/libsqlite3-sys-0.28.0" }
+# The native SDK's system services: rustix and errno on the AROS C library,
+# mio's readiness on the native poll, tempfile without unlink-while-open (an
+# open AROS file cannot be deleted; its owner closes every handle first), and
+# serde/serde_core serializing OsStr/OsString as bytes on AROS. rustix 0.38
+# stays on crates.io: only host (Wayland) crates reach it.
+rustix = { path = "../../aros-project/crate-store/rustix-1.1.4" }
+errno = { path = "../../aros-project/crate-store/errno-0.3.14" }
+mio = { path = "../../aros-project/crate-store/mio-1.2.1" }
+tempfile = { path = "../../aros-project/crate-store/tempfile-3.27.0" }
+serde = { path = "../../aros-project/crate-store/serde-1.0.228" }
+serde_core = { path = "../../aros-project/crate-store/serde_core-1.0.228" }

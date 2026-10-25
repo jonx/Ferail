@@ -225,6 +225,7 @@ fn persist_disk_usage_engine(value: &str) {
     });
 }
 
+#[cfg(not(target_os = "aros"))]
 fn persist_update_check(value: bool) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -2494,78 +2495,80 @@ fn shortcuts_page() -> SettingPage {
 }
 
 fn about_page() -> SettingPage {
-    SettingPage::new(tr!("About"))
-        .icon(Icon::empty().path("icons/info.svg"))
-        .group(
-            // Updates: the automatic check is opt-in; the menu's manual
-            // Check for Updates… works regardless (docs/features/UPDATES.md).
-            SettingGroup::new()
-                .title(tr!("Updates"))
-                .item(switch_setting(
-                    tr!("Check for updates automatically"),
-                    tr!(
-                        "Once a day, ask GitHub whether a newer Ferail release exists, and show a \
+    let page = SettingPage::new(tr!("About")).icon(Icon::empty().path("icons/info.svg"));
+    // Updates: only where the check can run (update_check::AVAILABLE); AROS
+    // has no HTTP client and shows no toggle for a check that cannot happen.
+    #[cfg(not(target_os = "aros"))]
+    let page = page.group(
+        // Updates: the automatic check is opt-in; the menu's manual
+        // Check for Updates… works regardless (docs/features/UPDATES.md).
+        SettingGroup::new()
+            .title(tr!("Updates"))
+            .item(switch_setting(
+                tr!("Check for updates automatically"),
+                tr!(
+                    "Once a day, ask GitHub whether a newer Ferail release exists, and show a \
                  notification when one does. Off by default: when off, Ferail makes no \
                  network requests on its own. Nothing is ever downloaded or installed without \
                  you choosing to; use Ferail \u{2192} Check for Updates\u{2026} to check by hand \
                  at any time."
-                    ),
-                    |_cx: &App| {
-                        app_state::load()
-                            .update_check
-                            .unwrap_or(app_state::DEFAULT_UPDATE_CHECK)
-                    },
-                    |val: bool, cx: &mut App| {
-                        persist_update_check(val);
-                        if val {
-                            // Opting in mid-session: answer immediately rather
-                            // than at tomorrow's daily wake.
-                            crate::update_check::start_check_background(cx);
-                        }
-                    },
-                )),
-        )
-        .group(
-            SettingGroup::new().item(SettingItem::render(|_options, _window, cx| {
-                let theme = cx.theme();
-                gpui_component::v_flex()
-                    .gap_2()
-                    .py_4()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_scale_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.foreground)
-                            .child("Ferail"),
-                    )
-                    .child(
-                        div()
-                            .text_scale_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(tr!(
-                                "Version {version}",
-                                version = env!("CARGO_PKG_VERSION")
-                            )),
-                    )
-                    .child(
-                        div()
-                            .mt_2()
-                            .text_scale_sm()
-                            .text_color(theme.foreground)
-                            .child(tr!("Fast, focused file operations at any scale.")),
-                    )
-                    .child(
-                        div()
-                            .text_scale_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(tr!(
-                                "Predictable, private, and built for real-world directories."
-                            )),
-                    )
-                    .into_any_element()
-            })),
-        )
+                ),
+                |_cx: &App| {
+                    app_state::load()
+                        .update_check
+                        .unwrap_or(app_state::DEFAULT_UPDATE_CHECK)
+                },
+                |val: bool, cx: &mut App| {
+                    persist_update_check(val);
+                    if val {
+                        // Opting in mid-session: answer immediately rather
+                        // than at tomorrow's daily wake.
+                        crate::update_check::start_check_background(cx);
+                    }
+                },
+            )),
+    );
+    page.group(
+        SettingGroup::new().item(SettingItem::render(|_options, _window, cx| {
+            let theme = cx.theme();
+            gpui_component::v_flex()
+                .gap_2()
+                .py_4()
+                .items_center()
+                .child(
+                    div()
+                        .text_scale_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.foreground)
+                        .child("Ferail"),
+                )
+                .child(
+                    div()
+                        .text_scale_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(tr!(
+                            "Version {version}",
+                            version = env!("CARGO_PKG_VERSION")
+                        )),
+                )
+                .child(
+                    div()
+                        .mt_2()
+                        .text_scale_sm()
+                        .text_color(theme.foreground)
+                        .child(tr!("Fast, focused file operations at any scale.")),
+                )
+                .child(
+                    div()
+                        .text_scale_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(tr!(
+                            "Predictable, private, and built for real-world directories."
+                        )),
+                )
+                .into_any_element()
+        })),
+    )
 }
 
 /// English name of a command category as a `msgid!` literal: translate it

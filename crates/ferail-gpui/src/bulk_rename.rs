@@ -380,9 +380,10 @@ pub(crate) fn run_renames(
     pairs: Vec<(PathBuf, PathBuf)>,
 ) -> (Vec<(PathBuf, PathBuf)>, Vec<String>) {
     use std::collections::HashMap;
+    ferail_core::path_guard::assert_off_ui_thread("bulk_rename::run_renames");
     let n = pairs.len();
-    let lower = |p: &Path| p.to_string_lossy().to_lowercase();
-    let mut src_of: HashMap<String, usize> = HashMap::with_capacity(n);
+    let lower = rename_path_key;
+    let mut src_of: HashMap<Vec<u8>, usize> = HashMap::with_capacity(n);
     for (i, (old, _)) in pairs.iter().enumerate() {
         src_of.insert(lower(old), i);
     }
@@ -409,7 +410,10 @@ pub(crate) fn run_renames(
             let dest = pairs[i].1.clone();
             match rename_guarded(&cur_src[i], &dest) {
                 Ok(()) => renamed.push((pairs[i].0.clone(), dest)),
-                Err(e) => errors.push(e),
+                Err(e) => {
+                    if parked[i] { errors.push(format!("{e}; original item preserved at {}", ferail_fs_native::paths::display_path(&cur_src[i]))); }
+                    else { errors.push(e); }
+                },
             }
             done[i] = true;
             remaining -= 1;
@@ -439,12 +443,21 @@ pub(crate) fn run_renames(
             break;
         };
         tmp_seq += 1;
-        let tmp = cur_src[i].with_file_name(format!(
-            ".ferail-rename-{}-{tmp_seq}.tmp",
-            std::process::id()
-        ));
-        match std::fs::rename(&cur_src[i], &tmp) {
-            Ok(()) => {
+        let temporary_leaf = format!(".ferail-rename-{}-{tmp_seq}.tmp", std::process::id());
+        #[cfg(target_os = "aros")]
+        let temporary = ferail_fs_native::rename::sibling_native_path(
+            &cur_src[i], std::ffi::OsStr::new(&temporary_leaf));
+        #[cfg(not(target_os = "aros"))]
+        let temporary = Ok(cur_src[i].with_file_name(&temporary_leaf));
+        let parked_move = temporary.and_then(|tmp| {
+            #[cfg(target_os = "aros")]
+            let result = ferail_fs_native::rename::rename_no_replace(&cur_src[i], &tmp);
+            #[cfg(not(target_os = "aros"))]
+            let result = std::fs::rename(&cur_src[i], &tmp);
+            result.map(|()| tmp)
+        });
+        match parked_move {
+            Ok(tmp) => {
                 parked[i] = true;
                 cur_src[i] = tmp;
                 if let Some(ws) = waiters.remove(&i) {
@@ -464,11 +477,28 @@ pub(crate) fn run_renames(
     (renamed, errors)
 }
 
+fn rename_path_key(path: &Path) -> Vec<u8> {
+    #[cfg(target_os = "aros")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        return path.as_os_str().as_bytes().iter().map(u8::to_ascii_lowercase).collect();
+    }
+    #[cfg(not(target_os = "aros"))]
+    path.to_string_lossy().to_lowercase().into_bytes()
+}
+
 /// `std::fs::rename` clobbers an existing destination on Unix: guard
 /// against it, except when the "existing" destination *is* the source
 /// (case-only rename on a case-insensitive filesystem). Same
 /// don't-overwrite contract as `UndoOp::MoveBack`.
 fn rename_guarded(old: &Path, new: &Path) -> Result<(), String> {
+    #[cfg(target_os = "aros")]
+    {
+        return ferail_fs_native::rename::rename_no_replace(old, new)
+            .map_err(|error| format!("{}: {error}", leaf_str(old)));
+    }
+    #[cfg(not(target_os = "aros"))]
+    {
     if let Ok(new_meta) = new.symlink_metadata() {
         let same = old
             .symlink_metadata()
@@ -485,6 +515,7 @@ fn rename_guarded(old: &Path, new: &Path) -> Result<(), String> {
         }
     }
     std::fs::rename(old, new).map_err(|e| format!("{}: {e}", leaf_str(old)))
+    }
 }
 
 /// Same directory entry? (dev, ino) on Unix; leaf-case comparison on
@@ -518,8 +549,8 @@ fn same_entry(
 
 fn leaf_str(p: &Path) -> String {
     p.file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| p.display().to_string())
+        .map(|s| ferail_fs_native::paths::os_to_display(s).into_owned())
+        .unwrap_or_else(|| ferail_fs_native::paths::display_path(p))
 }
 
 // ---------------------------------------------------------------------
@@ -673,14 +704,19 @@ impl BulkRenameView {
     /// `(old path, new path)` for every Renamed row, mapping the display
     /// name back to an on-disk leaf (macOS `/`→`:`), staying a single
     /// leaf under the item's existing parent.
-    fn rename_pairs(&self) -> Vec<(PathBuf, PathBuf)> {
+    fn rename_pairs(&self) -> Result<Vec<(PathBuf, PathBuf)>, String> {
         self.items
             .iter()
             .zip(self.plan.rows.iter())
             .filter(|(_, row)| matches!(row.status, RowStatus::Renamed))
             .map(|((path, _, _), row)| {
-                let disk = ferail_fs_native::paths::on_disk_leaf(&row.after).into_owned();
-                (path.clone(), path.with_file_name(disk))
+                let disk = ferail_fs_native::paths::display_to_os(&row.after)?;
+                #[cfg(target_os = "aros")]
+                let renamed = ferail_fs_native::rename::sibling_native_path(path, &disk)
+                    .map_err(|error| error.to_string())?;
+                #[cfg(not(target_os = "aros"))]
+                let renamed = path.with_file_name(disk);
+                Ok((path.clone(), renamed))
             })
             .collect()
     }
@@ -934,6 +970,13 @@ pub fn open(
                     // Conflicts / bad pattern: keep the dialog open so
                     // the user can fix the rule.
                     return false;
+                };
+                let pairs = match pairs {
+                    Ok(pairs) => pairs,
+                    Err(error) => {
+                        window.push_notice(gpui_component::notification::Notification::error(error), cx);
+                        return false;
+                    }
                 };
                 if !pairs.is_empty() {
                     shell.update(cx, |this, cx| apply(this, pairs, window, cx));

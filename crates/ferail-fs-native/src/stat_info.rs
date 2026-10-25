@@ -309,7 +309,13 @@ fn owner_name(uid: u32) -> String {
     uid.to_string()
 }
 
-#[cfg(unix)]
+/// AROS has no group database: the numeric id is the name.
+#[cfg(target_os = "aros")]
+fn group_name(gid: u32) -> String {
+    gid.to_string()
+}
+
+#[cfg(all(unix, not(target_os = "aros")))]
 fn group_name(gid: u32) -> String {
     unsafe {
         let mut grp: libc::group = std::mem::zeroed();

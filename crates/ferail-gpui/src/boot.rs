@@ -111,6 +111,8 @@ fn activate_aux_window(cx: &mut App, index: usize) {
 }
 
 pub fn run_gui(args: screenshot::Args) {
+    #[cfg(target_os = "aros")]
+    let _state_writer_session = crate::app_state::NativeWriterSession::new();
     // Windows shell: assign our own AppUserModelID so the taskbar
     // groups Ferail windows under their own icon/label instead of
     // inheriting the launching console's identity (PowerShell, etc.).
@@ -179,6 +181,7 @@ pub fn run_gui(args: screenshot::Args) {
         // `cx.http_client()` a real TLS-capable client so the update
         // check can reach GitHub. Nothing else in the app talks HTTP
         // today, and this client never sends a request on its own.
+        #[cfg(not(target_os = "aros"))]
         match reqwest_client::ReqwestClient::user_agent(concat!(
             "Ferail/",
             env!("CARGO_PKG_VERSION"),
@@ -187,6 +190,11 @@ pub fn run_gui(args: screenshot::Args) {
             Ok(client) => cx.set_http_client(std::sync::Arc::new(client)),
             Err(e) => crate::log_warn!(90, "http client init failed: {e}"),
         }
+        #[cfg(target_os = "aros")]
+        crate::log_info!(
+            90,
+            "http client: not available on AROS; the update check is off"
+        );
         // UI language: read the persisted choice and install the matching
         // catalog *before* any window renders or the menu bar is built, so
         // there is no flash of English (docs/features/LOCALIZATION.md).
@@ -791,6 +799,9 @@ pub(crate) fn install_app_menus(cx: &mut App) {
             name: "Ferail".into(),
             items: vec![
                 MenuItem::action(title("app.about", "About Ferail"), OpenAbout),
+                // Only where the check can run: an unavailable action has no
+                // place in a usable menu.
+                #[cfg(not(target_os = "aros"))]
                 MenuItem::action(
                     title("app.check_updates", "Check for Updates\u{2026}"),
                     CheckForUpdates,

@@ -4209,8 +4209,28 @@ impl Shell {
                     .small()
                     .icon(gpui_component::Icon::empty().path("icons/close.svg"))
                     .tooltip(tr!("Close results"))
-                    .on_click(cx.listener(|_, _, window, cx| {
-                        window.dispatch_action(Box::new(CloseToolResult), cx);
+                    // Acts on the shell directly: a dispatched CloseToolResult
+                    // only reaches the shell when focus sits inside it, which
+                    // a click on this button does not guarantee (on AROS the
+                    // button did nothing). An archive closes the way Escape
+                    // closes it, through its dirty-edit confirmation. That
+                    // path updates the shell again, so it runs deferred, once
+                    // this listener has released the shell.
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let archive = this
+                            .active_tab()
+                            .tool_result
+                            .as_ref()
+                            .and_then(|surface| surface.archive_mode())
+                            .map(|archive| archive.view.clone());
+                        if let Some(archive) = archive {
+                            window.defer(cx, move |window, cx| {
+                                archive
+                                    .update(cx, |archive, cx| archive.request_dismiss(window, cx));
+                            });
+                        } else {
+                            this.close_active_tool_result(cx);
+                        }
                     })),
             );
         }
