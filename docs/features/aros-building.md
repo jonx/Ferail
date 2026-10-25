@@ -133,3 +133,18 @@ volume adds the cross-volume transfers). It prints one
 in place for inspection. A complete run reports every declared case.
 Physical filesystem, UI interaction, persistence and responsiveness need
 separate runs with their own fixtures.
+
+Validate the complete output with the bounded guest run's verdict:
+
+```sh
+python3 scripts/aros-functional-result.py --log RUN/functional.log \
+  --runtime-verdict RUN/runtime-verdict.json --output RUN/functional-result.json
+python3 scripts/test-aros-functional-result.py
+```
+
+The checker requires every declared case exactly once and one consistent final
+summary. Missing/duplicate cases, failures, refused roots and a failed runtime
+gate reject the result. Capability records remain explicit in the receipt.
+Use a second fixture root on another disposable volume to cover the complete
+manifest; a single-volume run does not qualify the cross-volume case. This
+check covers filesystem/archive APIs, separately from GUI interaction.
