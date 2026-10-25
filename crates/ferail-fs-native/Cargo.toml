@@ -13,6 +13,15 @@ description = "Cross-platform std::fs implementation of ferail-core::FsBackend"
 level = "warn"
 check-cfg = ['cfg(target_os, values("aros"))']
 
+[features]
+# The AROS functional contracts (examples/aros-functional.rs) use the Unix
+# byte-path API that AROS shares; other platforms do not build them.
+aros-functional = []
+
+[[example]]
+name = "aros-functional"
+required-features = ["aros-functional"]
+
 [dependencies]
 ferail-core.workspace = true
 ferail-disk-usage.workspace = true

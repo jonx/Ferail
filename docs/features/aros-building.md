@@ -121,7 +121,7 @@ requesters.
 
 ```sh
 scripts/aros-cargo.sh --config profile.release.lto=false --config profile.release.strip=false \
-  build --release -p ferail-fs-native --example aros-functional -j2
+  build --release -p ferail-fs-native --features aros-functional --example aros-functional -j2
 ```
 
 On AROS, `aros-functional NEW_ROOT [SECOND_NEW_ROOT]` runs every case in a
