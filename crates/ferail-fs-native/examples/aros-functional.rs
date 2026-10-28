@@ -399,7 +399,7 @@ fn file_cases(s: &mut Suite, root: &Path) {
     s.case("native-rename-no-clobber-contract", || {
         use ferail_fs_native::rename::rename_no_replace;
         use std::ffi::OsStr;
-        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
         let dir = fresh(root, "rename contract")?;
         let a = dir.join("source.txt");
         let b = dir.join("existing.txt");
@@ -456,7 +456,12 @@ fn file_cases(s: &mut Suite, root: &Path) {
             b"bad\0name".as_slice(),
             b"..".as_slice(),
         ] {
-            let error = rename_no_replace(&upper, &dir.join(OsStr::from_bytes(bad)))
+            // Path::join replaces the base for an AROS volume prefix. Keep
+            // the malformed final component literal so it reaches validation.
+            let target = PathBuf::from(std::ffi::OsString::from_vec(
+                [dir.as_os_str().as_bytes(), b"/", bad].concat(),
+            ));
+            let error = rename_no_replace(&upper, &target)
                 .err()
                 .ok_or("invalid destination must refuse")?;
             require(
