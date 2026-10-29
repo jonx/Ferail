@@ -19,6 +19,7 @@ instead.
 | UI stack | gpui-component 0.7.1 (gpui-kit), GPUI `gpui-pre` 0.3.8 (Zed `279fe07`), both from crates.io |
 | Open work | [TODO.md](../TODO.md) |
 | Active campaign | [Windows reliability and compatibility](features/WINDOWS_COMPATIBILITY_PLAN.md) |
+| Navigation updates | Ancestor child selection, archive exit selection and idle folder-size scheduling integrated; macOS check/clippy, 408 unit/integration tests and the upward-navigation screenshot pass. AROS GUI qualification is separate. |
 
 ## Platforms
 

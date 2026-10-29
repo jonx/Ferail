@@ -992,6 +992,10 @@ pub struct Shell {
     /// shell drills into that folder so the user can drop deeper without
     /// releasing (docs/features/FILE_OPS.md). Cleared on drill / drop.
     pub spring_load: Option<(usize, std::time::Instant)>,
+    /// When the user last pressed a key, clicked, or scrolled in this
+    /// window. Read by [`Shell::is_idle`] to hold deferrable background
+    /// work (the folder-size walk) while they are actively navigating.
+    pub last_user_input: std::time::Instant,
     /// Spring-load dwell tracker for sidebar *tree* rows, keyed by path:
     /// hovering a collapsed folder with a drag expands it after a dwell
     /// so the user can drill the tree mid-drag.
@@ -2303,6 +2307,7 @@ impl Shell {
             context_row: None,
             context_target: None,
             spring_load: None,
+            last_user_input: std::time::Instant::now(),
             tree_spring: None,
             favorites_context_path: None,
             breadcrumb_menu_open: false,
@@ -4500,12 +4505,50 @@ impl Shell {
     }
 
     pub(super) fn close_active_tool_result(&mut self, cx: &mut Context<Self>) {
+        if self.leave_archive_workbench(cx) {
+            return;
+        }
         if self.active_tab().tool_result.is_none() {
             return;
         }
         self.active_tab_mut().tool_result = None;
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
+    }
+
+    /// Leave a docked archive workbench the way leaving a subfolder works:
+    /// back to the folder that holds the archive, with the archive file
+    /// selected and scrolled into view. Browsing an archive is navigation
+    /// *into* a file, so Escape, Backspace and Back all land here. Returns
+    /// `false` when the active tab is not showing an archive.
+    pub(super) fn leave_archive_workbench(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(archive) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.archive_mode())
+            .map(|mode| mode.archive.clone())
+        else {
+            return false;
+        };
+        let archive_id = self.process.fs.id_for_path(&archive);
+        let path = {
+            let tab = self.active_tab_mut();
+            tab.tool_result = None;
+            tab.clear_selection();
+            tab.selection.insert(archive_id);
+            tab.anchor = Some(archive_id);
+            tab.lead = Some(archive_id);
+            tab.pending_reveal = Some(archive_id);
+            tab.pending_select_first = false;
+            tab.filtered_out.clear();
+            tab.range_live = false;
+            tab.current_dir.clone()
+        };
+        // `load_path` keeps the seeded selection; the streaming reconcile
+        // applies it and `Done` centres the row (same as going up a folder).
+        self.load_path(path, cx);
+        true
     }
 
     fn on_close_tool_result(
@@ -5044,6 +5087,12 @@ impl Shell {
     }
 
     pub fn navigate_back(&mut self, cx: &mut Context<Self>) {
+        // Inside an archive, Back leaves the archive first: opening it
+        // pushed no history entry, so stepping the history would skip the
+        // folder the archive lives in.
+        if self.leave_archive_workbench(cx) {
+            return;
+        }
         if self.active_tab().platform_namespace.is_some() {
             let tab_id = self.active_tab().id;
             let request = self
@@ -5843,17 +5892,35 @@ impl Shell {
             // left: answers from the `folder_sizes` rows the last pass wrote.
             let force_sizes = self.tabs[idx].force_folder_sizes;
             self.tabs[idx].folder_size_cancel = Some(size_cancel.clone());
-            crate::folder_sizes::start(
-                table,
-                fs,
-                db,
-                tasks,
-                size_tab_id,
-                size_generation,
-                size_cancel,
-                force_sizes,
-                cx,
-            );
+            // Refresh is the user asking for the measurement now; every
+            // other load waits until the app has been idle for a moment
+            // (`folder_sizes::start_when_idle`), so a run of quick
+            // navigations never has a recursive walk competing with the
+            // listing the user is actually reading.
+            if force_sizes {
+                crate::folder_sizes::start(
+                    table,
+                    fs,
+                    db,
+                    tasks,
+                    size_tab_id,
+                    size_generation,
+                    size_cancel,
+                    true,
+                    cx,
+                );
+            } else {
+                crate::folder_sizes::start_when_idle(
+                    table,
+                    fs,
+                    db,
+                    tasks,
+                    size_tab_id,
+                    size_generation,
+                    size_cancel,
+                    cx,
+                );
+            }
         }
         let icon_seeds = self.icon_seeds_from_table_in_tab(idx, cx);
         self.start_icon_warm(icon_seeds, cx);
@@ -6343,6 +6410,21 @@ impl Shell {
     /// "re-measure everything" ones. The parameter stays because the
     /// pass itself supports forcing; only Refresh arms it today, per-tab
     /// through `Tab::force_folder_sizes`.
+    /// Record a user gesture for [`Shell::is_idle`]. Wired to the shell
+    /// root's capture-phase key, mouse-down and wheel listeners, so it
+    /// sees every gesture whichever child consumes it.
+    pub(crate) fn note_user_input(&mut self) {
+        self.last_user_input = std::time::Instant::now();
+    }
+
+    /// Whether deferrable background work may start: no tab has a
+    /// directory enumeration in flight and the user has not touched the
+    /// window for `quiet`. Cheap, in-memory only; safe on the UI thread.
+    pub(crate) fn is_idle(&self, quiet: Duration) -> bool {
+        self.last_user_input.elapsed() >= quiet
+            && self.tabs.iter().all(|tab| tab.load_cancel.is_none())
+    }
+
     fn restart_folder_size_passes(&mut self, force: bool, cx: &mut Context<Self>) {
         // Respect the Performance toggle: this is also the activation
         // re-seed path (`observe_window_activation`), so disabling folder
@@ -6363,17 +6445,30 @@ impl Shell {
             }
             let cancel = Arc::new(AtomicBool::new(false));
             self.tabs[idx].folder_size_cancel = Some(cancel.clone());
-            crate::folder_sizes::start(
-                self.tabs[idx].table.clone(),
-                fs.clone(),
-                db.clone(),
-                tasks.clone(),
-                self.tabs[idx].id,
-                self.tabs[idx].load_generation,
-                cancel,
-                force,
-                cx,
-            );
+            if force {
+                crate::folder_sizes::start(
+                    self.tabs[idx].table.clone(),
+                    fs.clone(),
+                    db.clone(),
+                    tasks.clone(),
+                    self.tabs[idx].id,
+                    self.tabs[idx].load_generation,
+                    cancel,
+                    true,
+                    cx,
+                );
+            } else {
+                crate::folder_sizes::start_when_idle(
+                    self.tabs[idx].table.clone(),
+                    fs.clone(),
+                    db.clone(),
+                    tasks.clone(),
+                    self.tabs[idx].id,
+                    self.tabs[idx].load_generation,
+                    cancel,
+                    cx,
+                );
+            }
         }
     }
 
@@ -7911,24 +8006,20 @@ impl Shell {
     /// Navigate to the parent of the current directory (Backspace
     /// keybind in 4.c.2). No-op when already at the filesystem root.
     pub fn navigate_parent(&mut self, cx: &mut Context<Self>) {
+        // Inside an archive the "parent" is the folder holding the archive,
+        // which is already `current_dir`: leave the workbench rather than
+        // climbing one level above it.
+        if self.leave_archive_workbench(cx) {
+            return;
+        }
         let cur = self.active_tab().current_dir.clone();
         if let Some(parent) = cur.parent() {
             let parent = parent.to_path_buf();
             if parent != cur {
+                // `navigate` selects and reveals the folder we came from:
+                // `cur` is an immediate child of `parent`, so the ancestor
+                // rule in `navigate_with_tracking` seeds it.
                 self.navigate(parent, cx);
-                // Select the folder we came from so it's highlighted and
-                // scrolled into view once the parent's contents stream
-                // in: `cur` is by definition an immediate child of
-                // `parent`. `navigate` just cleared selection; seed it
-                // here and the streaming reconcile
-                // (`refresh_file_list_selection_in_tab`) applies + reveals
-                // it, matching what Back does via `history_child_to_select`.
-                let child_id = self.process.fs.id_for_path(&cur);
-                let tab = self.active_tab_mut();
-                tab.selection.insert(child_id);
-                tab.anchor = Some(child_id);
-                tab.lead = Some(child_id);
-                tab.pending_reveal = Some(child_id);
             }
         }
     }
@@ -8132,6 +8223,15 @@ impl Shell {
             .node_store
             .borrow_mut()
             .get_or_create_path_with_id(path.clone(), node_id);
+        // Going *up*: when the destination is an ancestor of the folder
+        // we are leaving (Backspace / parent, a breadcrumb segment, a tree
+        // row, a typed path), select the child folder we came from so it
+        // is highlighted and scrolled into view once the ancestor's rows
+        // stream in. Resolved here, before the selection is cleared, from
+        // the tab's real `current_dir`: every navigation entry point gets
+        // it, not only the one that remembered to seed it.
+        let came_from_child = history_child_to_select(&self.active_tab().current_dir, &path)
+            .map(|child| self.process.fs.id_for_path(&child));
         let tab = self.active_tab_mut();
         // Snapshot the selection we're leaving into the current
         // history entry so a Back returns to where the user was.
@@ -8174,6 +8274,19 @@ impl Shell {
         self.active_tab_mut().pending_select_rows.clear();
         self.active_tab_mut().pending_select_names.clear();
         self.active_tab_mut().pending_reveal = None;
+        if let Some(child_id) = came_from_child {
+            // The streaming reconcile (`refresh_file_list_selection_in_tab`)
+            // applies the seed as batches land, and `Done` resolves
+            // `pending_reveal` against the final sort so the row is
+            // centred after the listing settles, matching what Back does
+            // via `history_child_to_select`.
+            let tab = self.active_tab_mut();
+            tab.selection.insert(child_id);
+            tab.anchor = Some(child_id);
+            tab.lead = Some(child_id);
+            tab.pending_reveal = Some(child_id);
+            tab.pending_select_first = false;
+        }
         if record_visit {
             self.record_ant_visit(node_id, cx);
         }

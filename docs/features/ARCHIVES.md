@@ -120,7 +120,12 @@ The filter appears only when enough width remains for the archive identity and
 primary actions. Extracting a lasting copy always requires an explicit Extract
 command; row activation only expands or previews. Escape exits the workbench
 whether it is docked or in its own window; a modified ZIP first asks whether to
-save, discard, or keep editing.
+save, discard, or keep editing. Leaving a docked workbench (Escape, Backspace
+or Back, all through `Shell::leave_archive_workbench`) returns to the folder
+that holds the archive with the archive file selected and scrolled into view,
+exactly as going up out of a subfolder selects that subfolder: opening an
+archive pushes no history entry, so Back and Backspace leave the archive
+rather than stepping past its folder.
 
 ## Entry metadata
 

@@ -105,8 +105,20 @@ how long that can hide a stale size:
   Entries belonging to other directories remain warm; in-flight work keeps its
   scheduler reservation rather than being duplicated.
 
+- **Idle start.** A plain navigation does not start the walk the moment the
+  listing lands. `finish_directory_load_in_tab` hands it to
+  `folder_sizes::start_when_idle`, which waits `IDLE_START_DELAY` (1.5 s, one
+  tunable const) and then starts the pass only once `Shell::is_idle` holds: no
+  tab has an enumeration in flight and the user has not pressed a key, clicked
+  or scrolled for that long (the shell root tracks those gestures in
+  `Shell::last_user_input`). While the app stays busy it re-checks every
+  400 ms; if the tab navigates on first, the pass is never started at all,
+  which is cheaper than starting and cancelling it. Refresh is the user asking
+  for the measurement and goes straight to `start`.
+
 - **Activation re-seed.** When the window returns from the background we re-run
-  the pass, but **cache-first** (`restart_folder_size_passes(force = false)`),
+  the pass, but **cache-first** (`restart_folder_size_passes(force = false)`)
+  and through the same idle gate as a navigation,
   so rows whose TTL lapsed while we were away get recomputed and everything else
   answers instantly. It reuses GPUI's framework-level
   `observe_window_activation` (no new platform-shell surface) and only fires on

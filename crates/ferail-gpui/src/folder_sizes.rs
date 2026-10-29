@@ -121,9 +121,81 @@ struct SizeRow {
     dir_count: u64,
 }
 
+/// How long the app must have been quiet (no key, click or wheel, no
+/// enumeration in flight) before a deferred folder-size pass starts.
+/// Long enough that a run of quick navigations never starts a walk the
+/// next click throws away; short enough that a folder the user settles
+/// on gets its sizes without a noticeable wait. One tunable.
+pub const IDLE_START_DELAY: Duration = Duration::from_millis(1500);
+/// Re-check cadence while the app is still busy past the first delay.
+const IDLE_POLL: Duration = Duration::from_millis(400);
+
+/// Spawn a folder-size pass once the app is idle (see
+/// [`Shell::is_idle`]): wait [`IDLE_START_DELAY`], then poll until the
+/// user has been quiet that long and no tab is enumerating. The plain
+/// navigation path uses this; Refresh goes straight to [`start`] because
+/// it is the user asking for the measurement now.
+///
+/// Gives up silently when the tab moves on first: the `cancel` flag is
+/// flipped by the next navigation and the generation stops matching, so
+/// the walk is never started, which is cheaper than starting and
+/// cancelling it.
+#[allow(clippy::too_many_arguments)]
+pub fn start_when_idle(
+    table: Entity<TableState<FileListDelegate>>,
+    fs: Arc<NativeFs>,
+    db: Option<Arc<Mutex<MetadataDb>>>,
+    tasks: Rc<RefCell<TaskRegistry>>,
+    tab_id: TabId,
+    generation: u64,
+    cancel: Arc<AtomicBool>,
+    cx: &mut gpui::Context<Shell>,
+) {
+    cx.spawn(async move |this, cx| {
+        let mut wait = IDLE_START_DELAY;
+        loop {
+            cx.background_executor().timer(wait).await;
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let decision = this.update(cx, |shell, _cx| {
+                let current = shell
+                    .tabs
+                    .iter()
+                    .find(|t| t.id == tab_id)
+                    .is_some_and(|t| t.load_generation == generation);
+                if !current {
+                    return Decision::Stale;
+                }
+                if shell.is_idle(IDLE_START_DELAY) {
+                    Decision::Go
+                } else {
+                    Decision::Busy
+                }
+            });
+            match decision {
+                Ok(Decision::Go) => break,
+                Ok(Decision::Busy) => wait = IDLE_POLL,
+                Ok(Decision::Stale) | Err(_) => return,
+            }
+        }
+        let _ = this.update(cx, |_shell, cx| {
+            start(table, fs, db, tasks, tab_id, generation, cancel, false, cx);
+        });
+    })
+    .detach();
+}
+
+enum Decision {
+    Go,
+    Busy,
+    Stale,
+}
+
 /// Spawn a folder-size pass over the current entries of `table`.
 /// Called from `Shell::finish_directory_load_in_tab` after the
-/// final enumeration snapshot lands. Cheap: returns immediately.
+/// final enumeration snapshot lands (through [`start_when_idle`] for
+/// plain navigation). Cheap: returns immediately.
 ///
 /// `cancel` is owned by the tab (`Tab::folder_size_cancel`) and
 /// flipped on the next navigation/reload, which both stops the

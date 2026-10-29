@@ -4723,6 +4723,12 @@ impl Render for Shell {
             // Runs only for characters no keybinding claimed (gpui
             // matches actions first), so it never shadows nav keys.
             .on_key_down(cx.listener(Self::on_typeahead_key))
+            // Idle tracking for deferred background work (see
+            // `Shell::is_idle`): capture phase, so a child that stops
+            // propagation still counts as activity.
+            .capture_key_down(cx.listener(|this, _, _, _| this.note_user_input()))
+            .capture_any_mouse_down(cx.listener(|this, _, _, _| this.note_user_input()))
+            .on_scroll_wheel(cx.listener(|this, _, _, _| this.note_user_input()))
             .on_action(cx.listener(Self::on_navigate_parent))
             .on_action(cx.listener(Self::on_navigate_back))
             .on_action(cx.listener(Self::on_navigate_forward))
