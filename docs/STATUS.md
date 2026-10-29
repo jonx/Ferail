@@ -20,6 +20,7 @@ instead.
 | Open work | [TODO.md](../TODO.md) |
 | Active campaign | [Windows reliability and compatibility](features/WINDOWS_COMPATIBILITY_PLAN.md) |
 | Navigation updates | Ancestor child selection, archive exit selection and idle folder-size scheduling integrated; macOS check/clippy, 408 unit/integration tests and the upward-navigation screenshot pass. AROS GUI qualification is separate. |
+| AROS consolidation | Consolidated source passes an optimized AArch64 release build against the official nightly2026-08-04 compiler and the common public C SDK. Actual std/application libc pass direct and metadata ABI admission and forced-member provider merge. Fresh GUI interaction and GPU acceptance remain separate. |
 
 ## Platforms
 

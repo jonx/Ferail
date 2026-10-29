@@ -26,7 +26,7 @@ so the layout is load-bearing (the paths resolve relative to `packaging/`):
 
 ```
 ~/Source/
-├── Ferail-aros/                    this repository
+├── Ferail/                         this repository
 └── aros-project/
     ├── gpui-aros/                  github.com/pomaros/gpui-aros, main
     ├── gpui-component-aros-0.7.1/  github.com/pomaros/gpui-kit, branch aros-port-0.7.1
@@ -105,7 +105,7 @@ A stage's verdict does not imply the next one.
 `crates/ferail-aros-app/ferail.startup` is the launch script: `Stack
 16000000`, then `C:Ferail --theme dark --width 780 --height 560`.
 Copy `Ferail` to the system's `C:` and run the script from a shell. The
-The diagnostic files appear in `T:`
+diagnostic files appear in `T:`
 (see [aros-port.md § Diagnostics](aros-port.md#diagnostics)).
 
 ## Functional contracts
