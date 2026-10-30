@@ -30,6 +30,7 @@ disallowed_methods = "deny"
 collapsible_if = "allow"
 
 [features]
+aros-native-gpu = ["gpui_platform/aros-native-gpu"]
 default = ["screenshot-harness"]
 # Compile in the optional mpv video provider (libmpv, loaded at runtime from
 # the path set in Settings). Off by default so a stock build needs nothing.

@@ -24,6 +24,9 @@
 # getrandom 0.4).
 
 [patch.crates-io]
+# Explicit Intuition handles and EGL entry stubs; no Unix loader or Wayland.
+raw-window-handle = { git = "https://github.com/pomaros/raw-window-handle", rev = "39372f35bbd84db1c1e8941a2e73f798ad2c0be2" }
+wgpu = { git = "https://github.com/pomaros/wgpu", rev = "fcc3108b364eb151286b8efc09379d011d867b99" }
 # GPUI's platform crate: the published gpui-pre-platform 0.3.8 source plus one
 # `target_os = "aros"` arm selecting `gpui_aros::ArosPlatform` (the Intuition /
 # CyberGraphics / tiny-skia backend next to it). Nothing else in the gpui-pre

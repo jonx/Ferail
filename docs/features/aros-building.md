@@ -73,6 +73,19 @@ consumed without `-Zbuild-std`; application libc and std's locked libc each
 use declarations for one native C provider. The `Ferail` command lands in
 `target/aarch64-unknown-aros/release/Ferail`.
 
+The optional native GPU renderer is selected on the AROS command itself:
+
+```sh
+AROS_EGL_LIB_DIR=/path/to/graphics-sdk/Developer/lib \
+  scripts/aros-cargo.sh build --release -p ferail-aros-app --features aros-native-gpu
+```
+
+The graphics SDK supplies `libEGL.a` entry stubs; the managed Rust SDK remains
+responsible for the C runtime. The backend isolates the entry archive rather
+than adding the graphics SDK’s entire library directory to the link search.
+The pinned WGPU 29 provider uses native Intuition window handles and EGL.
+Compilation alone does not qualify application rendering or window resizing.
+
 ## Stages
 
 | Stage | Command | Verdict |

@@ -16,6 +16,9 @@ publish = false
 name = "Ferail"
 path = "src/main.rs"
 
+[features]
+aros-native-gpu = ["ferail-gpui/aros-native-gpu"]
+
 [dependencies]
 # Small objects from size-class slabs instead of the C library (exec pools
 # behind a semaphore and Forbid/Permit on every call); see the crate.
