@@ -180,13 +180,16 @@ model), so only an explicit Quit arms this there.
   touch `App`;
 - every window close leaves a breadcrumb with the remaining count: a run of
   closes that never reaches zero is the whole diagnosis;
-- quitting arms a watchdog thread. Reaching its first deadline at all means
-  the process outlived its own quit, since a clean exit would have taken the
-  thread with it. It writes `reports/ferail-shutdown-<pid>-<seq>.txt`: the same
+- quitting arms a watchdog thread owned by the GUI session. When the event loop
+  returns, the owner cancels its waits and joins it before application code can
+  be unloaded. Reaching the first deadline means GUI teardown has not returned.
+  It writes `reports/ferail-shutdown-<pid>-<seq>.txt`: the same
   body as a hang report (task snapshot, breadcrumbs, activity trail) with the
   window facts lifted above them, and no whole-process stack capture, because
   the UI thread is not wedged here and a page of addresses would add nothing;
-- at the second deadline it exits the process anyway. A process the user has
+- at the second deadline it exits the process on platforms where a helper
+  thread can do so. AROS keeps the report and leaves exit to the main task.
+  A process the user has
   to hunt down in Task Manager is worse than one that stopped a few seconds
   late. `FERAIL_NO_SHUTDOWN_EXIT=1` suppresses that when the point is to attach
   a debugger to the stuck process instead.

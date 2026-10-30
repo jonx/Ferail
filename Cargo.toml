@@ -138,6 +138,9 @@ gpui-fps = { version = "=0.7.1" }
 # the sibling-checkout patches this one is safe (and required) on every
 # platform and stays in the shared manifest. See vendor/tar/README.md.
 [patch.crates-io]
+# Shared platform feature vocabulary must also resolve on non-AROS hosts.
+# The public fork keeps the snapshot API; local AROS config may select its checkout.
+gpui-pre-platform = { git = "https://github.com/pomaros/gpui-aros", rev = "58541173802976ea0974c22454604cf5e881cd45" }
 # GPUI promotes native file drags on macOS/Wayland, but its Windows backend
 # leaves the platform hooks disabled. This narrow Apache-2.0 fork adds the
 # missing Shell/OLE handoff; see vendor/gpui_windows/README.md.
@@ -169,7 +172,7 @@ block = { path = "vendor/block" }
 # from std Metadata and reports set-times unsupported.
 filetime = { path = "vendor/filetime" }
 
-# NOTE: the AROS `[patch]` entries deliberately do NOT live here.
+# NOTE: local AROS source-path overrides deliberately do NOT live here.
 #
 # The AROS port needs four source overrides (gpui, gpui_platform,
 # gpui-component[-assets], plus AROS-only source shims) that resolve to

@@ -1481,6 +1481,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3215,8 +3224,7 @@ dependencies = [
 [[package]]
 name = "gpui-pre-platform"
 version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e200b7b78836f1a0fc70767d971768e88f29d8b91b697285c15fb8e373635a3e"
+source = "git+https://github.com/pomaros/gpui-aros?rev=58541173802976ea0974c22454604cf5e881cd45#58541173802976ea0974c22454604cf5e881cd45"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -3226,6 +3234,7 @@ dependencies = [
  "gpui-pre-web",
  "gpui-pre-wgpu",
  "gpui-pre-windows",
+ "gpui_aros",
 ]
 
 [[package]]
@@ -3482,6 +3491,27 @@ name = "gpui-pre-ztracing-macro"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d337c9acf058238e45ce0570d8a5958439242889492f91ae2d8e324211a61ccd"
+
+[[package]]
+name = "gpui_aros"
+version = "0.1.0"
+source = "git+https://github.com/pomaros/gpui-aros?rev=58541173802976ea0974c22454604cf5e881cd45#58541173802976ea0974c22454604cf5e881cd45"
+dependencies = [
+ "anyhow",
+ "cc",
+ "crossbeam-channel",
+ "etagere",
+ "futures",
+ "gpui-pre",
+ "gpui-pre-collections",
+ "gpui-pre-wgpu",
+ "log",
+ "parking_lot",
+ "raw-window-handle",
+ "smallvec",
+ "tiny-skia",
+ "uuid",
+]
 
 [[package]]
 name = "granit-parser"

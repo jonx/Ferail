@@ -32,8 +32,9 @@
 //! [FREEZE_DIAGNOSTICS.md](../../../docs/features/FREEZE_DIAGNOSTICS.md) has
 //! the per-shell command lines.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, mpsc};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 /// How long a normal quit is allowed to take before the process is presumed
@@ -66,6 +67,37 @@ fn delays() -> (Duration, Duration) {
 }
 
 static ARMED: AtomicBool = AtomicBool::new(false);
+static FINISHED: AtomicBool = AtomicBool::new(false);
+static WORKER: Mutex<Option<ShutdownWorker>> = Mutex::new(None);
+
+struct ShutdownWorker {
+    stop: mpsc::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Drop for ShutdownWorker {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Owned by run_gui until its event loop and teardown have returned.
+/// AROS unloads command code on return, so diagnostics must be joined first.
+pub(crate) struct Session;
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let worker = {
+            let mut worker = WORKER.lock().unwrap_or_else(|p| p.into_inner());
+            FINISHED.store(true, Ordering::Release);
+            worker.take()
+        };
+        drop(worker);
+    }
+}
 static WINDOWS_OPEN: AtomicUsize = AtomicUsize::new(0);
 
 /// Labels of the auxiliary windows still alive, published from the UI thread.
@@ -98,15 +130,26 @@ pub(crate) fn note_window_closed(remaining: usize) {
 /// `trigger` says what asked the process to end, and is the first line of any
 /// report that follows.
 pub fn arm(trigger: &'static str) {
-    if ARMED.swap(true, Ordering::AcqRel) {
+    let mut worker = WORKER.lock().unwrap_or_else(|p| p.into_inner());
+    if FINISHED.load(Ordering::Acquire) || ARMED.swap(true, Ordering::AcqRel) {
         return;
     }
     crate::obs::breadcrumb(format_args!("shutdown armed: {trigger}"));
     let (report_after, exit_after) = delays();
-    crate::obs::spawn_logged("shutdown-watchdog", move || {
-        std::thread::sleep(report_after);
-        // Reaching here at all means the process outlived its own quit: a
-        // clean exit would have taken this thread down with it.
+    *worker = Some(spawn_worker(trigger, report_after, exit_after));
+}
+
+fn spawn_worker(
+    trigger: &'static str,
+    report_after: Duration,
+    exit_after: Duration,
+) -> ShutdownWorker {
+    let (stop, stopped) = mpsc::channel();
+    let thread = crate::obs::spawn_logged("shutdown-watchdog", move || {
+        if stopped.recv_timeout(report_after) != Err(mpsc::RecvTimeoutError::Timeout) {
+            return;
+        }
+        // The event loop has not returned within the shutdown grace period.
         let details = render_details(trigger);
         let path = crate::watchdog::write_shutdown_report(
             &format!("still running {report_after:?} after {trigger}"),
@@ -125,7 +168,9 @@ pub fn arm(trigger: &'static str) {
             crate::log_warn!(90, "shutdown: exit suppressed by FERAIL_NO_SHUTDOWN_EXIT");
             return;
         }
-        std::thread::sleep(exit_after);
+        if stopped.recv_timeout(exit_after) != Err(mpsc::RecvTimeoutError::Timeout) {
+            return;
+        }
         // On AROS a helper thread cannot end the process: `exit` jumps to
         // the program's exit point in the main task's context, which this
         // thread is not. The report above is the whole remedy; the main
@@ -153,6 +198,10 @@ pub fn arm(trigger: &'static str) {
             std::process::exit(0);
         }
     });
+    ShutdownWorker {
+        stop,
+        thread: Some(thread),
+    }
 }
 
 /// The shutdown-specific half of the report: what is still registered, and
@@ -191,7 +240,19 @@ fn render_details(trigger: &str) -> String {
 mod tests {
     use super::{AUX_WINDOWS, note_windows, render_details};
 
-    // One test, not two: the published state is process-global, and two tests
+    #[test]
+    fn completed_shutdown_cancels_and_joins_the_sleeping_watchdog() {
+        let start = std::time::Instant::now();
+        let worker = super::spawn_worker(
+            "test shutdown",
+            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(60),
+        );
+        drop(worker);
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    // One state-publication test: the published state is process-global, and two tests
     // writing it in parallel would race each other rather than the code.
     #[test]
     fn details_name_what_outlived_the_quit() {

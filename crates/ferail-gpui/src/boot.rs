@@ -111,6 +111,7 @@ fn activate_aux_window(cx: &mut App, index: usize) {
 }
 
 pub fn run_gui(args: screenshot::Args) {
+    let _shutdown_watchdog_session = crate::shutdown::Session;
     #[cfg(target_os = "aros")]
     let _state_writer_session = crate::app_state::NativeWriterSession::new();
     // Windows shell: assign our own AppUserModelID so the taskbar
