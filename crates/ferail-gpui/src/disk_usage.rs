@@ -2616,12 +2616,12 @@ impl DiskUsageView {
         if items.is_empty() {
             return;
         }
-        #[cfg(target_os = "aros")]
+        #[cfg(any(target_os = "aros", target_os = "linux"))]
         {
             if let Some(shell) = self.shell.clone() {
                 let items = items.into_iter().map(|(p, d, _)| (p, d)).collect();
                 let _ = shell.update(cx, |shell, cx| {
-                    shell.write_aros_file_clipboard(
+                    shell.write_native_file_clipboard(
                         items,
                         crate::platform_shell::ClipboardFileOperation::Copy,
                         window,
@@ -2664,26 +2664,30 @@ impl DiskUsageView {
                     }
                 }
             }
-            return;
         }
-        let refs: Vec<(&std::path::Path, bool)> =
-            items.iter().map(|(p, d, _)| (p.as_path(), *d)).collect();
-        if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
-            window.push_notice(
-                Notification::error(tr!("File clipboard isn't available on this platform yet.")),
-                cx,
-            );
-            return;
+        #[cfg(not(any(target_os = "aros", target_os = "linux")))]
+        {
+            let refs: Vec<(&std::path::Path, bool)> =
+                items.iter().map(|(p, d, _)| (p.as_path(), *d)).collect();
+            if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
+                window.push_notice(
+                    Notification::error(tr!(
+                        "File clipboard isn't available on this platform yet."
+                    )),
+                    cx,
+                );
+                return;
+            }
+            let msg = if items.len() == 1 {
+                tr!(
+                    "Copied \u{201C}{name}\u{201D}",
+                    name = items[0].0.file_name().unwrap_or_default().to_string_lossy()
+                )
+            } else {
+                trn!("Copied {n} item", "Copied {n} items", items.len())
+            };
+            window.push_notice(Notification::success(msg), cx);
         }
-        let msg = if items.len() == 1 {
-            tr!(
-                "Copied \u{201C}{name}\u{201D}",
-                name = items[0].0.file_name().unwrap_or_default().to_string_lossy()
-            )
-        } else {
-            trn!("Copied {n} item", "Copied {n} items", items.len())
-        };
-        window.push_notice(Notification::success(msg), cx);
     }
 
     fn on_du_copy_paths(&mut self, _: &DuCopyPaths, window: &mut Window, cx: &mut Context<Self>) {

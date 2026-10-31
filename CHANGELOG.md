@@ -8,6 +8,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Copy, Cut and Paste work on Wayland desktops with data-control support.**
+  File lists use URI and GNOME clipboard formats, including the Copy/Move
+  operation. File clipboard requests run off the UI thread; file names retain their
+  original bytes and symbolic links are copied as links.
+
 - **Going up to a parent folder selects the folder you came from and scrolls
   it into view, whichever way you go up.** Backspace and Back already did
   this; clicking a breadcrumb segment, a folder in the sidebar tree, or typing
