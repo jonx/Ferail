@@ -78,6 +78,14 @@ reports as unavailable (idle-sleep inhibition, sleep and wake notifications,
 window visibility beyond open or closed). The portable half (renderer,
 atlas, damage, input mapping) runs its conformance tests on any host.
 
+The optional `aros-native-gpu` command feature selects WGPU/GLES hardware
+rendering through native Intuition handles and `egl.library`. Ordinary logical
+windows present the rendered image through AROS's native bitmap composition,
+which controls window overlap, scaling and the software pointer. This path
+copies GPU results to the window bitmap on the CPU. Accelerated desktop scene
+composition is a separate platform capability. The default tiny-skia path is
+retained for VM use. See [the GPU build command](aros-building.md#building).
+
 Keyboard shortcuts use Ctrl: GPUI's `secondary` token is Cmd only on macOS,
 and the backend maps the Amiga keys to GPUI's `platform` modifier.
 
