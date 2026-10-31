@@ -54,8 +54,8 @@ adding cross-crate dependencies.
 
 ## Building
 
-Ferail depends on `gpui` / `gpui-component` as **git** dependencies (they
-are not published to crates.io). Reproducible builds come from the committed
+GPUI and gpui-component come from crates.io, with a Git patch for the GPUI
+platform crate. Reproducible builds come from the committed
 `Cargo.lock`. A normal `cargo build` / `cargo run --bin ferail-gpui` works
 on a recent stable toolchain (see `rust-toolchain.toml`).
 
