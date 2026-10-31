@@ -249,8 +249,10 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     let fmt_date = fsn::stat_info::format_local_datetime;
 
     // ---- General ----
-    let mut general =
-        InfoSection::new(tr!("General").to_string()).text_if(tr!("Kind").to_string(), kind.clone());
+    let mut general = InfoSection::new(tr!("General").to_string()).text_if(
+        tr!("Kind").to_string(),
+        crate::i18n::tr_dyn(&kind).to_string(),
+    );
     if let Some(uti) = sh.uti.clone() {
         general = general.text_if(tr!("Type").to_string(), uti);
     }
@@ -1183,7 +1185,7 @@ impl Render for EntryInfoView {
             div()
                 .text_scale_xs()
                 .text_color(muted)
-                .child(self.kind.clone()),
+                .child(crate::i18n::tr_dyn(&self.kind)),
         );
 
         let content = v_flex()

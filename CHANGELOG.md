@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **File format labels and relative modification dates follow the interface
+  language.** File detection keeps its original identifiers.
+
 - **The interface is available in Italian.** Select Italiano under Language
   in Appearance settings.
 
