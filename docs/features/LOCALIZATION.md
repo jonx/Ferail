@@ -1,7 +1,7 @@
 # Localization
 
 Ferail's UI can be shown in any language for which a **language pack** exists.
-Packs are plain JSON files; three (French, German, Polish) ship inside the app, and
+Packs are plain JSON files; four (French, German, Italian, Polish) ship inside the app, and
 anyone can create another one without touching the code, typically by
 handing a generated template to a translator or to an AI assistant (Claude,
 ChatGPT, a local model…) and importing the result. Ferail itself never calls
@@ -133,7 +133,8 @@ Rules:
 
 - **New or changed user-visible text ships translated.** In the same change,
   regenerate `locales/en.json` and add or update the corresponding entries in
-  every bundled pack (`locales/de.json`, `locales/fr.json`, `locales/pl.json`).
+  every bundled pack (`locales/de.json`, `locales/fr.json`, `locales/it.json`,
+  `locales/pl.json`).
   Do not leave new strings to fall back to English.
 - **Arguments must be string literals.** The extractor (see below) only sees
   literals; a dynamic `tr!(x)` does not compile. For a `&'static str` that
