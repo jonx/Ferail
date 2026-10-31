@@ -333,11 +333,6 @@ pub fn run_gui(args: screenshot::Args) {
         // mode, diagnosing freezes is what both exist for.
         crate::watchdog::start(cx);
 
-        // Resolve the sidebar Locations for the persisted special-folder
-        // mode (Windows/OneDrive) once, before any window paints. Render
-        // reads this cached global: it must never stat (Prime Directive).
-        crate::special_folders::seed(cx);
-
         // The three process-wide watchers below are all skipped in safe
         // mode, each one talks to the OS off-thread, and safe mode's
         // whole point is a session where no background subsystem runs.

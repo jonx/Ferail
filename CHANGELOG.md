@@ -8,6 +8,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Linux sidebar locations follow XDG user directories.** Desktop, Documents
+  and Downloads use the configured folders, including localized and redirected
+  paths, instead of assuming English names under the home directory. Location
+  resolution runs off the UI thread.
+
 - **Going up to a parent folder selects the folder you came from and scrolls
   it into view, whichever way you go up.** Backspace and Back already did
   this; clicking a breadcrumb segment, a folder in the sidebar tree, or typing

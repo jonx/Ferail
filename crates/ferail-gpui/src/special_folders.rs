@@ -10,13 +10,9 @@
 //!
 //! ## Prime-directive shape
 //!
-//! Resolving a mode stats the disk (`prefer_if_exists`), which `render`
-//! must never do. So the `Vec<WellKnownLocation>` is resolved **once**: at
-//! startup ([`seed`]) and whenever the Settings dropdown changes it
-//! ([`set_mode`]), and stashed in the [`ResolvedLocations`] global. The
-//! two sidebar builders only ever read that global ([`locations`]), an
-//! in-memory `Rc` clone with no I/O: the same shape as
-//! [`crate::thumbnails::ShowThumbnails`].
+//! Resolving locations can read XDG configuration or stat redirected folders.
+//! Startup and mode changes resolve on the background executor; rendering
+//! only clones the cached list. A generation discards outdated resolutions.
 
 use std::rc::Rc;
 
@@ -28,8 +24,11 @@ use crate::app_state::{self, AppState};
 /// [`SpecialFolderMode`]. Seeded at startup and replaced wholesale when the
 /// mode changes; reading it inside `render` subscribes that window to
 /// changes, so flipping the Settings dropdown repaints every sidebar at once.
-#[derive(Clone)]
-pub struct ResolvedLocations(pub Rc<Vec<WellKnownLocation>>);
+#[derive(Clone, Default)]
+pub struct ResolvedLocations {
+    locations: Rc<Vec<WellKnownLocation>>,
+    generation: u64,
+}
 
 impl gpui::Global for ResolvedLocations {}
 
@@ -43,23 +42,40 @@ pub fn current_mode() -> SpecialFolderMode {
         .unwrap_or_default()
 }
 
-/// The cached Locations. Falls back to an `Auto` resolve when the global
-/// hasn't been seeded (headless / screenshot paths that skip startup), so a
-/// caller never needs to special-case absence.
+/// The cached locations, empty until the first resolution completes.
 pub fn locations(cx: &gpui::App) -> Rc<Vec<WellKnownLocation>> {
-    match cx.try_global::<ResolvedLocations>() {
-        Some(g) => g.0.clone(),
-        None => Rc::new(paths::well_known_locations()),
-    }
+    cx.try_global::<ResolvedLocations>()
+        .map(|g| g.locations.clone())
+        .unwrap_or_default()
 }
 
-/// Resolve `mode` (the only place that stats) and publish the result to the
-/// global. Returns nothing: callers pair this with `cx.refresh_windows()`
-/// to repaint open sidebars.
+/// Resolve a mode off-thread, retaining the current list until it is ready.
 pub fn set_mode(mode: SpecialFolderMode, cx: &mut gpui::App) {
-    cx.set_global(ResolvedLocations(Rc::new(paths::well_known_locations_for(
-        mode,
-    ))));
+    let cached = cx
+        .try_global::<ResolvedLocations>()
+        .cloned()
+        .unwrap_or_default();
+    let generation = cached.generation.wrapping_add(1);
+    cx.set_global(ResolvedLocations {
+        generation,
+        ..cached
+    });
+    cx.spawn(async move |cx| {
+        let locations = cx
+            .background_executor()
+            .spawn(async move { paths::well_known_locations_for(mode) })
+            .await;
+        cx.update(|cx| {
+            if cx.global::<ResolvedLocations>().generation == generation {
+                cx.set_global(ResolvedLocations {
+                    locations: Rc::new(locations),
+                    generation,
+                });
+                cx.refresh_windows();
+            }
+        });
+    })
+    .detach();
 }
 
 /// Seed the global from the persisted mode. Called once at startup, before
