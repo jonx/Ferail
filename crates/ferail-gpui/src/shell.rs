@@ -1921,6 +1921,7 @@ impl Shell {
     /// before any window opens; the resulting `Rc` is stashed as a
     /// GPUI `Global` and read back by every `Shell::new`.
     pub fn build_process_state(cx: &mut App) -> Rc<crate::process_state::ProcessState> {
+        crate::special_folders::seed(cx);
         let fs = Arc::new(NativeFs::new());
         // Spin up the platform file-system watcher. Errors
         // (sandboxed CI without FSEvents) are non-fatal: the app
