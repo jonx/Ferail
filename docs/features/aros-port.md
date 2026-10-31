@@ -84,7 +84,7 @@ windows present the rendered image through AROS's native bitmap composition,
 which controls window overlap, scaling and the software pointer. This path
 copies GPU results to the window bitmap on the CPU. Accelerated desktop scene
 composition is a separate platform capability. The default tiny-skia path is
-retained for VM use. See [the GPU build command](aros-building.md#building).
+retained for VM use. See [the GPU build command](aros-building.md).
 
 Keyboard shortcuts use Ctrl: GPUI's `secondary` token is Cmd only on macOS,
 and the backend maps the Amiga keys to GPUI's `platform` modifier.
