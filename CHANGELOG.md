@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Linux desktops can open folders in Ferail.** The desktop entry handles
+  directory paths through `--navigate`, which now also applies to normal windows.
+
 - **Going up to a parent folder selects the folder you came from and scrolls
   it into view, whichever way you go up.** Backspace and Back already did
   this; clicking a breadcrumb segment, a folder in the sidebar tree, or typing

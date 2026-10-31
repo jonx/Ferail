@@ -165,6 +165,7 @@ pub fn run_gui(args: screenshot::Args) {
     let theme_mode = args.theme;
     let settings_page = args.settings;
     let initial_archive = args.archive;
+    let initial_directory = args.navigate.last().cloned();
 
     app.run(move |cx| {
         // Arm the Prime Directive's debug-build tripwire: from here on,
@@ -467,7 +468,12 @@ pub fn run_gui(args: screenshot::Args) {
             let initial_size = (width, height);
             cx.spawn(async move |cx| {
                 cx.update(|cx| {
-                    open_shell_window_sized(cx, Some(initial_size), initial_archive);
+                    open_shell_window_sized(
+                        cx,
+                        Some(initial_size),
+                        initial_archive,
+                        initial_directory,
+                    );
                 });
             })
             .detach();
@@ -496,7 +502,7 @@ fn settings_window_opts(width: f32, height: f32) -> WindowOptions {
 /// route through this so there's one place that owns window options
 /// and process-state hookup.
 pub fn open_shell_window(cx: &mut App) {
-    open_shell_window_sized(cx, None, None);
+    open_shell_window_sized(cx, None, None, None);
 }
 
 #[cfg(feature = "screenshot-harness")]
@@ -636,6 +642,7 @@ fn open_shell_window_sized(
     cx: &mut App,
     size_hint: Option<(f32, f32)>,
     initial_archive: Option<std::path::PathBuf>,
+    initial_directory: Option<std::path::PathBuf>,
 ) {
     let (w, h) = size_hint.unwrap_or((1180.0, 760.0));
     let opts = WindowOptions {
@@ -654,6 +661,9 @@ fn open_shell_window_sized(
             install_dev_window_callback_cleanup(window, cx);
             let process = crate::process_state::process_state(cx);
             let view = cx.new(|cx| Shell::new(process, window, cx));
+            if let Some(directory) = initial_directory.clone() {
+                view.update(cx, |shell, cx| shell.navigate(directory, cx));
+            }
             if let Some(archive) = initial_archive.clone() {
                 view.update(cx, |shell, cx| {
                     shell.open_archive_path(archive, window, cx);

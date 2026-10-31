@@ -6,17 +6,13 @@
 # to "ferail" (see ferail-gpui/src/lib.rs base_window_options). Rename
 # this file and the taskbar icon/grouping silently breaks.
 #
-# No %F/%U field code on Exec yet: the binary treats a bare positional
-# argument as an unknown subcommand (src/main.rs handle_cli_subcommand),
-# so it cannot open a directory passed by the desktop shell. Add
-# MimeType=inode/directory; and Exec=ferail %U once a path argument is
-# supported.
 [Desktop Entry]
 Type=Application
 Name=Ferail
 GenericName=File Manager
 Comment=Fast file manager with disk usage, previews, and dual-pane browsing
-Exec=ferail
+Exec=ferail --navigate %f
+MimeType=inode/directory;
 Icon=ferail
 Terminal=false
 Categories=System;FileTools;FileManager;
