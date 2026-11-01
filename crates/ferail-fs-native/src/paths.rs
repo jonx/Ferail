@@ -416,25 +416,26 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
 #[cfg(target_os = "linux")]
 pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocation> {
     ferail_core::path_guard::assert_off_ui_thread("well_known_locations_for");
+    let home = home_dir();
     [
         (
             ferail_core::msgid!("Home"),
-            Some(home_dir()),
+            Some(home.clone()),
             "icons/nav/home.svg",
         ),
         (
             ferail_core::msgid!("Desktop"),
-            dirs::desktop_dir(),
+            dirs::desktop_dir().filter(|path| path != &home),
             "icons/nav/desktop.svg",
         ),
         (
             ferail_core::msgid!("Documents"),
-            dirs::document_dir(),
+            dirs::document_dir().filter(|path| path != &home),
             "icons/nav/documents.svg",
         ),
         (
             ferail_core::msgid!("Downloads"),
-            dirs::download_dir(),
+            dirs::download_dir().filter(|path| path != &home),
             "icons/nav/downloads.svg",
         ),
     ]
@@ -1031,22 +1032,25 @@ mod xdg_tests {
         let root = std::env::temp_dir().join(format!("ferail-xdg-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         let config = root.join("user-dirs.dirs");
-        std::fs::write(&config, format!(
-            "XDG_DESKTOP_DIR=\"{}/Scrivania\"\nXDG_DOCUMENTS_DIR=\"{}/Documenti condivisi\"\nXDG_DOWNLOAD_DIR=\"$HOME\"\n",
-            root.display(), root.display(),
-        )).unwrap();
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--ignored",
-                "--exact",
-                "paths::xdg_tests::isolated_locations",
-            ])
-            .env("XDG_CONFIG_HOME", &root)
-            .output()
-            .unwrap();
+        for disabled in ["$HOME".to_owned(), root.display().to_string()] {
+            std::fs::write(&config, format!(
+                "XDG_DESKTOP_DIR=\"{}/Scrivania\"\nXDG_DOCUMENTS_DIR=\"{}/Documenti condivisi\"\nXDG_DOWNLOAD_DIR=\"{disabled}\"\n",
+                root.display(), root.display(),
+            )).unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "paths::xdg_tests::isolated_locations",
+                ])
+                .env("HOME", &root)
+                .env("XDG_CONFIG_HOME", &root)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+        }
         std::fs::remove_file(config).unwrap();
         std::fs::remove_dir(root).unwrap();
-        assert!(output.status.success(), "{output:?}");
     }
 
     #[test]
