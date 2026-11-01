@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Linux opens JSON and other text files in their associated application.**
+  File opening and text editing honor the desktop's inherited associations.
+
 - **Going up to a parent folder selects the folder you came from and scrolls
   it into view, whichever way you go up.** Backspace and Back already did
   this; clicking a breadcrumb segment, a folder in the sidebar tree, or typing
