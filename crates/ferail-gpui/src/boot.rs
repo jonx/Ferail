@@ -221,31 +221,52 @@ pub fn run_gui(args: screenshot::Args) {
         //   1. `--theme {light,dark}` CLI flag
         //   2. `FERAIL_THEME` env var (light / dark / system)
         //   3. Persisted `theme_pref` in app_state
-        //   4. macOS Appearance via `system_is_dark()`
+        //   4. System appearance
         let env_theme = std::env::var("FERAIL_THEME").ok().map(|s| s.to_lowercase());
         let persisted_theme = crate::app_state::load().theme_pref;
         let resolve_string = |s: &str| -> Option<gpui_component::ThemeMode> {
             match s {
                 "light" => Some(gpui_component::ThemeMode::Light),
                 "dark" => Some(gpui_component::ThemeMode::Dark),
-                "system" | "auto" => Some(if crate::platform_shell::system_is_dark() {
-                    gpui_component::ThemeMode::Dark
-                } else {
-                    gpui_component::ThemeMode::Light
-                }),
+                "system" | "auto" => Some(crate::settings::ThemePref::System.resolve(cx)),
                 _ => None,
             }
         };
         let mode = theme_mode
             .or_else(|| env_theme.as_deref().and_then(resolve_string))
             .or_else(|| persisted_theme.as_deref().and_then(resolve_string))
-            .unwrap_or_else(|| {
-                if crate::platform_shell::system_is_dark() {
-                    gpui_component::ThemeMode::Dark
-                } else {
-                    gpui_component::ThemeMode::Light
+            .unwrap_or_else(|| crate::settings::ThemePref::System.resolve(cx));
+        #[cfg(target_os = "linux")]
+        {
+            let configured = env_theme
+                .as_deref()
+                .filter(|value| matches!(*value, "light" | "dark" | "system" | "auto"))
+                .or(persisted_theme.as_deref());
+            cx.set_global(crate::settings::FollowSystemTheme(
+                theme_mode.is_none() && !matches!(configured, Some("light" | "dark")),
+            ));
+            cx.observe_new::<gpui_component::Root>(|_, window, _cx| {
+                if let Some(window) = window {
+                    window
+                        .observe_window_appearance(|window, cx| {
+                            if cx
+                                .try_global::<crate::settings::FollowSystemTheme>()
+                                .is_some_and(|follow| follow.0)
+                            {
+                                let mode: gpui_component::ThemeMode = window.appearance().into();
+                                Theme::change(mode, Some(window), cx);
+                                crate::shell::set_system_theme_pending(matches!(
+                                    mode,
+                                    gpui_component::ThemeMode::Dark
+                                ));
+                                cx.refresh_windows();
+                            }
+                        })
+                        .detach();
                 }
-            });
+            })
+            .detach();
+        }
         Theme::change(mode, None, cx);
         // Sync native chrome (titlebars, traffic lights, menus) to the
         // app theme so secondary windows don't show system-dark chrome

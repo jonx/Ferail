@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **System theme follows the Linux desktop.** Ferail reads GPUI’s portal-backed
+  appearance instead of requiring GNOME settings schemas, and updates open
+  windows when the desktop switches between light and dark.
+
 - **Going up to a parent folder selects the folder you came from and scrolls
   it into view, whichever way you go up.** Backspace and Back already did
   this; clicking a breadcrumb segment, a folder in the sidebar tree, or typing

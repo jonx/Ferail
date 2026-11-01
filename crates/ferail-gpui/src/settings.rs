@@ -122,6 +122,11 @@ pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
 // Theme preference: external API
 // =============================================================================
 
+#[cfg(target_os = "linux")]
+pub(crate) struct FollowSystemTheme(pub bool);
+#[cfg(target_os = "linux")]
+impl gpui::Global for FollowSystemTheme {}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ThemePref {
     Light,
@@ -146,15 +151,22 @@ impl ThemePref {
         }
     }
 
-    fn resolve(self) -> ThemeMode {
+    pub(crate) fn resolve(self, _cx: &App) -> ThemeMode {
         match self {
             ThemePref::Light => ThemeMode::Light,
             ThemePref::Dark => ThemeMode::Dark,
             ThemePref::System => {
-                if crate::platform_shell::system_is_dark() {
-                    ThemeMode::Dark
-                } else {
-                    ThemeMode::Light
+                #[cfg(target_os = "linux")]
+                {
+                    _cx.window_appearance().into()
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    if crate::platform_shell::system_is_dark() {
+                        ThemeMode::Dark
+                    } else {
+                        ThemeMode::Light
+                    }
                 }
             }
         }
@@ -2611,7 +2623,12 @@ fn theme_tile(pref: ThemePref) -> impl IntoElement {
             // when given a Window. `cx.refresh_windows()` propagates
             // the same change to any other open window (e.g. the
             // main Shell while Settings is open in a second window).
-            let resolved = pref.resolve();
+            let resolved = pref.resolve(cx);
+            #[cfg(target_os = "linux")]
+            {
+                cx.set_global(FollowSystemTheme(pref == ThemePref::System));
+                crate::shell::set_system_theme_pending(matches!(resolved, ThemeMode::Dark));
+            }
             Theme::change(resolved, Some(window), cx);
             // Match native chrome across all windows to the new theme.
             crate::platform_shell::set_app_appearance(matches!(
