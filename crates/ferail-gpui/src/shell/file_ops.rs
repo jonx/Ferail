@@ -3234,12 +3234,9 @@ impl Shell {
 
     /// Put the selected trashed items back where they came from.
     ///
-    /// The original location comes from the put-back record Ferail wrote when
-    /// it trashed the item. Nothing else knows it: on macOS the Finder keeps
-    /// its own put-back information in a private store, so an item Ferail did
-    /// not trash cannot be restored and says so rather than guessing at a
-    /// destination. Restoring never overwrites: a name taken since is a
-    /// refusal, not a replacement.
+    /// Linux uses freedesktop trash metadata. Other platforms use Ferail's
+    /// own put-back record; Finder's private records are unavailable.
+    /// Restoring never overwrites an existing destination.
     pub(super) fn on_restore_from_trash(
         &mut self,
         _: &RestoreFromTrash,
