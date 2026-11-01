@@ -517,6 +517,13 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         })
         .collect();
 
+    #[cfg(target_os = "linux")]
+    locations.push(WellKnownLocation {
+        label: ferail_core::msgid!("Trash"),
+        path: crate::linux_trash::home_files(),
+        icon: "icons/nav/trash.svg",
+    });
+
     // `~/Applications` (macOS): a genuinely separate app folder that Finder's
     // sidebar hides, per-user installs plus the Chrome/Edge PWA shims. Shown
     // right under the system row, but only when it holds something the user

@@ -3165,6 +3165,8 @@ impl Shell {
                             Ok(_) => std::fs::remove_file(p),
                             Err(e) => Err(e),
                         };
+                        #[cfg(target_os = "linux")]
+                        let removed = removed.and_then(|()| ferail_fs_native::linux_trash::forget(p));
                         match removed {
                             Ok(()) => deleted += 1,
                             Err(e) => {
@@ -3254,6 +3256,7 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
+        #[cfg(not(target_os = "linux"))]
         let Some(db) = self.process.db_snapshot() else {
             window.push_notice(
                 Notification::error(tr!("Ferail cannot reach its database to restore items.")),
@@ -3274,59 +3277,78 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let mut restored: Vec<PathBuf> = Vec::new();
+                    #[cfg(target_os = "linux")]
+                    let unknown = 0usize;
+                    #[cfg(not(target_os = "linux"))]
                     let mut unknown = 0usize;
                     let mut failures: Vec<ferail_fs_native::file_ops::FileOpError> = Vec::new();
                     let mut touched: Vec<PathBuf> = Vec::new();
                     for path in &paths {
-                        let target = db
-                            .lock()
-                            .ok()
-                            .and_then(|db| db.put_back_target(path).ok().flatten());
-                        let Some(target) = target else {
-                            unknown += 1;
-                            continue;
-                        };
-                        // The folder it came from may itself be gone, or its
-                        // name may have been taken since. Recreate the folder;
-                        // refuse the name.
-                        if let Some(parent) = target.parent() {
-                            if let Err(error) = std::fs::create_dir_all(parent) {
+                        #[cfg(target_os = "linux")]
+                        {
+                            match ferail_fs_native::linux_trash::restore(path) {
+                                Ok(target) => {
+                                    touched.extend(path.parent().map(Path::to_path_buf));
+                                    touched.extend(target.parent().map(Path::to_path_buf));
+                                    restored.push(target);
+                                }
+                                Err(error) => failures.push(
+                                    ferail_fs_native::file_ops::FileOpError::from_io(&error, path),
+                                ),
+                            }
+                        }
+                        #[cfg(not(target_os = "linux"))]
+                        {
+                            let target = db
+                                .lock()
+                                .ok()
+                                .and_then(|db| db.put_back_target(path).ok().flatten());
+                            let Some(target) = target else {
+                                unknown += 1;
+                                continue;
+                            };
+                            // The folder it came from may itself be gone, or its
+                            // name may have been taken since. Recreate the folder;
+                            // refuse the name.
+                            if let Some(parent) = target.parent() {
+                                if let Err(error) = std::fs::create_dir_all(parent) {
+                                    failures.push(ferail_fs_native::file_ops::FileOpError::from_io(
+                                        &error, path,
+                                    ));
+                                    continue;
+                                }
+                            }
+                            if target.symlink_metadata().is_ok() {
                                 failures.push(ferail_fs_native::file_ops::FileOpError::from_io(
-                                    &error, path,
+                                    &std::io::Error::new(
+                                        std::io::ErrorKind::AlreadyExists,
+                                        "something else is there now",
+                                    ),
+                                    &target,
                                 ));
                                 continue;
                             }
-                        }
-                        if target.symlink_metadata().is_ok() {
-                            failures.push(ferail_fs_native::file_ops::FileOpError::from_io(
-                                &std::io::Error::new(
-                                    std::io::ErrorKind::AlreadyExists,
-                                    "something else is there now",
+                            #[cfg(target_os = "aros")]
+                            let renamed = ferail_fs_native::rename::rename_no_replace(path, &target);
+                            #[cfg(not(target_os = "aros"))]
+                            let renamed = std::fs::rename(path, &target);
+                            match renamed {
+                                Ok(()) => {
+                                    if let Ok(db) = db.lock() {
+                                        let _ = db.forget_put_back(path);
+                                    }
+                                    if let Some(parent) = path.parent() {
+                                        touched.push(parent.to_path_buf());
+                                    }
+                                    if let Some(parent) = target.parent() {
+                                        touched.push(parent.to_path_buf());
+                                    }
+                                    restored.push(target);
+                                }
+                                Err(error) => failures.push(
+                                    ferail_fs_native::file_ops::FileOpError::from_io(&error, path),
                                 ),
-                                &target,
-                            ));
-                            continue;
-                        }
-                        #[cfg(target_os = "aros")]
-                        let renamed = ferail_fs_native::rename::rename_no_replace(path, &target);
-                        #[cfg(not(target_os = "aros"))]
-                        let renamed = std::fs::rename(path, &target);
-                        match renamed {
-                            Ok(()) => {
-                                if let Ok(db) = db.lock() {
-                                    let _ = db.forget_put_back(path);
-                                }
-                                if let Some(parent) = path.parent() {
-                                    touched.push(parent.to_path_buf());
-                                }
-                                if let Some(parent) = target.parent() {
-                                    touched.push(parent.to_path_buf());
-                                }
-                                restored.push(target);
                             }
-                            Err(error) => failures.push(
-                                ferail_fs_native::file_ops::FileOpError::from_io(&error, path),
-                            ),
                         }
                     }
                     (restored, unknown, failures, touched)
@@ -3404,7 +3426,7 @@ impl Shell {
             let preview = cx
                 .background_executor()
                 .spawn(async move {
-                    let dirs = ferail_fs_native::trash_dirs();
+                    let dirs = ferail_fs_native::trash_dirs()?;
                     let mut items = 0usize;
                     let mut unreadable = false;
                     for d in &dirs {
@@ -3416,10 +3438,18 @@ impl Shell {
                             Err(_) => unreadable = true,
                         }
                     }
-                    (dirs, items, unreadable)
+                    Ok::<_, std::io::Error>((dirs, items, unreadable))
                 })
                 .await;
-            let (dirs, items, unreadable) = preview;
+            let (dirs, items, unreadable) = match preview {
+                Ok(preview) => preview,
+                Err(error) => {
+                    let _ = win.update(cx, |_, window, cx| {
+                        window.push_notice(Notification::error(error.to_string()), cx);
+                    });
+                    return;
+                }
+            };
             if items == 0 && !unreadable {
                 let _ = win.update(cx, |_, window, cx| {
                     window.push_notice(Notification::info(tr!("Trash is already empty")), cx);

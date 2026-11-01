@@ -27,6 +27,8 @@ mod dupes;
 pub mod file_ops;
 mod icons;
 pub mod image_meta;
+#[cfg(target_os = "linux")]
+pub mod linux_trash;
 mod magic;
 pub mod media;
 pub mod paths;
@@ -226,6 +228,14 @@ impl NativeFs {
         });
         if !buffer.is_empty() {
             on_batch(buffer);
+        }
+        #[cfg(target_os = "linux")]
+        if result
+            .as_ref()
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            && path == linux_trash::home_files()
+        {
+            return None;
         }
         result.err().map(|error| map_io_error(&error))
     }
@@ -585,9 +595,10 @@ pub fn home_trash_dir() -> PathBuf {
 /// Trash directories visible to this user: `~/.Trash` plus each
 /// mounted volume's `.Trashes/<uid>` when it exists. Used by Empty
 /// Trash to cover per-volume trashes, not just the boot volume's.
+/// Linux uses the freedesktop home and mounted-volume payload directories.
 /// [win-parity: `SHEmptyRecycleBinW` handles this wholesale]
 #[cfg(target_os = "macos")]
-pub fn trash_dirs() -> Vec<PathBuf> {
+pub fn trash_dirs() -> std::io::Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
     let home_trash = paths::home_dir().join(".Trash");
     if home_trash.is_dir() {
@@ -616,12 +627,17 @@ pub fn trash_dirs() -> Vec<PathBuf> {
             dirs.push(t);
         }
     }
-    dirs
+    Ok(dirs)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "aros")))]
-pub fn trash_dirs() -> Vec<PathBuf> {
-    Vec::new()
+#[cfg(target_os = "linux")]
+pub fn trash_dirs() -> std::io::Result<Vec<PathBuf>> {
+    linux_trash::directories()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "aros", target_os = "linux")))]
+pub fn trash_dirs() -> std::io::Result<Vec<PathBuf>> {
+    Ok(Vec::new())
 }
 
 /// Whether `path` is a trash directory, or something inside one.
@@ -632,7 +648,7 @@ pub fn trash_dirs() -> Vec<PathBuf> {
 ///
 /// - macOS: `~/.Trash`, and each volume's `.Trashes/<uid>`;
 /// - Linux: `$XDG_DATA_HOME/Trash` (or `~/.local/share/Trash`), and each
-///   volume's `.Trash-<uid>`;
+///   volume's `.Trash-<uid>` or `.Trash/<uid>`;
 /// - AROS: a volume's `Trashcan` drawer.
 ///
 /// The Windows Recycle Bin is deliberately absent: it has no filesystem path a
@@ -662,21 +678,23 @@ pub fn trash_root_of(path: &Path) -> Option<PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-        let data_home = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| paths::home_dir().join(".local/share"));
-        if let Some(root) = under(data_home.join("Trash")) {
+        if let Some(root) = under(linux_trash::home_files().parent()?.to_path_buf()) {
             return Some(root);
         }
-        // The freedesktop per-volume form is `.Trash-<uid>` at the mount root.
+        // Both freedesktop per-volume layouts live at the mount root.
         let uid = unsafe { libc::getuid() };
         let name = format!(".Trash-{uid}");
+        let shared = uid.to_string();
         let mut walk = path;
         loop {
-            if walk
-                .file_name()
-                .is_some_and(|component| component == name.as_str())
-            {
+            if walk.file_name().is_some_and(|component| {
+                component == name.as_str()
+                    || (component == shared.as_str()
+                        && walk
+                            .parent()
+                            .and_then(Path::file_name)
+                            .is_some_and(|name| name == ".Trash"))
+            }) {
                 return Some(walk.to_path_buf());
             }
             walk = walk.parent()?;
@@ -918,12 +936,12 @@ pub(crate) fn aros_trashcan_for(path: &Path) -> Option<PathBuf> {
 /// AROS: the per-volume Trashcan drawers that exist, for Empty Trash, over
 /// the volumes DOS has mounted.
 #[cfg(target_os = "aros")]
-pub fn trash_dirs() -> Vec<PathBuf> {
-    crate::list_volumes()
+pub fn trash_dirs() -> std::io::Result<Vec<PathBuf>> {
+    Ok(crate::list_volumes()
         .into_iter()
         .map(|v| v.path.join("Trashcan"))
         .filter(|p| p.is_dir())
-        .collect()
+        .collect())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "aros", windows)))]
