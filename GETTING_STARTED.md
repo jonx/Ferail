@@ -84,6 +84,10 @@ You also need **git** to clone the repo and to fetch the git dependencies.
   Fedora equivalents and the full Linux story (including WSL2) are in
   [docs/features/linux-port.md](docs/features/linux-port.md).
 
+For PDF thumbnails and previews on Linux, install Poppler’s `pdftoppm`
+(`poppler-utils` on Debian/Ubuntu, `poppler` on Arch). Ferail renders the first
+page; PDF documents are recognized by their contents, not their extension.
+
 ### Optional: libmpv (for the any-format video player)
 
 The built-in viewer plays `mp4` / `m4v` / `mov` out of the box. The optional

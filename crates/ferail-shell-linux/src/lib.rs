@@ -1048,10 +1048,9 @@ pub fn show_quick_look(_paths: &[&Path]) -> Result<(), String> {
 /// stale entry: the source is newer than the cached PNG) it regenerates with
 /// `gdk-pixbuf-thumbnailer`, which writes the spec `Thumb::*` tEXt chunks.
 ///
-/// v1 covers what gdk-pixbuf loads (images). Video poster frames and PDF first
-/// pages need their own thumbnailers (totem/evince) or the Tumbler D-Bus
-/// service that dispatches to all registered thumbnailers: a follow-up; those
-/// simply return `None` here and fall back to the type icon.
+/// On a PDF cache miss, Poppler's `pdftoppm` renders the first page in memory.
+/// Other misses use gdk-pixbuf's image loaders; unsupported formats return
+/// `None` and fall back to the type icon.
 ///
 /// Off the render path (the gpui thumbnail warmer runs this on the background
 /// pool), so the process spawn + disk I/O are Prime-Directive-safe.
@@ -1078,6 +1077,27 @@ pub fn fetch_quick_look_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>,
         .is_some_and(|(thumb_mtime, src_mtime)| thumb_mtime >= src_mtime);
 
     if !fresh {
+        use std::io::Read as _;
+        let mut header = [0; 5];
+        if std::fs::File::open(path)
+            .and_then(|mut file| file.read_exact(&mut header))
+            .is_ok()
+            && &header == b"%PDF-"
+        {
+            let output = std::process::Command::new("pdftoppm")
+                .args(["-f", "1", "-singlefile", "-png", "-scale-to"])
+                .arg(dim.to_string())
+                .arg(path)
+                .stderr(std::process::Stdio::inherit())
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let rgba = image::load_from_memory(&output.stdout).ok()?.to_rgba8();
+            let (width, height) = rgba.dimensions();
+            return Some((rgba.into_raw(), width, height));
+        }
         std::fs::create_dir_all(cache_path.parent()?).ok()?;
         let ok = std::process::Command::new("gdk-pixbuf-thumbnailer")
             .arg("-s")
@@ -1662,6 +1682,27 @@ mod tests {
             thumb_md5("file:///home/jens/photo/me.png"),
             "d40775e596682f2a16d1b834c221c0a2"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires Poppler's pdftoppm"]
+    fn pdf_preview_renders_first_page_without_extension() {
+        let dir = TmpDir::new("pdf-preview");
+        let path = dir.join("document with spaces.bin");
+        std::fs::write(
+            &path,
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../test-data/preview/two-pages.pdf"
+            )),
+        )
+        .unwrap();
+        let (rgba, width, height) = fetch_preview_image(&path, 128).unwrap();
+        assert_eq!(height, 128);
+        assert_eq!(rgba.len(), (width * height * 4) as usize);
+        let pixel = ((height * 9 / 10 * width + width / 10) * 4) as usize;
+        assert_eq!(&rgba[pixel..pixel + 4], &[255, 0, 0, 255]);
     }
 
     #[cfg(target_os = "linux")]
