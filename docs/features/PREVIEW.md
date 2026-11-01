@@ -42,7 +42,7 @@ remain bounded by their latest-wins queues.
 
 ## User Surface
 
-- Toggle with `Cmd+P` / `Ctrl+P`.
+- Toggle with `Cmd+P` on macOS or `Ctrl+Shift+P` on Windows and Linux.
 - Shows selected item name, kind, path, size, modified date, magic label,
   description, and quarantine/provenance when available.
 - Filesystem paths in the embedded Get Info sections are constrained to the
