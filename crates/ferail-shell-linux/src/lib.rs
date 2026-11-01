@@ -1084,17 +1084,55 @@ pub fn fetch_quick_look_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>,
             .is_ok()
             && &header == b"%PDF-"
         {
-            let output = std::process::Command::new("pdftoppm")
+            let (mut output, writer) = std::os::unix::net::UnixStream::pair().ok()?;
+            let mut child = std::process::Command::new("pdftoppm")
                 .args(["-f", "1", "-singlefile", "-png", "-scale-to"])
                 .arg(dim.to_string())
                 .arg(path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::from(std::os::fd::OwnedFd::from(
+                    writer,
+                )))
                 .stderr(std::process::Stdio::inherit())
-                .output()
+                .spawn()
                 .ok()?;
-            if !output.status.success() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+            let mut bytes = Vec::new();
+            let complete = loop {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() || output.set_read_timeout(Some(remaining)).is_err() {
+                    break false;
+                }
+                let mut chunk = [0; 8192];
+                match output.read(&mut chunk) {
+                    Ok(0) => break true,
+                    Ok(count) if bytes.len() + count <= 8 * 1024 * 1024 => {
+                        bytes.extend_from_slice(&chunk[..count]);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    _ => break false,
+                }
+            };
+            let status = loop {
+                if !complete {
+                    break None;
+                }
+                match child.try_wait() {
+                    Ok(Some(status)) => break Some(status),
+                    Ok(None) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                    _ => break None,
+                }
+            };
+            if status.is_none() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            if !status.is_some_and(|status| status.success()) {
                 return None;
             }
-            let rgba = image::load_from_memory(&output.stdout).ok()?.to_rgba8();
+            let rgba = image::load_from_memory(&bytes).ok()?.to_rgba8();
             let (width, height) = rgba.dimensions();
             return Some((rgba.into_raw(), width, height));
         }
@@ -1682,6 +1720,48 @@ mod tests {
             thumb_md5("file:///home/jens/photo/me.png"),
             "d40775e596682f2a16d1b834c221c0a2"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pdf_renderer_is_timed_out() {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(dir) = std::env::var_os("FERAIL_PDF_TIMEOUT_TEST_CHILD") {
+            let dir = PathBuf::from(dir);
+            let started = std::time::Instant::now();
+            assert!(fetch_preview_image(&dir.join("test.pdf"), 128).is_none());
+            let elapsed = started.elapsed();
+            assert!(elapsed >= std::time::Duration::from_secs(5));
+            assert!(elapsed < std::time::Duration::from_secs(8));
+            let pid = std::fs::read_to_string(dir.join("pid")).unwrap();
+            assert!(!Path::new(&format!("/proc/{}", pid.trim())).exists());
+            return;
+        }
+        let dir = TmpDir::new("pdf-timeout");
+        std::fs::write(dir.join("test.pdf"), b"%PDF-1.4\n").unwrap();
+        let helper = dir.join("pdftoppm");
+        std::fs::write(
+            &helper,
+            "#!/bin/sh\necho $$ > \"$FERAIL_PDF_TIMEOUT_TEST_CHILD/pid\"\nsleep 9 & wait\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::pdf_renderer_is_timed_out", "--nocapture"])
+            .stderr(std::process::Stdio::inherit())
+            .env("FERAIL_PDF_TIMEOUT_TEST_CHILD", dir.join(""))
+            .env("XDG_CACHE_HOME", dir.join("cache"))
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    dir.join("").display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
     }
 
     #[cfg(target_os = "linux")]
