@@ -165,7 +165,11 @@ pub fn run_gui(args: screenshot::Args) {
     let theme_mode = args.theme;
     let settings_page = args.settings;
     let initial_archive = args.archive;
-    let initial_directory = args.navigate.last().cloned();
+    let initial_directory = args
+        .navigate
+        .last()
+        .cloned()
+        .map(crate::shell::canonicalize_for_identity);
 
     app.run(move |cx| {
         // Arm the Prime Directive's debug-build tripwire: from here on,
