@@ -6,6 +6,23 @@
 
 use std::collections::HashSet;
 
+#[derive(Clone, Copy)]
+pub struct BrowseEnabled(pub bool);
+impl gpui::Global for BrowseEnabled {}
+
+pub fn browse_enabled(cx: &gpui::App) -> bool {
+    cx.try_global::<BrowseEnabled>().is_none_or(|value| value.0)
+}
+
+#[derive(Clone, Copy)]
+pub struct FavoritesEnabled(pub bool);
+impl gpui::Global for FavoritesEnabled {}
+
+pub fn favorites_enabled(cx: &gpui::App) -> bool {
+    cx.try_global::<FavoritesEnabled>()
+        .is_none_or(|value| value.0)
+}
+
 /// Geometry for the icon-only sidebar. Values are effective DIPs after UI
 /// zoom, while icon renderers still receive their unscaled rem-relative size.
 #[derive(Clone, Copy, Debug, PartialEq)]

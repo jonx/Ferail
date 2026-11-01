@@ -4305,9 +4305,15 @@ impl Render for Shell {
         let weak = cx.weak_entity();
         let locations_rows = self.build_locations_rows(cx);
         let platform_location_rows = self.build_platform_location_rows();
-        let favorites_section = self.build_user_favorites_section(weak.clone());
+        let favorites_section = crate::sidebar_layout::favorites_enabled(cx)
+            .then(|| self.build_user_favorites_section(weak.clone()));
         let recents_section = self.build_recents_section(weak.clone(), cx);
-        let browse_rows = self.build_browse_rows(cx);
+        let browse_enabled = crate::sidebar_layout::browse_enabled(cx);
+        let browse_rows = if browse_enabled {
+            self.build_browse_rows(cx)
+        } else {
+            Vec::new()
+        };
         let volumes_rows = self.build_volumes_rows(cx);
         let has_volumes = !self.process.volumes.borrow().is_empty();
 
@@ -4365,19 +4371,21 @@ impl Render for Shell {
         // sidebar to a 48-DIP icon strip.
         use crate::sidebar_layout::SidebarSection;
         let collapsed = |section| self.sidebar_layout.is_collapsed(section);
-        let mut sections: Vec<(SidebarSection, ShellSidebarItem)> = vec![
-            (
-                SidebarSection::Locations,
-                ShellSidebarItem::locations(crate::locations_section::LocationsSection::new(
-                    tr!("Locations"),
-                    locations_rows,
-                    weak.clone(),
-                    crate::tree::SIDEBAR_ICON_PX,
-                    collapsed(SidebarSection::Locations),
-                )),
-            ),
-            (SidebarSection::Favorites, favorites_section),
-            (
+        let mut sections: Vec<(SidebarSection, ShellSidebarItem)> = vec![(
+            SidebarSection::Locations,
+            ShellSidebarItem::locations(crate::locations_section::LocationsSection::new(
+                tr!("Locations"),
+                locations_rows,
+                weak.clone(),
+                crate::tree::SIDEBAR_ICON_PX,
+                collapsed(SidebarSection::Locations),
+            )),
+        )];
+        if let Some(favorites_section) = favorites_section {
+            sections.push((SidebarSection::Favorites, favorites_section));
+        }
+        if browse_enabled {
+            sections.push((
                 SidebarSection::Browse,
                 ShellSidebarItem::tree(TreeSection::new(
                     tr!("Browse"),
@@ -4388,8 +4396,8 @@ impl Render for Shell {
                     SidebarSection::Browse,
                     collapsed(SidebarSection::Browse),
                 )),
-            ),
-        ];
+            ));
+        }
         #[cfg(windows)]
         sections.push((
             SidebarSection::Windows,

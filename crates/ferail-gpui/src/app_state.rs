@@ -209,6 +209,8 @@ pub struct AppState {
     pub sidebar_section_order: Option<String>,
     /// Stable comma-separated IDs of collapsed sidebar sections.
     pub sidebar_collapsed_sections: Option<String>,
+    pub browse_enabled: Option<bool>,
+    pub favorites_enabled: Option<bool>,
     /// Viewer slideshow auto-advance interval in seconds
     /// (docs/features/VIEWER.md). Clamped at load to [1, 60].
     pub viewer_slideshow_interval: Option<u64>,
@@ -525,6 +527,8 @@ fn load_from_disk() -> AppState {
             "viewer_media_only" => {
                 out.viewer_media_only = parse_bool(val);
             }
+            "browse_enabled" => out.browse_enabled = parse_bool(val),
+            "favorites_enabled" => out.favorites_enabled = parse_bool(val),
             "recents_enabled" => {
                 out.recents_enabled = parse_bool(val);
             }
@@ -723,6 +727,12 @@ fn serialize(state: &AppState) -> String {
     if let Some(b) = state.viewer_media_only {
         s.push_str(&format!("viewer_media_only={b}\n"));
     }
+    if let Some(b) = state.browse_enabled {
+        s.push_str(&format!("browse_enabled={b}\n"));
+    }
+    if let Some(b) = state.favorites_enabled {
+        s.push_str(&format!("favorites_enabled={b}\n"));
+    }
     if let Some(b) = state.recents_enabled {
         s.push_str(&format!("recents_enabled={b}\n"));
     }
@@ -847,13 +857,17 @@ mod tests {
         let state = AppState {
             sidebar_section_order: Some("volumes,locations,browse".into()),
             sidebar_collapsed_sections: Some("locations,browse".into()),
+            browse_enabled: Some(false),
+            favorites_enabled: Some(false),
             ..AppState::default()
         };
         assert_eq!(
             serialize(&state),
             concat!(
                 "sidebar_section_order=volumes,locations,browse\n",
-                "sidebar_collapsed_sections=locations,browse\n"
+                "sidebar_collapsed_sections=locations,browse\n",
+                "browse_enabled=false\n",
+                "favorites_enabled=false\n"
             )
         );
     }

@@ -1071,8 +1071,10 @@
     "Shortcut": "Collegamento",
     "Show All": "Mostra tutto",
     "Show Ant Trail": "Mostra traccia delle visite",
+    "Show Browse": "Mostra Esplora",
     "Show Contents": "Mostra contenuto",
     "Show Desktop": "Mostra scrivania",
+    "Show Favorites": "Mostra Preferiti",
     "Show Hidden Files": "Mostra file nascosti",
     "Show Linux (WSL)": "Mostra Linux (WSL)",
     "Show Preview Pane": "Mostra pannello di anteprima",
@@ -1088,6 +1090,8 @@
     "Show largest-files panel": "Mostra pannello dei file più grandi",
     "Show matching files only": "Mostra solo i file corrispondenti",
     "Show only images, videos and audio": "Mostra solo immagini, video e audio",
+    "Show saved folder shortcuts in the sidebar.": "Mostra i collegamenti salvati alle cartelle nella barra laterale.",
+    "Show the expandable Home folder tree in the sidebar.": "Mostra l’albero espandibile della cartella Home nella barra laterale.",
     "Show the full treemap and dim non-matches": "Mostra l'intera mappa e attenua gli elementi non corrispondenti",
     "Showing info for the first {cap} of {total} items.": "Proprietà dei primi {cap} elementi su {total}.",
     "Showing {n} item in {app}": {
@@ -1095,6 +1099,7 @@
       "other": "Visualizzazione di {n} elementi in {app}"
     },
     "Showing “{name}” in {app}": "Visualizzazione di “{name}” in {app}",
+    "Sidebar": "Barra laterale",
     "Sidecar files": "File associati",
     "Similar image scan": "Scansione di immagini simili",
     "Similar image scan finished: no similar images found": "Scansione completata: nessuna immagine simile trovata",

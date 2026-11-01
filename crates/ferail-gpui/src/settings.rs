@@ -487,6 +487,20 @@ fn persist_exclude_favorites_from_tracking(value: bool) {
     });
 }
 
+fn persist_browse_enabled(value: bool) {
+    app_state::save(&AppState {
+        browse_enabled: Some(value),
+        ..app_state::load()
+    });
+}
+
+fn persist_favorites_enabled(value: bool) {
+    app_state::save(&AppState {
+        favorites_enabled: Some(value),
+        ..app_state::load()
+    });
+}
+
 fn persist_recents_enabled(value: bool) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -1458,6 +1472,28 @@ fn appearance_page(
     SettingPage::new(tr!("Appearance"))
         .icon(Icon::empty().path("icons/palette.svg"))
         .group(language_group())
+        .group(
+            SettingGroup::new()
+                .title(tr!("Sidebar"))
+                .item(switch_setting(
+                    tr!("Show Favorites"),
+                    tr!("Show saved folder shortcuts in the sidebar."),
+                    crate::sidebar_layout::favorites_enabled,
+                    |value: bool, cx: &mut App| {
+                        persist_favorites_enabled(value);
+                        cx.set_global(crate::sidebar_layout::FavoritesEnabled(value));
+                    },
+                ))
+                .item(switch_setting(
+                    tr!("Show Browse"),
+                    tr!("Show the expandable Home folder tree in the sidebar."),
+                    crate::sidebar_layout::browse_enabled,
+                    |value: bool, cx: &mut App| {
+                        persist_browse_enabled(value);
+                        cx.set_global(crate::sidebar_layout::BrowseEnabled(value));
+                    },
+                )),
+        )
         .group(
             SettingGroup::new().title(tr!("Theme")).item(
                 // Vertical layout so the three fixed-width tiles drop
