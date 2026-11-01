@@ -245,24 +245,25 @@ pub fn run_gui(args: screenshot::Args) {
             cx.set_global(crate::settings::FollowSystemTheme(
                 theme_mode.is_none() && !matches!(configured, Some("light" | "dark")),
             ));
-            cx.observe_new::<gpui_component::Root>(|_, window, _cx| {
+            fn sync_system_theme(window: &mut gpui::Window, cx: &mut gpui::App) {
+                if cx
+                    .try_global::<crate::settings::FollowSystemTheme>()
+                    .is_some_and(|follow| follow.0)
+                {
+                    let mode: gpui_component::ThemeMode = window.appearance().into();
+                    if Theme::global(cx).mode != mode {
+                        Theme::change(mode, Some(window), cx);
+                        crate::shell::set_system_theme_pending(matches!(
+                            mode,
+                            gpui_component::ThemeMode::Dark
+                        ));
+                    }
+                }
+            }
+            cx.observe_new::<gpui_component::Root>(|_, window, cx| {
                 if let Some(window) = window {
-                    window
-                        .observe_window_appearance(|window, cx| {
-                            if cx
-                                .try_global::<crate::settings::FollowSystemTheme>()
-                                .is_some_and(|follow| follow.0)
-                            {
-                                let mode: gpui_component::ThemeMode = window.appearance().into();
-                                Theme::change(mode, Some(window), cx);
-                                crate::shell::set_system_theme_pending(matches!(
-                                    mode,
-                                    gpui_component::ThemeMode::Dark
-                                ));
-                                cx.refresh_windows();
-                            }
-                        })
-                        .detach();
+                    sync_system_theme(window, cx);
+                    window.observe_window_appearance(sync_system_theme).detach();
                 }
             })
             .detach();
