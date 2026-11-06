@@ -146,7 +146,13 @@ pub fn open_url(_url: &str) {}
 /// Ferail's stdio and reaped when the launcher exits.
 #[cfg(target_os = "linux")]
 pub fn open_with_default(path: &Path) -> std::io::Result<()> {
-    spawn_detached(std::process::Command::new("xdg-open").arg(path))
+    let path = std::path::absolute(path)?;
+    match spawn_detached(std::process::Command::new("gio").arg("open").arg(&path)) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            spawn_detached(std::process::Command::new("xdg-open").arg(&path))
+        }
+        result => result,
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -159,7 +165,7 @@ pub fn open_with_default(_path: &Path) -> std::io::Result<()> {
 /// portable equivalent of TextEdit/Notepad.
 #[cfg(target_os = "linux")]
 pub fn edit_text_file(path: &Path) -> std::io::Result<()> {
-    spawn_detached(std::process::Command::new("xdg-open").arg(path))
+    open_with_default(path)
 }
 
 #[cfg(not(target_os = "linux"))]
