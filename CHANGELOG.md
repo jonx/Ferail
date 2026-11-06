@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **System theme follows the Linux desktop.** Ferail reads GPUI’s portal-backed
+  appearance instead of requiring GNOME settings schemas, and updates open
+  windows when the desktop switches between light and dark.
+
 - **Linux desktops can open folders in Ferail.** The desktop entry handles
   directory paths through `--navigate`, which now also applies to normal windows.
 
