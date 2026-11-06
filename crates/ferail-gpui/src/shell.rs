@@ -2042,6 +2042,12 @@ impl Shell {
         cx.set_global(crate::ant_trail::ExcludeFavoritesFromTracking(
             persisted.exclude_favorites_from_tracking.unwrap_or(true),
         ));
+        cx.set_global(crate::sidebar_layout::BrowseEnabled(
+            persisted.browse_enabled.unwrap_or(true),
+        ));
+        cx.set_global(crate::sidebar_layout::FavoritesEnabled(
+            persisted.favorites_enabled.unwrap_or(true),
+        ));
         // Seed the Recents master switch. Default true (on).
         cx.set_global(crate::recents_section::RecentsEnabled(
             persisted.recents_enabled.unwrap_or(true),

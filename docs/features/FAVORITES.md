@@ -30,6 +30,10 @@ A complete behavioral spec for the Favorites section of the sidebar. Written to 
 
 **Favorites** is a user-curated, ordered list of locations pinned to the sidebar for one-click access. A favorite is a *reference to a location*, a folder, a volume, a saved search, or a tag, not a copy of its contents.
 
+Settings → Appearance → Sidebar controls the visibility of Favorites and the
+Browse folder tree independently. Both are shown by default; hiding Favorites
+keeps its saved entries. Changes apply to open windows and persist across restarts.
+
 Favorites are distinct from:
 - **Locations** (Home, Desktop, Documents, etc.), the OS-standard folders. These are *not* favorites; they're a separate, fixed section. (Note: this also resolves the duplicate-Downloads bug, Locations is the standard set, Favorites is the user's set, and they're visually separated.)
 - **The file tree**: the expandable hierarchy. The tree shows structure; Favorites shows shortcuts.

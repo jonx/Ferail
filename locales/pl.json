@@ -1054,7 +1054,9 @@
     "Shortcut": "Skrót",
     "Show All": "Pokaż wszystko",
     "Show Ant Trail": "Pokaż ścieżkę mrówki",
+    "Show Browse": "Pokaż przeglądanie",
     "Show Desktop": "Pokaż pulpit",
+    "Show Favorites": "Pokaż ulubione",
     "Show Hidden Files": "Pokaż ukryte pliki",
     "Show Linux (WSL)": "Pokaż system Linux (WSL)",
     "Show Preview Pane": "Pokaż panel podglądu",
@@ -1069,6 +1071,8 @@
     "Show installed Windows Subsystem for Linux distributions in the sidebar. Disabled by default; when disabled Ferail does not discover or start WSL distributions.": "Wyświetlaj zainstalowane dystrybucje systemu Windows Subsystem for Linux na pasku bocznym. Domyślnie wyłączone; po wyłączeniu Ferail nie wykrywa ani nie uruchamia dystrybucji WSL.",
     "Show largest-files panel": "Pokaż panel największych plików",
     "Show matching files only": "Pokaż tylko pasujące pliki",
+    "Show saved folder shortcuts in the sidebar.": "Pokaż zapisane skróty do folderów na pasku bocznym.",
+    "Show the expandable Home folder tree in the sidebar.": "Pokaż rozwijane drzewo folderu domowego na pasku bocznym.",
     "Show the full treemap and dim non-matches": "Pokaż pełną mapę drzewa (treemap) i przyciemnij elementy niedopasowane",
     "Showing info for the first {cap} of {total} items.": "Wyświetlanie informacji dla pierwszych {cap} z {total} elementów.",
     "Showing {n} item in {app}": {
@@ -1076,6 +1080,7 @@
       "other": "Wyświetlanie {n} elementów w programie {app}"
     },
     "Showing “{name}” in {app}": "Wyświetlanie „{name}” w programie {app}",
+    "Sidebar": "Pasek boczny",
     "Sidecar files": "Pliki powiązane (sidecar)",
     "Similar image scan": "Skanowanie podobnych obrazów",
     "Similar image scan finished: no similar images found": "Skanowanie podobnych obrazów zakończone: nie znaleziono podobnych obrazów",

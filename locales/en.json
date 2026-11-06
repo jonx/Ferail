@@ -1145,8 +1145,10 @@
     "Shortcut": "Shortcut",
     "Show All": "Show All",
     "Show Ant Trail": "Show Ant Trail",
+    "Show Browse": "Show Browse",
     "Show Contents": "Show Contents",
     "Show Desktop": "Show Desktop",
+    "Show Favorites": "Show Favorites",
     "Show Hidden Files": "Show Hidden Files",
     "Show Linux (WSL)": "Show Linux (WSL)",
     "Show Preview Pane": "Show Preview Pane",
@@ -1162,6 +1164,8 @@
     "Show largest-files panel": "Show largest-files panel",
     "Show matching files only": "Show matching files only",
     "Show only images, videos and audio": "Show only images, videos and audio",
+    "Show saved folder shortcuts in the sidebar.": "Show saved folder shortcuts in the sidebar.",
+    "Show the expandable Home folder tree in the sidebar.": "Show the expandable Home folder tree in the sidebar.",
     "Show the full treemap and dim non-matches": "Show the full treemap and dim non-matches",
     "Showing info for the first {cap} of {total} items.": "Showing info for the first {cap} of {total} items.",
     "Showing {n} item in {app}": {
@@ -1169,6 +1173,7 @@
       "other": "Showing {n} items in {app}"
     },
     "Showing “{name}” in {app}": "Showing “{name}” in {app}",
+    "Sidebar": "Sidebar",
     "Sidecar files": "Sidecar files",
     "Similar image scan": "Similar image scan",
     "Similar image scan finished: no similar images found": "Similar image scan finished: no similar images found",

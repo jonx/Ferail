@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Choose which sidebar sections you see.** Settings → Appearance → Sidebar
+  can hide Favorites and the Browse folder tree independently, without removing
+  saved favorites or restarting Ferail.
+
 - **File format labels and relative modification dates follow the interface
   language.** File detection keeps its original identifiers.
 
