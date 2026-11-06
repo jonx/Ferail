@@ -175,7 +175,7 @@ The ❌ rows are real gaps, not modesty.
 | **Built-in text and image editing** | ✅ editor + redact/annotate | ⚠️ Quick Look markup | ❌ | ⚠️ opens another app |
 | **Capture-safe screenshot mode** | ✅ Private Mode | ❌ | ❌ | ❌ |
 | **Global / indexed search** | ⚠️ Spotlight-backed, single query box | ✅ rich | ✅ indexed | ✅ Tracker / Baloo |
-| **Localization** | ⚠️ four bundled languages, any other importable | ✅ dozens | ✅ dozens | ✅ dozens |
+| **Localization** | ⚠️ five bundled languages, any other importable | ✅ dozens | ✅ dozens | ✅ dozens |
 | **Accessibility / maturity** | ❌ young, single-dev | ✅ decades | ✅ decades | ✅ mature |
 
 ✅ first-class · ⚠️ partial / varies · ❌ absent

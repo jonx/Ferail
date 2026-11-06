@@ -248,8 +248,9 @@ the same change:
    `msgid!` form described in
    [Localization](docs/features/LOCALIZATION.md#for-developers-writing-strings).
 2. Regenerate `locales/en.json` with the extraction test.
-3. Add or update the matching entries in both bundled packs,
-   `locales/de.json` and `locales/fr.json`. Preserve every placeholder and
+3. Add or update the matching entries in all bundled packs:
+   `locales/de.json`, `locales/fr.json`, `locales/it.json`, and `locales/pl.json`.
+   Preserve every placeholder and
    plural shape; do not ship newly added text as an English fallback.
 4. Run the i18n extraction and bundled-pack tests before finishing.
 
@@ -280,7 +281,7 @@ Before finishing code changes:
 - If the change touches icons, update
   [docs/features/ICONS.md](docs/features/ICONS.md) (see [Icons](#icons)).
 - If the change adds or rewrites user-visible text, regenerate the English
-  catalog, translate the new entries in both bundled language packs, and run
+  catalog, translate the new entries in all bundled language packs, and run
   the i18n tests (see [Localization](#localization)).
 - If the change displays a count of anything, group it (see
   [Counts](#counts)).

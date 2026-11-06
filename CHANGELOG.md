@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The interface is available in Italian.** Select Italiano under Language
+  in Appearance settings.
+
 - **Linux opens JSON and other text files in their associated application.**
   File opening and text editing honor the desktop's inherited associations.
 

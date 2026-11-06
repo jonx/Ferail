@@ -39,6 +39,7 @@ pub const EN_JSON: &str = include_str!("../../../../locales/en.json");
 /// (in the config dir) takes precedence, so anyone can fix a string
 /// locally before contributing it back.
 pub const BUNDLED: &[(&str, &str)] = &[
+    ("it", include_str!("../../../../locales/it.json")),
     ("fr", include_str!("../../../../locales/fr.json")),
     ("de", include_str!("../../../../locales/de.json")),
     // Contributed by Bohun (github.com/bohunamiga).
