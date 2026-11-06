@@ -737,6 +737,11 @@ pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
     None
 }
 
+/// No display-sleep inhibition on AROS either: `None`.
+pub fn prevent_display_sleep(_reason: &str) -> Option<SleepBlocker> {
+    None
+}
+
 // =============================================================
 // Window
 // =============================================================

@@ -2827,15 +2827,19 @@ pub fn start_power_observer(
 ) {
 }
 
-/// RAII guard that keeps the system awake while held, twin of
-/// shell-mac's `SleepBlocker`. Dropping it re-allows idle sleep.
+/// RAII guard that keeps the system (and optionally the display) awake
+/// while held, twin of shell-mac's `SleepBlocker`. Dropping it re-allows
+/// sleep.
 ///
-/// Implemented with `SetThreadExecutionState(ES_SYSTEM_REQUIRED |
-/// ES_CONTINUOUS)`, cleared with a plain `ES_CONTINUOUS` on drop. That
+/// Implemented with `SetThreadExecutionState(ES_CONTINUOUS | …)`. That
 /// flag is **per-thread and sticky**: it stays in effect (no activity
-/// required) until reset on the *same* thread. The host holds the guard
-/// inside one foreground task for the whole transfer, so set and clear
-/// land on the same thread, which is the constraint this API needs.
+/// required) until reset on the *same* thread, and a single call sets the
+/// whole set of flags for that thread. Two guards can be alive at once
+/// (a transfer and a playing video, both on the UI thread), so the guards
+/// keep two counters and every take/release recomputes the flag set from
+/// them instead of clearing blindly: dropping the viewer's guard must not
+/// cancel the transfer's. All callers hold their guard on the UI thread,
+/// which is the constraint this API needs.
 ///
 /// If a future caller needs to assert from a thread-pool worker that
 /// may not be the one that releases, switch to the Power Request API
@@ -2844,18 +2848,47 @@ pub fn start_power_observer(
 /// thread-independent.
 #[cfg(windows)]
 pub struct SleepBlocker {
-    _private: (),
+    display: bool,
+}
+
+#[cfg(windows)]
+static SYSTEM_HOLDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(windows)]
+static DISPLAY_HOLDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Re-apply the execution state from the two hold counters. `ES_CONTINUOUS`
+/// alone, when both are zero, drops back to default power behaviour.
+#[cfg(windows)]
+fn apply_execution_state() {
+    use std::sync::atomic::Ordering;
+    use windows::Win32::System::Power::{
+        SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
+    };
+    let mut flags = ES_CONTINUOUS;
+    if SYSTEM_HOLDS.load(Ordering::SeqCst) > 0 {
+        flags |= ES_SYSTEM_REQUIRED;
+    }
+    if DISPLAY_HOLDS.load(Ordering::SeqCst) > 0 {
+        flags |= ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED;
+    }
+    // Returns the previous state (0 only on failure). Either way the
+    // request is now in effect.
+    unsafe {
+        SetThreadExecutionState(flags);
+    }
 }
 
 #[cfg(windows)]
 impl Drop for SleepBlocker {
     fn drop(&mut self) {
-        use windows::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS};
-        // Clearing the sticky bit: ES_CONTINUOUS alone, no
-        // ES_SYSTEM_REQUIRED, drops back to default power behaviour.
-        unsafe {
-            SetThreadExecutionState(ES_CONTINUOUS);
-        }
+        use std::sync::atomic::Ordering;
+        let holds = if self.display {
+            &DISPLAY_HOLDS
+        } else {
+            &SYSTEM_HOLDS
+        };
+        holds.fetch_sub(1, Ordering::SeqCst);
+        apply_execution_state();
     }
 }
 
@@ -2865,15 +2898,18 @@ impl Drop for SleepBlocker {
 /// reason string, so it's unused here.
 #[cfg(windows)]
 pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
-    use windows::Win32::System::Power::{
-        SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED,
-    };
-    // Returns the previous state (0 only on failure). Either way the
-    // request is now in effect; hand back a guard that clears it.
-    unsafe {
-        SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
-    }
-    Some(SleepBlocker { _private: () })
+    SYSTEM_HOLDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    apply_execution_state();
+    Some(SleepBlocker { display: false })
+}
+
+/// Keep the display lit and the system awake until the returned guard
+/// drops (`ES_DISPLAY_REQUIRED`): the viewer's video and slideshow guard.
+#[cfg(windows)]
+pub fn prevent_display_sleep(_reason: &str) -> Option<SleepBlocker> {
+    DISPLAY_HOLDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    apply_execution_state();
+    Some(SleepBlocker { display: true })
 }
 
 #[cfg(not(windows))]
@@ -2881,6 +2917,11 @@ pub struct SleepBlocker;
 
 #[cfg(not(windows))]
 pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
+    None
+}
+
+#[cfg(not(windows))]
+pub fn prevent_display_sleep(_reason: &str) -> Option<SleepBlocker> {
     None
 }
 

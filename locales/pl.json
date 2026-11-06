@@ -1716,6 +1716,8 @@
       "few": "{n} sekundy temu",
       "many": "{n} sekund temu",
       "other": "{n} sekundy temu"
-    }
+    },
+    "Keep the screen awake during videos and slideshows": "Nie wygaszaj ekranu podczas filmów i pokazów slajdów",
+    "While a video plays or a slideshow runs, the display stays on and the computer does not go to sleep. Pausing, stopping or closing the viewer lets the system idle again.": "Gdy odtwarzany jest film lub trwa pokaz slajdów, ekran pozostaje włączony, a komputer nie przechodzi w stan uśpienia. Wstrzymanie, zatrzymanie lub zamknięcie przeglądarki ponownie zwalnia system."
   }
 }

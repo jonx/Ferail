@@ -1196,7 +1196,7 @@ pub fn start_power_observer(callback: Box<dyn Fn(ferail_core::power::PowerEvent)
 pub fn start_power_observer(_callback: Box<dyn Fn(ferail_core::power::PowerEvent) + 'static>) {}
 
 #[cfg(target_os = "macos")]
-pub use power_assert::{prevent_idle_sleep, SleepBlocker};
+pub use power_assert::{prevent_display_sleep, prevent_idle_sleep, SleepBlocker};
 
 /// Inert stand-in so cross-platform callers can hold a `SleepBlocker`
 /// unconditionally on non-macOS workspace builds.

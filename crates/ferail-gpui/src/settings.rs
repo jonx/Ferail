@@ -2072,7 +2072,28 @@ fn layout_page() -> SettingPage {
                     .unwrap_or_else(|| "fit".into())
             },
             persist_viewer_default_zoom,
+        )).item(switch_setting(
+            tr!("Keep the screen awake during videos and slideshows"),
+            tr!("While a video plays or a slideshow runs, the display stays on and the \
+             computer does not go to sleep. Pausing, stopping or closing the viewer lets \
+             the system idle again."),
+            crate::viewer::keep_screen_awake,
+            |value: bool, cx: &mut App| {
+                persist_viewer_keep_awake(value);
+                cx.set_global(crate::viewer::KeepScreenAwake(value));
+                // Open viewers take or release their guard right away.
+                for viewer in crate::process_state::process_state(cx).live_viewers() {
+                    let _ = viewer.update(cx, |viewer, cx| viewer.sync_keep_awake(cx));
+                }
+            },
         )))
+}
+
+fn persist_viewer_keep_awake(value: bool) {
+    app_state::save(&AppState {
+        viewer_keep_awake: Some(value),
+        ..app_state::load()
+    });
 }
 
 fn persist_viewer_default_zoom(value: &str) {

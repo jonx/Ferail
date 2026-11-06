@@ -1,4 +1,5 @@
-//! Idle-sleep suppression for long-running file transfers.
+//! Idle-sleep suppression: for long-running file transfers, and for the
+//! screen while the viewer plays a video or a slideshow.
 //!
 //! A copy/move shouldn't be interrupted by the machine idle-sleeping
 //! mid-stream. Rather than *react* to `WillSleep` (we'd get only a few
@@ -13,8 +14,14 @@
 //! a deliberate Apple-menu → Sleep, exactly the scope a background
 //! copy wants.
 //!
-//! The assertion is process-wide and thread-safe (no main-thread
-//! requirement), so the host can take it from the transfer task.
+//! [`prevent_display_sleep`] is the viewer's variant: it asserts
+//! `kIOPMAssertPreventUserIdleDisplaySleep`, which also keeps the
+//! display lit, the scope a video or a slideshow wants (nobody is
+//! touching the keyboard, and the screen must stay on). Both guards
+//! share the [`SleepBlocker`] type.
+//!
+//! The assertions are process-wide and thread-safe (no main-thread
+//! requirement), so the host can take them from any task.
 
 use std::ffi::c_void;
 
@@ -65,7 +72,18 @@ impl Drop for SleepBlocker {
 /// declines: the caller proceeds without the guard; the worst case is
 /// the OS may idle-sleep mid-copy, which is survivable, just not ideal.
 pub fn prevent_idle_sleep(reason: &str) -> Option<SleepBlocker> {
-    let assertion_type = NSString::from_str("PreventUserIdleSystemSleep");
+    assert_power("PreventUserIdleSystemSleep", reason)
+}
+
+/// Assert `PreventUserIdleDisplaySleep` under the given reason: the
+/// display stays lit and the system stays awake while the guard is
+/// held. Same failure semantics as [`prevent_idle_sleep`].
+pub fn prevent_display_sleep(reason: &str) -> Option<SleepBlocker> {
+    assert_power("PreventUserIdleDisplaySleep", reason)
+}
+
+fn assert_power(assertion_type: &str, reason: &str) -> Option<SleepBlocker> {
+    let assertion_type = NSString::from_str(assertion_type);
     let assertion_name = NSString::from_str(reason);
     let mut id: u32 = 0;
     // Safe: both strings outlive the call; IOKit copies what it needs.

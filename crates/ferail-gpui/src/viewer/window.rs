@@ -702,6 +702,10 @@ pub struct ViewerWindow {
     /// Whether the current video is paused (we drive play/pause from our
     /// own gpui control since the native controls are hidden).
     video_paused: bool,
+    /// Display-sleep guard held while a video plays or the slideshow runs
+    /// and the "keep the screen awake" switch is on (docs/features/POWER.md).
+    /// `None` otherwise; dropping the window releases it.
+    keep_awake: Option<crate::platform_shell::SleepBlocker>,
     /// Transition state for the process-global Private Mode. Playback is
     /// paused while protected and restored only when it was live on entry.
     private_mode_active: bool,
@@ -926,6 +930,7 @@ impl ViewerWindow {
             video_frames_to_drop: Vec::new(),
             video_dims: (0.0, 0.0),
             video_paused: false,
+            keep_awake: None,
             private_mode_active: false,
             private_resume_video: false,
             private_resume_slideshow: false,
@@ -1448,6 +1453,7 @@ impl ViewerWindow {
             }
             self.video_overlay = Some((stream, path));
             self.video_enhance_applied = enhance;
+            self.sync_keep_awake(cx);
             // A freshly opened stream is unmuted; apply the window's mute
             // toggle so audio only plays when opted in (video) or right away
             // (audio, just unmuted above).
@@ -1485,6 +1491,8 @@ impl ViewerWindow {
         // backend's `Drop` does the native remove / mpv teardown).
         drop(self.video_overlay.take());
         self.video_opened_at = None;
+        // No stream, nothing to keep the screen on for.
+        self.keep_awake = None;
         // Retire the on-screen frame + its rotated cache so their atlas
         // textures are evicted on the next render.
         if let Some(img) = self.video_frame_image.take() {
@@ -1526,6 +1534,7 @@ impl ViewerWindow {
             self.private_resume_video = false;
             self.private_resume_slideshow = false;
         }
+        self.sync_keep_awake(cx);
     }
 
     /// Toggle audio mute of the current video (the transport's speaker
@@ -1555,6 +1564,7 @@ impl ViewerWindow {
             }
             stream.set_paused(paused);
         }
+        self.sync_keep_awake(cx);
         cx.notify();
     }
 
@@ -1575,6 +1585,7 @@ impl ViewerWindow {
         if self.playback.playing {
             self.set_playing(false, cx);
         }
+        self.sync_keep_awake(cx);
         cx.notify();
     }
 
@@ -1589,6 +1600,7 @@ impl ViewerWindow {
             stream.set_paused(true);
             stream.step(frames);
             self.video_paused = true;
+            self.sync_keep_awake(cx);
             cx.notify();
         }
     }
@@ -1748,6 +1760,7 @@ impl ViewerWindow {
                 self.video_paused = true;
             }
         }
+        self.sync_keep_awake(cx);
         cx.notify();
         true
     }
@@ -1769,6 +1782,7 @@ impl ViewerWindow {
                 stream.set_paused(false);
             }
             self.video_paused = false;
+            self.sync_keep_awake(cx);
             cx.notify();
             return;
         }
@@ -1780,6 +1794,7 @@ impl ViewerWindow {
             // mirror that so the transport shows ▶, and resuming restarts
             // from the In cue via `toggle_video_paused`.
             self.video_paused = true;
+            self.sync_keep_awake(cx);
             cx.notify();
         }
     }
@@ -1795,7 +1810,28 @@ impl ViewerWindow {
         if playing && !self.current_is_playable() {
             self.arm_timer(epoch, cx);
         }
+        self.sync_keep_awake(cx);
         cx.notify();
+    }
+
+    /// Take or release the display-sleep guard so it matches playback:
+    /// held while a video plays or the slideshow runs, and the Settings
+    /// switch is on; released the moment neither is true. Called from
+    /// every playback transition (never from render: taking the guard
+    /// talks to the OS, and on Linux spawns a helper), and by Settings
+    /// when the switch flips. Idempotent: a guard already in the right
+    /// state is left alone, so repeated calls never churn the OS.
+    pub fn sync_keep_awake(&mut self, cx: &App) {
+        let video_playing = self.video_overlay.is_some() && !self.video_paused;
+        let wants = crate::viewer::keep_screen_awake(cx)
+            && (video_playing || self.playback.playing);
+        match (wants, self.keep_awake.is_some()) {
+            (true, false) => {
+                self.keep_awake = crate::platform_shell::prevent_display_sleep("Ferail viewer");
+            }
+            (false, true) => self.keep_awake = None,
+            _ => {}
+        }
     }
 
     /// One-shot timer tick. The epoch check makes stale ticks inert:

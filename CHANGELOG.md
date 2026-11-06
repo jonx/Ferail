@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The screen stays on while a video plays or a slideshow runs.** The viewer
+  keeps the display awake for as long as something is playing, and lets the
+  computer idle again the moment you pause, stop or close it. A new switch
+  under Settings → Layout → Viewer turns this off. On Linux this relies on the
+  GNOME session inhibitor, with the logind idle lock as a fallback; it has not
+  been exercised on a Linux desktop yet.
+
 - **Choose which sidebar sections you see.** Settings → Appearance → Sidebar
   can hide Favorites and the Browse folder tree independently, without removing
   saved favorites or restarting Ferail.

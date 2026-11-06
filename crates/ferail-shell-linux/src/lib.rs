@@ -1373,6 +1373,41 @@ pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
     None
 }
 
+/// Keep the screen lit while the returned guard is held: the viewer's video
+/// and slideshow guard. A logind `idle` inhibitor does not stop the desktop
+/// session from blanking the screen (that is the session's own idle
+/// handling, `org.freedesktop.ScreenSaver` / the GNOME session manager), so
+/// this wraps `gnome-session-inhibit --inhibit idle`, which holds a session
+/// inhibitor for the lifetime of the command it runs: the same hold-a-child
+/// shape as [`prevent_idle_sleep`]. Outside GNOME, where that helper is
+/// absent, it falls back to the logind inhibitor, which at least keeps the
+/// machine from suspending; desktops that blank the screen on their own
+/// terms are not covered.
+#[cfg(target_os = "linux")]
+pub fn prevent_display_sleep(reason: &str) -> Option<SleepBlocker> {
+    let child = std::process::Command::new("gnome-session-inhibit")
+        .arg("--inhibit")
+        .arg("idle")
+        .arg("--reason")
+        .arg(reason)
+        .arg("--app-id")
+        .arg("ferail")
+        .arg("sleep")
+        .arg("infinity")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match child {
+        Ok(child) => Some(SleepBlocker { child }),
+        Err(_) => prevent_idle_sleep(reason),
+    }
+}
+#[cfg(not(target_os = "linux"))]
+pub fn prevent_display_sleep(_reason: &str) -> Option<SleepBlocker> {
+    None
+}
+
 // =============================================================
 // Window
 // =============================================================

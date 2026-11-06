@@ -2042,6 +2042,9 @@ impl Shell {
         cx.set_global(crate::ant_trail::ExcludeFavoritesFromTracking(
             persisted.exclude_favorites_from_tracking.unwrap_or(true),
         ));
+        cx.set_global(crate::viewer::KeepScreenAwake(
+            persisted.viewer_keep_awake.unwrap_or(true),
+        ));
         cx.set_global(crate::sidebar_layout::BrowseEnabled(
             persisted.browse_enabled.unwrap_or(true),
         ));

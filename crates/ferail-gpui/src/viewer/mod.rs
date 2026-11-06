@@ -25,6 +25,18 @@ use gpui_component::Root;
 
 pub use window::{PlaylistEntry, ViewerOrigin, ViewerWindow};
 
+/// Process-wide "keep the screen awake during videos and slideshows"
+/// switch (Settings → Layout → Viewer). Seeded from `AppState` at startup
+/// and flipped by the switch; every open viewer re-syncs its guard when
+/// it changes. Absent (headless paths) reads as on.
+#[derive(Clone, Copy)]
+pub struct KeepScreenAwake(pub bool);
+impl gpui::Global for KeepScreenAwake {}
+
+pub fn keep_screen_awake(cx: &gpui::App) -> bool {
+    cx.try_global::<KeepScreenAwake>().is_none_or(|v| v.0)
+}
+
 /// Cascade counter so each new viewer window is offset from the last
 /// instead of stacking exactly on top of it.
 static VIEWER_CASCADE: AtomicU32 = AtomicU32::new(0);

@@ -217,6 +217,10 @@ pub struct AppState {
     /// Viewer "Media only" toggle: the playlist skips files that are not
     /// images, video or audio. `None` == never set (off).
     pub viewer_media_only: Option<bool>,
+    /// Viewer "keep the screen awake" switch: hold a display-sleep guard
+    /// while a video plays or a slideshow runs (docs/features/POWER.md).
+    /// `None` == never set (defaults to `true`).
+    pub viewer_keep_awake: Option<bool>,
     /// Whether the Recents feature is on at all. `None` == never set
     /// (defaults to `true`). Off hides the sidebar section and stops
     /// pushing folders into the recents cache; the Ant Trail keeps its
@@ -527,6 +531,9 @@ fn load_from_disk() -> AppState {
             "viewer_media_only" => {
                 out.viewer_media_only = parse_bool(val);
             }
+            "viewer_keep_awake" => {
+                out.viewer_keep_awake = parse_bool(val);
+            }
             "browse_enabled" => out.browse_enabled = parse_bool(val),
             "favorites_enabled" => out.favorites_enabled = parse_bool(val),
             "recents_enabled" => {
@@ -726,6 +733,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(b) = state.viewer_media_only {
         s.push_str(&format!("viewer_media_only={b}\n"));
+    }
+    if let Some(b) = state.viewer_keep_awake {
+        s.push_str(&format!("viewer_keep_awake={b}\n"));
     }
     if let Some(b) = state.browse_enabled {
         s.push_str(&format!("browse_enabled={b}\n"));

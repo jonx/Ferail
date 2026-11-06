@@ -8,6 +8,9 @@ waking. Two distinct mechanisms, because video and file-ops want
 opposite treatment:
 
 - **Video + slideshow → *react*.** Pause them when sleep begins.
+- **Video + slideshow → *prevent the display from sleeping*.** While
+  something plays, nobody touches the keyboard, so the screen must not
+  blank under it.
 - **File copy/move → *prevent*.** Hold off idle sleep for the duration
   of a transfer so it never starts mid-stream.
 
@@ -124,17 +127,46 @@ only a few seconds.
   worker that may not release on the same thread, switch to the Power
   Request API (`PowerCreateRequest` / `PowerSetRequest` /
   `PowerClearRequest` + `CloseHandle`), which is process-wide.
-- **Linux** (note only): the portable equivalent is a **logind
-  inhibitor lock**: `org.freedesktop.login1.Manager.Inhibit(what="idle",
-  who, why, mode="block")` returns a file descriptor; idle sleep is
-  blocked for as long as that fd stays open, so the `SleepBlocker` RAII
-  guard simply owns the fd and closes it on drop: the same
-  hold-a-handle shape as the other two platforms. Use `what="sleep"`
-  instead to also delay (briefly) a deliberate suspend; `what="idle"` is
-  the closer analogue to the macOS `PreventUserIdleSystemSleep` scope we
-  want for transfers. The `who`/`why` strings surface in
+- **Linux**: a **logind inhibitor lock** held through a
+  `systemd-inhibit --what=idle --mode=block sleep infinity` child; the
+  guard owns the child and kills it on drop, the same hold-a-handle
+  shape as the other two platforms. `what=idle` is the analogue of the
+  macOS `PreventUserIdleSystemSleep` scope: an explicit suspend or lid
+  close still goes through. The `--who`/`--why` strings surface in
   `systemd-inhibit --list`, the Linux counterpart to `pmset -g
-  assertions`.
+  assertions`. `None` on a host without `systemd-inhibit`.
+
+## Prevention (display-sleep block during playback)
+
+`platform_shell::prevent_display_sleep(reason) -> Option<SleepBlocker>`
+is the second guard, same RAII type, wider scope: the display stays lit
+as well as the system awake. `ViewerWindow` holds at most one in its
+`keep_awake` field and re-syncs it in `sync_keep_awake` from every
+playback transition (video open, play/pause, step, cue loop, clip end,
+slideshow start/stop, Private Mode, sleep suspend, teardown): held
+exactly while a video is playing or the slideshow is running, released
+otherwise, and dropped with the window. Never taken from `render`:
+taking it talks to the OS and, on Linux, spawns a helper.
+
+The switch *Keep the screen awake during videos and slideshows*
+(Settings → Layout → Viewer, on by default) is the `viewer_keep_awake`
+app-state key behind the `viewer::KeepScreenAwake` global; flipping it
+re-syncs every live viewer so a running video releases or takes the
+guard at once.
+
+- **macOS**: the same IOKit call with `PreventUserIdleDisplaySleep`.
+- **Windows**: `ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED`. Because
+  `SetThreadExecutionState` sets the whole flag set per thread, the two
+  guard kinds keep hold counters and every take/release recomputes the
+  flags from both, so a viewer closing never cancels a transfer's
+  system hold (both live on the UI thread).
+- **Linux**: a logind `idle` lock does not stop the desktop session
+  from blanking the screen, so the guard wraps
+  `gnome-session-inhibit --inhibit idle … sleep infinity`, which holds a
+  session inhibitor for the child's lifetime. Where that helper is
+  absent it falls back to the logind lock, which keeps the machine from
+  suspending but not the screen from blanking.
+- **AROS**: `None`.
 
 ## Files
 
@@ -142,7 +174,12 @@ only a few seconds.
 - `crates/ferail-shell-mac/src/power_observer.rs`: NSWorkspace hooks.
 - `crates/ferail-shell-mac/src/power_assert.rs`: IOKit assertion.
 - `crates/ferail-shell-win32/src/lib.rs`: `start_power_observer`,
-  `prevent_idle_sleep`, `SleepBlocker` (cfg(windows) + stubs).
+  `prevent_idle_sleep`, `prevent_display_sleep`, `SleepBlocker`
+  (cfg(windows) + stubs).
+- `crates/ferail-shell-linux/src/lib.rs`: `prevent_idle_sleep`,
+  `prevent_display_sleep` over `systemd-inhibit` /
+  `gnome-session-inhibit` children.
 - `crates/ferail-gpui/src/process_state.rs`: `start_power_watch`.
-- `crates/ferail-gpui/src/viewer/window.rs`: `suspend_for_power`.
+- `crates/ferail-gpui/src/viewer/window.rs`: `suspend_for_power`,
+  `sync_keep_awake`.
 - `crates/ferail-gpui/src/shell/file_ops.rs`: transfer-time guard.
