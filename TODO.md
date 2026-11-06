@@ -530,7 +530,7 @@ Net-new, but each sits on plumbing that already exists.
   the process-wide Power Request API if a transfer ever asserts from a
   thread-pool worker.
 - **Linux shell stubs** ([linux-port.md](docs/features/linux-port.md)): the
-  file-URL clipboard (`text/uri-list`), and the dark, volume and power
+  X11 file clipboard, and the dark, volume and power
   observers (D-Bus, udisks2, logind). These need a real desktop with mounts and
   session events to verify meaningfully. Also open: `pkexec` re-exec for
   `run_elevated_self` and a `/proc/*/fd` scan for `processes_using`, the Linux

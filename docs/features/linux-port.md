@@ -106,10 +106,11 @@ under `cfg(not)`):
 not just to compile** (so they're the first things to do *on* a Linux box, not
 blind from a Mac):
 
-- **Clipboard file-URLs**: correct paste interop needs multiple MIME targets
-  (`text/uri-list` *and* GNOME's `x-special/gnome-copied-files`), which a
-  single `wl-copy`/`xclip` shell-out can't offer; wants a native multi-type
-  clipboard client. Wrong target = silent no-op on paste.
+- **File clipboard on X11**. Wayland desktops with data-control support use
+  native `text/uri-list` and `x-special/gnome-copied-files` offers, with Copy/Move
+  metadata. Requests run on a worker and do not resolve symbolic links. Pure
+  URI lists are treated as Copy; remote URIs are rejected. Desktops without
+  data-control support are not covered by this implementation.
 - ~~**`fetch_quick_look_thumbnail`**~~: **done.** Rides the shared freedesktop
   thumbnail cache (`$XDG_CACHE_HOME/thumbnails/{normal,large,x-large,xx-large}/
   <md5(file-uri)>.png`), regenerating with `gdk-pixbuf-thumbnailer` on a miss or

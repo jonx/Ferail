@@ -2258,20 +2258,54 @@ impl ViewerWindow {
         let Some(entry) = self.current().cloned() else {
             return;
         };
-        if !crate::platform_shell::clipboard_copy_file_urls(&[(entry.path.as_path(), false)]) {
+        #[cfg(target_os = "linux")]
+        {
+            let pending = crate::platform_shell::reserve_file_clipboard().and_then(|job| {
+                job.begin_write(
+                    vec![(entry.path.clone(), false)],
+                    crate::platform_shell::ClipboardFileOperation::Copy,
+                )
+            });
+            match pending {
+                Ok(pending) => {
+                    cx.spawn_in(window, async move |this, cx| {
+                        let result = pending.await;
+                        let _ = this.update_in(cx, move |_, window, cx| match result {
+                            Ok(()) => window.push_notice(
+                                Notification::success(tr!(
+                                    "Copied \u{201c}{name}\u{201d}",
+                                    name =
+                                        crate::private_mode::present_leaf_str(&entry.name, false)
+                                )),
+                                cx,
+                            ),
+                            Err(error) => window.push_notice(Notification::error(error), cx),
+                        });
+                    })
+                    .detach();
+                }
+                Err(error) => window.push_notice(Notification::error(error), cx),
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            if !crate::platform_shell::clipboard_copy_file_urls(&[(entry.path.as_path(), false)]) {
+                window.push_notice(
+                    Notification::error(tr!(
+                        "File clipboard isn't available on this platform yet."
+                    )),
+                    cx,
+                );
+                return;
+            }
             window.push_notice(
-                Notification::error(tr!("File clipboard isn't available on this platform yet.")),
+                Notification::success(tr!(
+                    "Copied \u{201c}{name}\u{201d}",
+                    name = crate::private_mode::present_leaf_str(&entry.name, false)
+                )),
                 cx,
             );
-            return;
         }
-        window.push_notice(
-            Notification::success(tr!(
-                "Copied \u{201c}{name}\u{201d}",
-                name = crate::private_mode::present_leaf_str(&entry.name, false)
-            )),
-            cx,
-        );
     }
 
     /// Cmd+Shift+C / context menu: the current file's full path as text.

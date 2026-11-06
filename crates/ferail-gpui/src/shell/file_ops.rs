@@ -108,8 +108,8 @@ fn copy_file_list_toast(count: usize, recursive: bool) -> gpui::SharedString {
 }
 
 impl Shell {
-    #[cfg(target_os = "aros")]
-    pub(crate) fn write_aros_file_clipboard(
+    #[cfg(any(target_os = "aros", target_os = "linux"))]
+    pub(crate) fn write_native_file_clipboard(
         &mut self,
         items: Vec<(PathBuf, bool)>,
         operation: crate::platform_shell::ClipboardFileOperation,
@@ -177,8 +177,8 @@ impl Shell {
         .detach();
     }
 
-    #[cfg(target_os = "aros")]
-    fn read_aros_file_clipboard(
+    #[cfg(any(target_os = "aros", target_os = "linux"))]
+    fn read_native_file_clipboard(
         &mut self,
         forced: Option<TransferMode>,
         window: &mut Window,
@@ -205,6 +205,10 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             let result = pending.await;
             let _ = this.update_in(cx, move |this, window, cx| {
+                #[cfg(target_os = "linux")]
+                if this.active_tab().current_dir != destination {
+                    return;
+                }
                 let update_marker = crate::platform_shell::accept_file_clipboard_result(sequence);
                 match result {
                     Ok((sources, operation)) => {
@@ -216,6 +220,13 @@ impl Shell {
                             }
                         }
                         if sources.is_empty() {
+                            #[cfg(target_os = "linux")]
+                            if forced.is_none() {
+                                if let Some(image) = clipboard_image(cx) {
+                                    this.paste_clipboard_image(image, window, cx);
+                                    return;
+                                }
+                            }
                             window.push_notice(
                                 Notification::info(tr!("No files on the clipboard")),
                                 cx,
@@ -278,36 +289,40 @@ impl Shell {
         if items.is_empty() {
             return;
         }
-        #[cfg(target_os = "aros")]
+        #[cfg(any(target_os = "aros", target_os = "linux"))]
         {
-            self.write_aros_file_clipboard(
+            self.write_native_file_clipboard(
                 items,
                 crate::platform_shell::ClipboardFileOperation::Copy,
                 window,
                 cx,
             );
-            return;
         }
-        let refs: Vec<(&std::path::Path, bool)> =
-            items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
-        if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
-            window.push_notice(
-                Notification::error(tr!("File clipboard isn't available on this platform yet.")),
-                cx,
-            );
-            return;
+        #[cfg(not(any(target_os = "aros", target_os = "linux")))]
+        {
+            let refs: Vec<(&std::path::Path, bool)> =
+                items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
+            if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
+                window.push_notice(
+                    Notification::error(tr!(
+                        "File clipboard isn't available on this platform yet."
+                    )),
+                    cx,
+                );
+                return;
+            }
+            // A fresh Copy cancels any pending Cut.
+            self.process.cut_marker.borrow_mut().clear();
+            let msg = match items.as_slice() {
+                [(single, _)] => tr!(
+                    "Copied \u{201c}{name}\u{201d}",
+                    name = single.file_name().unwrap_or_default().to_string_lossy()
+                ),
+                many => trn!("Copied {n} item", "Copied {n} items", many.len()),
+            };
+            window.push_notice(Notification::success(msg), cx);
+            cx.notify();
         }
-        // A fresh Copy cancels any pending Cut.
-        self.process.cut_marker.borrow_mut().clear();
-        let msg = match items.as_slice() {
-            [(single, _)] => tr!(
-                "Copied \u{201c}{name}\u{201d}",
-                name = single.file_name().unwrap_or_default().to_string_lossy()
-            ),
-            many => trn!("Copied {n} item", "Copied {n} items", many.len()),
-        };
-        window.push_notice(Notification::success(msg), cx);
-        cx.notify();
     }
 
     /// Cmd+X: copy the selection's URLs to the pasteboard and mark them
@@ -344,38 +359,42 @@ impl Shell {
         if items.is_empty() {
             return;
         }
-        #[cfg(target_os = "aros")]
+        #[cfg(any(target_os = "aros", target_os = "linux"))]
         {
-            self.write_aros_file_clipboard(
+            self.write_native_file_clipboard(
                 items,
                 crate::platform_shell::ClipboardFileOperation::Move,
                 window,
                 cx,
             );
-            return;
         }
-        let refs: Vec<(&std::path::Path, bool)> =
-            items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
-        if !crate::platform_shell::clipboard_cut_file_urls(&refs) {
-            // Don't dim rows for a Cut that can never complete its
-            // move: the stub platform has no file clipboard.
-            window.push_notice(
-                Notification::error(tr!("File clipboard isn't available on this platform yet.")),
-                cx,
-            );
-            return;
+        #[cfg(not(any(target_os = "aros", target_os = "linux")))]
+        {
+            let refs: Vec<(&std::path::Path, bool)> =
+                items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
+            if !crate::platform_shell::clipboard_cut_file_urls(&refs) {
+                // Don't dim rows for a Cut that can never complete its
+                // move: the stub platform has no file clipboard.
+                window.push_notice(
+                    Notification::error(tr!(
+                        "File clipboard isn't available on this platform yet."
+                    )),
+                    cx,
+                );
+                return;
+            }
+            let paths: Vec<PathBuf> = items.into_iter().map(|(p, _)| p).collect();
+            let msg = match paths.as_slice() {
+                [single] => tr!(
+                    "Cut \u{201c}{name}\u{201d}",
+                    name = single.file_name().unwrap_or_default().to_string_lossy()
+                ),
+                many => trn!("Cut {n} item", "Cut {n} items", many.len()),
+            };
+            *self.process.cut_marker.borrow_mut() = paths;
+            window.push_notice(Notification::info(msg), cx);
+            cx.notify();
         }
-        let paths: Vec<PathBuf> = items.into_iter().map(|(p, _)| p).collect();
-        let msg = match paths.as_slice() {
-            [single] => tr!(
-                "Cut \u{201c}{name}\u{201d}",
-                name = single.file_name().unwrap_or_default().to_string_lossy()
-            ),
-            many => trn!("Cut {n} item", "Cut {n} items", many.len()),
-        };
-        *self.process.cut_marker.borrow_mut() = paths;
-        window.push_notice(Notification::info(msg), cx);
-        cx.notify();
     }
 
     /// Cmd+V: paste the pasteboard's files into this folder. A *move*
@@ -390,43 +409,45 @@ impl Shell {
         if self.reject_platform_filesystem_command(window, cx) {
             return;
         }
-        #[cfg(target_os = "aros")]
+        #[cfg(any(target_os = "aros", target_os = "linux"))]
         {
-            self.read_aros_file_clipboard(None, window, cx);
-            return;
+            self.read_native_file_clipboard(None, window, cx);
         }
-        use gpui_component::notification::Notification;
-        let (sources, clipboard_operation) =
-            crate::platform_shell::clipboard_read_file_urls_with_operation();
-        if sources.is_empty() {
-            // No files, but a picture (a screenshot, an image copied from a
-            // browser or an editor): paste it as a new image file. Files win
-            // when both are there, because copying a file in Finder also
-            // puts its icon on the clipboard.
-            if let Some(image) = clipboard_image(cx) {
-                self.paste_clipboard_image(image, window, cx);
+        #[cfg(not(any(target_os = "aros", target_os = "linux")))]
+        {
+            use gpui_component::notification::Notification;
+            let (sources, clipboard_operation) =
+                crate::platform_shell::clipboard_read_file_urls_with_operation();
+            if sources.is_empty() {
+                // No files, but a picture (a screenshot, an image copied from a
+                // browser or an editor): paste it as a new image file. Files win
+                // when both are there, because copying a file in Finder also
+                // puts its icon on the clipboard.
+                if let Some(image) = clipboard_image(cx) {
+                    self.paste_clipboard_image(image, window, cx);
+                    return;
+                }
+                window.push_notice(
+                    Notification::info(tr!("No files or image on the clipboard")),
+                    cx,
+                );
                 return;
             }
-            window.push_notice(
-                Notification::info(tr!("No files or image on the clipboard")),
-                cx,
-            );
-            return;
+            // Pasting the exact set that was Cut → move + clear the mark.
+            let cut = self.process.cut_marker.borrow().clone();
+            let is_cut_set = !cut.is_empty()
+                && cut.len() == sources.len()
+                && cut.iter().all(|p| sources.contains(p));
+            let mode = if is_cut_set
+                || clipboard_operation == crate::platform_shell::ClipboardFileOperation::Move
+            {
+                TransferMode::Move
+            } else {
+                TransferMode::Copy
+            };
+            let dest = self.active_tab().current_dir.clone();
+            self.spawn_transfer_op(sources, dest, mode, window, cx);
         }
-        // Pasting the exact set that was Cut → move + clear the mark.
-        let cut = self.process.cut_marker.borrow().clone();
-        let is_cut_set = !cut.is_empty()
-            && cut.len() == sources.len()
-            && cut.iter().all(|p| sources.contains(p));
-        let mode = if is_cut_set
-            || clipboard_operation == crate::platform_shell::ClipboardFileOperation::Move
-        {
-            TransferMode::Move
-        } else {
-            TransferMode::Copy
-        };
-        let dest = self.active_tab().current_dir.clone();
-        self.spawn_transfer_op(sources, dest, mode, window, cx);
     }
 
     /// Write a clipboard image into the folder on screen as a new file named
@@ -490,24 +511,26 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
         if self.reject_platform_filesystem_command(window, cx) {
             return;
         }
-        #[cfg(target_os = "aros")]
+        #[cfg(any(target_os = "aros", target_os = "linux"))]
         {
-            self.read_aros_file_clipboard(Some(mode), window, cx);
-            return;
+            self.read_native_file_clipboard(Some(mode), window, cx);
         }
-        // Pasteboard read is a semantic event (action handler), same
-        // boundary as Quick Look, never from render.
-        let sources = crate::platform_shell::clipboard_read_file_urls();
-        if sources.is_empty() {
-            window.push_notice(Notification::info(tr!("No files on the clipboard")), cx);
-            return;
+        #[cfg(not(any(target_os = "aros", target_os = "linux")))]
+        {
+            use gpui_component::notification::Notification;
+            // Pasteboard read is a semantic event (action handler), same
+            // boundary as Quick Look, never from render.
+            let sources = crate::platform_shell::clipboard_read_file_urls();
+            if sources.is_empty() {
+                window.push_notice(Notification::info(tr!("No files on the clipboard")), cx);
+                return;
+            }
+            let dest = self.active_tab().current_dir.clone();
+            self.spawn_transfer_op(sources, dest, mode, window, cx);
         }
-        let dest = self.active_tab().current_dir.clone();
-        self.spawn_transfer_op(sources, dest, mode, window, cx);
     }
 
     /// Files dropped into the window (Finder/Explorer drags, or our own rows

@@ -28,7 +28,7 @@ instead.
 | --- | --- | --- |
 | **macOS** | Primary | Feature-complete for everyday use. The DMG is Developer ID signed and notarized, so it opens without a warning. |
 | **Windows** | Active port | Broad native parity: clipboard, Recycle Bin with Restore, thumbnails, Open With, Media Foundation video, UAC elevation, Restart Manager lock diagnostics, and native context-menu verbs on explicit demand. Builds, runs and screenshots on real hardware. Unsigned, so SmartScreen warns on first launch. Indexed search and window docking are planned. ([notes](features/windows-port.md)) |
-| **Linux** | Early port | Builds and runs; volumes, Trash and Open With are real; clipboard, thumbnails and video are stubbed. Ubuntu 22.04-compatible amd64 and arm64 `.deb` packages ship. ([notes](features/linux-port.md)) |
+| **Linux** | Early port | Builds and runs; volumes, Trash and Open With are real; Wayland file clipboard uses data-control; X11 file clipboard and video remain open. Ubuntu 22.04-compatible amd64 and arm64 `.deb` packages ship. ([notes](features/linux-port.md)) |
 | **AROS** | Native port | The `Ferail` command for native AROS (AArch64) links against the AROS SDK and runs on the AROS desktop: window, volume list, navigation, archives, log in `T:`. Its own GPUI backend over Intuition, a shell crate over Workbench, openurl, ASL, the clipboard and DOS. Parity (see the capability list) is open. ([notes](features/aros-port.md)) |
 
 ## Windows campaign
@@ -75,7 +75,7 @@ the rest is tracked in [TODO.md](../TODO.md).
 | [ICONS.md](features/ICONS.md) | Reference | Complete icon inventory: source (NSWorkspace / local Lucide bundle / upstream), attribution, command→icon map, and the rules for adding new icons. Flags missing/weak/reused glyphs. |
 | [IMAGE_EDITOR.md](features/IMAGE_EDITOR.md) | Shipped | Built-in image redaction/annotation editor: rectangle + brush in Redact (opaque black) and Annotate (coloured) modes, undo, save-copy beside the original or confirmed in-place overwrite, off-thread compositing with a bounded preview buffer. |
 | [LAZY_METADATA.md](features/LAZY_METADATA.md) | Shipped with follow-ups | Shared NodeStore, path guard, cached row metadata, background prefetch, metadata DB, and process-owned caches ship; rename/move identity completion remains open. |
-| [linux-port.md](features/linux-port.md) | Partial port | The Linux shell crate compiles behind stubs; real clipboard/trash/open-with/volume/power/preview integrations remain open. |
+| [linux-port.md](features/linux-port.md) | Partial port | The Linux shell crate compiles behind stubs; Wayland file clipboard uses data-control; other shell integrations retain the limits described in the Linux notes. |
 | [LOCALIZATION.md](features/LOCALIZATION.md) | Shipped with follow-ups | English-as-key catalog, bundled French, German and Polish packs, live switching, and an export/translate/import workflow; Polish `few` plurals, backend error text, RTL and locale number formats remain open. |
 | [mac_port.md](features/mac_port.md) | Shipped with follow-ups | macOS is the primary implementation path; remaining items are mostly packaging, polish, and verification. |
 | [MAGIC_DESCRIPTION.md](features/MAGIC_DESCRIPTION.md) | Shipped | Format/Description columns, mismatch cues, quarantine badges, and structured descriptions ship. |

@@ -8,6 +8,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Copy, Cut and Paste work on Wayland desktops with data-control support.**
+  File lists use URI and GNOME clipboard formats, including the Copy/Move
+  operation. File clipboard requests run off the UI thread; file names retain their
+  original bytes and symbolic links are copied as links.
+
 - **Linux previews PDF contents.** With Poppler installed, the preview pane,
   icon grid and media viewer render the first page instead of a generic icon.
 

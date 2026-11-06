@@ -33,8 +33,9 @@
 //! Implemented: `duplicate_path`, `make_alias`, `make_alias_in`, `open_url`,
 //! `reveal_in_finder`, `open_terminal`, `system_is_dark`, `open_with_app`,
 //! `open_with_candidates` (freedesktop MIME + `.desktop` scan), and
-//! `copy_to_clipboard` (plain text via `arboard`). Still stubbed: the file-URL
-//! clipboard, thumbnails, the dark/volume/power observers, and video: these
+//! `copy_to_clipboard` (plain text via `arboard`). File-URL clipboard uses
+//! Wayland data-control. Still stubbed: X11 file clipboard, the dark/volume/power
+//! observers, and video: these
 //! need richer `ashpd`/`zbus`/`gstreamer` integration (linux-port.md §6).
 //! (Trash and download-provenance live in `ferail-fs-native`, not here.)
 
@@ -535,31 +536,35 @@ pub fn copy_to_clipboard(_text: &str) {}
 // Clipboard (file URLs)
 // =============================================================
 
-/// Copy file paths to the clipboard as `text/uri-list` `file://` URIs (plus
-/// the GNOME `x-special/gnome-copied-files` target for Nautilus interop).
-/// Stub: needs Wayland/X11 selection access (`wl-clipboard` / `xclip` / a
-/// native protocol client). Returns `false` so callers surface "not
-/// available" instead of a lying success toast (the `is_dir` half of
-/// each item is a mac-pasteboard need).
-pub fn clipboard_copy_file_urls(_items: &[(&Path, bool)]) -> bool {
-    false
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClipboardFileOperation {
     Copy,
     Move,
 }
 
+#[cfg(target_os = "linux")]
+mod file_clipboard;
+#[cfg(target_os = "linux")]
+pub use file_clipboard::{
+    accept_result as accept_file_clipboard_result, reserve as reserve_file_clipboard,
+};
+
+#[cfg(not(target_os = "linux"))]
+pub fn clipboard_copy_file_urls(_items: &[(&Path, bool)]) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn clipboard_cut_file_urls(_items: &[(&Path, bool)]) -> bool {
     false
 }
 
-/// Read file paths previously placed on the clipboard. Empty if none. Stub.
+#[cfg(not(target_os = "linux"))]
 pub fn clipboard_read_file_urls() -> Vec<PathBuf> {
     Vec::new()
 }
 
+#[cfg(not(target_os = "linux"))]
 pub fn clipboard_read_file_urls_with_operation() -> (Vec<PathBuf>, ClipboardFileOperation) {
     (Vec::new(), ClipboardFileOperation::Copy)
 }
