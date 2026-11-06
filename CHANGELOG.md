@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Linux previews PDF contents.** With Poppler installed, the preview pane,
+  icon grid and media viewer render the first page instead of a generic icon.
+
 - **System theme follows the Linux desktop.** Ferail reads GPUI’s portal-backed
   appearance instead of requiring GNOME settings schemas, and updates open
   windows when the desktop switches between light and dark.

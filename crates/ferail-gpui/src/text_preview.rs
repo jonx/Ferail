@@ -225,6 +225,9 @@ pub(crate) fn decode_text_preview(buf: Vec<u8>) -> Option<String> {
 }
 
 fn decode_text_preview_document(mut buf: Vec<u8>) -> Option<TextPreviewDocument> {
+    if buf.starts_with(b"%PDF-") {
+        return None;
+    }
     buf.truncate(MAX_BYTES);
     // A bounded read can end between UTF-8 bytes. Preserve the prior friendly
     // behaviour by dropping only that incomplete final codepoint.
@@ -460,6 +463,16 @@ mod tests {
         let out = read_text_preview(&p).unwrap().unwrap();
         assert!(out.text.contains("fn main()"));
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn rejects_ascii_pdf() {
+        let pdf = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-data/preview/two-pages.pdf"
+        ));
+        assert!(pdf.is_ascii());
+        assert!(decode_text_preview(pdf.to_vec()).is_none());
     }
 
     #[test]
