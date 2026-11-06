@@ -266,8 +266,9 @@ Before finishing code changes:
   the `disallowed_methods` deny is part of Prime Directive enforcement; a
   hit means move the call off-thread, not silence the lint.
 - Run `cargo test` unless the change is docs-only.
-- For UI changes, render at least one screenshot with
-  `cargo run --bin ferail-gpui -- --screenshot ...` and inspect it.
+- For UI changes, capture and inspect at least one screenshot. On Linux, use
+  the compositor; GPUI does not implement offscreen capture there. On macOS
+  and Windows, use `cargo run --bin ferail-gpui -- --screenshot ...`.
 - Write screenshots to `screenshots/<feature>.png`, not `/tmp`.
   `screenshots/` is gitignored scratch, any image a committed document
   references (README, docs/) must live in `docs/images/` instead, or it

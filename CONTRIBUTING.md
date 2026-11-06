@@ -41,7 +41,9 @@ adding cross-crate dependencies.
 - `python3 scripts/check-docs.py` when the change touches Markdown. The
   documentation rules it enforces are in
   [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
-- For UI changes, attach a screenshot. Generate one headlessly:
+- For UI changes, attach a screenshot. On Linux, capture the running window
+  through the compositor; GPUI does not implement offscreen capture there.
+  On macOS and Windows, generate one headlessly:
 
   ```sh
   cargo run --bin ferail-gpui -- \
