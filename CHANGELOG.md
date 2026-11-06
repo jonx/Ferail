@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **File format labels and relative modification dates follow the interface
+  language.** File detection keeps its original identifiers.
+
 - **Copy, Cut and Paste work on Wayland desktops with data-control support.**
   File lists use URI and GNOME clipboard formats, including the Copy/Move
   operation. File clipboard requests run off the UI thread; file names retain their

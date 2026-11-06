@@ -167,126 +167,128 @@ impl MagicType {
     pub fn display_name(&self) -> &'static str {
         match self {
             // Documents
-            MagicType::Pdf => "PDF document",
+            MagicType::Pdf => ferail_core::msgid!("PDF document"),
 
             // Office: extension is more familiar to users than
             // "Document (Word)" style. Keep concise.
-            MagicType::DocWord | MagicType::DocWordMacro | MagicType::DocWordOle => "Word document",
+            MagicType::DocWord | MagicType::DocWordMacro | MagicType::DocWordOle => {
+                ferail_core::msgid!("Word document")
+            }
             MagicType::DocExcel | MagicType::DocExcelMacro | MagicType::DocExcelOle => {
-                "Excel spreadsheet"
+                ferail_core::msgid!("Excel spreadsheet")
             }
             MagicType::DocPowerPoint
             | MagicType::DocPowerPointMacro
-            | MagicType::DocPowerPointOle => "PowerPoint presentation",
-            MagicType::OleCompound => "Compound document",
+            | MagicType::DocPowerPointOle => ferail_core::msgid!("PowerPoint presentation"),
+            MagicType::OleCompound => ferail_core::msgid!("Compound document"),
 
             // Archives: match the historical flat-table labels exactly
             // so existing format_label tests keep passing.
-            MagicType::Zip => "ZIP archive",
-            MagicType::ZipEncrypted => "ZIP archive",
-            MagicType::Rar => "RAR archive",
-            MagicType::SevenZip => "7z archive",
-            MagicType::Lha => "LHA archive",
-            MagicType::Lzx => "LZX archive",
-            MagicType::ExeAmiga => "Amiga executable",
-            MagicType::ObjAmiga => "Amiga object file",
-            MagicType::LibAmiga => "Amiga link library",
-            MagicType::AmigaIcon => "Amiga icon",
-            MagicType::Ilbm => "IFF ILBM image",
-            MagicType::Svx8 => "IFF 8SVX audio",
-            MagicType::IffAnim => "IFF ANIM animation",
-            MagicType::IffSmus => "IFF SMUS score",
-            MagicType::TrackerModule => "Tracker module",
-            MagicType::AdfDisk => "Amiga disk image",
-            MagicType::DmsDisk => "DMS disk image",
-            MagicType::AmigaGuide => "AmigaGuide document",
-            MagicType::Tar => "TAR archive",
-            MagicType::Gzip => "Gzip archive",
-            MagicType::Xz => "XZ archive",
-            MagicType::Bzip2 => "Bzip2 archive",
-            MagicType::Zstd => "Zstandard archive",
+            MagicType::Zip => ferail_core::msgid!("ZIP archive"),
+            MagicType::ZipEncrypted => ferail_core::msgid!("ZIP archive"),
+            MagicType::Rar => ferail_core::msgid!("RAR archive"),
+            MagicType::SevenZip => ferail_core::msgid!("7z archive"),
+            MagicType::Lha => ferail_core::msgid!("LHA archive"),
+            MagicType::Lzx => ferail_core::msgid!("LZX archive"),
+            MagicType::ExeAmiga => ferail_core::msgid!("Amiga executable"),
+            MagicType::ObjAmiga => ferail_core::msgid!("Amiga object file"),
+            MagicType::LibAmiga => ferail_core::msgid!("Amiga link library"),
+            MagicType::AmigaIcon => ferail_core::msgid!("Amiga icon"),
+            MagicType::Ilbm => ferail_core::msgid!("IFF ILBM image"),
+            MagicType::Svx8 => ferail_core::msgid!("IFF 8SVX audio"),
+            MagicType::IffAnim => ferail_core::msgid!("IFF ANIM animation"),
+            MagicType::IffSmus => ferail_core::msgid!("IFF SMUS score"),
+            MagicType::TrackerModule => ferail_core::msgid!("Tracker module"),
+            MagicType::AdfDisk => ferail_core::msgid!("Amiga disk image"),
+            MagicType::DmsDisk => ferail_core::msgid!("DMS disk image"),
+            MagicType::AmigaGuide => ferail_core::msgid!("AmigaGuide document"),
+            MagicType::Tar => ferail_core::msgid!("TAR archive"),
+            MagicType::Gzip => ferail_core::msgid!("Gzip archive"),
+            MagicType::Xz => ferail_core::msgid!("XZ archive"),
+            MagicType::Bzip2 => ferail_core::msgid!("Bzip2 archive"),
+            MagicType::Zstd => ferail_core::msgid!("Zstandard archive"),
 
-            MagicType::AppJar => "Java JAR",
-            MagicType::AppApk => "Android APK",
+            MagicType::AppJar => ferail_core::msgid!("Java JAR"),
+            MagicType::AppApk => ferail_core::msgid!("Android APK"),
 
             // Images
-            MagicType::Jpeg => "JPEG image",
-            MagicType::Png => "PNG image",
-            MagicType::Gif => "GIF image",
-            MagicType::Bmp => "BMP image",
-            MagicType::Webp => "WebP image",
-            MagicType::Ico => "Icon file",
-            MagicType::Tiff => "TIFF image",
-            MagicType::Heic => "HEIC image",
-            MagicType::Svg => "XML / SVG",
+            MagicType::Jpeg => ferail_core::msgid!("JPEG image"),
+            MagicType::Png => ferail_core::msgid!("PNG image"),
+            MagicType::Gif => ferail_core::msgid!("GIF image"),
+            MagicType::Bmp => ferail_core::msgid!("BMP image"),
+            MagicType::Webp => ferail_core::msgid!("WebP image"),
+            MagicType::Ico => ferail_core::msgid!("Icon file"),
+            MagicType::Tiff => ferail_core::msgid!("TIFF image"),
+            MagicType::Heic => ferail_core::msgid!("HEIC image"),
+            MagicType::Svg => ferail_core::msgid!("XML / SVG"),
 
             // Video
-            MagicType::Mp4 => "MP4 video",
-            MagicType::Mov => "QuickTime movie",
-            MagicType::Avi => "AVI video",
-            MagicType::Mkv => "Matroska / WebM",
-            MagicType::Webm => "Matroska / WebM",
+            MagicType::Mp4 => ferail_core::msgid!("MP4 video"),
+            MagicType::Mov => ferail_core::msgid!("QuickTime movie"),
+            MagicType::Avi => ferail_core::msgid!("AVI video"),
+            MagicType::Mkv => ferail_core::msgid!("Matroska / WebM"),
+            MagicType::Webm => ferail_core::msgid!("Matroska / WebM"),
 
             // Audio
-            MagicType::Mp3 => "MP3 audio",
-            MagicType::Wav => "WAV audio",
-            MagicType::Flac => "FLAC audio",
-            MagicType::Ogg => "Ogg audio",
-            MagicType::Aiff => "AIFF audio",
-            MagicType::M4a => "M4A audio",
-            MagicType::Asf => "Windows Media",
+            MagicType::Mp3 => ferail_core::msgid!("MP3 audio"),
+            MagicType::Wav => ferail_core::msgid!("WAV audio"),
+            MagicType::Flac => ferail_core::msgid!("FLAC audio"),
+            MagicType::Ogg => ferail_core::msgid!("Ogg audio"),
+            MagicType::Aiff => ferail_core::msgid!("AIFF audio"),
+            MagicType::M4a => ferail_core::msgid!("M4A audio"),
+            MagicType::Asf => ferail_core::msgid!("Windows Media"),
 
             // Data
-            MagicType::Json => "JSON",
-            MagicType::Xml => "XML",
-            MagicType::Html => "HTML document",
-            MagicType::NfoScene => "Scene NFO",
-            MagicType::NfoKodi => "Kodi NFO",
-            MagicType::NfoMsInfo => "System Information NFO",
-            MagicType::ChecksumSfv => "SFV checksum list",
-            MagicType::ChecksumList => "Checksum list",
-            MagicType::Sqlite => "SQLite database",
+            MagicType::Json => ferail_core::msgid!("JSON"),
+            MagicType::Xml => ferail_core::msgid!("XML"),
+            MagicType::Html => ferail_core::msgid!("HTML document"),
+            MagicType::NfoScene => ferail_core::msgid!("Scene NFO"),
+            MagicType::NfoKodi => ferail_core::msgid!("Kodi NFO"),
+            MagicType::NfoMsInfo => ferail_core::msgid!("System Information NFO"),
+            MagicType::ChecksumSfv => ferail_core::msgid!("SFV checksum list"),
+            MagicType::ChecksumList => ferail_core::msgid!("Checksum list"),
+            MagicType::Sqlite => ferail_core::msgid!("SQLite database"),
 
             // Executables: keep "executable" in the string so
             // icons::classify_file's substring matcher still resolves
             // to FileTypeTint::Executable.
-            MagicType::ExeWindows => "PE / DOS executable",
-            MagicType::DllWindows => "PE / DOS executable",
-            MagicType::ExeWindowsNet => "PE / DOS executable",
-            MagicType::ExeLinux => "ELF executable",
-            MagicType::SoLinux => "ELF executable",
-            MagicType::ExeMac => "Mach-O executable",
-            MagicType::DylibMac => "Mach-O dylib",
-            MagicType::ObjMac => "Mach-O object",
-            MagicType::MachOFat => "Mach-O fat / Java class",
+            MagicType::ExeWindows => ferail_core::msgid!("PE / DOS executable"),
+            MagicType::DllWindows => ferail_core::msgid!("PE / DOS executable"),
+            MagicType::ExeWindowsNet => ferail_core::msgid!("PE / DOS executable"),
+            MagicType::ExeLinux => ferail_core::msgid!("ELF executable"),
+            MagicType::SoLinux => ferail_core::msgid!("ELF executable"),
+            MagicType::ExeMac => ferail_core::msgid!("Mach-O executable"),
+            MagicType::DylibMac => ferail_core::msgid!("Mach-O dylib"),
+            MagicType::ObjMac => ferail_core::msgid!("Mach-O object"),
+            MagicType::MachOFat => ferail_core::msgid!("Mach-O fat / Java class"),
 
             // Scripts: keep "script" in the string for the
             // classifier substring matcher.
-            MagicType::ScriptBash => "Shell script",
-            MagicType::ScriptPython => "Python script",
-            MagicType::ScriptPerl => "Perl script",
-            MagicType::ScriptRuby => "Ruby script",
-            MagicType::ScriptNode => "Node.js script",
-            MagicType::ScriptOther => "Script",
+            MagicType::ScriptBash => ferail_core::msgid!("Shell script"),
+            MagicType::ScriptPython => ferail_core::msgid!("Python script"),
+            MagicType::ScriptPerl => ferail_core::msgid!("Perl script"),
+            MagicType::ScriptRuby => ferail_core::msgid!("Ruby script"),
+            MagicType::ScriptNode => ferail_core::msgid!("Node.js script"),
+            MagicType::ScriptOther => ferail_core::msgid!("Script"),
 
             // Text
-            MagicType::TextIni => "INI",
-            MagicType::TextReg => "Windows Registry",
-            MagicType::TextPlain => "Plain text",
-            MagicType::Utf8Bom => "UTF-8 text",
-            MagicType::Utf16Le => "UTF-16 LE text",
-            MagicType::Utf16Be => "UTF-16 BE text",
+            MagicType::TextIni => ferail_core::msgid!("INI"),
+            MagicType::TextReg => ferail_core::msgid!("Windows Registry"),
+            MagicType::TextPlain => ferail_core::msgid!("Plain text"),
+            MagicType::Utf8Bom => ferail_core::msgid!("UTF-8 text"),
+            MagicType::Utf16Le => ferail_core::msgid!("UTF-16 LE text"),
+            MagicType::Utf16Be => ferail_core::msgid!("UTF-16 BE text"),
 
             // Windows
-            MagicType::Lnk => "Windows shortcut",
-            MagicType::Url => "Internet shortcut",
+            MagicType::Lnk => ferail_core::msgid!("Windows shortcut"),
+            MagicType::Url => ferail_core::msgid!("Internet shortcut"),
 
             // Fonts
-            MagicType::OpenType => "OpenType font",
-            MagicType::TrueType => "TrueType font",
+            MagicType::OpenType => ferail_core::msgid!("OpenType font"),
+            MagicType::TrueType => ferail_core::msgid!("TrueType font"),
 
-            MagicType::Folder => "Folder",
-            MagicType::Binary => "Binary",
+            MagicType::Folder => ferail_core::msgid!("Folder"),
+            MagicType::Binary => ferail_core::msgid!("Binary"),
             MagicType::Unknown => "",
         }
     }

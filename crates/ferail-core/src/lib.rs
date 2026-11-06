@@ -565,8 +565,8 @@ pub fn now_unix() -> i64 {
 /// Why this is allowed on the paint path when sizes/dates are otherwise
 /// pre-formatted: a *relative* duration is timezone-independent (`now - mtime`
 /// is identical in every zone), so unlike absolute hour-of-day formatting it
-/// needs no local-timezone machinery: it is pure integer arithmetic plus one
-/// small allocation, bounded to the handful of on-screen rows.
+/// needs no local-timezone machinery. Arithmetic and translation lookups
+/// stay bounded to the handful of on-screen rows.
 pub fn humanize_mtime(mtime_unix: i64, now_unix: i64) -> String {
     const MIN: i64 = 60;
     const HOUR: i64 = 3_600;
@@ -581,49 +581,41 @@ pub fn humanize_mtime(mtime_unix: i64, now_unix: i64) -> String {
     // date rather than a nonsensical negative "ago".
     if diff < 0 {
         return if diff > -MIN {
-            "just now".to_string()
+            crate::tr!("just now").to_string()
         } else {
             format_date(mtime_unix)
         };
     }
     if diff == 0 {
-        return "just now".to_string();
+        return crate::tr!("just now").to_string();
     }
     if diff < MIN {
-        return format!("{diff} second{} ago", plural(diff));
+        return crate::trn!("{n} second ago", "{n} seconds ago", diff).to_string();
     }
     if diff < HOUR {
         let (m, s) = (diff / MIN, diff % MIN);
         return if s == 0 {
-            format!("{m} min ago")
+            crate::tr!("{m} min ago", m = m).to_string()
         } else {
-            format!("{m} min {s} sec ago")
+            crate::tr!("{m} min {s} sec ago", m = m, s = s).to_string()
         };
     }
     if diff < DAY {
         let (h, m) = (diff / HOUR, (diff % HOUR) / MIN);
         return if m == 0 {
-            format!("{h} hr ago")
+            crate::tr!("{h} hr ago", h = h).to_string()
         } else {
-            format!("{h} hr {m} min ago")
+            crate::tr!("{h} hr {m} min ago", h = h, m = m).to_string()
         };
     }
     if diff < WEEK {
         let d = diff / DAY;
-        return format!("{d} day{} ago", plural(d));
+        return crate::trn!("{n} day ago", "{n} days ago", d).to_string();
     }
     if diff < YEAR {
         return format_month_day(mtime_unix);
     }
     format_date(mtime_unix)
-}
-
-fn plural(n: i64) -> &'static str {
-    if n == 1 {
-        ""
-    } else {
-        "s"
-    }
 }
 
 /// Days-from-unix-epoch → (Y, M, D) via Howard Hinnant's `civil_from_days`.
@@ -645,9 +637,22 @@ fn ymd(unix: i64) -> (i32, u32, u32) {
 fn format_month_day(unix: i64) -> String {
     let (_, m, d) = ymd(unix);
     const NAMES: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        crate::msgid!("Jan"),
+        crate::msgid!("Feb"),
+        crate::msgid!("Mar"),
+        crate::msgid!("Apr"),
+        crate::msgid!("May"),
+        crate::msgid!("Jun"),
+        crate::msgid!("Jul"),
+        crate::msgid!("Aug"),
+        crate::msgid!("Sep"),
+        crate::msgid!("Oct"),
+        crate::msgid!("Nov"),
+        crate::msgid!("Dec"),
     ];
-    format!("{} {}", NAMES[(m as usize - 1).min(11)], d)
+    let month = NAMES[(m as usize - 1).min(11)];
+    let month = crate::i18n::tr_dynamic(month).unwrap_or_else(|| month.into());
+    format!("{month} {d}")
 }
 
 fn format_date(unix: i64) -> String {

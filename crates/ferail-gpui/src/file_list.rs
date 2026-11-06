@@ -3364,7 +3364,7 @@ impl TableDelegate for FileListDelegate {
                 .child(SharedString::from(if crate::private_mode::enabled() {
                     crate::i18n::tr_dyn(&entry.format_label().0).to_string()
                 } else {
-                    entry.display_description.to_string()
+                    crate::i18n::tr_dyn(&entry.display_description).to_string()
                 }))
                 .into_any_element(),
             "path" => {
@@ -3431,7 +3431,7 @@ impl TableDelegate for FileListDelegate {
             "size" => entry.display_size.to_string(),
             "format" => entry.format_label().0.to_string(),
             "modified" => ferail_core::humanize_mtime(entry.mtime_unix, ferail_core::now_unix()),
-            "description" => entry.display_description.to_string(),
+            "description" => crate::i18n::tr_dyn(&entry.display_description).to_string(),
             "path" => self
                 .flat_paths
                 .as_ref()
