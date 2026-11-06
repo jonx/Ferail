@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Linux desktops can open folders in Ferail.** The desktop entry handles
+  directory paths through `--navigate`, which now also applies to normal windows.
+
 - **The interface is available in Italian.** Select Italiano under Language
   in Appearance settings.
 
