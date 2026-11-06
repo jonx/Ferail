@@ -6,7 +6,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
-## Unreleased
+## 0.7.10 - 2026-11-07
 
 - **The screen stays on while a video plays or a slideshow runs.** The viewer
   keeps the display awake for as long as something is playing, and lets the

@@ -1,48 +1,68 @@
-# Ferail 0.7.9 - Media-only slideshows and a quieter filter
+# Ferail 0.7.10 - Linux catches up, Italian, and a screen that stays on
 
-Slideshows can skip everything that is not media, the filter stops getting in
-the way, and it can search subfolders as you type.
+The first outside code contributions land: a large Linux batch and an Italian
+interface, both by **ooonea**. The viewer keeps the screen awake while it
+plays, and the sidebar can be trimmed to what you use.
 
-## Slideshows of pictures, videos and music only
+## The screen stays on while something plays
 
-**A *Media only* checkbox in the viewer** leaves documents and other files out
-of the playlist, so a slideshow of a mixed folder shows only its pictures,
-videos and songs. The choice is remembered for the next viewer. In a narrow
-window it moves into the **…** menu with the other slideshow controls.
+**A video or a slideshow keeps the display awake** for as long as it runs,
+and the computer is free to idle again the moment you pause, stop or close
+the viewer. A new switch under **Settings ▸ Layout ▸ Viewer** turns this off.
 
-## A filter that stays out of the way
+## Linux
 
-**The suggestion menu under the filter field no longer pops up while you
-type ordinary text.** It used to open on an empty field, after clicking × to
-clear it, and after any plain word. It now opens only when what you type looks
-like a filter token, such as `si` for `size:`, after a short pause, and it has
-its own close button. Press **Down** in the field to see every token, or click
-**(?)** for the full cheat sheet.
+Fourteen pull requests from ooonea, tested on a GNOME desktop under Wayland:
 
-**Search subfolders as you type.** Turn on **View > Search Subfolders While
-Typing** and the filter field searches the current folder and everything below
-it after a short pause, instead of filtering only what is on screen. With the
-option off, Enter still runs that search.
+- **Copy, Cut and Paste of files work on Wayland.** Ferail exchanges file
+  lists with Nautilus and other file managers, including the cut intent.
+- **PDFs get a real preview** in the preview pane, the icon grid and the
+  viewer when Poppler's `pdftoppm` is installed.
+- **The system theme follows the desktop**, light or dark, through the
+  portal, and switches live.
+- **Folders open in Ferail from the desktop**: the launcher accepts a
+  directory, and `--navigate` works for ordinary windows.
+- **JSON and other text files open in their associated application**
+  instead of the browser.
+- **Build and download instructions** for Linux are current.
 
-## Clearer empty folders
+## Italian interface
 
-**A folder whose files are all hidden or filtered out says so**, with the
-count and how to show them, instead of *This folder is empty*. The status bar
-no longer says *Empty folder* beside the hidden count either.
+**Ferail speaks Italian.** Pick *Italiano* under Language in Appearance
+settings. Every one of the catalog's strings is translated, and **file
+format labels and relative dates** (*Testo semplice*, *5 giorni fa*) now
+follow the interface language in every pack.
+
+## A sidebar that shows what you use
+
+**Favorites and the Browse tree can be hidden independently** under
+**Settings ▸ Appearance ▸ Sidebar**. Hiding Favorites keeps its saved
+entries.
 
 ## Also in this release
 
-- **The status bar's right side holds still** while a folder's sizes are being
-  measured; background tasks no longer make it shift back and forth.
-- **The viewer toolbar folds properly in French and German** instead of
-  pushing controls off the edge of a narrow window.
-- **The update window shows the release name once**, and its buttons have
-  room for longer labels.
+- **Going up selects the folder you came from**, whichever way you go up,
+  and leaving an archive selects the archive file.
+- **Folder sizes are measured once you settle on a folder**, not the
+  instant it opens, so clicking through folders no longer competes with
+  reading them.
+- **The viewer has a right-click menu**: Show in Ferail, Copy, Copy Path,
+  Close.
+- **Emptying a large Trash shows its progress**, and unlocks items locked
+  in Finder instead of stopping on them.
+- **Escape closes dialogs, menus and popups again**, and the command
+  palette scrolls all the way.
+- **Notifications and dialogs stay out of Private Mode** and gain a Copy
+  button.
+- **Double-clicking a grid item no longer starts a rename** after opening
+  it.
+- **Building Ferail no longer needs Xcode's Metal compiler.**
 
 ## Worth knowing
 
-The command palette's list still stops short of the end with the scroll
-wheel. **Use the arrow keys** to reach the last commands.
+The Linux screen-awake guard relies on the GNOME session inhibitor, with the
+logind idle lock as a fallback, and has not been exercised on a Linux desktop
+yet.
 
 The Windows build is not code-signed, so SmartScreen warns on first launch:
 choose **More info ▸ Run anyway**. **Unblock the download before extracting or
