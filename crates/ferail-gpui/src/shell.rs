@@ -2838,9 +2838,6 @@ impl Shell {
                         this.apply_row_keyboard_gesture(*row_ix, *modifiers, cx);
                     }
                     TableEvent::DoubleClickedRow(row_ix) => {
-                        // The first click of this double-click may have armed
-                        // a rename on an already-selected row; opening wins.
-                        this.cancel_click_rename();
                         this.activate_row(*row_ix, window, cx);
                     }
                     TableEvent::RightClickedRow(row_ix) => {
@@ -7666,6 +7663,7 @@ impl Shell {
     /// workbench, and every other file goes to the OS opener (Open With is
     /// the way to hand an archive to another app).
     pub fn activate_row(&mut self, row_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_click_rename();
         let window_handle = Some(window.window_handle());
         // Archive rows are virtual: they have no on-disk path, and the
         // fallback below would otherwise synthesize `current_dir/<name>` and
