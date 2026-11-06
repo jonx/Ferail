@@ -360,7 +360,7 @@ Third-party components incorporated into a built binary (GPUI, gpui-component,
 and the bundled Lucide / Bootstrap icon artwork) are credited in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-> **Note:** Ferail depends on `gpui` / `gpui-component` as git dependencies
-> (not on crates.io), so there is no `cargo install`. Use a
-> [prebuilt download](#download) or build from source; reproducible builds come
-> from the committed `Cargo.lock`.
+> **Note:** Ferail is not published to crates.io. Use a
+> [prebuilt download](#download) or build from source. GPUI and gpui-component
+> come from crates.io, with a Git patch for the GPUI platform crate; the
+> committed `Cargo.lock` pins the dependency versions.
