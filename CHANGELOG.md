@@ -43,6 +43,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 - **Linux opens JSON and other text files in their associated application.**
   File opening and text editing honor the desktop's inherited associations.
 
+- **The Linux sidebar includes Music, Pictures and Videos.** These shortcuts
+  follow XDG user directories, including localized and disabled locations.
+
 - **Linux sidebar locations follow XDG user directories.** Desktop, Documents
   and Downloads use the configured folders, including localized and redirected
   paths, instead of assuming English names under the home directory. Location

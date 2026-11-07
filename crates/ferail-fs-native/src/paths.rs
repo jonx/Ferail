@@ -438,6 +438,21 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
             dirs::download_dir().filter(|path| path != &home),
             "icons/nav/downloads.svg",
         ),
+        (
+            ferail_core::msgid!("Music"),
+            dirs::audio_dir().filter(|path| path != &home),
+            "icons/nav/music.svg",
+        ),
+        (
+            ferail_core::msgid!("Pictures"),
+            dirs::picture_dir().filter(|path| path != &home),
+            "icons/nav/pictures.svg",
+        ),
+        (
+            ferail_core::msgid!("Videos"),
+            dirs::video_dir().filter(|path| path != &home),
+            "icons/nav/movies.svg",
+        ),
     ]
     .into_iter()
     .filter_map(|(label, path, icon)| path.map(|path| WellKnownLocation { label, path, icon }))
@@ -1034,8 +1049,8 @@ mod xdg_tests {
         let config = root.join("user-dirs.dirs");
         for disabled in ["$HOME".to_owned(), root.display().to_string()] {
             std::fs::write(&config, format!(
-                "XDG_DESKTOP_DIR=\"{}/Scrivania\"\nXDG_DOCUMENTS_DIR=\"{}/Documenti condivisi\"\nXDG_DOWNLOAD_DIR=\"{disabled}\"\n",
-                root.display(), root.display(),
+                "XDG_DESKTOP_DIR=\"{}/Scrivania\"\nXDG_DOCUMENTS_DIR=\"{}/Documenti condivisi\"\nXDG_DOWNLOAD_DIR=\"{disabled}\"\nXDG_MUSIC_DIR=\"{}/Musica\"\nXDG_PICTURES_DIR=\"{}/Immagini\"\nXDG_VIDEOS_DIR=\"{}/Video\"\n",
+                root.display(), root.display(), root.display(), root.display(), root.display(),
             )).unwrap();
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -1060,9 +1075,12 @@ mod xdg_tests {
         let locations = well_known_locations();
         assert_eq!(
             locations.iter().map(|l| l.label).collect::<Vec<_>>(),
-            ["Home", "Desktop", "Documents"]
+            ["Home", "Desktop", "Documents", "Music", "Pictures", "Videos"]
         );
         assert_eq!(locations[1].path, root.join("Scrivania"));
         assert_eq!(locations[2].path, root.join("Documenti condivisi"));
+        assert_eq!(locations[3].path, root.join("Musica"));
+        assert_eq!(locations[4].path, root.join("Immagini"));
+        assert_eq!(locations[5].path, root.join("Video"));
     }
 }
