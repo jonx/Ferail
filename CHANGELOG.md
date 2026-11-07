@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Empty Trash is available from the Trash sidebar menu.** It uses the same
+  confirmation as the existing File menu command.
+
 - Linux: add the Trash sidebar location, restore from freedesktop metadata without replacing existing files, and empty trash with metadata cleanup.
 
 - **Going up to a parent folder selects the folder you came from and scrolls
