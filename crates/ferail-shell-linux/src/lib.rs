@@ -25,8 +25,8 @@
 //!
 //! The signatures below are the exact subset of `ferail-shell-mac` /
 //! `ferail-shell-win32` that gpui invokes through the alias. Callback bounds
-//! match **macOS** (`Box<dyn Fn(..) + 'static>`, no `Send`): the proven-green
-//! contract. `docs/features/linux-port.md` §6 maps every still-stubbed function
+//! match **macOS** except the Linux volume callback, which is `Send` because
+//! UDisks signals arrive on a worker. `docs/features/linux-port.md` §6 maps every still-stubbed function
 //! to the freedesktop / D-Bus / XDG mechanism to reach for; run all blocking
 //! work off the UI thread.
 //!
@@ -38,6 +38,9 @@
 //! observers, and video: these
 //! need richer `ashpd`/`zbus`/`gstreamer` integration (linux-port.md §6).
 //! (Trash and download-provenance live in `ferail-fs-native`, not here.)
+
+#[cfg(target_os = "linux")]
+pub mod volumes;
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -1336,8 +1339,13 @@ pub fn app_bundle_path() -> Option<String> {
 // Volumes / power
 // =============================================================
 
-/// Observe volume mount/unmount. Real impl: udisks2 `InterfacesAdded/Removed`
-/// signals (or `GVolumeMonitor`); call `callback` on each change. Stub.
+/// Observe UDisks2 changes on a worker and refresh the cached device list.
+#[cfg(target_os = "linux")]
+pub fn start_volume_observer(callback: Box<dyn Fn() + Send + 'static>) {
+    volumes::observe(callback);
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static>) {}
 
 /// Observe power transitions (sleep/wake). Real impl: `org.freedesktop.login1`

@@ -246,9 +246,12 @@ pub struct ProcessState {
     /// and hints are memory-only and evicted with the small preview cache.
     pub folder_sidecar_cache: RefCell<FolderSidecarCache>,
 
-    /// Mounted volumes. Refreshed lazily today; `RefCell` so a future
-    /// Disk Arbitration listener can refresh it from any window.
+    /// Cached mounted volumes, shared by every window.
     pub volumes: RefCell<Vec<VolumeInfo>>,
+    #[cfg(target_os = "linux")]
+    pub linux_filesystems: RefCell<Option<Vec<ferail_shell_linux::volumes::Filesystem>>>,
+    #[cfg(target_os = "linux")]
+    pub linux_mounting: RefCell<std::collections::HashSet<String>>,
 
     /// Well-known Location paths macOS reports as iCloud items, mapped to
     /// their `CloudState` (downloaded vs not-downloaded placeholder), e.g.
@@ -420,6 +423,10 @@ impl ProcessState {
             // GetVolumeInformationW block for the SMB timeout, running it
             // here delayed the first window by up to ~45s.
             volumes: RefCell::new(Vec::new()),
+            #[cfg(target_os = "linux")]
+            linux_filesystems: RefCell::new(None),
+            #[cfg(target_os = "linux")]
+            linux_mounting: RefCell::new(std::collections::HashSet::new()),
             cloud_locations: RefCell::new(HashMap::new()),
             platform_locations: RefCell::new(
                 crate::platform_locations::PlatformLocations::default(),
@@ -725,8 +732,32 @@ async fn refresh_volumes(cx: &mut gpui::AsyncApp) {
         .background_executor()
         .spawn(async { (list_volumes(), ferail_fs_native::cloud_synced_locations()) })
         .await;
+    #[cfg(target_os = "linux")]
+    let mut filesystems = cx.background_executor()
+        .spawn(async { ferail_shell_linux::volumes::list_filesystems() }).await;
+    #[cfg(target_os = "linux")]
+    if let Ok(filesystems) = &mut filesystems {
+        for volume in &vols {
+            if !filesystems.iter().any(|filesystem| filesystem.mount_point.as_ref() == Some(&volume.path)) {
+                filesystems.push(ferail_shell_linux::volumes::Filesystem {
+                    object_path: format!("mounted:{}", volume.path.display()),
+                    name: volume.name.clone(),
+                    mount_point: Some(volume.path.clone()),
+                    ejectable: volume.is_removable,
+                });
+            }
+        }
+    }
     cx.update(|cx| {
         let process = process_state(cx);
+        #[cfg(target_os = "linux")]
+        match filesystems {
+            Ok(filesystems) => *process.linux_filesystems.borrow_mut() = Some(filesystems),
+            Err(error) => {
+                crate::log_warn!(90, "UDisks volume discovery: {error}");
+                *process.linux_filesystems.borrow_mut() = None;
+            }
+        }
         *process.volumes.borrow_mut() = vols;
         *process.cloud_locations.borrow_mut() = clouds;
         process

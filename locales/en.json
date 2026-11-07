@@ -255,6 +255,7 @@
     },
     "Could not calculate SHA-256: {detail}": "Could not calculate SHA-256: {detail}",
     "Could not create checksum file: {detail}": "Could not create checksum file: {detail}",
+    "Could not mount volume: {error}": "Could not mount volume: {error}",
     "Could not open item: {error}": "Could not open item: {error}",
     "Could not open text editor: {error}": "Could not open text editor: {error}",
     "Could not open the Windows location": "Could not open the Windows location",

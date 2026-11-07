@@ -255,6 +255,7 @@
     },
     "Could not calculate SHA-256: {detail}": "Impossible de calculer le SHA-256 : {detail}",
     "Could not create checksum file: {detail}": "Impossible de créer le fichier de contrôle : {detail}",
+    "Could not mount volume: {error}": "Impossible de monter le volume : {error}",
     "Could not open item: {error}": "Impossible d’ouvrir l’élément : {error}",
     "Could not open text editor: {error}": "Impossible d’ouvrir l’éditeur de texte : {error}",
     "Could not open the Windows location": "Impossible d’ouvrir l’emplacement Windows",

@@ -6,6 +6,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
+## Unreleased
+
+- **Connected Linux filesystems appear before they are mounted.** Click to
+  mount through UDisks2 and open the volume. Device changes refresh the
+  sidebar; mounted volumes retain their menus, drag-and-drop and eject button.
+
 ## 0.7.10 - 2026-11-07
 
 - **The screen stays on while a video plays or a slideshow runs.** The viewer

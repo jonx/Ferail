@@ -172,6 +172,9 @@ from `tint_color` against the theme's chart palette.
 
 ## Sidebar Locations (well-known folders)
 
+The Linux device list uses `nav/drive.svg` and the existing `nav/eject.svg`
+affordance for mounted removable volumes.
+
 Mapped in [`well_known_locations`](../../crates/ferail-fs-native/src/paths.rs).
 All local, all Lucide-derived.
 

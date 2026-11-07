@@ -422,6 +422,8 @@ pub enum ShellSidebarItem {
     Favorites(crate::favorites_section::FavoritesSection),
     Recents(crate::recents_section::RecentsSection),
     Tree(TreeSection),
+    #[cfg(target_os = "linux")]
+    LinuxVolumes(crate::linux_volumes::LinuxVolumesSection),
 }
 
 impl ShellSidebarItem {
@@ -464,6 +466,8 @@ impl Collapsible for ShellSidebarItem {
             ShellSidebarItem::Favorites(f) => f.is_collapsed(),
             ShellSidebarItem::Recents(r) => r.is_collapsed(),
             ShellSidebarItem::Tree(t) => t.is_collapsed(),
+            #[cfg(target_os = "linux")]
+            ShellSidebarItem::LinuxVolumes(v) => v.is_collapsed(),
         }
     }
     fn collapsed(self, c: bool) -> Self {
@@ -481,6 +485,8 @@ impl Collapsible for ShellSidebarItem {
             ShellSidebarItem::Favorites(f) => ShellSidebarItem::Favorites(f.collapsed(c)),
             ShellSidebarItem::Recents(r) => ShellSidebarItem::Recents(r.collapsed(c)),
             ShellSidebarItem::Tree(t) => ShellSidebarItem::Tree(t.collapsed(c)),
+            #[cfg(target_os = "linux")]
+            ShellSidebarItem::LinuxVolumes(v) => ShellSidebarItem::LinuxVolumes(v.collapsed(c)),
         }
     }
 }
@@ -502,6 +508,8 @@ impl SidebarItem for ShellSidebarItem {
             ShellSidebarItem::Favorites(f) => f.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Recents(r) => r.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Tree(t) => t.render(id, window, cx).into_any_element(),
+            #[cfg(target_os = "linux")]
+            ShellSidebarItem::LinuxVolumes(v) => v.render(id, window, cx).into_any_element(),
         }
     }
 }
@@ -556,7 +564,7 @@ impl SidebarItem for TreeSection {
 /// folder/volume icon renders between the caret and the label, with
 /// the icon cache keyed by path so /Volumes/Foo gets its custom icon
 /// rather than the generic blue-folder.
-fn render_tree_row(
+pub(crate) fn render_tree_row(
     spec: TreeRowSpec,
     shell: WeakEntity<Shell>,
     icons: Rc<RefCell<IconCache>>,
@@ -863,7 +871,7 @@ fn render_tree_row(
                 }
             });
         row = row.child(caret);
-    } else if !icon_only {
+    } else if !icon_only && !matches!(icon, TreeRowIcon::Volume | TreeRowIcon::Network) {
         row = row.child(div().flex_shrink_0().w(px(16.0)));
     }
 
