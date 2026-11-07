@@ -1059,7 +1059,8 @@ pub fn show_quick_look(_paths: &[&Path]) -> Result<(), String> {
 /// stale entry: the source is newer than the cached PNG) it regenerates with
 /// `gdk-pixbuf-thumbnailer`, which writes the spec `Thumb::*` tEXt chunks.
 ///
-/// On a PDF cache miss, Poppler's `pdftoppm` renders the first page in memory.
+/// On a PDF cache miss, Poppler's `pdftoppm` renders the first page and saves
+/// it with the source URI and modification time in the shared cache.
 /// Other misses use gdk-pixbuf's image loaders; unsupported formats return
 /// `None` and fall back to the type icon.
 ///
@@ -1072,7 +1073,8 @@ pub fn fetch_quick_look_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>,
         return None;
     }
     let (bucket, dim) = thumb_bucket(size_px);
-    let digest = thumb_md5(&file_uri(path));
+    let uri = file_uri(path);
+    let digest = thumb_md5(&uri);
     let cache_path = thumbnails_cache_dir()?
         .join(bucket)
         .join(format!("{digest}.png"));
@@ -1145,6 +1147,34 @@ pub fn fetch_quick_look_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>,
             }
             let rgba = image::load_from_memory(&bytes).ok()?.to_rgba8();
             let (width, height) = rgba.dimensions();
+            // A failed cache write must not discard a successful preview.
+            let _ = (|| -> Option<()> {
+                use std::os::unix::fs::DirBuilderExt;
+                let parent = cache_path.parent()?;
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(parent)
+                    .ok()?;
+                let mut file = tempfile::NamedTempFile::new_in(parent).ok()?;
+                let mut encoder = png::Encoder::new(&mut file, width, height);
+                encoder.set_color(png::ColorType::Rgba);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder.add_text_chunk("Thumb::URI".into(), uri).ok()?;
+                let mtime = meta
+                    .modified()
+                    .ok()?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()?;
+                encoder
+                    .add_text_chunk("Thumb::MTime".into(), mtime.as_secs().to_string())
+                    .ok()?;
+                let mut writer = encoder.write_header().ok()?;
+                writer.write_image_data(&rgba).ok()?;
+                writer.finish().ok()?;
+                file.persist(&cache_path).ok()?;
+                Some(())
+            })();
             return Some((rgba.into_raw(), width, height));
         }
         std::fs::create_dir_all(cache_path.parent()?).ok()?;
@@ -1829,6 +1859,59 @@ mod tests {
         assert_eq!(rgba.len(), (width * height * 4) as usize);
         let pixel = ((height * 9 / 10 * width + width / 10) * 4) as usize;
         assert_eq!(&rgba[pixel..pixel + 4], &[255, 0, 0, 255]);
+        if std::env::var_os("FERAIL_PDF_UNWRITABLE_CACHE_TEST").is_some() {
+            return;
+        }
+        let cache = thumbnails_cache_dir()
+            .unwrap()
+            .join("normal")
+            .join(format!("{}.png", thumb_md5(&file_uri(&path))));
+        let decoder = png::Decoder::new(std::io::BufReader::new(
+            std::fs::File::open(&cache).unwrap(),
+        ));
+        let reader = decoder.read_info().unwrap();
+        let chunks = &reader.info().uncompressed_latin1_text;
+        assert!(
+            chunks
+                .iter()
+                .any(|c| c.keyword == "Thumb::URI" && c.text == file_uri(&path))
+        );
+        let modified = path.metadata().unwrap().modified().unwrap();
+        let mtime = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string();
+        assert!(
+            chunks
+                .iter()
+                .any(|c| c.keyword == "Thumb::MTime" && c.text == mtime)
+        );
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(0).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        assert_eq!(fetch_preview_image(&path, 128), Some((rgba, width, height)));
+        file.set_times(
+            std::fs::FileTimes::new()
+                .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(2)),
+        )
+        .unwrap();
+        assert!(fetch_preview_image(&path, 128).is_none());
+        std::fs::remove_file(cache).unwrap();
+        let blocked_cache = dir.join("cache-file");
+        std::fs::write(&blocked_cache, b"not a directory").unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "tests::pdf_preview_renders_first_page_without_extension",
+            ])
+            .env("FERAIL_PDF_UNWRITABLE_CACHE_TEST", "1")
+            .env("XDG_CACHE_HOME", blocked_cache)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
     }
 
     #[cfg(target_os = "linux")]

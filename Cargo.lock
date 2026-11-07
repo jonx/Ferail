@@ -2225,6 +2225,8 @@ dependencies = [
  "image",
  "libc",
  "md-5 0.11.0",
+ "png 0.18.1",
+ "tempfile",
  "url",
  "wl-clipboard-rs",
  "zip",
