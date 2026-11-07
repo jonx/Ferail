@@ -6,6 +6,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
+## Unreleased
+
+- **Opening items on Linux clears their selection.** Entering a folder no
+  longer automatically selects its first item. Arrow navigation starts at the
+  first item when the selection is empty.
+
 ## 0.7.10 - 2026-11-07
 
 - **The screen stays on while a video plays or a slideshow runs.** The viewer

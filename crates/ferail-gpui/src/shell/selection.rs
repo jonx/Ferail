@@ -766,19 +766,18 @@ impl Shell {
         }
         let page = 12i64;
         let last = len as i64 - 1;
-        let cur_idx: i64 = self
+        let cur_idx = self
             .active_tab()
             .lead
             .and_then(|id| entries.iter().position(|x| *x == id))
-            .map(|i| i as i64)
-            .unwrap_or(0);
-        let next: i64 = match delta {
-            SelectionDelta::Up => cur_idx - 1,
-            SelectionDelta::Down => cur_idx + 1,
-            SelectionDelta::PageUp => cur_idx - page,
-            SelectionDelta::PageDown => cur_idx + page,
-            SelectionDelta::First => 0,
-            SelectionDelta::Last => last,
+            .map(|i| i as i64);
+        let next = match (delta, cur_idx) {
+            (SelectionDelta::Last, _) => last,
+            (_, None) | (SelectionDelta::First, _) => 0,
+            (SelectionDelta::Up, Some(current)) => current - 1,
+            (SelectionDelta::Down, Some(current)) => current + 1,
+            (SelectionDelta::PageUp, Some(current)) => current - page,
+            (SelectionDelta::PageDown, Some(current)) => current + page,
         };
         let clamped = next.clamp(0, last) as usize;
         let new_lead = entries[clamped];
@@ -838,13 +837,13 @@ impl Shell {
             return;
         }
         let last = len as i64 - 1;
-        let cur_idx: i64 = self
+        let next = self
             .active_tab()
             .lead
             .and_then(|id| entries.iter().position(|x| *x == id))
-            .map(|i| i as i64)
+            .map(|i| i as i64 + step)
             .unwrap_or(0);
-        let clamped = (cur_idx + step).clamp(0, last) as usize;
+        let clamped = next.clamp(0, last) as usize;
         let new_lead = entries[clamped];
         if extend {
             let tab = self.active_tab_mut();
