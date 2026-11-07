@@ -1327,9 +1327,9 @@ pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) -> SetIconResult {
 /// Wayland `app_id`'s job).
 pub fn set_app_user_model_id(_id: &str) {}
 
-/// The app bundle path. No bundle concept on Linux: `None`.
+/// The running executable, used by Diagnostics and its Reveal action.
 pub fn app_bundle_path() -> Option<String> {
-    None
+    std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned())
 }
 
 // =============================================================
