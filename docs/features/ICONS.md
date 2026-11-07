@@ -172,6 +172,8 @@ from `tint_color` against the theme's chart palette.
 
 ## Sidebar Locations (well-known folders)
 
+Recents reuses these glyphs and labels for paths matching a cached Location.
+
 Mapped in [`well_known_locations`](../../crates/ferail-fs-native/src/paths.rs).
 All local, all Lucide-derived.
 

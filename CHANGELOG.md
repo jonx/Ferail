@@ -6,6 +6,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
+## Unreleased
+
+- **Recent special folders use their sidebar names and icons.** The Linux
+  Trash appears as Trash rather than its internal `files` directory.
+
 ## 0.7.10 - 2026-11-07
 
 - **The screen stays on while a video plays or a slideshow runs.** The viewer

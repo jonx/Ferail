@@ -226,11 +226,29 @@ fn render_recent_row(
 ) -> AnyElement {
     let RecentRowLayout { icon_px, icon_only } = layout;
     let theme = cx.theme();
-    let label = row_label(path);
+    let locations = crate::special_folders::locations(cx);
+    let location = locations.iter().find(|location| location.path == path);
+    let label = location
+        .map(|location| crate::i18n::tr_static(location.label).to_string())
+        .unwrap_or_else(|| row_label(path));
     let collapsed_tooltip: SharedString = label.clone().into();
     let is_active = active_path == Some(path);
     let row_key: SharedString = format!("recent-row-{index}").into();
-    let icon = icons.borrow_mut().folder_icon_for(path);
+    let icon = if let Some(location) = location {
+        gpui::svg()
+            .path(location.icon)
+            .icon_px(icon_px)
+            .text_color(if is_active {
+                theme.sidebar_accent_foreground
+            } else {
+                theme.sidebar_foreground
+            })
+            .into_any_element()
+    } else {
+        img(icons.borrow_mut().folder_icon_for(path))
+            .icon_px(icon_px)
+            .into_any_element()
+    };
 
     let mut row = h_flex()
         .id(ElementId::Name(row_key))
@@ -262,7 +280,7 @@ fn render_recent_row(
         div()
             .flex_shrink_0()
             .icon_px(icon_px)
-            .child(img(icon).icon_px(icon_px)),
+            .child(icon),
     );
     if !icon_only {
         row = row.child(
