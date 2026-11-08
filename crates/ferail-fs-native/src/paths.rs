@@ -4,7 +4,8 @@
 //! sidebar's "Locations" are resolved per platform: on Windows via
 //! `SHGetKnownFolderPath`, which returns the *real* (possibly OneDrive-
 //! redirected / moved) folder rather than a literal `%USERPROFILE%\Pictures`
-//! that may not exist; on macOS/Unix by joining the standard subfolder name.
+//! that may not exist; on Linux from XDG user directories; on other Unix systems
+//! by joining the standard subfolder name.
 
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
@@ -378,7 +379,7 @@ pub fn well_known_locations() -> Vec<WellKnownLocation> {
 
 /// Per-platform canonical Locations list in sidebar order.
 ///
-/// macOS / Unix: `home_dir()` joined with the standard subfolder name (or
+/// macOS / other Unix: `home_dir()` joined with the standard subfolder name (or
 /// `home_dir()` itself for "Home"). `mode` is Windows-only and ignored here.
 /// AROS: the Unix "home joined with Desktop/Documents/Downloads" scheme does
 /// not apply: those drawers do not exist on a stock AROS volume, and
@@ -412,6 +413,52 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         .collect()
 }
 
+#[cfg(target_os = "linux")]
+pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocation> {
+    ferail_core::path_guard::assert_off_ui_thread("well_known_locations_for");
+    let home = home_dir();
+    [
+        (
+            ferail_core::msgid!("Home"),
+            Some(home.clone()),
+            "icons/nav/home.svg",
+        ),
+        (
+            ferail_core::msgid!("Desktop"),
+            dirs::desktop_dir().filter(|path| path != &home),
+            "icons/nav/desktop.svg",
+        ),
+        (
+            ferail_core::msgid!("Documents"),
+            dirs::document_dir().filter(|path| path != &home),
+            "icons/nav/documents.svg",
+        ),
+        (
+            ferail_core::msgid!("Downloads"),
+            dirs::download_dir().filter(|path| path != &home),
+            "icons/nav/downloads.svg",
+        ),
+        (
+            ferail_core::msgid!("Music"),
+            dirs::audio_dir().filter(|path| path != &home),
+            "icons/nav/music.svg",
+        ),
+        (
+            ferail_core::msgid!("Pictures"),
+            dirs::picture_dir().filter(|path| path != &home),
+            "icons/nav/pictures.svg",
+        ),
+        (
+            ferail_core::msgid!("Videos"),
+            dirs::video_dir().filter(|path| path != &home),
+            "icons/nav/movies.svg",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(label, path, icon)| path.map(|path| WellKnownLocation { label, path, icon }))
+    .collect()
+}
+
 /// `true` when `dir` exists and holds at least one non-dotfile entry.
 ///
 /// Used to decide whether an optional sidebar row is worth drawing at all, so
@@ -426,7 +473,7 @@ fn dir_has_visible_entry(dir: &std::path::Path) -> bool {
     })
 }
 
-#[cfg(all(not(windows), not(target_os = "aros")))]
+#[cfg(all(not(windows), not(target_os = "aros"), not(target_os = "linux")))]
 pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocation> {
     let home = home_dir();
     let entries: &[(&'static str, Option<&'static str>, &'static str)] = {
@@ -988,5 +1035,52 @@ mod aros_write_contract_tests {
         let nested = std::path::Path::new(OsStr::from_bytes(b"WORK:dir/caf\xe9.tar.gz"));
         assert_eq!(os_parent(nested).unwrap(), std::path::Path::new("WORK:dir"));
         assert_eq!(os_file_stem(nested).unwrap().as_bytes(), b"caf\xe9.tar");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod xdg_tests {
+    use super::*;
+
+    #[test]
+    fn localized_and_disabled_locations() {
+        let root = std::env::temp_dir().join(format!("ferail-xdg-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let config = root.join("user-dirs.dirs");
+        for disabled in ["$HOME".to_owned(), root.display().to_string()] {
+            std::fs::write(&config, format!(
+                "XDG_DESKTOP_DIR=\"{}/Scrivania\"\nXDG_DOCUMENTS_DIR=\"{}/Documenti condivisi\"\nXDG_DOWNLOAD_DIR=\"{disabled}\"\nXDG_MUSIC_DIR=\"{}/Musica\"\nXDG_PICTURES_DIR=\"{}/Immagini\"\nXDG_VIDEOS_DIR=\"{}/Video\"\n",
+                root.display(), root.display(), root.display(), root.display(), root.display(),
+            )).unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "paths::xdg_tests::isolated_locations",
+                ])
+                .env("HOME", &root)
+                .env("XDG_CONFIG_HOME", &root)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+        }
+        std::fs::remove_file(config).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "run by localized_and_disabled_locations with an isolated XDG config"]
+    fn isolated_locations() {
+        let root = PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").unwrap());
+        let locations = well_known_locations();
+        assert_eq!(
+            locations.iter().map(|l| l.label).collect::<Vec<_>>(),
+            ["Home", "Desktop", "Documents", "Music", "Pictures", "Videos"]
+        );
+        assert_eq!(locations[1].path, root.join("Scrivania"));
+        assert_eq!(locations[2].path, root.join("Documenti condivisi"));
+        assert_eq!(locations[3].path, root.join("Musica"));
+        assert_eq!(locations[4].path, root.join("Immagini"));
+        assert_eq!(locations[5].path, root.join("Video"));
     }
 }

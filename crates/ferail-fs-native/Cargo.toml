@@ -130,6 +130,7 @@ libc = "0.2"
 xattr = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+dirs = "6"
 freedesktop-icons = "0.4"
 resvg = "0.45"
 # move_to_trash → the freedesktop Trash spec (XDG Trash + per-volume

@@ -2106,6 +2106,7 @@ dependencies = [
  "cc",
  "crc32fast",
  "delharc",
+ "dirs 6.0.0",
  "ferail-archive",
  "ferail-core",
  "ferail-disk-usage",
