@@ -491,6 +491,11 @@ fn avail_anchor_file(t: &MenuTargets) -> bool {
 /// always sees the user-visible subset, no per-cell skipping.
 pub struct FileListDelegate {
     pub entries: Vec<FileEntry>,
+    /// Live on-screen width of the Name and Path cells, keyed by column key,
+    /// as measured by the cells themselves on the last frame. The table only
+    /// reports a resized column's width when the drag ends, so without this
+    /// the names kept their old elision until the mouse was released.
+    live_widths: LiveWidths,
     /// Tree metadata for archive rows, parallel to `entries` (same shape as
     /// `tags` / `heats`). **Empty for ordinary directory listings**, which is
     /// what keeps this addition inert for normal browsing: the Name cell only
@@ -1238,6 +1243,40 @@ fn flat_entry_matches(
     expr.text_matches(&haystack) && expr.metadata_matches(entry)
 }
 
+/// Per-column cell widths measured during paint (see
+/// [`FileListDelegate::live_widths`]). In-memory only: render reads it, the
+/// cells' prepaint writes it.
+#[derive(Clone, Default)]
+struct LiveWidths(std::rc::Rc<std::cell::RefCell<HashMap<SharedString, f32>>>);
+
+impl LiveWidths {
+    fn get(&self, key: &str) -> Option<f32> {
+        self.0.borrow().get(key).copied()
+    }
+
+    /// An invisible element covering the cell that records its width and,
+    /// when the width moved by at least a pixel, asks for one more frame so
+    /// the text re-elides against it. Every row of a column measures the
+    /// same width, so this settles after one extra frame.
+    fn probe(&self, key: SharedString) -> impl IntoElement {
+        let widths = self.clone();
+        gpui::canvas(
+            move |bounds, window, _cx| {
+                let width = f32::from(bounds.size.width);
+                let previous = widths.0.borrow_mut().insert(key.clone(), width);
+                if previous.is_none_or(|old| (old - width).abs() >= 1.0) {
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+    }
+}
+
 impl FileListDelegate {
     pub fn new(
         fs: Arc<NativeFs>,
@@ -1257,6 +1296,7 @@ impl FileListDelegate {
             split_persisted_columns(crate::app_state::load().list_columns.as_deref());
         Self {
             entries: Vec::new(),
+            live_widths: LiveWidths::default(),
             archive_rows: Vec::new(),
             archive_view: None,
             // Next-level Phase 1: Magic-driven `Format` column
@@ -2999,7 +3039,7 @@ impl TableDelegate for FileListDelegate {
         &mut self,
         row_ix: usize,
         col_ix: usize,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let _path_guard = ferail_core::path_guard::enter_render();
@@ -3130,17 +3170,27 @@ impl TableDelegate for FileListDelegate {
                     self.selected_set.contains(&entry.id)
                 };
                 let tooltip_name = display_name.clone();
-                let column_width = self
-                    .columns
-                    .get(col_ix)
-                    .map(|column| f32::from(column.width))
-                    .unwrap_or(240.0);
+                let column_width = self.live_widths.get("name").unwrap_or_else(|| {
+                    self.columns
+                        .get(col_ix)
+                        .map(|column| f32::from(column.width))
+                        .unwrap_or(240.0)
+                });
+                // Glyph advances scale with the UI zoom (rem-relative text).
+                let scale = f32::from(window.rem_size()) / 16.0;
                 // Hazard names are several independent text runs, so GPUI
                 // cannot apply its ordinary pixel-exact ellipsis across the
-                // whole label. Use a deliberately conservative advance here
+                // whole label. Use a deliberately conservative advance there
                 // (including badge padding) so the semantic elider always
-                // wins before the cell's hard edge can clip a suffix.
-                let name_budget = ((column_width - 52.0) / 9.0).floor().max(10.0) as usize;
+                // wins before the cell's hard edge can clip a suffix. Plain
+                // names keep the middle ellipsis as an exact fallback, so
+                // their estimate can be close to the real average advance.
+                let name_budget = if entry.name_has_hazards {
+                    ((column_width - 52.0 * scale) / (9.0 * scale)).floor()
+                } else {
+                    ((column_width - 44.0 * scale) / (7.0 * scale)).floor()
+                }
+                .max(10.0) as usize;
                 let elided_name = elide_label(display_name.as_ref(), name_budget);
                 let name_child: gpui::AnyElement = if let Some((input, session)) = inline_session {
                     crate::inline_edit::InlineEditor::new(
@@ -3211,6 +3261,8 @@ impl TableDelegate for FileListDelegate {
                 let tree_affordance = self.archive_tree_affordance(row_ix, cx);
                 div()
                     .id(("file-row-name", row_ix))
+                    .relative()
+                    .child(self.live_widths.probe("name".into()))
                     .flex()
                     .items_center()
                     .gap_2()
@@ -3379,15 +3431,20 @@ impl TableDelegate for FileListDelegate {
                 } else {
                     raw_path
                 };
-                let column_width = self
-                    .columns
-                    .get(col_ix)
-                    .map(|column| f32::from(column.width))
-                    .unwrap_or(280.0);
-                let path_budget = ((column_width - 16.0) / 6.5).floor().max(12.0) as usize;
+                let column_width = self.live_widths.get("path").unwrap_or_else(|| {
+                    self.columns
+                        .get(col_ix)
+                        .map(|column| f32::from(column.width))
+                        .unwrap_or(280.0)
+                });
+                let scale = f32::from(window.rem_size()) / 16.0;
+                let path_budget =
+                    ((column_width - 16.0 * scale) / (6.5 * scale)).floor().max(12.0) as usize;
                 let visible_path = elide_label(full_path.as_ref(), path_budget);
                 div()
                     .id(("flat-path", row_ix))
+                    .relative()
+                    .child(self.live_widths.probe("path".into()))
                     .min_w_0()
                     .truncate_middle()
                     .text_scale_xs()

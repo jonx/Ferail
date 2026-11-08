@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Long names follow the Name column as you resize it, and use its full
+  width.** Names kept the length they had before the drag until the mouse was
+  released, and stopped well short of the column's edge because their length
+  was estimated with a generous safety margin. They now re-fit on every frame
+  of the drag and run close to the edge, still keeping their beginning, a piece
+  of the middle and their end. The Path column of search results does the same.
+
 - **The Linux Trash is in the sidebar, with Restore and Empty Trash.** Items
   go back where they came from without replacing a file that has taken their
   place, and emptying the Trash also removes the records that describe them.
