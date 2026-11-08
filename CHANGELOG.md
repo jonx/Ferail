@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Empty the Trash from the Trash itself.** Opening the Trash shows a strip
+  above the list with an *Empty Trash…* button, so the command is no longer
+  only in the menus. It asks for the same confirmation.
+
 - **A failed Move to Trash shows its message again.** When an item could not
   be moved for lack of permission, the error offered a button to retry as an
   administrator, and that button's long label squeezed the message out of view,

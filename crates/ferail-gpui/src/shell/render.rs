@@ -4287,6 +4287,56 @@ impl Shell {
     /// reveal trigger is the screen edge itself, driven by the poll loop. It
     /// anchors opposite the dock edge because the drawer hides toward its dock
     /// edge, leaving that side on-screen as the strip.
+    /// Finder-style strip over the list while the active tab shows a trash
+    /// directory itself: names the place and offers Empty Trash, which
+    /// otherwise lives only in menus. Pure path comparison, no I/O, so it is
+    /// safe here; the button dispatches the same confirmed command as the
+    /// menu item.
+    fn trash_bar(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        use gpui_component::Sizable as _;
+        use gpui_component::button::Button;
+        let dir = &self.active_tab().current_dir;
+        if ferail_fs_native::trash_root_of(dir).as_deref() != Some(dir.as_path()) {
+            return None;
+        }
+        Some(
+            h_flex()
+                .flex_shrink_0()
+                .w_full()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .px_3()
+                .py_1()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().muted)
+                .text_scale_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            svg()
+                                .path("icons/nav/trash.svg")
+                                .icon_px(14.0)
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .child(tr!("Trash")),
+                )
+                .child(
+                    Button::new("trash-bar-empty")
+                        .label(tr!("Empty Trash\u{2026}"))
+                        .small()
+                        .outline()
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::shell::EmptyTrash), cx);
+                        }),
+                ),
+        )
+    }
+
     fn dock_handle(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
         let dock = self.dock.as_ref()?;
         if dock.progress >= 0.999 {
@@ -5239,6 +5289,7 @@ impl Render for Shell {
                                     .overflow_hidden()
                                     .child(tabstrip)
                                     .child(breadcrumb)
+                                    .children(self.trash_bar(cx))
                                     .child(file_body_wrapped),
                             ),
                     );

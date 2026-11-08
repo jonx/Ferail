@@ -188,7 +188,7 @@ All local, all Lucide-derived.
 | Desktop | `nav/desktop.svg` | `monitor` |
 | Documents | `nav/documents.svg` | `file-text` |
 | Downloads | `nav/downloads.svg` | `download` |
-| Trash | `nav/trash.svg` | `trash-2` |
+| Trash | `nav/trash.svg` | `trash-2`; also the place marker on the strip over the list while the Trash is open |
 | Movies / Videos | `nav/movies.svg` | `film` |
 | Music | `nav/music.svg` | `music` |
 | Pictures | `nav/pictures.svg` | `image` |
