@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **A failed Move to Trash shows its message again.** When an item could not
+  be moved for lack of permission, the error offered a button to retry as an
+  administrator, and that button's long label squeezed the message out of view,
+  leaving a tall, empty error. The button now sits under the message, next to
+  Copy.
+
 - **Long names follow the Name column as you resize it, and use its full
   width.** Names kept the length they had before the drag until the mouse was
   released, and stopped well short of the column's edge because their length

@@ -813,28 +813,32 @@ pub(crate) fn trash_failure_notification(
     } else {
         tr!("Move to Trash as administrator\u{2026}")
     };
-    let primary = retry.clone();
-    let note = Notification::error(headline).action(move |_, _, cx| {
-        let r = primary.clone();
-        Button::new("trash-elevated")
-            .label(label.clone())
-            .small()
-            .on_click(cx.listener(move |note, _, window, cx| {
-                let _ = r.shell.update(cx, |shell, cx| {
-                    shell.retry_trash_elevated(r.sources.clone(), r.delete, window, cx);
-                });
-                // Retire this failure toast: the elevated retry posts its own
-                // result toast (success / partial / cancelled), so leaving this
-                // one up would just stack a stale dialog the user must close.
-                note.dismiss(window, cx);
-            }))
-    });
-
-    note.content(move |_, _, _| {
+    // The elevated retry sits under the message next to Copy, not in the
+    // toast's trailing action slot: that slot does not shrink, and a label
+    // this long (French runs past 50 characters) squeezed the message column
+    // to nothing, leaving a tall, empty error toast.
+    Notification::error(headline).content(move |_, _, cx| {
         let copy_detail = copy_detail.clone();
+        let r = retry.clone();
         h_flex()
+            .flex_wrap()
             .gap_2()
             .pt_1()
+            .child(
+                Button::new("trash-elevated")
+                    .label(label.clone())
+                    .primary()
+                    .small()
+                    .on_click(cx.listener(move |note, _, window, cx| {
+                        let _ = r.shell.update(cx, |shell, cx| {
+                            shell.retry_trash_elevated(r.sources.clone(), r.delete, window, cx);
+                        });
+                        // Retire this failure toast: the elevated retry posts its
+                        // own result toast (success / partial / cancelled), so
+                        // leaving this one up would stack a stale dialog.
+                        note.dismiss(window, cx);
+                    })),
+            )
             .child(
                 Button::new("copy-trash-failure")
                     .label(tr!("Copy"))
