@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Recent special folders use their sidebar names and icons.** The Linux
+  Trash appears as Trash rather than its internal `files` directory.
+
 - **Linux diagnostics identifies the running executable.** Its path is
   available for inspection from the Diagnostics page.
 
