@@ -8,6 +8,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Linux diagnostics identifies the running executable.** Its path is
+  available for inspection from the Diagnostics page.
+
 - **The Linux sidebar includes Music, Pictures and Videos.** These shortcuts
   follow XDG user directories, including localized and disabled locations.
 

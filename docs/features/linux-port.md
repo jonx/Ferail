@@ -417,7 +417,7 @@ thread** (prime directive).
 | `start_system_theme_observer(cb)` | Subscribe to the portal `SettingChanged` signal for `org.freedesktop.appearance` / `color-scheme` (`ashpd` exposes a stream); fire the callback off-thread. |
 | `set_app_icon_from_png_bytes` | **No-op.** On Linux app identity/icon comes from a `.desktop` file + the Wayland `app_id` / X11 `WM_CLASS`, not a runtime swap. **Shipped:** `resources/linux/ferail.desktop` + the hicolor icon are installed by the cargo-deb assets, and every window sets `app_id = "ferail"` via `ferail_gpui::base_window_options()` (see §2). |
 | `set_app_user_model_id(id)` | **No-op** (Windows taskbar concept). The Wayland `app_id` plays the grouping role; ensure gpui sets it to match the `.desktop` file's basename. |
-| `app_bundle_path()` | `None` (no bundle concept), or the install prefix if ever useful. |
+| `app_bundle_path()` | The running executable's path, for Diagnostics and Reveal. |
 | `video_overlay_show` / `set_frame` / `remove` | GStreamer (`gstreamer` crate) or libmpv child surface floated over the viewer stage rect. Viewer-feature-sized; defer. See VIEWER.md. |
 | `install_app_menu`, `register_command_callback`, `set_tab_count`, `set_command_state`, `set_about_options` / `show_about_panel` | NSApp main-menu paradigm, no Linux global menu. Title-bar hamburger covers about/settings; make these no-ops for v1. |
 
