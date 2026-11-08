@@ -719,7 +719,7 @@ fn render_location_row(
     // rather than folding back into `element`.
     element
         .context_menu(move |menu, _window, cx| {
-            use crate::shell::{CopyContextPath, OpenContextInNewTab, RevealContextPath};
+            use crate::shell::{CopyContextPath, EmptyTrash, OpenContextInNewTab, RevealContextPath};
             // Stash the right-clicked path so the path-aware action handlers
             // know which path the user meant.
             if let Some(s) = shell_for_menu.upgrade() {
@@ -734,6 +734,10 @@ fn render_location_row(
                     Box::new(RevealContextPath),
                 )
                 .menu(tr!("Copy Path"), Box::new(CopyContextPath))
+                .when(ferail_fs_native::is_in_trash(&path_for_menu), |menu| {
+                    menu.separator()
+                        .menu(tr!("Empty Trash\u{2026}"), Box::new(EmptyTrash))
+                })
         })
         .into_any_element()
 }

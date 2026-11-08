@@ -69,7 +69,12 @@ pub fn empty_dirs(dirs: &[PathBuf], on_progress: &mut dyn FnMut(&EmptyProgress))
                     on_progress(progress);
                 }
             };
-            remove_tree(&item, &mut outcome.progress, &mut report)
+            let result = remove_tree(&item, &mut outcome.progress, &mut report);
+            #[cfg(target_os = "linux")]
+            let result = result.and_then(|()| {
+                crate::linux_trash::forget(&item).map_err(|error| (error, item.clone()))
+            });
+            result
         };
         match result {
             Ok(()) => outcome.items_deleted += 1,

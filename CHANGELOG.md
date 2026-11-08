@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The Linux Trash is in the sidebar, with Restore and Empty Trash.** Items
+  go back where they came from without replacing a file that has taken their
+  place, and emptying the Trash also removes the records that describe them.
+
+- **Empty Trash is available from the Trash sidebar menu.** It uses the same
+  confirmation as the existing File menu command.
+
 - **Connected Linux filesystems appear before they are mounted.** Click to
   mount through UDisks2 and open the volume. Device changes refresh the
   sidebar; mounted volumes retain their menus, drag-and-drop and eject button.

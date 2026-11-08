@@ -417,7 +417,7 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
 pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocation> {
     ferail_core::path_guard::assert_off_ui_thread("well_known_locations_for");
     let home = home_dir();
-    [
+    let mut locations = [
         (
             ferail_core::msgid!("Home"),
             Some(home.clone()),
@@ -456,7 +456,14 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
     ]
     .into_iter()
     .filter_map(|(label, path, icon)| path.map(|path| WellKnownLocation { label, path, icon }))
-    .collect()
+    .collect::<Vec<_>>();
+    // The primary freedesktop Trash payload directory: a pure path, no stat.
+    locations.push(WellKnownLocation {
+        label: ferail_core::msgid!("Trash"),
+        path: crate::linux_trash::home_files(),
+        icon: "icons/nav/trash.svg",
+    });
+    locations
 }
 
 /// `true` when `dir` exists and holds at least one non-dotfile entry.
@@ -1075,7 +1082,7 @@ mod xdg_tests {
         let locations = well_known_locations();
         assert_eq!(
             locations.iter().map(|l| l.label).collect::<Vec<_>>(),
-            ["Home", "Desktop", "Documents", "Music", "Pictures", "Videos"]
+            ["Home", "Desktop", "Documents", "Music", "Pictures", "Videos", "Trash"]
         );
         assert_eq!(locations[1].path, root.join("Scrivania"));
         assert_eq!(locations[2].path, root.join("Documenti condivisi"));
