@@ -2230,6 +2230,7 @@ dependencies = [
  "tempfile",
  "url",
  "wl-clipboard-rs",
+ "zbus",
  "zip",
 ]
 

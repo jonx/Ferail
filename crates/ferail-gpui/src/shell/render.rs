@@ -605,6 +605,51 @@ impl Shell {
         rows
     }
 
+    #[cfg(target_os = "linux")]
+    fn build_linux_volumes_section(&self, shell: WeakEntity<Self>, cx: &App) -> Option<crate::linux_volumes::LinuxVolumesSection> {
+        let filesystems = self.process.linux_filesystems.borrow();
+        let filesystems = filesystems.as_ref().filter(|filesystems| !filesystems.is_empty())?;
+        let active = filesystems.iter().filter_map(|filesystem| filesystem.mount_point.as_ref())
+            .filter(|path| self.active_tab().current_dir.starts_with(path))
+            .max_by_key(|path| path.components().count());
+        let volumes = self.process.volumes.borrow();
+        let favorites = self.process.favorites().read(cx);
+        let mut mounted = Vec::new();
+        let mut unmounted = Vec::new();
+        for filesystem in filesystems {
+            let Some(path) = &filesystem.mount_point else {
+                unmounted.push(filesystem.clone());
+                continue;
+            };
+            let volume = volumes.iter().find(|volume| volume.path == *path);
+            mounted.push(TreeRowSpec {
+                node_id: self.sidebar_node_id(path),
+                path: path.clone(),
+                label: if volume.is_some_and(|volume| !volume.responding) {
+                    tr!("{name} (not responding)", name = filesystem.name)
+                } else {
+                    filesystem.name.clone().into()
+                },
+                depth: 0,
+                guides: Vec::new(),
+                is_expandable: false,
+                is_expanded: false,
+                is_active: active == Some(path),
+                capacity: volume.and_then(|volume| volume.total_bytes.zip(volume.available_bytes))
+                    .filter(|(total, _)| *total > 0),
+                icon: if volume.is_some_and(|volume| !volume.is_local) { TreeRowIcon::Network } else { TreeRowIcon::Volume },
+                favorited: favorites.contains_path(path),
+                ejectable: filesystem.ejectable,
+                dimmed: volume.is_some_and(|volume| !volume.responding),
+            });
+        }
+        Some(crate::linux_volumes::LinuxVolumesSection {
+            mounted, unmounted, icons: self.process.icons.clone(), shell,
+            section_collapsed: self.sidebar_layout.is_collapsed(crate::sidebar_layout::SidebarSection::Volumes),
+            icon_only: false,
+        })
+    }
+
     /// Recursively append children of `parent` (and their expanded
     /// descendants) to `rows`. Reads from `tree_children` only:
     /// callers must have called `ensure_tree_children` first
@@ -4425,6 +4470,12 @@ impl Render for Shell {
         }
         if let Some(recents_section) = recents_section {
             sections.push((SidebarSection::Recents, recents_section));
+        }
+        #[cfg(target_os = "linux")]
+        let has_volumes = has_volumes && self.process.linux_filesystems.borrow().is_none();
+        #[cfg(target_os = "linux")]
+        if let Some(section) = self.build_linux_volumes_section(weak.clone(), cx) {
+            sections.push((SidebarSection::Volumes, ShellSidebarItem::LinuxVolumes(section)));
         }
         if has_volumes {
             sections.push((

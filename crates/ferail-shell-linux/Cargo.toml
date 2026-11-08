@@ -17,9 +17,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Linux-only shell deps. Kept under cfg(target_os = "linux") so the crate still
 # compiles on macOS/Windows as a workspace member (the cfg(not(linux)) stub arms).
-# The remaining work (X11 file clipboard, thumbnails, dark/volume/power
-# observers, video) will pull `ashpd`/`zbus`/`gstreamer` - see
-# docs/features/linux-port.md §6.
 [target.'cfg(target_os = "linux")'.dependencies]
 # copy_to_clipboard - plain-text clipboard over Wayland + X11.
 arboard = "3"
@@ -31,3 +28,4 @@ wl-clipboard-rs = "0.9"
 url = "2"
 async-channel = "2"
 libc = "0.2"
+zbus = "5"

@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Connected Linux filesystems appear before they are mounted.** Click to
+  mount through UDisks2 and open the volume. Device changes refresh the
+  sidebar; mounted volumes retain their menus, drag-and-drop and eject button.
+
 - **Opening items on Linux clears their selection.** Entering a folder no
   longer automatically selects its first item. Arrow navigation starts at the
   first item when the selection is empty.

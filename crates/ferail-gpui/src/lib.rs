@@ -50,6 +50,8 @@ pub mod inline_edit;
 pub mod keyboard_help;
 pub mod keymap;
 pub mod locations_section;
+#[cfg(target_os = "linux")]
+pub mod linux_volumes;
 pub mod menu_plan;
 pub mod multi_table;
 pub mod obs;
