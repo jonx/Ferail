@@ -29,7 +29,7 @@ pub use ferail_design::TextSize;
 pub const BASE_REM_PX: f32 = 16.0;
 
 /// Resolve a tier to the rem-relative font size used everywhere.
-fn tier_rems(size: TextSize) -> gpui::Rems {
+pub(crate) fn tier_rems(size: TextSize) -> gpui::Rems {
     rems(TextTokens::BASE.get(size) / BASE_REM_PX)
 }
 

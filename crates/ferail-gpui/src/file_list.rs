@@ -3178,19 +3178,37 @@ impl TableDelegate for FileListDelegate {
                 });
                 // Glyph advances scale with the UI zoom (rem-relative text).
                 let scale = f32::from(window.rem_size()) / 16.0;
-                // Hazard names are several independent text runs, so GPUI
-                // cannot apply its ordinary pixel-exact ellipsis across the
-                // whole label. Use a deliberately conservative advance there
-                // (including badge padding) so the semantic elider always
-                // wins before the cell's hard edge can clip a suffix. Plain
-                // names keep the middle ellipsis as an exact fallback, so
-                // their estimate can be close to the real average advance.
                 let name_budget = if entry.name_has_hazards {
-                    ((column_width - 52.0 * scale) / (9.0 * scale)).floor()
+                    // Hazard names are several independent text runs, so GPUI
+                    // cannot apply its ordinary pixel-exact ellipsis across
+                    // the whole label. Keep a deliberately conservative
+                    // advance there so the semantic elider always wins before
+                    // the cell's hard edge can clip a suffix.
+                    ((column_width - 52.0 * scale) / (9.0 * scale)).floor().max(10.0) as usize
                 } else {
-                    ((column_width - 44.0 * scale) / (7.0 * scale)).floor()
-                }
-                .max(10.0) as usize;
+                    // Plain names: measure the real text and size the budget
+                    // to the space the name actually has, so it runs right up
+                    // to the column edge. Shaping is cached by GPUI across
+                    // frames and only visible rows render.
+                    let gap = 8.0 * scale;
+                    let tags = self.tags.get(row_ix).map_or(0, |t| t.len().min(7)) as f32;
+                    let chips = if tags > 0.0 { tags * 6.0 + (tags - 1.0) * 4.0 * scale } else { 0.0 };
+                    let star = if self.is_favorited.get(row_ix).copied().unwrap_or(false)
+                        && matches!(entry.kind, EntryKind::Directory)
+                    {
+                        12.0 * scale
+                    } else {
+                        0.0
+                    };
+                    let indent = self
+                        .archive_rows
+                        .get(row_ix)
+                        .map_or(0.0, |row| row.depth as f32 * 14.0 + 12.0 + gap);
+                    // icon slot + the three flex gaps around name/chips/star.
+                    let available =
+                        column_width - slot - 3.0 * gap - chips - star - indent;
+                    name_fit_chars(&display_name, available, window, cx)
+                };
                 let elided_name = elide_label(display_name.as_ref(), name_budget);
                 let name_child: gpui::AnyElement = if let Some((input, session)) = inline_session {
                     crate::inline_edit::InlineEditor::new(
@@ -5217,4 +5235,43 @@ mod empty_state_tests {
         );
         assert!(empty_state_text(false, 7, 0).1.is_some());
     }
+}
+
+/// How many characters of `name` fit in `available` pixels at the list's
+/// name font size: the whole name when it fits, otherwise a budget for
+/// [`elide_label`] proportional to the measured width, one character short
+/// to leave room for the ellipsis. The cell's pixel-exact middle ellipsis
+/// stays the fallback for an unusually wide mix of glyphs.
+fn name_fit_chars(
+    name: &str,
+    available: f32,
+    window: &mut Window,
+    cx: &mut Context<TableState<FileListDelegate>>,
+) -> usize {
+    let chars = name.chars().count();
+    if name.is_empty() || available <= 0.0 {
+        return chars.max(10);
+    }
+    let font = window.text_style().font();
+    let font_size = crate::text::tier_rems(crate::text::TextSize::Sm).to_pixels(window.rem_size());
+    let run = gpui::TextRun {
+        len: name.len(),
+        font,
+        color: cx.theme().foreground,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let width = f32::from(
+        window
+            .text_system()
+            .shape_line(SharedString::from(name.to_string()), font_size, &[run], None)
+            .width,
+    );
+    if width <= available {
+        return chars;
+    }
+    ((chars as f32 * available / width).floor() as usize)
+        .saturating_sub(1)
+        .max(10)
 }
