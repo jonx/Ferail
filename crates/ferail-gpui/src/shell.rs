@@ -3276,6 +3276,8 @@ impl Shell {
             window,
             cx,
             move |this, window, cx| {
+                #[cfg(target_os = "linux")]
+                this.clear_active_selection(cx);
                 let mut files = Vec::new();
                 use crate::menu_plan::types::{TargetType, target_type};
                 for (_, entry, path) in entries {
@@ -7729,6 +7731,8 @@ impl Shell {
         else {
             return;
         };
+        #[cfg(target_os = "linux")]
+        self.clear_active_selection(cx);
         #[cfg(not(windows))]
         let _ = (node, size, mtime_unix);
         #[cfg(windows)]
@@ -8257,7 +8261,7 @@ impl Shell {
             .get(tab.history_index)
             .map(|e| e.path == path)
             .unwrap_or(false);
-        tab.pending_select_first = !same_path;
+        tab.pending_select_first = !cfg!(target_os = "linux") && !same_path;
         if !same_path {
             tab.history.truncate(tab.history_index + 1);
             tab.history.push(HistoryEntry::new(path.clone()));

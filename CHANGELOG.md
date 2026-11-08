@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Opening items on Linux clears their selection.** Entering a folder no
+  longer automatically selects its first item. Arrow navigation starts at the
+  first item when the selection is empty.
+
 - **Recent special folders use their sidebar names and icons.** The Linux
   Trash appears as Trash rather than its internal `files` directory.
 
