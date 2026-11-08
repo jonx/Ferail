@@ -1844,6 +1844,25 @@ mod tests {
     #[test]
     #[ignore = "requires Poppler's pdftoppm"]
     fn pdf_preview_renders_first_page_without_extension() {
+        // The test writes, reads back and deletes a cache entry, so it runs
+        // against a private thumbnail cache rather than the user's: re-run
+        // this test in a child process whose XDG_CACHE_HOME is a temp dir.
+        if std::env::var_os("FERAIL_PDF_CACHE_TEST_CHILD").is_none() {
+            let cache_home = TmpDir::new("pdf-cache");
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "tests::pdf_preview_renders_first_page_without_extension",
+                    "--nocapture",
+                ])
+                .env("FERAIL_PDF_CACHE_TEST_CHILD", "1")
+                .env("XDG_CACHE_HOME", cache_home.join("cache"))
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
         let dir = TmpDir::new("pdf-preview");
         let path = dir.join("document with spaces.bin");
         std::fs::write(

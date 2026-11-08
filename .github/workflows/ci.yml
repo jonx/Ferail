@@ -93,6 +93,17 @@ jobs:
       - name: cargo test
         run: cargo test -p ${{ matrix.shell_crate }} -p ferail-fs-native -p ferail-archive
 
+      # The PDF preview tests are #[ignore]d because they need Poppler's
+      # `pdftoppm`, which a developer machine may lack. The Ubuntu runner
+      # installs it and runs them, so the render, the thumbnail cache entry
+      # and the renderer timeout are exercised on every push.
+      - name: Poppler preview tests
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils
+          cargo test -p ferail-shell-linux -- --ignored pdf_preview
+
       # Windows-only for now: the zero-warning state was verified on a real
       # Windows host. Enable this for ubuntu/macos once someone has confirmed
       # those hosts are clean too - turning the gate on blind would just paint
