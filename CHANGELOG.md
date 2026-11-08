@@ -19,9 +19,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   mount through UDisks2 and open the volume. Device changes refresh the
   sidebar; mounted volumes retain their menus, drag-and-drop and eject button.
 
-- **Opening items on Linux clears their selection.** Entering a folder no
-  longer automatically selects its first item. Arrow navigation starts at the
-  first item when the selection is empty.
+- **The arrow keys start at the first item when nothing is selected.** Down
+  used to skip the first item and land on the second.
 
 - **Recent special folders use their sidebar names and icons.** The Linux
   Trash appears as Trash rather than its internal `files` directory.
