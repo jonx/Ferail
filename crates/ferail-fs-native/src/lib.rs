@@ -332,6 +332,17 @@ impl NativeFs {
         locked: bool,
         id: NodeId,
     ) -> FileEntry {
+        // A directory's own `st_size` is the size of its directory entry
+        // table (a few hundred bytes, varying with the filesystem), not of
+        // its contents. Shown as blank until the folder-size walker measures
+        // it; recorded as 0 so a Size sort orders unmeasured folders by name
+        // instead of by that meaningless figure, and selection totals do not
+        // add it in.
+        let size = if matches!(kind, EntryKind::Directory) {
+            0
+        } else {
+            size
+        };
         let display_size = if matches!(kind, EntryKind::Directory) {
             String::new()
         } else {
@@ -1345,6 +1356,38 @@ pub fn folder_contents_summary(file_count: u64, dir_count: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// A folder enters the list with size 0 until it is measured: its own
+    /// `st_size` is the directory table, and sorting by it gave folders an
+    /// arbitrary order under a Size sort (issue #12).
+    #[test]
+    fn unmeasured_directories_have_zero_size() {
+        let root = std::env::temp_dir().join(format!("ferail-dirsize-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("many")).unwrap();
+        for n in 0..200 {
+            std::fs::write(root.join("many").join(format!("file-{n:03}")), b"x").unwrap();
+        }
+        std::fs::create_dir(root.join("empty")).unwrap();
+        std::fs::write(root.join("plain.bin"), vec![0u8; 1234]).unwrap();
+        let fs = NativeFs::new();
+        let mut rows = Vec::new();
+        let error = fs.enumerate_streaming(
+            &root,
+            16,
+            &std::sync::atomic::AtomicBool::new(false),
+            |batch| rows.extend(batch),
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(error.is_none());
+        for row in &rows {
+            match row.kind {
+                EntryKind::Directory => assert_eq!(row.size, 0, "{}", row.name),
+                _ => assert_eq!(row.size, 1234, "{}", row.name),
+            }
+        }
+        assert_eq!(rows.len(), 3);
+    }
+
     use super::*;
 
     #[cfg(target_os = "macos")]

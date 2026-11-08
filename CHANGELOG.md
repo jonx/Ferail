@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Sorting by size no longer scatters folders whose size is not known
+  yet.** Until a folder's contents are measured, the sort used the size of the
+  folder's own directory entry, a few hundred bytes unrelated to what it holds,
+  so folders appeared in an arbitrary order. With folder sizing turned off that
+  order never corrected itself. Unmeasured folders now sort by name and take
+  their place as their sizes arrive.
+
 - **Context menus no longer run off the bottom of a short window.** Menus are
   drawn inside the window, so a long one in a low window was cut off and its
   last commands were out of reach. A menu now moves up to fit, and one taller
