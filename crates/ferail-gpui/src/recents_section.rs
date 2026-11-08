@@ -229,7 +229,9 @@ fn render_recent_row(
     let locations = crate::special_folders::locations(cx);
     let location = locations.iter().find(|location| location.path == path);
     let label = location
-        .map(|location| crate::i18n::tr_static(location.label).to_string())
+        // Through Private Mode like the Locations section's own labels,
+        // so a recent special folder never shows its real name there.
+        .map(|location| crate::private_mode::present_label(crate::i18n::tr_static(location.label).as_ref()))
         .unwrap_or_else(|| row_label(path));
     let collapsed_tooltip: SharedString = label.clone().into();
     let is_active = active_path == Some(path);
