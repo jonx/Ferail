@@ -117,13 +117,13 @@ a language pack is the part of the app a user reads every day.
 ### Known gap: Polish plurals need a `few` form
 
 `i18n/plural.rs` implements Polish properly, `one` for 1, `few` for 2 to 4
-(excluding 12 to 14), `many` for everything else. The contributed pack gives
-`one` and `other` for all 105 plural entries, with `other` holding the
-genitive (`many`) form. Lookup falls back to `other` when the wanted category
-is absent, so 2, 3 and 4 currently read `3 elementów` where Polish wants
+(excluding 12 to 14), `many` for everything else. Two of the pack's 109 plural
+entries carry a `few`; the rest give `one` and `other`, with `other` holding
+the genitive (`many`) form. Lookup falls back to `other` when the wanted
+category is absent, so 2, 3 and 4 read `3 elementów` where Polish wants
 `3 elementy`. The entries are correct for 1 and for 5 and above.
 
-Filling in `few` is 105 judgement calls in Polish, and not all of them are
+Filling in the remaining 107 is a judgement call each, and not all of them are
 mechanical: a phrase whose head is itself genitive (`Klonowanie 2
 duplikatów`) does not take the nominative plural the bare rule would suggest.
 It is a question for the pack's author rather than a search and replace.

@@ -375,9 +375,10 @@ Net-new, but each sits on plumbing that already exists.
 
 ## Settings, commands and accessibility
 
-- **Polish plurals need their `few` form.** The bundled pack has `one` and
-  `other` for all 105 plural entries, with `other` holding the genitive
-  (`many`) form, so counts of 2 to 4 fall back to it and read `3 elementów`
+- **Polish plurals need their `few` form.** 2 of the pack's 109 plural entries
+  carry a `few`; the rest have only `one` and `other`, with `other` holding
+  the genitive (`many`) form, so counts of 2 to 4 fall back to it and read
+  `3 elementów`
   where Polish wants `3 elementy`. `i18n/plural.rs` already computes
   `one`/`few`/`many` correctly, so only the pack is missing forms. Ask the
   pack's author rather than search-and-replacing: a phrase whose head is itself

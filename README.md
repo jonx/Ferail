@@ -82,6 +82,15 @@ It targets the gap the default managers leave: **responsiveness under load** and
   row cap or retaining personal paths after the view closes.
 - **Everything is undoable.** Rename, bulk rename, move, copy, trash: Cmd+Z,
   with guards so an undo never overwrites newer work.
+- **It speaks your language, even if nobody shipped it.** French, German,
+  Italian and Polish are bundled and complete, but the point is the mechanism:
+  **Settings ▸ Appearance ▸ New language…** writes a JSON template of all
+  1.386 strings, with the translator brief inside the file. Hand it to a
+  translator or paste it into any chat assistant, save the reply, press
+  **Import…**, and the whole app switches on the spot. No code, no build, no
+  API key, nothing to recompile, and 34 languages are one click away in the
+  picker. Ferail itself never calls an LLM.
+  ([how it works](docs/features/LOCALIZATION.md))
 
 ## Feature tour
 
@@ -175,7 +184,7 @@ The ❌ rows are real gaps, not modesty.
 | **Built-in text and image editing** | ✅ editor + redact/annotate | ⚠️ Quick Look markup | ❌ | ⚠️ opens another app |
 | **Capture-safe screenshot mode** | ✅ Private Mode | ❌ | ❌ | ❌ |
 | **Global / indexed search** | ⚠️ Spotlight-backed, single query box | ✅ rich | ✅ indexed | ✅ Tracker / Baloo |
-| **Localization** | ⚠️ five bundled languages, any other importable | ✅ dozens | ✅ dozens | ✅ dozens |
+| **Localization** | ⚠️ five bundled, ✅ **any other added by the user** in minutes, no code or API key | ✅ dozens, ❌ not user-extensible | ✅ dozens, ❌ not user-extensible | ✅ dozens, ⚠️ upstream `.po` only |
 | **Accessibility / maturity** | ❌ young, single-dev | ✅ decades | ✅ decades | ✅ mature |
 
 ✅ first-class · ⚠️ partial / varies · ❌ absent

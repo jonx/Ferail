@@ -300,9 +300,19 @@ you can place and remove, and a reset per menu. Hiding an entry never removes
 the command; it keeps its shortcut and stays in the palette.
 ([context menus](features/CONTEXT_MENU.md))
 
-Ferail ships in **English, French, German and Polish**, switchable live, and
-any language can be added by exporting the catalog, translating it anywhere,
-and importing it back. ([localization](features/LOCALIZATION.md))
+**Any language, added by the user in minutes.** English, French, German,
+Italian and Polish are bundled and complete, switchable live, every window
+repainting on the spot. The part that matters is what happens when yours is
+not in the list: *Settings ▸ Appearance ▸ New language…* picks from 34
+languages and writes `<code>.json` into your languages folder, a template
+holding all 1.386 strings in English with the translator brief inside the
+file. Give it to a translator, or paste it into any chat assistant and say
+"translate this". Save the reply, press *Import…*, and Ferail validates it
+(unknown keys, lost `{placeholders}`, wrong plural categories are reported,
+none fatal), installs it and selects it. Partial packs are fine: whatever a
+pack does not cover stays in English, and the dropdown shows each language's
+coverage. No code, no build, no API key, and Ferail itself never calls an
+LLM. ([localization](features/LOCALIZATION.md))
 
 ## Editors, for the small fixes
 
