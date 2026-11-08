@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::multi_table::context_menu::FittedContextMenuExt as _;
 use gpui::{
     App, AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, IntoElement, ListSizingBehavior, Modifiers,
@@ -13,7 +14,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme, ElementExt, Icon, IconName, StyleSized as _, StyledExt, h_flex,
-    menu::{ContextMenuExt, PopupMenu},
+    menu::PopupMenu,
     scroll::{ScrollableMask, Scrollbar},
     v_flex,
 };
@@ -2185,7 +2186,7 @@ where
             .map(|this| {
                 if has_header_menu {
                     let view = view.clone();
-                    this.context_menu(
+                    this.fitted_context_menu(
                         move |menu, window: &mut Window, cx: &mut Context<PopupMenu>| {
                             view.update(cx, |state, cx| {
                                 state.delegate_mut().header_context_menu(menu, window, cx)

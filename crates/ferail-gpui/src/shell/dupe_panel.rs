@@ -18,6 +18,7 @@
 // the dupe body's styling calls resolve through traits already in scope
 // there. Keep the imports for the other platforms, silence that one leg.
 #[cfg_attr(any(target_os = "windows", target_os = "aros"), allow(unused_imports))]
+use crate::multi_table::context_menu::FittedContextMenuExt as _;
 use crate::overlay::OverlayWindowExt as _;
 #[cfg_attr(target_os = "aros", allow(unused_imports))]
 use crate::text::{IconScale as _, TextScale as _};
@@ -31,7 +32,7 @@ use ferail_core::NodeId;
 use ferail_fs_native::DupeMode;
 #[cfg_attr(any(target_os = "windows", target_os = "aros"), allow(unused_imports))]
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::menu::{ContextMenuExt as _, PopupMenuItem};
+use gpui_component::menu::PopupMenuItem;
 use gpui_component::scroll::Scrollbar;
 
 use super::dupes::{SimilarCriterion, location_with_note, similar_criterion_range};
@@ -719,7 +720,7 @@ impl Shell {
                             )
                             .children(image_detail),
                     )
-                    .context_menu(move |menu, _window, _cx| {
+                    .fitted_context_menu(move |menu, _window, _cx| {
                         let path = path_for_tab.clone();
                         let shell = shell_for_tab.clone();
                         menu.item(PopupMenuItem::new(tr!("Open in New Tab")).on_click(

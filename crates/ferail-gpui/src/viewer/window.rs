@@ -6,6 +6,7 @@
 //! and view state. Keyboard goes through gpui actions gated on
 //! [`VIEWER_CONTEXT`] so Shell shortcuts can't fire here and vice versa.
 
+use crate::multi_table::context_menu::FittedContextMenuExt as _;
 use crate::overlay::OverlayWindowExt as _;
 use crate::text::TextScale as _;
 use std::path::PathBuf;
@@ -19,7 +20,7 @@ use gpui_component::{
     button::Button,
     checkbox::Checkbox,
     h_flex,
-    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
+    menu::{DropdownMenu as _, PopupMenuItem},
     v_flex,
 };
 
@@ -4189,7 +4190,7 @@ impl Render for ViewerWindow {
             let adjust_open = self.adjust_panel_open;
             self.stage_area(stage_w, stage_h, cx)
                 .id("viewer-stage")
-                .context_menu(move |menu, _window, _cx| {
+                .fitted_context_menu(move |menu, _window, _cx| {
                     menu.action_context(focus.clone())
                         .menu(tr!("Show in Ferail"), Box::new(ViewerReveal))
                         .separator()

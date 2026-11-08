@@ -15,6 +15,7 @@
 //! instead of growing the backlog. Cancellation is cooperative via
 //! `AtomicBool` (also checked inside the backpressure wait).
 
+use crate::multi_table::context_menu::FittedContextMenuExt as _;
 use crate::overlay::OverlayWindowExt as _;
 use crate::text::{TextScale as _, TruncateMiddle as _};
 use std::cell::RefCell;
@@ -2180,7 +2181,7 @@ impl DiskUsageView {
         h: f32,
         cx: &mut Context<Self>,
     ) -> gpui_component::menu::ContextMenu<gpui::Stateful<Div>> {
-        use gpui_component::menu::ContextMenuExt as _;
+        
         let (w, h) = (w.max(260.0), h.max(220.0));
         let view = cx.entity().clone();
         let weak_bg_menu = cx.weak_entity();
@@ -2208,7 +2209,7 @@ impl DiskUsageView {
             // layers: the overlay hitboxes paint above the rects, so
             // stacked layers all fired at once (two menus colliding on
             // screen, and the background arm wiping the selection).
-            .context_menu(move |menu, window, cx| {
+            .fitted_context_menu(move |menu, window, cx| {
                 let Some(v) = weak_bg_menu.upgrade() else {
                     return menu;
                 };

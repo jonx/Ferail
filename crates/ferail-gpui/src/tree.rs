@@ -25,6 +25,7 @@
 //! `Shell::load_path` is too, moving both to a background-executor
 //! pipeline is a unified follow-on (streaming enumeration).
 
+use crate::multi_table::context_menu::FittedContextMenuExt as _;
 use crate::text::{IconScale as _, TextScale as _};
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -38,7 +39,6 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Collapsible, h_flex,
-    menu::ContextMenuExt as _,
     sidebar::{SidebarItem, SidebarMenu},
     v_flex,
 };
@@ -1006,7 +1006,7 @@ pub(crate) fn render_tree_row(
         tr!("Add to Favorites")
     };
     let attach_menu = move |el: gpui::Stateful<gpui::Div>| {
-        el.context_menu(move |menu, _window, cx| {
+        el.fitted_context_menu(move |menu, _window, cx| {
             use crate::shell::{
                 CopyContextPath, EjectVolume, GetInfoAtContext, NewFolderHere, OpenContextInNewTab,
                 OpenTerminalAtContext, RevealContextPath, ShowLockHoldersAtContext,

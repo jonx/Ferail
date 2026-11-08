@@ -22,6 +22,34 @@ use gpui_component::menu::PopupMenu;
 
 type MenuBuilder = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
 
+/// Gap kept between a fitted menu and the window edge, matching the
+/// anchored snap margin below.
+const MENU_EDGE_MARGIN: f32 = 8.0;
+
+/// Let a context menu scroll inside the window instead of running past its
+/// edge. Menus are drawn inside the window, so one taller than the space
+/// left was cut off (issue #4). Capping it at the window height lets the
+/// anchored snap shift it fully into view, and anything longer scrolls.
+pub fn fit_menu_to_window(menu: PopupMenu, window: &Window) -> PopupMenu {
+    let height = window.viewport_size().height - px(2.0 * MENU_EDGE_MARGIN);
+    menu.scrollable(true).max_h(height.max(px(120.0)))
+}
+
+/// [`gpui_component::menu::ContextMenuExt::context_menu`], fitted to the
+/// window with [`fit_menu_to_window`]. Every Ferail context menu attaches
+/// through this (or [`PlatformContextMenuExt`], which fits the same way).
+pub trait FittedContextMenuExt: gpui_component::menu::ContextMenuExt + Sized {
+    #[track_caller]
+    fn fitted_context_menu(
+        self,
+        f: impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static,
+    ) -> gpui_component::menu::ContextMenu<Self> {
+        self.context_menu(move |menu, window, cx| fit_menu_to_window(f(menu, window, cx), window))
+    }
+}
+
+impl<E: gpui_component::menu::ContextMenuExt> FittedContextMenuExt for E {}
+
 /// Attach a context menu that respects the native Windows extended-menu
 /// gesture. Async children should update themselves with `PopupMenu::rebuild`.
 pub trait PlatformContextMenuExt: InteractiveElement + ParentElement + Styled {
@@ -146,7 +174,7 @@ fn schedule_build(
             let Some(build) = &builder else {
                 return menu;
             };
-            build(menu, window, cx)
+            fit_menu_to_window(build(menu, window, cx), window)
         });
 
         // Weak capture, deliberately: the App holds this closure for as long

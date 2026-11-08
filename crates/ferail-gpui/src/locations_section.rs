@@ -14,11 +14,11 @@
 //! Visuals stay what `SidebarMenu` gave: the per-location glyph, the iCloud
 //! badge for Desktop/Documents, and the §5 favorited star.
 
+use crate::multi_table::context_menu::FittedContextMenuExt as _;
 use std::path::PathBuf;
 
 use gpui::prelude::*;
 use gpui::{AnyElement, App, ElementId, SharedString, WeakEntity, div, px};
-use gpui_component::menu::ContextMenuExt as _;
 use gpui_component::sidebar::SidebarItem;
 use gpui_component::{ActiveTheme, Collapsible, h_flex, v_flex};
 
@@ -718,7 +718,7 @@ fn render_location_row(
     // `.context_menu` wraps the element in a new type, so it closes the chain
     // rather than folding back into `element`.
     element
-        .context_menu(move |menu, _window, cx| {
+        .fitted_context_menu(move |menu, _window, cx| {
             use crate::shell::{CopyContextPath, EmptyTrash, OpenContextInNewTab, RevealContextPath};
             // Stash the right-clicked path so the path-aware action handlers
             // know which path the user meant.

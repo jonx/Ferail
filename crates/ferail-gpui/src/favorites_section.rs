@@ -6,6 +6,7 @@
 //! built via `Shell::build_locations_menu` in `shell.rs`). Section-
 //! header collapse persists through `MetadataDb::favorites_section_collapsed`.
 
+use crate::multi_table::context_menu::FittedContextMenuExt as _;
 use crate::text::{IconScale as _, TextScale as _};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -24,7 +25,7 @@ use gpui::{
     ease_out_quint, img, px, svg,
 };
 use gpui_component::{
-    ActiveTheme, Collapsible, h_flex, menu::ContextMenuExt as _, sidebar::SidebarItem, v_flex,
+    ActiveTheme, Collapsible, h_flex, sidebar::SidebarItem, v_flex,
 };
 
 use crate::favorites::Favorites;
@@ -276,7 +277,7 @@ impl SidebarItem for FavoritesSection {
                     });
                 }
             })
-            .context_menu(move |menu, _window, cx| {
+            .fitted_context_menu(move |menu, _window, cx| {
                 use crate::shell::{
                     AddCurrentFolderToFavorites, SortFavoritesByDateAddedNewest,
                     SortFavoritesByDateAddedOldest, SortFavoritesByKind, SortFavoritesByName,
@@ -698,7 +699,7 @@ fn render_favorite_row(
             }
         });
         return apply_row_anim(
-            row.context_menu(move |menu, _window, cx| {
+            row.fitted_context_menu(move |menu, _window, cx| {
                 use crate::shell::DeleteFavorite;
                 // Stash the target so the bubbled DeleteFavorite action
                 // removes this row (with the §3.2 collapse + undo).
@@ -762,7 +763,7 @@ fn render_favorite_row(
     let menu_fav_id = fav.id;
     let menu_accent = theme.primary;
     apply_row_anim(
-        row.context_menu(move |menu, _window, cx| {
+        row.fitted_context_menu(move |menu, _window, cx| {
             use crate::shell::{
                 CopyContextPath, LocateFavorite, OpenFavoriteIconPicker, RenameFavorite,
                 ResetFavoriteIcon, ResetFavoriteName, RevealContextPath, ToggleFavoriteForTarget,

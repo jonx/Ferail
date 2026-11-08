@@ -8,6 +8,7 @@
 //! never touches SQLite. Modeled on [`crate::favorites_section`] but
 //! simpler: no drag-reorder, no per-row availability state, no rename.
 
+use crate::multi_table::context_menu::FittedContextMenuExt as _;
 use crate::text::{IconScale as _, TextScale as _};
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -20,7 +21,7 @@ use gpui::{
     px,
 };
 use gpui_component::{
-    ActiveTheme, Collapsible, h_flex, menu::ContextMenuExt as _, sidebar::SidebarItem, v_flex,
+    ActiveTheme, Collapsible, h_flex, sidebar::SidebarItem, v_flex,
 };
 
 use crate::icons::IconCache;
@@ -166,7 +167,7 @@ impl SidebarItem for RecentsSection {
                     shell.update(cx, |s, cx| s.toggle_recents_section_collapsed(cx));
                 }
             })
-            .context_menu(move |menu, _window, _cx| {
+            .fitted_context_menu(move |menu, _window, _cx| {
                 menu.menu(
                     tr!("Clear Recents\u{2026}"),
                     Box::new(crate::shell::ClearRecents),
@@ -312,7 +313,7 @@ fn render_recent_row(
         }
     });
     // `.context_menu(...)` changes the element type, so it's terminal.
-    row.context_menu(move |menu, _window, cx| {
+    row.fitted_context_menu(move |menu, _window, cx| {
         use crate::shell::{ClearRecents, RemoveFromRecents, RevealContextPath};
         if let Some(s) = shell_for_menu.upgrade() {
             s.update(cx, |shell, _| {

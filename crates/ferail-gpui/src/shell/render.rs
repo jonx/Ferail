@@ -1,4 +1,5 @@
 use super::*;
+use crate::multi_table::context_menu::FittedContextMenuExt as _;
 use crate::text::{IconScale as _, TruncateMiddle as _};
 use gpui_component::ElementExt as _;
 use gpui_component::scroll::ScrollableElement as _;
@@ -769,7 +770,7 @@ impl Shell {
         use ferail_core::platform_namespace::{
             PlatformItemFlags, PlatformItemKind, PlatformSurfacePhase,
         };
-        use gpui_component::menu::ContextMenuExt as _;
+        
 
         let Some(session) = self.active_tab().platform_namespace.as_ref() else {
             return div().into_any_element();
@@ -918,7 +919,7 @@ impl Shell {
                                         );
                                     });
                                 })
-                                .context_menu(move |menu, window, app| {
+                                .fitted_context_menu(move |menu, window, app| {
                                     if !native_menu && !can_restore {
                                         return menu;
                                     }
@@ -3955,7 +3956,7 @@ impl Shell {
             // / "Copy Path", same right-click surface as the
             // sidebar Favorites. context_target carries the path of
             // *this* segment, not the active tab's current_dir.
-            use gpui_component::menu::ContextMenuExt as _;
+            
             let weak_for_crumb = cx.weak_entity();
             let path_for_menu = path.clone();
             let path_for_click = path.clone();
@@ -4108,7 +4109,7 @@ impl Shell {
                         }
                     }),
                 )
-                .context_menu(move |menu, window, cx| {
+                .fitted_context_menu(move |menu, window, cx| {
                     let menu_entity = cx.entity();
                     let favorited_now = if let Some(s) = weak_for_crumb.upgrade() {
                         let already = s

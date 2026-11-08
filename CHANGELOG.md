@@ -8,6 +8,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Context menus no longer run off the bottom of a short window.** Menus are
+  drawn inside the window, so a long one in a low window was cut off and its
+  last commands were out of reach. A menu now moves up to fit, and one taller
+  than the window scrolls.
+
 - **Empty the Trash from the Trash itself.** Opening the Trash shows a strip
   above the list with an *Empty Trash…* button, so the command is no longer
   only in the menus. It asks for the same confirmation.
