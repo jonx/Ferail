@@ -13,12 +13,16 @@ without losing sight of either.
 
 | Command | Shortcut | Effect |
 | --- | --- | --- |
-| Split Right | Cmd+\ | Show two tabs side by side. On a side-by-side split, close it. |
-| Split Down | Cmd+Shift+\ | Show two tabs stacked. On a stacked split, close it. |
-| Switch Pane | Cmd+Option+\, Option+Tab on macOS | Move the focus to the other pane. |
+| Split Right | Cmd+Option+S | Show two tabs side by side. On a side-by-side split, close it. |
+| Split Down | Cmd+Option+Shift+S | Show two tabs stacked. On a stacked split, close it. |
+| Switch Pane | Cmd+Option+P, Option+Tab on macOS | Move the focus to the other pane. |
+| Copy to Other Pane | Cmd+Option+C | Copy the selection into the other pane's folder. |
+| Move to Other Pane | Cmd+Option+M | Move the selection into the other pane's folder. |
 
-The three commands are in the View menu. A split along the other axis turns
-instead of closing.
+The split commands are in the View menu, the transfer commands in the Edit
+menu. A split along the other axis turns instead of closing. Every shortcut
+is a letter with modifiers, so it can be typed on any keyboard layout:
+punctuation such as `\` sits behind Option on AZERTY and others.
 
 - **Which tabs.** A split lines up the active tab with its right-hand
   neighbour in the tab strip, or its left-hand one when it is the last. A
@@ -32,9 +36,13 @@ instead of closing.
   focused pane.
 - **Per pane.** Folder, history, selection, sort, list or grid view and
   scroll position, because each pane is a tab.
-- **Moving files.** Drag from one pane to the other. The pane under the
-  pointer takes the focus, and the drop lands in its folder or in the folder
-  row under the pointer, with the copy or move rules of any other drop.
+- **Moving files.** Copy to Other Pane and Move to Other Pane send the
+  selection to the folder the other pane shows, as an ordinary transfer:
+  collision prompt, progress, cancellation, undo. They refuse when the other
+  pane shows search results, an archive or another listing that is not a
+  folder. Dragging works too: the pane under the pointer takes the focus,
+  and the drop lands in its folder or in the folder row under the pointer,
+  with the copy or move rules of any other drop.
 - **Divider.** Drag it to resize; double-click it to even the panes out.
 - **Closing.** Closing either visible tab closes the split and leaves the
   other tab active.

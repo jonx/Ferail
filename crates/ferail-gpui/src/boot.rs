@@ -922,6 +922,15 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                 MenuItem::action(title("file.paste", "Paste"), PasteFiles),
                 MenuItem::action(title("file.move_paste", "Move Items Here"), MovePasteFiles),
                 MenuItem::separator(),
+                MenuItem::action(
+                    title("file.copy_to_other_pane", "Copy to Other Pane"),
+                    crate::shell::CopyToOtherPane,
+                ),
+                MenuItem::action(
+                    title("file.move_to_other_pane", "Move to Other Pane"),
+                    crate::shell::MoveToOtherPane,
+                ),
+                MenuItem::separator(),
                 MenuItem::action(title("file.copy_path", "Copy Path"), CopyPath),
             ],
             disabled: false,

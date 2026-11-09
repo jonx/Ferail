@@ -5088,6 +5088,8 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_split_right))
             .on_action(cx.listener(Self::on_split_down))
             .on_action(cx.listener(Self::on_switch_pane))
+            .on_action(cx.listener(Self::on_copy_to_other_pane))
+            .on_action(cx.listener(Self::on_move_to_other_pane))
             .on_action(cx.listener(Self::on_prev_tab))
             .on_action(cx.listener(Self::on_quick_look))
             .on_action(cx.listener(Self::on_go_home))

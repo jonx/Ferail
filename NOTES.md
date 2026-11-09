@@ -30,8 +30,10 @@ Two of a window's tabs can be shown at once
 - **Kept small on purpose.** Two panes, two axes, three commands. The
   reference was Bloom's ten layouts with synchronized browsing and pane
   locks; none of those earn their surface for sorting between two folders.
-- **Deferred:** keyboard copy/move to the other pane, dragging a tab into
-  the split. A layout with more panes would need the split to become a tree,
+- **Letter shortcuts only.** The first binding was Cmd+\, which cannot be
+  typed on a French Mac keyboard: `\` is Option+Shift+: there. Split, switch
+  and transfer all use Cmd+Option plus a letter.
+- **Deferred:** dragging a tab into the split. A layout with more panes would need the split to become a tree,
   and would be reconsidered only on a concrete need.
 
 # 2026-10-25 Native AROS port

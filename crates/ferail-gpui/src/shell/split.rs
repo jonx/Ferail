@@ -18,7 +18,9 @@ use gpui::{
 use gpui_component::ActiveTheme as _;
 
 use super::tab::TabId;
-use super::{Shell, SplitDown, SplitRight, SwitchPane};
+use super::{
+    CopyToOtherPane, MoveToOtherPane, Shell, SplitDown, SplitRight, SwitchPane, TransferMode,
+};
 
 /// Smallest share of the split area either pane keeps while the divider is
 /// dragged.
@@ -243,6 +245,76 @@ impl Shell {
         let tab = self.tabs[idx].id;
         self.focus_pane_tab(tab, cx);
         self.focus_active_surface(window, cx);
+    }
+
+    pub(super) fn on_copy_to_other_pane(
+        &mut self,
+        _: &CopyToOtherPane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.transfer_to_other_pane(TransferMode::Copy, window, cx);
+    }
+
+    pub(super) fn on_move_to_other_pane(
+        &mut self,
+        _: &MoveToOtherPane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.transfer_to_other_pane(TransferMode::Move, window, cx);
+    }
+
+    /// Copy or move the focused pane's selection into the folder the other
+    /// pane shows. The transfer itself is the ordinary one: planned and run
+    /// off-thread, with collisions, progress, cancellation and undo.
+    fn transfer_to_other_pane(
+        &mut self,
+        mode: TransferMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::overlay::OverlayWindowExt as _;
+        use gpui_component::notification::Notification;
+
+        self.sync_split();
+        let Some(other) = self.other_pane_index() else {
+            window.push_notice(
+                Notification::info(tr!(
+                    "Split the window first: there is no other pane to send items to."
+                )),
+                cx,
+            );
+            return;
+        };
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
+        // Only a plain folder listing names a destination. Search results,
+        // an open archive or a provider-owned location do not.
+        let destination = &self.tabs[other];
+        if destination.tool_result.is_some() || destination.platform_namespace.is_some() {
+            window.push_notice(
+                Notification::info(tr!("The other pane is not showing a folder.")),
+                cx,
+            );
+            return;
+        }
+        let dest = destination.current_dir.clone();
+        let sources: Vec<std::path::PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if sources.is_empty() {
+            return;
+        }
+        // Both panes on the same folder: a move would be a no-op and a copy
+        // is what Duplicate is for.
+        if sources.iter().all(|s| s.parent() == Some(dest.as_path())) {
+            return;
+        }
+        self.spawn_transfer_op(sources, dest, mode, window, cx);
     }
 
     /// Follow the pointer while the divider is held.

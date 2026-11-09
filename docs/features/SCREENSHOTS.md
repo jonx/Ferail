@@ -69,7 +69,7 @@ look more interesting.
 - **Navigation**: `--navigate <path>` (repeatable; chaining seeds realistic
   ant-trail visit counts), `--new-tab <path>` (repeatable), `--tab <idx>`,
   `--expand <path>` (unfurl the sidebar tree), `--show-hidden`.
-- **Split view**: open one with `--keys 'cmd-\ pause'`; an `o` prefix in
+- **Split view**: open one with `--keys 'cmd-alt-s pause'`; an `o` prefix in
   `--click-rows` (`o3`, `o0:2`) aims the click at the pane that does not have
   the focus.
 - **Selection & sort**: `--select-row N`, `--select-name <name>`,

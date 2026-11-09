@@ -117,6 +117,10 @@ actions!(
         SplitDown,
         /// Move the focus to the other pane of a split window.
         SwitchPane,
+        /// Copy the selection into the folder shown in the other pane.
+        CopyToOtherPane,
+        /// Move the selection into the folder shown in the other pane.
+        MoveToOtherPane,
         QuickLook,
         /// Cmd+Y: open the viewer window on the current folder's
         /// files (docs/features/VIEWER.md). Space stays Quick Look.

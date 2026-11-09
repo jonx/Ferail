@@ -194,6 +194,8 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
         "file.cut" => bind!(CutFiles, ctx),
         "file.paste" => bind!(PasteFiles, ctx),
         "file.move_paste" => bind!(MovePasteFiles, ctx),
+        "file.copy_to_other_pane" => bind!(crate::shell::CopyToOtherPane, ctx),
+        "file.move_to_other_pane" => bind!(crate::shell::MoveToOtherPane, ctx),
         "file.reveal_in_finder" => bind!(RevealInFinder, ctx),
         "file.refresh" => bind!(Refresh, ctx),
         "file.edit" => bind!(EditFile, ctx),

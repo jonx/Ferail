@@ -370,6 +370,18 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[Shortcut::primary_alt("V")],
     },
     CommandSpec {
+        id: CommandId("file.copy_to_other_pane"),
+        title: msgid!("Copy to Other Pane"),
+        category: Category::File,
+        shortcuts: &[Shortcut::primary_alt("C")],
+    },
+    CommandSpec {
+        id: CommandId("file.move_to_other_pane"),
+        title: msgid!("Move to Other Pane"),
+        category: Category::File,
+        shortcuts: &[Shortcut::primary_alt("M")],
+    },
+    CommandSpec {
         id: CommandId("file.reveal_in_finder"),
         title: REVEAL_LABEL,
         category: Category::File,
@@ -464,24 +476,31 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[],
     },
     // Split view (docs/features/SPLIT_VIEW.md). Both split commands
-    // toggle: the one matching the current split closes it.
+    // toggle: the one matching the current split closes it. Letters only:
+    // punctuation such as `\` needs Option on AZERTY and other layouts, so
+    // a shortcut built on it cannot be typed there.
     CommandSpec {
         id: CommandId("view.split_right"),
         title: msgid!("Split Right"),
         category: Category::View,
-        shortcuts: &[Shortcut::primary("\\")],
+        shortcuts: &[Shortcut::primary_alt("S")],
     },
     CommandSpec {
         id: CommandId("view.split_down"),
         title: msgid!("Split Down"),
         category: Category::View,
-        shortcuts: &[Shortcut::primary_shift("\\")],
+        shortcuts: &[Shortcut {
+            key: "S",
+            primary: true,
+            shift: true,
+            alt: true,
+        }],
     },
     CommandSpec {
         id: CommandId("view.switch_pane"),
         title: msgid!("Switch Pane"),
         category: Category::View,
-        shortcuts: &[Shortcut::primary_alt("\\")],
+        shortcuts: &[Shortcut::primary_alt("P")],
     },
     CommandSpec {
         id: CommandId("view.cycle_focus"),
