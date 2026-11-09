@@ -1,68 +1,55 @@
-# Ferail 0.7.10 - Linux catches up, Italian, and a screen that stays on
+# Ferail 0.7.11 - RAR, WinRAR-style extraction, and a Linux Trash
 
-The first outside code contributions land: a large Linux batch and an Italian
-interface, both by **ooonea**. The viewer keeps the screen awake while it
-plays, and the sidebar can be trimmed to what you use.
+RAR archives open and extract, extraction follows WinRAR's three commands,
+and names with numbers sort the way Explorer and Finder sort them. On Linux,
+the Trash, removable drives and localized user folders join the sidebar, in
+another batch from **ooonea**.
 
-## The screen stays on while something plays
+## Archives
 
-**A video or a slideshow keeps the display awake** for as long as it runs,
-and the computer is free to idle again the moment you pause, stop or close
-the viewer. A new switch under **Settings ▸ Layout ▸ Viewer** turns this off.
+- **RAR archives open and extract**, from RAR 1.5 to RAR5, including
+  password-protected archives and multi-part sets opened from any part.
+  Ferail cannot create RAR archives: the format is proprietary.
+- **Extract Here puts the contents directly in the current folder**, with no
+  extra folder named after the archive. It refuses rather than mixing files
+  into an item of the same name.
+- **Extract to "name" gives each archive its own folder.** With several
+  archives selected it reads *Extract Each to Its Own Folder*. *Extract To…*
+  keeps choosing in place or a new folder for you.
+
+## Sorting and selection
+
+- **Numbers in names sort by value**: `2_Intro.pdf` comes before
+  `10_Forms.pdf`.
+- **Sorting by size no longer scatters folders whose size is not known
+  yet.** They sort by name until their size arrives.
+- **Rubber-band selection keeps going past the edge** of the list and of the
+  window, and scrolls the list when held above or below it.
+- **Long names use the full width of the Name column** and re-fit live while
+  you resize it.
 
 ## Linux
 
-Fourteen pull requests from ooonea, tested on a GNOME desktop under Wayland:
-
-- **Copy, Cut and Paste of files work on Wayland.** Ferail exchanges file
-  lists with Nautilus and other file managers, including the cut intent.
-- **PDFs get a real preview** in the preview pane, the icon grid and the
-  viewer when Poppler's `pdftoppm` is installed.
-- **The system theme follows the desktop**, light or dark, through the
-  portal, and switches live.
-- **Folders open in Ferail from the desktop**: the launcher accepts a
-  directory, and `--navigate` works for ordinary windows.
-- **JSON and other text files open in their associated application**
-  instead of the browser.
-- **Build and download instructions** for Linux are current.
-
-## Italian interface
-
-**Ferail speaks Italian.** Pick *Italiano* under Language in Appearance
-settings. Every one of the catalog's strings is translated, and **file
-format labels and relative dates** (*Testo semplice*, *5 giorni fa*) now
-follow the interface language in every pack.
-
-## A sidebar that shows what you use
-
-**Favorites and the Browse tree can be hidden independently** under
-**Settings ▸ Appearance ▸ Sidebar**. Hiding Favorites keeps its saved
-entries.
+- **The Trash is in the sidebar**, with Restore and Empty Trash.
+- **Removable drives appear before they are mounted.** Click to mount
+  through UDisks2.
+- **Desktop, Documents, Downloads, Music, Pictures and Videos follow your XDG
+  user folders**, localized or redirected.
+- **PDF thumbnails are kept** in the shared desktop thumbnail cache.
+- **The arrow keys start at the first item** when nothing is selected.
 
 ## Also in this release
 
-- **Going up selects the folder you came from**, whichever way you go up,
-  and leaving an archive selects the archive file.
-- **Folder sizes are measured once you settle on a folder**, not the
-  instant it opens, so clicking through folders no longer competes with
-  reading them.
-- **The viewer has a right-click menu**: Show in Ferail, Copy, Copy Path,
-  Close.
-- **Emptying a large Trash shows its progress**, and unlocks items locked
-  in Finder instead of stopping on them.
-- **Escape closes dialogs, menus and popups again**, and the command
-  palette scrolls all the way.
-- **Notifications and dialogs stay out of Private Mode** and gain a Copy
-  button.
-- **Double-clicking a grid item no longer starts a rename** after opening
-  it.
-- **Building Ferail no longer needs Xcode's Metal compiler.**
+- **The preview pane stays open across launches** if you left it open.
+- **Context menus fit inside the window**, scrolling when taller than it.
+- **The Trash view has an Empty Trash… button** on a strip above the list.
+- **A failed Move to Trash shows its message again** instead of an empty
+  error.
 
 ## Worth knowing
 
-The Linux screen-awake guard relies on the GNOME session inhibitor, with the
-logind idle lock as a fallback, and has not been exercised on a Linux desktop
-yet.
+RAR is not available on the AROS build. Rubber-band scrolling past the edge
+is covered by the build and tests but has not been tried by hand yet.
 
 The Windows build is not code-signed, so SmartScreen warns on first launch:
 choose **More info ▸ Run anyway**. **Unblock the download before extracting or

@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.11 - 2026-11-09
+
 - **RAR archives open and extract.** `.rar` files, from RAR 1.5 to RAR5,
   browse in the archive view and extract like ZIP and 7-Zip, including
   password-protected ones and multi-part sets opened from any part. Ferail

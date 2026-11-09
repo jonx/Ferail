@@ -347,9 +347,10 @@ The **Polish** language pack is the work of **Bohun**
 
 The **Italian** language pack, the translated file-format labels and dates,
 the optional sidebar sections, and the Linux Wayland clipboard, PDF previews,
-portal theme, desktop launcher and file-association work are by **ooonea**
-([ooonea](https://github.com/ooonea)), contributed in
-[PRs #15 to #28](https://github.com/jonx/Ferail/pulls?q=is%3Apr+author%3Aooonea).
+portal theme, desktop launcher, file-association, Trash, UDisks2 volume and XDG
+location work are by **ooonea** ([ooonea](https://github.com/ooonea)),
+contributed in
+[PRs #15 to #33](https://github.com/jonx/Ferail/pulls?q=is%3Apr+author%3Aooonea).
 
 The Windows shell-integration work leans on the excellent open-source
 explorations of **Simon Mourier**: studied as reference implementations for
