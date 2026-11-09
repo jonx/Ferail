@@ -8,13 +8,20 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
-- **Split view: two folders side by side.** *Split Right* (Cmd+\) and *Split
-  Down* (Cmd+Shift+\) in the View menu show two of the window's tabs at once,
-  so you can sort files between two folders or two disks by dragging from one
-  pane to the other. Click a pane, or press Cmd+Option+\ (Option+Tab on
-  macOS), to work in it; pick another tab to change what the focused pane
-  shows; drag the divider to resize. The same command closes the split. A
-  split is not restored when Ferail restarts.
+## 0.7.12 - 2026-11-10
+
+- **Split view: two folders side by side.** *Split Right* (Cmd+Option+S) and
+  *Split Down* (Cmd+Option+Shift+S) in the View menu show two of the window's
+  tabs at once, so you can sort files between two folders or two disks. Click
+  a pane, or press Cmd+Option+P (Option+Tab on macOS), to work in it; pick
+  another tab to change what the focused pane shows; drag the divider to
+  resize. The same command closes the split. A split is not restored when
+  Ferail restarts.
+
+- **Copy and move to the other pane from the keyboard.** With the window
+  split, *Copy to Other Pane* (Cmd+Option+C) and *Move to Other Pane*
+  (Cmd+Option+M) in the Edit menu send the selection to the folder shown on
+  the other side. Dragging from one pane to the other works too.
 
 ## 0.7.11 - 2026-11-09
 
