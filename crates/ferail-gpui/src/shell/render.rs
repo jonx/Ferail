@@ -1255,7 +1255,11 @@ impl Shell {
                 return Vec::new();
             };
             let shell = shell_ent.read(app);
-            let tab = shell.active_tab();
+            // By id, not `active_tab()`: in a split window this closure
+            // also runs for the pane that does not have the focus.
+            let Some(tab) = shell.tabs.iter().find(|t| t.id == tab_id) else {
+                return Vec::new();
+            };
             let table = tab.table.read(app);
             let del = table.delegate();
             let entries = &del.entries;
@@ -1968,16 +1972,21 @@ impl Shell {
                     let weak_warm = weak.clone();
                     app.defer(move |app| {
                         let _ = weak_warm.update(app, |this, cx| {
-                            if this.active_tab().id != tab_id {
+                            let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id)
+                            else {
+                                return;
+                            };
+                            if !this.tab_is_shown(idx) {
                                 return;
                             }
                             let key =
                                 (load_generation, entry_start, entry_end, bucket, icon_bucket);
-                            if this.active_tab().grid_warm_key == Some(key) {
+                            if this.tabs[idx].grid_warm_key == Some(key) {
                                 return;
                             }
-                            this.active_tab_mut().grid_warm_key = Some(key);
+                            this.tabs[idx].grid_warm_key = Some(key);
                             this.warm_grid_viewport(
+                                idx,
                                 entry_start..entry_end,
                                 bucket,
                                 icon_bucket,
@@ -2273,6 +2282,9 @@ impl Shell {
         const TAB_SCROLL_STEP: Pixels = px(200.0);
 
         let active = self.active;
+        // The other pane of a split window: its chip reads as shown, one
+        // step below the focused pane's.
+        let other_pane = self.other_pane_index();
         let multi = self.tabs.len() > 1;
         // The chips live in a horizontally scrollable strip so the tab
         // row can hold more tabs than fit the window. Trackpad / shift-
@@ -2316,6 +2328,10 @@ impl Shell {
                 });
             if is_active {
                 chip = chip.bg(theme.background);
+            } else if other_pane == Some(idx) {
+                chip = chip
+                    .bg(theme.background.opacity(0.55))
+                    .hover(|this| this.bg(theme.background.opacity(0.8)));
             } else {
                 chip = chip.hover(|this| this.bg(theme.accent.opacity(0.10)));
             }
@@ -4313,6 +4329,166 @@ impl Shell {
         row
     }
 
+    /// One pane of the file area: breadcrumb, Trash bar and listing for the
+    /// active tab. A split window builds it once per pane, with that pane's
+    /// tab as the active one (see `split_body`).
+    pub(super) fn pane_column(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let breadcrumb = self.breadcrumb(cx);
+        let platform_mode = self.active_tab().platform_namespace.is_some();
+        let file_body = self.file_pane_body(cx);
+        let open_archive = self
+            .active_archive_view()
+            .map(|view| view.read(cx).archive_path().to_path_buf());
+        let native_archive_dragging = crate::file_list::native_archive_drag_active();
+        let native_drop_color = cx.theme().accent;
+        let native_reject_color = cx.theme().danger;
+        let open_archive_for_native = open_archive.clone();
+        // Phase 6 review fix: an outer .context_menu on the
+        // file body wrapper consumed the click events bound
+        // for the inner DataTable row menu, causing every
+        // file-row menu selection to dismiss without firing.
+        // Don't reintroduce one here. The empty-space menu
+        // (New Folder / Paste / …) now lives INSIDE the
+        // table's own platform context-menu wrapper instead: see
+        // `FileListDelegate::background_context_menu` and the
+        // capture-phase region pick in `TableState::render`,
+        // so it can't fight the row menus for events.
+        // Drop target for OS file drags (Finder → Ferail,
+        // and row drag-outs landing back in our own pane):
+        // anywhere in the pane that a folder row didn't claim
+        // first drops into the current directory
+        // (docs/features/FILE_OPS.md; dnd-spec §3.5 "empty
+        // space"). Folder rows stop propagation so their drop
+        // wins.
+        let file_body_wrapped = div()
+            .id("file-pane-drop")
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .drag_over::<ExternalPaths>(move |style, _, _, cx| {
+                if platform_mode {
+                    style.cursor_not_allowed()
+                } else {
+                    style.bg(cx.theme().accent.opacity(0.06))
+                }
+            })
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                if this.reject_platform_filesystem_command(window, cx) {
+                    return;
+                }
+                let dest = this.active_tab().current_dir.clone();
+                this.handle_external_drop(paths.paths().to_vec(), dest, window, cx);
+            }))
+            // Entries dragged out of an archive workbench land in this
+            // tab's folder.
+            .drag_over::<crate::file_list::ArchiveEntryDrag>(move |style, drag, _, cx| {
+                if platform_mode || open_archive.as_ref() == Some(&drag.archive) {
+                    style.cursor_not_allowed()
+                } else {
+                    style
+                        .cursor_copy()
+                        .border_1()
+                        .border_color(cx.theme().accent)
+                        .bg(cx.theme().accent.opacity(0.06))
+                }
+            })
+            .on_drop(cx.listener(
+                |this, drag: &crate::file_list::ArchiveEntryDrag, window, cx| {
+                    if this.reject_platform_filesystem_command(window, cx) {
+                        return;
+                    }
+                    if this.active_archive_view().is_some_and(|view| {
+                        view.read(cx).archive_path() == drag.archive.as_path()
+                    }) {
+                        // Releasing over the archive itself cancels
+                        // the drag. Never let it fall through to this
+                        // folder pane's current-directory semantics.
+                        cx.stop_propagation();
+                        return;
+                    }
+                    let dest = this.active_tab().current_dir.clone();
+                    this.extract_archive_entries_into(
+                        drag.archive.clone(),
+                        drag.entries.clone(),
+                        dest,
+                        drag.password.clone(),
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_mouse_move(cx.listener(|_this, _event, _window, cx| {
+                if crate::file_list::native_archive_drag_active() {
+                    // The first native update entered with no GPUI
+                    // typed drag; repaint so the hover cursor/ring
+                    // below reflects the coordinator payload.
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _event, window, cx| {
+                    // A retained GPUI drag is handled by on_drop.
+                    // This is solely the cross-window promised-file
+                    // fallback, where GPUI has already discarded it.
+                    if cx.has_active_drag() {
+                        return;
+                    }
+                    if this.reject_platform_filesystem_command(window, cx) {
+                        return;
+                    }
+                    let Some(drag) = crate::file_list::take_native_archive_drag() else {
+                        return;
+                    };
+                    cx.stop_propagation();
+                    if this.active_archive_view().is_some() {
+                        crate::log_info!(100, "archive-drag: rejected by archive pane");
+                        return;
+                    }
+                    let dest = this.active_tab().current_dir.clone();
+                    crate::log_info!(
+                        100,
+                        "archive-drag: accepted by file pane -> {}",
+                        dest.display()
+                    );
+                    this.extract_archive_entries_into(
+                        drag.archive,
+                        drag.entries,
+                        dest,
+                        drag.password,
+                        window,
+                        cx,
+                    );
+                }),
+            )
+            .when(native_archive_dragging, move |style| {
+                let reject = platform_mode || open_archive_for_native.is_some();
+                style.hover(move |style| {
+                    if reject {
+                        style
+                            .cursor_not_allowed()
+                            .border_2()
+                            .border_color(native_reject_color)
+                    } else {
+                        style
+                            .cursor_copy()
+                            .border_2()
+                            .border_color(native_drop_color)
+                    }
+                })
+            })
+            .child(file_body);
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
+            .child(breadcrumb)
+            .children(self.trash_bar(cx))
+            .child(file_body_wrapped)
+            .into_any_element()
+    }
+
     /// The grab handle drawn at the window's inner edge while docked and not
     /// fully revealed (docs/features/DOCK.md). Purely a visual hint: the
     /// reveal trigger is the screen edge itself, driven by the poll loop. It
@@ -4428,6 +4604,7 @@ impl Render for Shell {
                 crate::platform_shell::set_app_appearance(is_dark);
             });
         }
+        self.sync_split();
         let weak = cx.weak_entity();
         let locations_rows = self.build_locations_rows(cx);
         let platform_location_rows = self.build_platform_location_rows();
@@ -4473,7 +4650,6 @@ impl Render for Shell {
             }
         }
         self.start_tree_icon_warm(icon_warm, cx);
-        let breadcrumb = self.breadcrumb(cx);
         // Keep the OS window caption (Windows taskbar / Alt+Tab,
         // macOS Window menu) in step with the active folder, without
         // it the window is nameless when switching tasks.
@@ -4909,6 +5085,9 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_close_window))
             .on_action(cx.listener(Self::on_reopen_closed_tab))
             .on_action(cx.listener(Self::on_next_tab))
+            .on_action(cx.listener(Self::on_split_right))
+            .on_action(cx.listener(Self::on_split_down))
+            .on_action(cx.listener(Self::on_switch_pane))
             .on_action(cx.listener(Self::on_prev_tab))
             .on_action(cx.listener(Self::on_quick_look))
             .on_action(cx.listener(Self::on_go_home))
@@ -5061,149 +5240,7 @@ impl Render for Shell {
                 // The status bar runs full-width across the bottom so its
                 // task summary + progress strip is always visible.
                 use crate::splitter::{h_resizable, resizable_panel};
-                let file_body = self.file_pane_body(cx);
-                let open_archive = self
-                    .active_archive_view()
-                    .map(|view| view.read(cx).archive_path().to_path_buf());
-                let native_archive_dragging = crate::file_list::native_archive_drag_active();
-                let native_drop_color = cx.theme().accent;
-                let native_reject_color = cx.theme().danger;
-                let open_archive_for_native = open_archive.clone();
-                // Phase 6 review fix: an outer .context_menu on the
-                // file body wrapper consumed the click events bound
-                // for the inner DataTable row menu, causing every
-                // file-row menu selection to dismiss without firing.
-                // Don't reintroduce one here. The empty-space menu
-                // (New Folder / Paste / …) now lives INSIDE the
-                // table's own platform context-menu wrapper instead: see
-                // `FileListDelegate::background_context_menu` and the
-                // capture-phase region pick in `TableState::render`,
-                // so it can't fight the row menus for events.
-                // Drop target for OS file drags (Finder → Ferail,
-                // and row drag-outs landing back in our own pane):
-                // anywhere in the pane that a folder row didn't claim
-                // first drops into the current directory
-                // (docs/features/FILE_OPS.md; dnd-spec §3.5 "empty
-                // space"). Folder rows stop propagation so their drop
-                // wins.
-                let file_body_wrapped = div()
-                    .id("file-pane-drop")
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .drag_over::<ExternalPaths>(move |style, _, _, cx| {
-                        if platform_mode {
-                            style.cursor_not_allowed()
-                        } else {
-                            style.bg(cx.theme().accent.opacity(0.06))
-                        }
-                    })
-                    .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
-                        if this.reject_platform_filesystem_command(window, cx) {
-                            return;
-                        }
-                        let dest = this.active_tab().current_dir.clone();
-                        this.handle_external_drop(paths.paths().to_vec(), dest, window, cx);
-                    }))
-                    // Entries dragged out of an archive workbench land in this
-                    // tab's folder.
-                    .drag_over::<crate::file_list::ArchiveEntryDrag>(move |style, drag, _, cx| {
-                        if platform_mode || open_archive.as_ref() == Some(&drag.archive) {
-                            style.cursor_not_allowed()
-                        } else {
-                            style
-                                .cursor_copy()
-                                .border_1()
-                                .border_color(cx.theme().accent)
-                                .bg(cx.theme().accent.opacity(0.06))
-                        }
-                    })
-                    .on_drop(cx.listener(
-                        |this, drag: &crate::file_list::ArchiveEntryDrag, window, cx| {
-                            if this.reject_platform_filesystem_command(window, cx) {
-                                return;
-                            }
-                            if this.active_archive_view().is_some_and(|view| {
-                                view.read(cx).archive_path() == drag.archive.as_path()
-                            }) {
-                                // Releasing over the archive itself cancels
-                                // the drag. Never let it fall through to this
-                                // folder pane's current-directory semantics.
-                                cx.stop_propagation();
-                                return;
-                            }
-                            let dest = this.active_tab().current_dir.clone();
-                            this.extract_archive_entries_into(
-                                drag.archive.clone(),
-                                drag.entries.clone(),
-                                dest,
-                                drag.password.clone(),
-                                window,
-                                cx,
-                            );
-                        },
-                    ))
-                    .on_mouse_move(cx.listener(|_this, _event, _window, cx| {
-                        if crate::file_list::native_archive_drag_active() {
-                            // The first native update entered with no GPUI
-                            // typed drag; repaint so the hover cursor/ring
-                            // below reflects the coordinator payload.
-                            cx.notify();
-                        }
-                    }))
-                    .on_mouse_up(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, _event, window, cx| {
-                            // A retained GPUI drag is handled by on_drop.
-                            // This is solely the cross-window promised-file
-                            // fallback, where GPUI has already discarded it.
-                            if cx.has_active_drag() {
-                                return;
-                            }
-                            if this.reject_platform_filesystem_command(window, cx) {
-                                return;
-                            }
-                            let Some(drag) = crate::file_list::take_native_archive_drag() else {
-                                return;
-                            };
-                            cx.stop_propagation();
-                            if this.active_archive_view().is_some() {
-                                crate::log_info!(100, "archive-drag: rejected by archive pane");
-                                return;
-                            }
-                            let dest = this.active_tab().current_dir.clone();
-                            crate::log_info!(
-                                100,
-                                "archive-drag: accepted by file pane -> {}",
-                                dest.display()
-                            );
-                            this.extract_archive_entries_into(
-                                drag.archive,
-                                drag.entries,
-                                dest,
-                                drag.password,
-                                window,
-                                cx,
-                            );
-                        }),
-                    )
-                    .when(native_archive_dragging, move |style| {
-                        let reject = platform_mode || open_archive_for_native.is_some();
-                        style.hover(move |style| {
-                            if reject {
-                                style
-                                    .cursor_not_allowed()
-                                    .border_2()
-                                    .border_color(native_reject_color)
-                            } else {
-                                style
-                                    .cursor_copy()
-                                    .border_2()
-                                    .border_color(native_drop_color)
-                            }
-                        })
-                    })
-                    .child(file_body);
+                let split_body = self.split_body(cx);
                 // The preview pane is hidden by default; whenever it's visible
                 // the user explicitly turned it on (Cmd+P / View menu), so
                 // honour that at any window width: the splitter's per-panel
@@ -5320,9 +5357,7 @@ impl Render for Shell {
                                     .min_w_0()
                                     .overflow_hidden()
                                     .child(tabstrip)
-                                    .child(breadcrumb)
-                                    .children(self.trash_bar(cx))
-                                    .child(file_body_wrapped),
+                                    .child(split_body),
                             ),
                     );
                 let splitter = if let Some(pane) = preview_pane {
@@ -5349,12 +5384,14 @@ impl Render for Shell {
                     .on_mouse_move(cx.listener(|this, event, window, cx| {
                         this.on_icon_size_drag(event, window, cx);
                         this.on_similar_criteria_drag(event, cx);
+                        this.on_split_drag(event, cx);
                     }))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
                         cx.listener(|this, _, _, cx| {
                             this.end_icon_size_drag(cx);
                             this.end_similar_criteria_drag();
+                            this.end_split_drag(cx);
                         }),
                     )
                     .on_mouse_up_out(
@@ -5362,6 +5399,7 @@ impl Render for Shell {
                         cx.listener(|this, _, _, cx| {
                             this.end_icon_size_drag(cx);
                             this.end_similar_criteria_drag();
+                            this.end_split_drag(cx);
                         }),
                     )
                     // Phase 7: TitleBar sits across the top with the

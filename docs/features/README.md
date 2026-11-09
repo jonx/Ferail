@@ -77,6 +77,8 @@ keep the UI off the I/O path.
 - [PREVIEW.md](PREVIEW.md): preview pane with async text/image rendering.
 - [TOOL_RESULTS.md](TOOL_RESULTS.md): shared tab-local result surfaces for
   Search, Duplicate Finder, and docked Disk Usage.
+- [SPLIT_VIEW.md](SPLIT_VIEW.md): two of a window's tabs shown side by side
+  or stacked, with the focus following the pointer.
 - [TARGET_PANEL.md](TARGET_PANEL.md): "Pick as Target": a pinned, frozen
   second listing used as a source or destination for file operations, and the
   batched-transfer queue it makes possible.

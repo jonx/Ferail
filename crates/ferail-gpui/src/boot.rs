@@ -824,6 +824,19 @@ pub(crate) fn install_app_menus(cx: &mut App) {
         .checked(crate::feature_settings::search_as_you_type()),
     );
     view_items.push(MenuItem::separator());
+    view_items.push(MenuItem::action(
+        title("view.split_right", "Split Right"),
+        crate::shell::SplitRight,
+    ));
+    view_items.push(MenuItem::action(
+        title("view.split_down", "Split Down"),
+        crate::shell::SplitDown,
+    ));
+    view_items.push(MenuItem::action(
+        title("view.switch_pane", "Switch Pane"),
+        crate::shell::SwitchPane,
+    ));
+    view_items.push(MenuItem::separator());
     view_items.push(MenuItem::action(title("file.refresh", "Refresh"), Refresh));
 
     cx.set_menus([

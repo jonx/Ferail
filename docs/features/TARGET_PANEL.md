@@ -88,15 +88,13 @@ as "cheap and idempotent: hosts call it on every selection change"), which is
 the opposite of frozen. Sharing the surface would mean explaining to the user
 why their preview stopped previewing.
 
-### Why not a dual-pane split
+### How it differs from split view
 
-A full second pane means duplicating the tab strip, the focus handling, and
-every hard-coded `ElementId` in the pane subtree, and it puts pressure on the
-283 `self.tabs` sites. It buys browsing on both sides, which is exactly what
-this design deliberately does not want. The target panel reaches the same
-outcome (an unambiguous "other side" that commands can name) at a fraction of
-the surface. If a split is ever added, it composes: each pane simply becomes
-another source.
+[Split view](SPLIT_VIEW.md) shows two tabs at once, and both of them browse.
+The target panel is the opposite on purpose: it never navigates, it belongs to
+the window rather than to a tab, and it is the surface that staged transfers
+are reviewed on. The two compose: with a split open, each pane is a source for
+the same target.
 
 ## It is a surface, not a tab
 

@@ -127,9 +127,14 @@ Net-new, but each sits on plumbing that already exists.
   `context_row` sites, three real functions). Phase 2 stages transfers into a
   reviewable queue applied on commit: a batch, explicitly not a transaction,
   re-validated at commit time.
-  Design: [TARGET_PANEL.md](docs/features/TARGET_PANEL.md). Supersedes a
-  dual-pane split for the reorganize-across-folders case; the split stays
-  optional and composes with it later.
+  Design: [TARGET_PANEL.md](docs/features/TARGET_PANEL.md). Composes with
+  [split view](docs/features/SPLIT_VIEW.md): each pane is a source for the
+  same target.
+- **Split view follow-ups** ([SPLIT_VIEW.md](docs/features/SPLIT_VIEW.md)).
+  Keyboard Copy and Move to the other pane, so sorting between two folders
+  needs no drag; dragging a tab chip onto the file area to choose which tab
+  joins the split; a `--screenshot` gesture that drags between panes, since
+  the cross-pane drop is the one path the harness cannot exercise.
 
 ## File list, sidebar and navigation
 

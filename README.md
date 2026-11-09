@@ -85,7 +85,7 @@ It targets the gap the default managers leave: **responsiveness under load** and
 - **It speaks your language, even if nobody shipped it.** French, German,
   Italian and Polish are bundled and complete, but the point is the mechanism:
   **Settings ▸ Appearance ▸ New language…** writes a JSON template of all
-  1.386 strings, with the translator brief inside the file. Hand it to a
+  1.392 strings, with the translator brief inside the file. Hand it to a
   translator or paste it into any chat assistant, save the reply, press
   **Import…**, and the whole app switches on the spot. No code, no build, no
   API key, nothing to recompile, and 34 languages are one click away in the
@@ -104,6 +104,12 @@ The full tour with a picture per feature lives in
 | ![Icon grid](docs/images/tour-grid.png) | ![Viewer](docs/images/tour-viewer.png) | ![Palette](docs/images/tour-palette.png) |
 | **Archives, browsed in place** | **Ant Trail visit heat** | **Content-derived descriptions** |
 | ![Archive workbench](docs/images/tour-archive.png) | ![Ant Trail](docs/images/tour-ant-trail.png) | ![Magic descriptions](docs/images/tour-magic.png) |
+
+**Two folders at once**: Split Right or Split Down shows two tabs side by
+side or stacked, to sort files between two folders or two disks by dragging
+across ([split view](docs/features/SPLIT_VIEW.md)):
+
+![Split view](docs/images/tour-split.png)
 
 **Deceptive filenames, exposed**: zero-widths, bidi overrides, homoglyphs and
 disguised whitespace are rendered as visible chips instead of letting a name lie:
@@ -177,7 +183,7 @@ The ❌ rows are real gaps, not modesty.
 | **Bulk rename** (regex + live preview) | ✅ | ❌ | ⚠️ PowerRename (PowerToys) | ✅ KRename etc. |
 | **Predictive navigation** (visit heat) | ✅ Ant Trail | ❌ | ❌ | ❌ |
 | **Previews** | ✅ Quick Look + inline highlighted code | ✅ Quick Look | ⚠️ preview pane | ✅ Dolphin strong |
-| **Tabs + multi-window** | ✅ | ⚠️ tabs, no split | ⚠️ tabs (recent) | ✅ Dolphin best-in-class |
+| **Tabs, split view, multi-window** | ✅ two tabs side by side or stacked | ⚠️ tabs, no split | ⚠️ tabs (recent) | ✅ Dolphin best-in-class |
 | **Command palette** | ✅ Cmd+K | ❌ | ❌ | ❌ |
 | **Editable right-click menus** (hide, reorder, add separators) | ✅ per surface, in Settings | ❌ | ❌ | ⚠️ service menus only |
 | **Chroma-keyed transparent video windows** | ✅ stack keyed videos over the desktop | ❌ | ❌ | ❌ |

@@ -463,6 +463,26 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::View,
         shortcuts: &[],
     },
+    // Split view (docs/features/SPLIT_VIEW.md). Both split commands
+    // toggle: the one matching the current split closes it.
+    CommandSpec {
+        id: CommandId("view.split_right"),
+        title: msgid!("Split Right"),
+        category: Category::View,
+        shortcuts: &[Shortcut::primary("\\")],
+    },
+    CommandSpec {
+        id: CommandId("view.split_down"),
+        title: msgid!("Split Down"),
+        category: Category::View,
+        shortcuts: &[Shortcut::primary_shift("\\")],
+    },
+    CommandSpec {
+        id: CommandId("view.switch_pane"),
+        title: msgid!("Switch Pane"),
+        category: Category::View,
+        shortcuts: &[Shortcut::primary_alt("\\")],
+    },
     CommandSpec {
         id: CommandId("view.cycle_focus"),
         title: msgid!("Cycle Focus"),

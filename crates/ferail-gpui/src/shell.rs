@@ -63,6 +63,8 @@ mod path;
 pub(crate) mod render;
 mod search;
 mod selection;
+mod split;
+pub use split::PaneSplit;
 mod tab;
 pub(crate) mod verify;
 
@@ -950,8 +952,17 @@ pub struct Shell {
     /// last-error / pending-select state, so tab-switching is
     /// instant and an inactive tab's enumeration keeps streaming.
     pub tabs: Vec<Tab>,
-    /// Index of the active tab in `tabs`.
+    /// Index of the active tab in `tabs`. While the window is split it
+    /// is the tab of the focused pane.
     pub active: usize,
+    /// Split view: the two tabs shown together, `None` for a single
+    /// pane (docs/features/SPLIT_VIEW.md). Reconciled against `tabs` by
+    /// `sync_split`, never patched at the sites that change tabs.
+    pub split: Option<PaneSplit>,
+    /// Bounds of the split area as last painted, for the divider drag.
+    pub(crate) split_bounds: Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
+    /// The divider between the panes is being dragged.
+    pub(crate) split_dragging: bool,
     /// Focus handle for the Shell's key-context. Keybindings declared
     /// against `SHELL_CONTEXT` only fire when this handle (or one of
     /// its children) holds focus.
@@ -2356,6 +2367,9 @@ impl Shell {
             preview_scroll_path: None,
             ui_scale,
             splitter_state: cx.new(|_| crate::splitter::ResizableState::default()),
+            split: None,
+            split_bounds: Rc::new(std::cell::Cell::new(gpui::Bounds::default())),
+            split_dragging: false,
             sidebar_width: persisted
                 .sidebar_width
                 .unwrap_or(220.0)
@@ -6056,6 +6070,7 @@ impl Shell {
     /// from Shell, not the table).
     fn warm_grid_viewport(
         &mut self,
+        idx: usize,
         entry_range: std::ops::Range<usize>,
         thumb_px: u32,
         icon_px: u32,
@@ -6067,7 +6082,7 @@ impl Shell {
         // Snapshot the folders and thumbnailable files in range.
         let mut folders: Vec<PathBuf> = Vec::new();
         {
-            let table = self.active_tab().table.read(cx);
+            let table = self.tabs[idx].table.read(cx);
             let del = table.delegate();
             let n = del.entries.len();
             let start = entry_range.start.min(n);
@@ -6088,7 +6103,7 @@ impl Shell {
         // can paint a soft stand-in while the crisp result is still pending.
         const PREVIEW_PX: u32 = crate::thumbnails::THUMB_PREVIEW_PX;
         const PREVIEW_ABOVE_BUCKET: u32 = 256;
-        let table = self.active_tab().table.clone();
+        let table = self.tabs[idx].table.clone();
         let target = crate::asset_dispatcher::ThumbnailTarget::Shell(cx.entity().downgrade());
         table.update(cx, |state, cx| {
             if thumb_px > PREVIEW_ABOVE_BUCKET {
@@ -6155,17 +6170,17 @@ impl Shell {
     /// first load (no layout yet) we fall back to a generous first
     /// screen so thumbnails still appear up front.
     fn warm_loaded_viewport_in_tab(&self, idx: usize, cx: &mut Context<Self>) {
-        if idx != self.active {
-            return;
-        }
-        // In grid mode the grid self-warms (at its bucket size) on the
-        // render that this load's `cx.notify()` triggers.
-        if matches!(self.active_tab().view_mode, crate::grid::ViewMode::Grid) {
+        if !self.tab_is_shown(idx) {
             return;
         }
         let Some(tab) = self.tabs.get(idx) else {
             return;
         };
+        // In grid mode the grid self-warms (at its bucket size) on the
+        // render that this load's `cx.notify()` triggers.
+        if matches!(tab.view_mode, crate::grid::ViewMode::Grid) {
+            return;
+        }
         let table = tab.table.clone();
         cx.spawn(async move |_this, cx| {
             cx.background_executor()

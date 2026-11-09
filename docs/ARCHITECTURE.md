@@ -239,7 +239,8 @@ The title bar owns global navigation controls and the filter input.
 The main shell is split into resizable panels:
 
 - Sidebar
-- Virtualized file table
+- Virtualized file table, or two of them in a
+  [split view](features/SPLIT_VIEW.md)
 - Preview pane
 
 The sidebar has three concepts:

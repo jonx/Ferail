@@ -110,6 +110,13 @@ actions!(
         ReopenClosedTab,
         NextTab,
         PrevTab,
+        /// Show two tabs side by side, or close a side-by-side split
+        /// (docs/features/SPLIT_VIEW.md).
+        SplitRight,
+        /// Show two tabs stacked, or close a stacked split.
+        SplitDown,
+        /// Move the focus to the other pane of a split window.
+        SwitchPane,
         QuickLook,
         /// Cmd+Y: open the viewer window on the current folder's
         /// files (docs/features/VIEWER.md). Space stays Quick Look.

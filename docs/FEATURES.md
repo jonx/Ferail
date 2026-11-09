@@ -18,6 +18,7 @@ that rule.
 - [SHA-256 - verify a download in place](#sha-256---verify-a-download-in-place)
 - [Archives - open them like folders](#archives---open-them-like-folders)
 - [Ant Trail - the app learns where you go](#ant-trail---the-app-learns-where-you-go)
+- [Split view - two folders at once](#split-view---two-folders-at-once)
 - [Icon grid - the same folder, visual](#icon-grid---the-same-folder-visual)
 - [Media viewer - compare files like frames](#media-viewer---compare-files-like-frames)
 - [Disk Usage - see the bytes, act on them, share the picture](#disk-usage---see-the-bytes-act-on-them-share-the-picture)
@@ -135,6 +136,15 @@ Recents section keeps them one click away. Recency and heat are separate,
 so clearing Recents doesn't erase how often you visit a folder. Both the
 tint and the Recents list have master switches, and the base colour is
 configurable in Settings → Appearance. ([ant trail](features/ANT_TRAIL.md))
+
+## Split view - two folders at once
+
+![Split view](images/tour-split.png)
+
+Split Right or Split Down puts two tabs on screen, each with its own
+folder, history, selection and view. Click a pane to work in it, drag
+files across to move or copy them, drag the divider to resize.
+([split view](features/SPLIT_VIEW.md))
 
 ## Icon grid - the same folder, visual
 
@@ -305,7 +315,7 @@ Italian and Polish are bundled and complete, switchable live, every window
 repainting on the spot. The part that matters is what happens when yours is
 not in the list: *Settings ▸ Appearance ▸ New language…* picks from 34
 languages and writes `<code>.json` into your languages folder, a template
-holding all 1.386 strings in English with the translator brief inside the
+holding all 1.392 strings in English with the translator brief inside the
 file. Give it to a translator, or paste it into any chat assistant and say
 "translate this". Save the reply, press *Import…*, and Ferail validates it
 (unknown keys, lost `{placeholders}`, wrong plural categories are reported,

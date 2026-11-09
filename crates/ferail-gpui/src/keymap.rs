@@ -281,6 +281,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
 
         // -- Window: tab cycling ---------------------------------
         "window.next_tab" => bind!(NextTab, ctx),
+        "view.split_right" => bind!(crate::shell::SplitRight, ctx),
+        "view.split_down" => bind!(crate::shell::SplitDown, ctx),
+        "view.switch_pane" => bind!(crate::shell::SwitchPane, ctx),
         "window.prev_tab" => bind!(PrevTab, ctx),
         "window.close_window" => bind!(CloseWindow, ctx),
 
@@ -350,6 +353,15 @@ pub(crate) fn install_extras(cx: &mut App) {
         // to repeat the binding here.
         KeyBinding::new("ctrl-tab", NextTab, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("ctrl-shift-tab", PrevTab, Some(shell::SHELL_CONTEXT)),
+        // Option+Tab also switches panes on macOS. Alt+Tab belongs to
+        // the window switcher everywhere else, so those platforms keep
+        // the catalogue shortcut only.
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "alt-tab",
+            crate::shell::SwitchPane,
+            Some(shell::SHELL_CONTEXT),
+        ),
         // Stage 8: macOS Quick Look. Space-bar on the selected row
         // pops the QL panel. Not in the catalogue because Quick
         // Look is a macOS-specific affordance; the binding lives

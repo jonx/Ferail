@@ -8,6 +8,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Split view: two folders side by side.** *Split Right* (Cmd+\) and *Split
+  Down* (Cmd+Shift+\) in the View menu show two of the window's tabs at once,
+  so you can sort files between two folders or two disks by dragging from one
+  pane to the other. Click a pane, or press Cmd+Option+\ (Option+Tab on
+  macOS), to work in it; pick another tab to change what the focused pane
+  shows; drag the divider to resize. The same command closes the split. A
+  split is not restored when Ferail restarts.
+
 ## 0.7.11 - 2026-11-09
 
 - **RAR archives open and extract.** `.rar` files, from RAR 1.5 to RAR5,

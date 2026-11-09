@@ -272,6 +272,9 @@ pub enum ClickGesture {
     Click {
         row: usize,
         count: usize,
+        /// Aim at the pane of a split window that does not have the focus
+        /// (`o3` in the list), the way a user points at the other side.
+        other_pane: bool,
     },
     /// Wait past the click-to-rename delay, so the next click is judged as
     /// a fresh gesture rather than half of a double-click.
@@ -330,14 +333,19 @@ pub fn parse_args() -> Args {
                                 if part == "pause" {
                                     return Some(ClickGesture::Pause);
                                 }
+                                let (part, other_pane) = match part.strip_prefix('o') {
+                                    Some(rest) => (rest, true),
+                                    None => (part, false),
+                                };
                                 let (row, count) = match part.split_once(':') {
                                     Some((r, c)) => (r, c.parse().unwrap_or(1)),
                                     None => (part, 1),
                                 };
-                                row.trim()
-                                    .parse()
-                                    .ok()
-                                    .map(|row| ClickGesture::Click { row, count })
+                                row.trim().parse().ok().map(|row| ClickGesture::Click {
+                                    row,
+                                    count,
+                                    other_pane,
+                                })
                             })
                             .collect()
                     })
@@ -556,7 +564,9 @@ OPTIONS
   --click-rows <list>      Real left clicks on rows: `row[:count]` items
                            separated by commas, `pause` waits past the
                            click-to-rename delay. `0,0:2` double-clicks row 0
-                           (expects Open); `0,pause,0` expects rename.
+                           (expects Open); `0,pause,0` expects rename. An
+                           `o` prefix (`o3`) aims at the other pane of a
+                           split window.
   --text-editor <path>     Render the built-in text-editor window for <path>.
   --image-editor <path>    Render the built-in image-editor window for <path>
                            with demo redaction/annotation strokes.
@@ -1633,14 +1643,18 @@ impl ShellArgs {
         }
         let mut first_click = true;
         for gesture in self.click_rows.iter().copied() {
-            let (row, count) = match gesture {
+            let (row, count, other_pane) = match gesture {
                 ClickGesture::Pause => {
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(800))
                         .await;
                     continue;
                 }
-                ClickGesture::Click { row, count } => (row, count),
+                ClickGesture::Click {
+                    row,
+                    count,
+                    other_pane,
+                } => (row, count, other_pane),
             };
             // Real left clicks through the window's event path. Only the
             // first one waits for the streamed enumeration; the rest follow
@@ -1654,7 +1668,14 @@ impl ShellArgs {
                 }))
                 .await;
             first_click = false;
-            let point = shell.read_with(cx, |s, cx| s.active_tab().table.read(cx).row_center(row));
+            let point = shell.read_with(cx, |s, cx| {
+                let idx = if other_pane {
+                    s.other_pane_index()?
+                } else {
+                    s.active
+                };
+                s.tabs[idx].table.read(cx).row_center(row)
+            });
             let Some(position) = point else {
                 crate::log_warn!(90, "--click-rows {row}: row not laid out / out of view");
                 continue;

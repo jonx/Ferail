@@ -7,6 +7,33 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-11-10 Split view
+
+Two of a window's tabs can be shown at once
+([SPLIT_VIEW.md](docs/features/SPLIT_VIEW.md)).
+
+- **A pane is a tab, not a new surface.** The alternative was a second pane
+  with its own tab set, which duplicates the tab strip and touches every one
+  of the roughly 600 reads of `tabs` and `active_tab()`. Showing an existing
+  tab costs none of that: `active` stays the one tab commands act on.
+- **Reconcile instead of patching.** About ten places assign `active`. The
+  split is matched against the tabs in one function at render time, so none
+  of them changed.
+- **Focus in the capture phase.** A press, a drag hover or a drop in the
+  unfocused pane makes it active before any row handler runs. This is what
+  lets handlers that resolve a row index against the active tab stay as they
+  are. The cost: a drag that merely crosses a pane moves the focus to it.
+- **This reverses the earlier ruling** that the target panel replaced a
+  split. That ruling priced the split as a second full pane. The target
+  panel stays a separate design for a frozen destination and staged
+  transfers.
+- **Kept small on purpose.** Two panes, two axes, three commands. The
+  reference was Bloom's ten layouts with synchronized browsing and pane
+  locks; none of those earn their surface for sorting between two folders.
+- **Deferred:** keyboard copy/move to the other pane, dragging a tab into
+  the split. A layout with more panes would need the split to become a tree,
+  and would be reconsidered only on a concrete need.
+
 # 2026-10-25 Native AROS port
 
 Ferail runs as a native AROS command on AArch64. The port is the
