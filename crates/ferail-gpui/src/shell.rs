@@ -8537,6 +8537,15 @@ impl Shell {
     }
 }
 
+/// Remember the preview pane's visibility for the next launch. `save`
+/// updates an in-memory cache and hands the disk write to the writer
+/// thread, so this is safe from a click or key handler.
+pub(crate) fn persist_preview_visible(visible: bool) {
+    let mut state = app_state::load();
+    state.preview_visible = Some(visible);
+    app_state::save(&state);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -8789,11 +8798,3 @@ mod tests {
     }
 }
 
-/// Remember the preview pane's visibility for the next launch. `save`
-/// updates an in-memory cache and hands the disk write to the writer
-/// thread, so this is safe from a click or key handler.
-pub(crate) fn persist_preview_visible(visible: bool) {
-    let mut state = app_state::load();
-    state.preview_visible = Some(visible);
-    app_state::save(&state);
-}
