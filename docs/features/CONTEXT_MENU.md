@@ -35,7 +35,7 @@ API, so we compose a faithful equivalent from `NSWorkspace`,
   (folders/files), Show Contents (packages), Edit in TextEdit/Notepad/Text Editor (one file), Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
   Compress (submenu: ZIP / 7-Zip / TAR ▸ Gzip·Bzip2·XZ·Uncompressed),
-  Extract (archive rows only; submenu: Extract Here / Extract To…),
+  Extract (archive rows only; submenu: Extract Here / Extract to "name" / Extract To…; see [Archives](ARCHIVES.md#extraction)),
   Copy Path, Open Terminal Here (folders), What's Locking This? (platforms
   with `lock_diagnostics_available()`: Windows-only today; a Restart-Manager
   dialog naming the processes holding the selection open, with force-close

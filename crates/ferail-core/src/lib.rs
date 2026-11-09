@@ -14,6 +14,7 @@ pub mod private_presentation;
 pub mod i18n;
 pub mod media;
 pub mod name_hazards;
+pub mod natural;
 pub mod navigation;
 pub mod node_store;
 pub mod packages;

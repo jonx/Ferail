@@ -1380,12 +1380,13 @@ impl ShellArgs {
         if self.similar_images {
             shell.update(cx, |shell, cx| shell.seed_similar_images_for_screenshot(cx));
         }
-        if self.preview {
-            shell.update(cx, |s, cx| {
-                s.preview_visible = true;
-                cx.notify();
-            });
-        }
+        // Explicit either way: the user's persisted preview choice must not
+        // leak into captures that did not ask for the pane.
+        let preview = self.preview;
+        shell.update(cx, |s, cx| {
+            s.preview_visible = preview;
+            cx.notify();
+        });
         if let Some(text) = self.breadcrumb.clone() {
             // Enter breadcrumb edit mode and SIMULATE TYPING `text`
             // (via the EntityInputHandler trait method, so the ordinary

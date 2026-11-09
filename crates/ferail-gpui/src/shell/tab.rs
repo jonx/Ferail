@@ -471,6 +471,12 @@ pub struct Marquee {
     /// then the gesture is still a candidate plain background click
     /// (which clears the selection on release).
     pub moved: bool,
+    /// Vertical scroll offset of the swept surface at press. `start` is
+    /// window-space, so when the surface scrolls under a held drag the
+    /// press point moves by `offset_now - start_scroll_y` with the content.
+    pub start_scroll_y: Pixels,
+    /// An edge auto-scroll loop is running for this gesture.
+    pub autoscrolling: bool,
 }
 
 pub struct Tab {

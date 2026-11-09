@@ -1007,7 +1007,14 @@ impl ArchiveView {
         let archive = self.archive_path.clone();
         let password = self.password.clone();
         let _ = shell.update(cx, |shell, scx| {
-            shell.spawn_extract_into(vec![archive], parent, password, window, scx);
+            shell.spawn_extract_into(
+                vec![archive],
+                parent,
+                password,
+                crate::shell::ExtractMode::Smart,
+                window,
+                scx,
+            );
         });
     }
 
@@ -1051,7 +1058,14 @@ impl ArchiveView {
             };
             let _ = shell.update_in(cx, |shell, window, scx| {
                 if selected.is_empty() {
-                    shell.spawn_extract_into(vec![archive], dest, password, window, scx);
+                    shell.spawn_extract_into(
+                        vec![archive],
+                        dest,
+                        password,
+                        crate::shell::ExtractMode::Smart,
+                        window,
+                        scx,
+                    );
                 } else {
                     shell.extract_archive_entries_into(
                         archive, selected, dest, password, window, scx,

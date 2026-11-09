@@ -52,6 +52,7 @@ mod dock;
 mod dupe_panel;
 mod dupes;
 mod file_ops;
+pub(crate) use file_ops::ExtractMode;
 pub use file_ops::ArchiveOpSettled;
 pub(crate) use file_ops::pick_destination_folder;
 pub(crate) use file_ops::{ArchiveSaveRequest, TransferMode};
@@ -2344,11 +2345,9 @@ impl Shell {
             // right and pushes file-list columns (Description in
             // particular) out of view at the default window size.
             // Cmd+P (or whatever shortcut binds the toggle in keymap)
-            // brings it back. Once DB-persistence for layout state
-            // wires into Shell::new the user's last choice will
-            // override this default, until then this is the boot
-            // state on every launch.
-            preview_visible: false,
+            // brings it back. The user's last explicit toggle is
+            // persisted and wins over this default.
+            preview_visible: persisted.preview_visible.unwrap_or(false),
             preview_override: None,
             preview_panel: None,
             preview_scroll: ScrollHandle::new(),
@@ -3998,6 +3997,7 @@ impl Shell {
         }
         if self.preview_visible {
             self.preview_visible = false;
+            persist_preview_visible(false);
             cx.notify();
             return true;
         }
@@ -4810,6 +4810,7 @@ impl Shell {
     /// shown; toggling off gives the file list the full content width.
     fn on_toggle_preview(&mut self, _: &TogglePreview, _: &mut Window, cx: &mut Context<Self>) {
         self.preview_visible = !self.preview_visible;
+        persist_preview_visible(self.preview_visible);
         // When revealing the pane, make sure the current lead selection's
         // preview is requested. Selection-change normally kicks this off, but
         // request again so an explicit Cmd+P never reveals an empty pane (e.g.
@@ -8786,4 +8787,13 @@ mod tests {
             None
         );
     }
+}
+
+/// Remember the preview pane's visibility for the next launch. `save`
+/// updates an in-memory cache and hands the disk write to the writer
+/// thread, so this is safe from a click or key handler.
+pub(crate) fn persist_preview_visible(visible: bool) {
+    let mut state = app_state::load();
+    state.preview_visible = Some(visible);
+    app_state::save(&state);
 }

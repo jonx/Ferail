@@ -150,7 +150,7 @@ impl ArchiveTree {
             let b_dir = self.dirs.contains(*b);
             b_dir
                 .cmp(&a_dir)
-                .then_with(|| leaf(a).to_lowercase().cmp(&leaf(b).to_lowercase()))
+                .then_with(|| ferail_core::natural::natural_cmp(leaf(a), leaf(b)))
         });
         for path in ordered {
             let is_dir = self.dirs.contains(path);
@@ -211,7 +211,7 @@ impl ArchiveTree {
         rows.sort_by(|a, b| {
             b.is_dir
                 .cmp(&a.is_dir)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                .then_with(|| ferail_core::natural::natural_cmp(&a.name, &b.name))
         });
         rows
     }

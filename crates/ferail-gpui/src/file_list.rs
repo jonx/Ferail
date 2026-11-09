@@ -1586,7 +1586,7 @@ impl FileListDelegate {
                     self.entries.sort_by_cached_key(|entry| {
                         (
                             flat.directory_rank(entry.id, &ranks),
-                            entry.display_name.to_lowercase(),
+                            ferail_core::natural::natural_key(&entry.display_name),
                             entry.id.as_raw(),
                         )
                     });
@@ -1594,7 +1594,7 @@ impl FileListDelegate {
                     self.entries.sort_by_cached_key(|entry| {
                         (
                             Reverse(flat.directory_rank(entry.id, &ranks)),
-                            entry.display_name.to_lowercase(),
+                            ferail_core::natural::natural_key(&entry.display_name),
                             entry.id.as_raw(),
                         )
                     });
@@ -3650,7 +3650,7 @@ impl TableDelegate for FileListDelegate {
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
             CompressTarBz2, CompressTarGz, CompressTarXz, ConvertArchive, CopyPath,
             CreateChecksumFile, DeleteImmediately, Duplicate, EditFile, EditImage, EditTextFile,
-            Extract, ExtractTo, GenerateSha256, GetInfo, MakeAlias, MoveToTrash, NewArchive,
+            Extract, ExtractTo, ExtractToFolders, GenerateSha256, GetInfo, MakeAlias, MoveToTrash, NewArchive,
             OpenAsArchive, OpenInNewTab, OpenSelected, OpenTerminalHere, QuickLook, RenameSelected,
             RevealInFinder, ShowContents, ShowLockHolders, SlideshowFromHere,
             ToggleFavoriteForTarget, ToggleTagBlue, ToggleTagGray, ToggleTagGreen, ToggleTagOrange,
@@ -3891,11 +3891,27 @@ impl TableDelegate for FileListDelegate {
             .submenu(ids::COMPRESS, tr!("Compress"), compress_submenu);
         {
             // Capability command: shown when any target is an archive
-            // (docs/features/CONTEXT_MENU.md). "Extract Here" unpacks into the
-            // current folder; "Extract To…" opens a folder picker first. Both
-            // choose a smart destination per archive.
-            let extract_submenu = PopupMenu::build(window, cx, |m, _w, _c| {
+            // (docs/features/CONTEXT_MENU.md). The three entries follow
+            // WinRAR: "Extract Here" unpacks straight into the current folder,
+            // the second gives each archive its own folder named after it,
+            // and "Extract To…" opens a folder picker first.
+            let own_folder_label: SharedString = if show_single_only {
+                let leaf = self
+                    .entries
+                    .get(row_ix)
+                    .map(|entry| entry.display_name.to_string())
+                    .unwrap_or_default();
+                let stem = archive_display_stem(&leaf);
+                tr!(
+                    "Extract to \"{name}\"",
+                    name = crate::private_mode::present_leaf_str(&stem, true)
+                )
+            } else {
+                tr!("Extract Each to Its Own Folder")
+            };
+            let extract_submenu = PopupMenu::build(window, cx, move |m, _w, _c| {
                 m.menu(tr!("Extract Here"), Box::new(Extract))
+                    .menu(own_folder_label.clone(), Box::new(ExtractToFolders))
                     .menu(tr!("Extract To\u{2026}"), Box::new(ExtractTo))
             });
             plan = plan.submenu(ids::EXTRACT, tr!("Extract"), extract_submenu);
@@ -4599,8 +4615,8 @@ pub fn sort_in_place(entries: &mut [ferail_core::FileEntry], col: SortColumn, as
     fn non_dir(e: &ferail_core::FileEntry) -> bool {
         !matches!(e.kind, ferail_core::EntryKind::Directory)
     }
-    fn name_key(e: &ferail_core::FileEntry) -> String {
-        e.display_name.to_lowercase()
+    fn name_key(e: &ferail_core::FileEntry) -> Vec<u8> {
+        ferail_core::natural::natural_key(&e.display_name)
     }
     match (col, asc) {
         (SortColumn::Name, true) => {
@@ -4706,7 +4722,7 @@ fn sort_by_heat(
             (
                 non_dir(e),
                 key(e),
-                e.display_name.to_lowercase(),
+                ferail_core::natural::natural_key(&e.display_name),
                 e.id.as_raw(),
             )
         });
@@ -4715,7 +4731,7 @@ fn sort_by_heat(
             (
                 non_dir(e),
                 Reverse(key(e)),
-                e.display_name.to_lowercase(),
+                ferail_core::natural::natural_key(&e.display_name),
                 e.id.as_raw(),
             )
         });
@@ -5274,4 +5290,16 @@ fn name_fit_chars(
     ((chars as f32 * available / width).floor() as usize)
         .saturating_sub(1)
         .max(10)
+}
+
+/// An archive file name without its format suffix (`photos.tar.gz` gives
+/// `photos`), as the folder "Extract to" creates is named. Lexical only.
+fn archive_display_stem(leaf: &str) -> String {
+    if let Some(format) = ferail_archive::Format::from_path(leaf) {
+        let dot_ext = format!(".{}", format.canonical_extension());
+        if let Some(stripped) = leaf.to_ascii_lowercase().strip_suffix(&dot_ext) {
+            return leaf[..stripped.len()].to_string();
+        }
+    }
+    leaf.to_string()
 }

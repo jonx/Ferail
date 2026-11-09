@@ -40,6 +40,8 @@ use crate::file_ops::TransferProgress;
 
 mod lha;
 mod os_paths;
+#[cfg(not(target_os = "aros"))]
+mod rar;
 pub use os_paths::entry_os_path;
 pub mod scratch;
 mod sevenz;
@@ -204,6 +206,8 @@ pub fn probe_format(path: &Path) -> Option<Format> {
         MagicType::SevenZip => Some(Format::SevenZ),
         MagicType::Tar => Some(Format::Tar),
         MagicType::Lha => Some(Format::Lha),
+        #[cfg(not(target_os = "aros"))]
+        MagicType::Rar => Some(Format::Rar),
         MagicType::Gzip => Some(Format::Gzip),
         MagicType::Xz => Some(Format::Xz),
         MagicType::Bzip2 => Some(Format::Bzip2),
@@ -226,6 +230,8 @@ pub fn read_toc(archive: &Path, password: Option<&str>) -> Result<Toc, ArchiveEr
         Format::Zip => zip_codec::read_toc(archive, password),
         Format::SevenZ => sevenz::read_toc(archive, password),
         Format::Lha => lha::read_toc(archive),
+        #[cfg(not(target_os = "aros"))]
+        Format::Rar => rar::read_toc(archive, password),
         f if f.is_tar_family() => tarball::read_toc(archive, f),
         f => single::read_toc(archive, f),
     }
@@ -270,6 +276,10 @@ pub fn read_summary(archive: &Path) -> Result<ArchiveSummary, ArchiveError> {
     match format_of(archive)? {
         Format::Zip => zip_codec::read_summary(archive),
         Format::SevenZ => sevenz::read_summary(archive),
+        // Listing a RAR walks every header of every volume: not cheap enough
+        // for a column label.
+        #[cfg(not(target_os = "aros"))]
+        Format::Rar => Ok(ArchiveSummary::default()),
         f if f.is_tar_family() => Ok(ArchiveSummary::default()),
         f => single::read_summary(archive, f),
     }
@@ -418,6 +428,8 @@ fn dispatch_extract(
         Format::Zip => zip_codec::extract(archive, dest, sel, opts, progress, cancel),
         Format::SevenZ => sevenz::extract(archive, dest, sel, opts, progress, cancel),
         Format::Lha => lha::extract(archive, dest, sel, opts, progress, cancel),
+        #[cfg(not(target_os = "aros"))]
+        Format::Rar => rar::extract(archive, dest, sel, opts, progress, cancel),
         f if f.is_tar_family() => tarball::extract(archive, f, dest, sel, opts, progress, cancel),
         f => single::extract(archive, f, dest, sel, opts, progress, cancel),
     }
@@ -514,6 +526,73 @@ pub(super) fn write_file<R: Read>(
     outcome.files_written += 1;
     note_created_root(dest, safe_rel, outcome)?;
     Ok(())
+}
+
+/// Like [`write_file`], for decoders that push their output into a writer
+/// instead of exposing a reader. `fill` receives an unbuffered-by-the-caller
+/// sink that counts progress and fails the write once `cancel` is set.
+#[cfg_attr(target_os = "aros", allow(dead_code))]
+pub(super) fn write_file_from(
+    dest: &Path,
+    safe_rel: &str,
+    opts: ExtractOptions<'_>,
+    progress: &TransferProgress,
+    cancel: &AtomicBool,
+    outcome: &mut ExtractOutcome,
+    fill: impl FnOnce(&mut dyn Write) -> Result<(), ArchiveError>,
+) -> Result<(), ArchiveError> {
+    let target = entry_os_path(dest, safe_rel)?;
+    let file = match open_file_beneath(dest, safe_rel, opts.overwrite)? {
+        DestinationFile::Ready(file) => file,
+        DestinationFile::Exists => {
+            outcome.skip(safe_rel.to_string(), SkipReason::ExistingNotOverwritten);
+            return Ok(());
+        }
+        DestinationFile::UnsafeLink => {
+            outcome.skip(safe_rel.to_string(), SkipReason::UnsafeDestinationLink);
+            return Ok(());
+        }
+    };
+    progress.note_current(&target);
+    let mut sink = ProgressSink {
+        inner: std::io::BufWriter::with_capacity(64 * 1024, file),
+        progress,
+        cancel,
+    };
+    // A member that fails to decode (wrong password, corrupt data, cancel)
+    // must not leave a truncated file that a retry then refuses to replace.
+    if let Err(error) = fill(&mut sink).and_then(|()| sink.flush().map_err(ArchiveError::from)) {
+        drop(sink);
+        let _ = std::fs::remove_file(&target);
+        return Err(error);
+    }
+    progress.add_items(1);
+    outcome.files_written += 1;
+    note_created_root(dest, safe_rel, outcome)?;
+    Ok(())
+}
+
+/// Writer adapter for [`write_file_from`]: counts bytes into `progress` and
+/// refuses further writes once `cancel` is set.
+struct ProgressSink<'a, W: Write> {
+    inner: W,
+    progress: &'a TransferProgress,
+    cancel: &'a AtomicBool,
+}
+
+impl<W: Write> Write for ProgressSink<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if check_cancel(self.cancel).is_err() {
+            return Err(std::io::Error::other("cancelled"));
+        }
+        let n = self.inner.write(buf)?;
+        self.progress.add_bytes(n as u64);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 enum DestinationFile {

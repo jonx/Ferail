@@ -1714,3 +1714,92 @@ fn conversion_publication_rejects_collision_without_touching_either_file() {
     #[cfg(target_os = "aros")]
     assert!(!source.exists());
 }
+
+// RAR fixtures: two tiny archives from the `unrar` crate's MIT/Apache-2.0
+// test data (no RAR writer exists to build them on the fly). `VERSION`
+// holds "unrar-0.4.0"; `.gitignore` is encrypted with the password "unrar".
+#[cfg(not(target_os = "aros"))]
+const RAR_VERSION: &str = "526172211a0700cf907300000d000000000000000f0c7420802700150000000b0000000345f37dc6a48a07471d330700a481000056455253494f4e0c008fec8a45cc23c848088362fe5fdd5c5388f072c43d7b00400700";
+#[cfg(not(target_os = "aros"))]
+const RAR_CRYPTED: &str = "526172211a0700cf907300000d00000000000000d3d97424843200200000001200000003f38a036e2d8103471d330a00a48100002e67697469676e6f72658904ba8c930643221f3985f96f255f39cfe9212406563c124f9006cafcd962d85ff0c72332a52e6dc43d7b00400700";
+
+#[cfg(not(target_os = "aros"))]
+fn write_hex(path: &Path, hex: &str) {
+    let bytes: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+    fs::write(path, bytes).unwrap();
+}
+
+#[cfg(not(target_os = "aros"))]
+#[test]
+fn rar_lists_and_extracts() {
+    let tf = TempFile::new(".rar");
+    write_hex(tf.path(), RAR_VERSION);
+    assert_eq!(Format::from_path("x.RAR"), Some(Format::Rar));
+    assert_eq!(super::probe_format(tf.path()), Some(Format::Rar));
+
+    let toc = super::read_toc(tf.path(), None).unwrap();
+    assert_eq!(toc.entries.len(), 1);
+    assert_eq!(toc.entries[0].path, "VERSION");
+    assert_eq!(toc.entries[0].uncompressed_size, Some(11));
+    assert!(!toc.needs_password);
+
+    let out = TempDir::new("rar-extract");
+    let (progress, cancel) = rig();
+    let outcome = extract_all(tf.path(), out.path(), ExtractOptions::default(), &progress, &cancel)
+        .unwrap();
+    assert_eq!(outcome.files_written, 1);
+    assert_eq!(fs::read_to_string(out.path().join("VERSION")).unwrap(), "unrar-0.4.0");
+    assert_eq!(progress.bytes_done(), 11);
+
+    // A second run must not overwrite, and says so.
+    let again = extract_all(tf.path(), out.path(), ExtractOptions::default(), &progress, &cancel)
+        .unwrap();
+    assert_eq!(again.files_written, 0);
+    assert_eq!(again.skipped.len(), 1);
+}
+
+#[cfg(not(target_os = "aros"))]
+#[test]
+fn rar_password_flow() {
+    let tf = TempFile::new(".rar");
+    write_hex(tf.path(), RAR_CRYPTED);
+    let toc = super::read_toc(tf.path(), None).unwrap();
+    assert!(toc.needs_password);
+    assert_eq!(toc.entries[0].path, ".gitignore");
+
+    let out = TempDir::new("rar-crypted");
+    let (progress, cancel) = rig();
+    let missing = extract_all(tf.path(), out.path(), ExtractOptions::default(), &progress, &cancel);
+    assert!(matches!(missing, Err(ArchiveError::PasswordRequired)), "{missing:?}");
+    let wrong = extract_all(
+        tf.path(),
+        out.path(),
+        ExtractOptions { password: Some("nope"), ..Default::default() },
+        &progress,
+        &cancel,
+    );
+    assert!(matches!(wrong, Err(ArchiveError::WrongPassword)), "{wrong:?}");
+    let _ = fs::remove_file(out.path().join(".gitignore"));
+    let ok = extract_all(
+        tf.path(),
+        out.path(),
+        ExtractOptions { password: Some("unrar"), overwrite: true },
+        &progress,
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(ok.files_written, 1);
+    assert_eq!(fs::read(out.path().join(".gitignore")).unwrap().len(), 18);
+}
+
+#[cfg(not(target_os = "aros"))]
+#[test]
+fn rar_is_read_only_and_absent_from_the_create_picker() {
+    let caps = Format::Rar.capabilities();
+    assert!(caps.can_browse && caps.can_extract);
+    assert!(!caps.can_create);
+    assert!(!Format::creatable_multi_file().contains(&Format::Rar));
+}

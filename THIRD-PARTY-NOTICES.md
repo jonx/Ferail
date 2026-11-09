@@ -85,6 +85,34 @@ capability matrix reflects.
 
 ---
 
+## RAR decoding - `unrar-rs` (Apache-2.0 with the UnRAR restriction)
+
+`.rar` support links [`unrar-rs`](https://github.com/scryer-media/rarpar)
+unmodified from crates.io, built without its default `aws-lc` crypto backend.
+It is pure Rust, with no C. Decoder only: Ferail cannot create RAR archives,
+which the capability matrix reflects. It is not built for AROS.
+
+Its RAR engine was developed from the unRAR source code, whose licence
+requires the following paragraph to accompany binaries:
+
+> The RAR engine was developed using the source code of the unRAR program.
+> All copyrights to the original unRAR code are owned by Alexander Roshal,
+> and its license restriction continues to govern that code:
+>
+> UnRAR source code may be used in any software to handle RAR archives
+> without limitations free of charge, but cannot be used to develop RAR
+> (WinRAR) compatible archiver and to re-create RAR compression algorithm,
+> which is proprietary. Distribution of modified UnRAR source code in
+> separate form or as a part of other software is permitted, provided that
+> full text of this paragraph, starting from "UnRAR source code" words, is
+> included in license, or in documentation if license is not available, and
+> in source code comments of resulting package.
+
+The rest of `unrar-rs` is Apache-2.0; that text is in
+[LICENSE-APACHE](LICENSE-APACHE).
+
+---
+
 ## Tree-sitter and its grammars (MIT / Apache-2.0)
 
 The inline syntax-highlighted code preview embeds **tree-sitter** and 35

@@ -8,6 +8,30 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **RAR archives open and extract.** `.rar` files, from RAR 1.5 to RAR5,
+  browse in the archive view and extract like ZIP and 7-Zip, including
+  password-protected ones and multi-part sets opened from any part. Ferail
+  cannot create RAR archives: the format is proprietary. Not available on AROS.
+
+- **Extract Here no longer wraps the files in an extra folder.** It now puts
+  the archive's contents directly in the current folder, as WinRAR does, and
+  refuses rather than mixing them into an item of the same name. A new
+  *Extract to "name"* command gives each archive its own folder, which with
+  several archives selected reads *Extract Each to Its Own Folder*.
+
+- **Numbers in names sort by value.** `2_Intro.pdf` now comes before
+  `10_Forms.pdf`, as in Explorer and Finder. Names were compared character by
+  character, so `10` sorted before `1_` and `2`.
+
+- **The preview pane stays open across launches.** Whether it was shown when
+  you last toggled it is remembered.
+
+- **Rubber-band selection keeps going past the edge.** Dragging a selection
+  rectangle out of the file list, or out of the window, stopped updating the
+  selection the moment the pointer left. It now follows the pointer anywhere,
+  and holding it above or below the list scrolls the list, faster the farther
+  out you go.
+
 - **Sorting by size no longer scatters folders whose size is not known
   yet.** Until a folder's contents are measured, the sort used the size of the
   folder's own directory entry, a few hundred bytes unrelated to what it holds,

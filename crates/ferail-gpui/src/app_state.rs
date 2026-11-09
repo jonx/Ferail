@@ -199,6 +199,9 @@ pub struct AppState {
     /// Height of the preview pane's thumbnail box in DIPs, set by
     /// dragging the resize grip under the image. Same clamp story.
     pub preview_thumb_height: Option<f32>,
+    /// Whether the preview pane was shown when the user last toggled it.
+    /// None == never toggled (the pane starts hidden).
+    pub preview_visible: Option<bool>,
     /// Whether the sidebar is collapsed to icons-only. None == the
     /// user has never expressed a preference (defaults to expanded).
     pub sidebar_collapsed: Option<bool>,
@@ -515,6 +518,9 @@ fn load_from_disk() -> AppState {
             "sidebar_collapsed" => {
                 out.sidebar_collapsed = parse_bool(val);
             }
+            "preview_visible" => {
+                out.preview_visible = parse_bool(val);
+            }
             "sidebar_compact" => {
                 out.sidebar_compact = parse_bool(val);
             }
@@ -721,6 +727,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(b) = state.sidebar_collapsed {
         s.push_str(&format!("sidebar_collapsed={b}\n"));
+    }
+    if let Some(b) = state.preview_visible {
+        s.push_str(&format!("preview_visible={b}\n"));
     }
     if let Some(value) = &state.sidebar_section_order {
         s.push_str(&format!("sidebar_section_order={value}\n"));

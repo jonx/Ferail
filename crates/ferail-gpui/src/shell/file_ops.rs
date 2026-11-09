@@ -4790,11 +4790,24 @@ impl Shell {
         );
     }
 
-    /// Extract Here: unpack the selected archive(s) into the current folder.
+    /// Extract Here: unpack the selected archive(s) straight into the
+    /// current folder.
     pub(super) fn on_extract(&mut self, _: &Extract, window: &mut Window, cx: &mut Context<Self>) {
         let paths = self.gather_archive_targets(cx);
         let cur = self.active_tab().current_dir.clone();
-        self.spawn_extract_into(paths, cur, None, window, cx);
+        self.spawn_extract_into(paths, cur, None, ExtractMode::Here, window, cx);
+    }
+
+    /// Extract each selected archive into its own folder named after it.
+    pub(super) fn on_extract_to_folders(
+        &mut self,
+        _: &ExtractToFolders,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths = self.gather_archive_targets(cx);
+        let cur = self.active_tab().current_dir.clone();
+        self.spawn_extract_into(paths, cur, None, ExtractMode::OwnFolder, window, cx);
     }
 
     /// Extract To…: pick a destination folder from a native modal, then
@@ -4817,7 +4830,7 @@ impl Shell {
                 return;
             };
             let _ = this.update_in(cx, |this, window, cx| {
-                this.spawn_extract_into(paths, dest, None, window, cx);
+                this.spawn_extract_into(paths, dest, None, ExtractMode::Smart, window, cx);
             });
         })
         .detach();
@@ -5074,6 +5087,7 @@ impl Shell {
         paths: Vec<PathBuf>,
         dest_parent: PathBuf,
         password: Option<String>,
+        mode: ExtractMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -5112,15 +5126,51 @@ impl Shell {
             archive: &std::path::Path,
             parent: &std::path::Path,
             password: Option<&str>,
+            mode: ExtractMode,
             progress: &ferail_fs_native::file_ops::TransferProgress,
             cancel: &AtomicBool,
         ) -> Result<Vec<PathBuf>, String> {
-            let toc =
-                ferail_fs_native::read_archive_toc(archive, password).map_err(|e| e.to_string())?;
             let opts = ferail_fs_native::ExtractOptions {
                 password,
                 overwrite: false,
             };
+            match mode {
+                ExtractMode::Here => {
+                    // Refuse before writing anything rather than half-merge
+                    // into a same-named item the user already has.
+                    let toc = ferail_fs_native::read_archive_toc(archive, password)
+                        .map_err(|e| e.to_string())?;
+                    let mut tops: Vec<&str> = toc
+                        .entries
+                        .iter()
+                        .map(|entry| entry.top_component())
+                        .filter(|top| !top.is_empty())
+                        .collect();
+                    tops.sort_unstable();
+                    tops.dedup();
+                    if let Some(taken) = tops.iter().find(|top| parent.join(top).exists()) {
+                        return Err(tr!(
+                            "\"{name}\" already exists here. Nothing was extracted. Extract to a folder instead.",
+                            name = taken.to_string()
+                        )
+                        .to_string());
+                    }
+                    let outcome =
+                        ferail_fs_native::extract_archive(archive, parent, opts, progress, cancel)
+                            .map_err(|e| e.to_string())?;
+                    return Ok(outcome.created);
+                }
+                ExtractMode::OwnFolder => {
+                    let dest = unique_dir(parent, &archive_stem(archive));
+                    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+                    ferail_fs_native::extract_archive(archive, &dest, opts, progress, cancel)
+                        .map_err(|e| e.to_string())?;
+                    return Ok(vec![dest]);
+                }
+                ExtractMode::Smart => {}
+            }
+            let toc =
+                ferail_fs_native::read_archive_toc(archive, password).map_err(|e| e.to_string())?;
             let in_place_root = toc.single_root().and_then(|root| {
                 let candidate = parent.join(root);
                 (!candidate.exists()).then_some(candidate)
@@ -5175,6 +5225,7 @@ impl Shell {
                         archive,
                         &dest_parent,
                         password.as_deref(),
+                        mode,
                         progress,
                         cancel,
                     )?);
@@ -6015,4 +6066,18 @@ fn clipboard_image_file(image: gpui::Image) -> Result<(Vec<u8>, &'static str), S
             Ok((png, "png"))
         }
     }
+}
+
+/// Where an extraction puts each archive's members.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExtractMode {
+    /// Straight into the destination folder, no folder named after the
+    /// archive. Refuses when a top-level member name is already taken.
+    Here,
+    /// Always into a new folder named after the archive (deduped with
+    /// `" 2"`, `" 3"`, ...), one per archive.
+    OwnFolder,
+    /// In place when the archive has a single, untaken root folder;
+    /// otherwise like [`ExtractMode::OwnFolder`].
+    Smart,
 }

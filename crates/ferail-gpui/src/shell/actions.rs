@@ -217,13 +217,16 @@ actions!(
         Duplicate,
         MakeAlias,
         Compress,
-        /// Extract the selected archive(s) **here**: into the current folder.
-        /// Reads each archive's table of contents off-thread to choose a smart
-        /// destination: extract in place when the archive has one root folder,
-        /// wrap in a folder named after the archive otherwise.
+        /// Extract the selected archive(s) **here**: the members land directly
+        /// in the current folder, with no folder named after the archive.
         Extract,
+        /// Extract each selected archive into its own new folder, named after
+        /// the archive, in the current folder.
+        ExtractToFolders,
         /// Extract the selected archive(s) into a folder chosen from a native
-        /// picker (same smart in-place/wrap logic, rooted at the choice).
+        /// picker. Reads each table of contents off-thread to choose a smart
+        /// destination: in place when the archive has one root folder, wrapped
+        /// in a folder named after the archive otherwise.
         ExtractTo,
         /// Open the selected archive in the embedded workbench view (browse
         /// contents, cherry-pick extract).

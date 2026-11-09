@@ -121,6 +121,18 @@ impl Format {
                 supports_create_password: false,
                 supports_levels: false,
             },
+
+            // RAR: browse and extract only, like LHA. Creation is proprietary
+            // and the unRAR licence forbids re-creating the compressor.
+            #[cfg(not(target_os = "aros"))]
+            Format::Rar => Capabilities {
+                can_browse: true,
+                can_extract: true,
+                can_create: false,
+                can_edit_in_place: false,
+                supports_create_password: false,
+                supports_levels: false,
+            },
         }
     }
 

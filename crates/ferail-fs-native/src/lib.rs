@@ -528,12 +528,12 @@ impl FsBackend for NativeFs {
             // hazard flag from drifting between the two listing routes.
             entries.push(self.file_entry_from_metadata(&child_path, name, &metadata));
         }
-        // Directories first, then case-insensitive name. Cached keys:
-        // one lowercase per entry, not two per comparison.
+        // Directories first, then natural case-insensitive name. Cached
+        // keys: one per entry, not two per comparison.
         entries.sort_by_cached_key(|e| {
             (
                 !matches!(e.kind, EntryKind::Directory),
-                e.name.to_lowercase(),
+                ferail_core::natural::natural_key(&e.name),
             )
         });
         EnumerationHandle {

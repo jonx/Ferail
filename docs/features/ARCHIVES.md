@@ -61,9 +61,17 @@ Extensions are aliases; each row below is one logical format.
 | Bzip2 | yes, one member | yes, one input | no |
 | XZ | yes, one member | yes, one input | no |
 | LHA / LZH | yes | no | no |
+| RAR (1.5 to RAR5, multi-part sets) | yes | no | no |
 
-That is ten readable formats, nine formats Ferail can create, and one format
-that can safely commit entry-level edits today: ordinary ZIP.
+That is eleven readable formats, nine formats Ferail can create, and one format
+that can safely commit entry-level edits today: ordinary ZIP. RAR creation is
+proprietary, and the licence of the decoder forbids re-creating it. RAR is not
+available on AROS.
+
+A multi-part RAR set opens from any of its parts. The sibling volumes are
+found by name, in both the `name.part01.rar` scheme and the older `name.rar`,
+`name.r00` one. A member that spans a missing part fails with a message naming
+that part.
 
 Content probing is authoritative when an archive is opened. A file can be
 browsed even when its extension is absent or misleading. ZIP-based packages
@@ -147,6 +155,15 @@ missing rather than being guessed. Aggregate counts and packed/unpacked totals
 come from the table of contents and the archive's cached filesystem stamp.
 
 ## Extraction
+
+The file list's Extract submenu offers three destinations, named as in
+WinRAR:
+
+| Command | Where the members land |
+| --- | --- |
+| Extract Here | Directly in the current folder, with no folder named after the archive. If a top-level member name is already taken there, nothing is extracted and the message names the item. |
+| Extract to "name" | In a new folder named after the archive, one per archive. With several archives selected the command reads *Extract Each to Its Own Folder*. A taken folder name gets `" 2"`, `" 3"`. |
+| Extract To… | Into a folder chosen in a picker. An archive with a single root folder lands in place; any other gets a folder named after it. The workbench's Extract All uses the same rule beside the archive. |
 
 Every supported format can extract all members. Multi-member formats also
 support a selected subset; choosing a directory includes its complete subtree.

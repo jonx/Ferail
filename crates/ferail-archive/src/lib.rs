@@ -48,7 +48,12 @@ mod tests {
         assert_eq!(Format::from_path("/some.zip/inner/readme.txt"), None);
         assert_eq!(Format::from_path("note.txt"), None);
         assert!(Format::is_archive_path("x.7z"));
-        assert!(!Format::is_archive_path("x.rar")); // rar is out of scope
+        assert_eq!(
+            Format::is_archive_path("x.RAR"),
+            cfg!(not(target_os = "aros")),
+            "RAR is decoded everywhere but AROS"
+        );
+        assert!(!Format::is_archive_path("x.ace"));
     }
 
     #[test]

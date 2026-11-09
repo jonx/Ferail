@@ -1107,12 +1107,22 @@ impl Shell {
                     .filter(|m| m.moved && m.surface == super::tab::MarqueeSurface::List)
                     .map(|m| {
                         let origin = table.read(cx).table_bounds().origin;
-                        let left = m.start.x.min(m.current.x) - origin.x;
-                        let top = m.start.y.min(m.current.y) - origin.y;
-                        let width = (m.start.x - m.current.x).abs();
-                        let height = (m.start.y - m.current.y).abs();
-                        (left, top, width, height)
+                        let viewport = self
+                            .marquee_scroll_handle(super::tab::MarqueeSurface::List, cx)
+                            .bounds();
+                        marquee_overlay_rect(
+                            m.start.x,
+                            self.marquee_start_y_now(m, cx),
+                            m.current,
+                            viewport,
+                            origin,
+                        )
                     });
+                let list_marquee_live = self
+                    .active_tab()
+                    .marquee
+                    .as_ref()
+                    .is_some_and(|m| m.surface == super::tab::MarqueeSurface::List);
                 let fill = crate::selection_colors::fill(cx);
                 let border = crate::selection_colors::strong(cx);
                 div()
@@ -1122,11 +1132,16 @@ impl Shell {
                         gpui::MouseButton::Left,
                         cx.listener(Self::on_list_marquee_down),
                     )
-                    .on_mouse_move(cx.listener(Self::on_list_marquee_move))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
                         cx.listener(Self::on_list_marquee_up),
                     )
+                    .when(list_marquee_live, |d| {
+                        d.child(marquee_window_tracker(
+                            cx.entity().downgrade(),
+                            Self::on_list_marquee_move,
+                        ))
+                    })
                     .on_mouse_up_out(
                         gpui::MouseButton::Left,
                         cx.listener(Self::on_list_marquee_up),
@@ -2009,14 +2024,23 @@ impl Shell {
         let marquee_rect: Option<(Pixels, Pixels, Pixels, Pixels)> = {
             let tab = self.active_tab();
             tab.marquee.as_ref().filter(|m| m.moved).map(|m| {
-                let o = tab.grid_pane_origin;
-                let l = f32::from(m.start.x).min(f32::from(m.current.x)) - f32::from(o.x);
-                let t = f32::from(m.start.y).min(f32::from(m.current.y)) - f32::from(o.y);
-                let w = (f32::from(m.start.x) - f32::from(m.current.x)).abs();
-                let h = (f32::from(m.start.y) - f32::from(m.current.y)).abs();
-                (px(l), px(t), px(w), px(h))
+                let viewport = self
+                    .marquee_scroll_handle(super::tab::MarqueeSurface::Grid, cx)
+                    .bounds();
+                marquee_overlay_rect(
+                    m.start.x,
+                    self.marquee_start_y_now(m, cx),
+                    m.current,
+                    viewport,
+                    tab.grid_pane_origin,
+                )
             })
         };
+        let grid_marquee_live = self
+            .active_tab()
+            .marquee
+            .as_ref()
+            .is_some_and(|m| m.surface == super::tab::MarqueeSurface::Grid);
 
         div()
             .key_context(crate::grid::GRID_CONTEXT)
@@ -2039,7 +2063,12 @@ impl Shell {
                 gpui::MouseButton::Left,
                 cx.listener(Self::on_grid_marquee_down),
             )
-            .on_mouse_move(cx.listener(Self::on_grid_marquee_move))
+            .when(grid_marquee_live, |d| {
+                d.child(marquee_window_tracker(
+                    cx.entity().downgrade(),
+                    Self::on_grid_marquee_move,
+                ))
+            })
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(Self::on_grid_marquee_up),
@@ -3653,6 +3682,7 @@ impl Shell {
         let panel = cx.new(|_| PreviewPanel::new(process, weak, thumb_h));
         cx.subscribe(&panel, |this, _panel, _: &PreviewCloseRequested, cx| {
             this.preview_visible = false;
+            crate::shell::persist_preview_visible(false);
             this.preview_override = None;
             if let Some(view) = this.active_archive_view() {
                 view.update(cx, |v, cx| v.set_preview_enabled(false, cx));
@@ -4938,6 +4968,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_compress_tarxz))
             .on_action(cx.listener(Self::on_extract))
             .on_action(cx.listener(Self::on_extract_to))
+            .on_action(cx.listener(Self::on_extract_to_folders))
             .on_action(cx.listener(Self::on_reveal_context_path))
             .on_action(cx.listener(Self::on_copy_context_path))
             .on_action(cx.listener(Self::on_open_terminal_at_context))
@@ -5386,4 +5417,60 @@ impl Render for Shell {
             .into_any_element();
         crate::private_mode::protect_with_toggle(content, cx, Some(self.private_toggle_bounds))
     }
+}
+
+/// Rubber-band overlay rectangle `(left, top, width, height)` relative to
+/// `origin`. The press point's y is already scroll-adjusted; both ends are
+/// clamped to the swept `viewport` so a drag past the window edge never
+/// paints over the toolbar or status bar.
+fn marquee_overlay_rect(
+    start_x: Pixels,
+    start_y: Pixels,
+    current: gpui::Point<Pixels>,
+    viewport: gpui::Bounds<Pixels>,
+    origin: gpui::Point<Pixels>,
+) -> (Pixels, Pixels, Pixels, Pixels) {
+    let (top_edge, bottom_edge) = if viewport.size.height > Pixels::ZERO {
+        (viewport.origin.y, viewport.origin.y + viewport.size.height)
+    } else {
+        (Pixels::MIN, Pixels::MAX)
+    };
+    let (left_edge, right_edge) = if viewport.size.width > Pixels::ZERO {
+        (viewport.origin.x, viewport.origin.x + viewport.size.width)
+    } else {
+        (Pixels::MIN, Pixels::MAX)
+    };
+    let clamp_y = |y: Pixels| y.clamp(top_edge, bottom_edge);
+    let clamp_x = |x: Pixels| x.clamp(left_edge, right_edge);
+    let (y0, y1) = (clamp_y(start_y), clamp_y(current.y));
+    let (x0, x1) = (clamp_x(start_x), clamp_x(current.x));
+    (
+        x0.min(x1) - origin.x,
+        y0.min(y1) - origin.y,
+        (x0 - x1).abs(),
+        (y0 - y1).abs(),
+    )
+}
+
+/// Paint-time listener that feeds every pointer move in the window to a
+/// live marquee. An element's own `on_mouse_move` only fires while the
+/// pointer is over it, so a drag that left the list or the window froze.
+/// Mounted only while a gesture is in flight.
+fn marquee_window_tracker(
+    shell: gpui::WeakEntity<Shell>,
+    handler: fn(&mut Shell, &gpui::MouseMoveEvent, &mut Window, &mut Context<Shell>),
+) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |_, _, window, _| {
+            let shell = shell.clone();
+            window.on_mouse_event(move |ev: &gpui::MouseMoveEvent, phase, window, cx| {
+                if phase == gpui::DispatchPhase::Bubble {
+                    let _ = shell.update(cx, |shell, cx| handler(shell, ev, window, cx));
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_full()
 }

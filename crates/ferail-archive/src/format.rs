@@ -13,7 +13,7 @@ use ferail_core::msgid;
 ///
 /// The set is intentionally bounded to the formats Ferail ships codecs for
 /// (see the workspace archive plan). "Any format" is not a goal: the long
-/// tail (rar, ace, obscure codecs) costs far more than it returns. New arms
+/// tail (ace, arj, obscure codecs) costs far more than it returns. New arms
 /// land here together with their codec in `ferail-fs-native` and their row
 /// in [`crate::Capabilities`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,6 +44,11 @@ pub enum Format {
     /// stored through `-lh7-`, plus `-lz*-` and `-lhd-` directories) but does
     /// not compress.
     Lha,
+    /// `.rar`: RAR 1.5 through RAR5, multi-volume sets included. Read +
+    /// extract only: RAR creation is proprietary. Absent on AROS, which does
+    /// not build the decoder.
+    #[cfg(not(target_os = "aros"))]
+    Rar,
 }
 
 impl Format {
@@ -84,6 +89,8 @@ impl Format {
             (".7z", Format::SevenZ),
             (".lha", Format::Lha),
             (".lzh", Format::Lha),
+            #[cfg(not(target_os = "aros"))]
+            (".rar", Format::Rar),
         ];
         for (suffix, fmt) in SINGLE {
             if lower.ends_with(suffix) {
@@ -112,6 +119,8 @@ impl Format {
             Format::Xz => "xz",
             Format::SevenZ => "7z",
             Format::Lha => "lha",
+            #[cfg(not(target_os = "aros"))]
+            Format::Rar => "rar",
         }
     }
 
@@ -128,6 +137,8 @@ impl Format {
             Format::Xz => "XZ",
             Format::SevenZ => "7-Zip",
             Format::Lha => "LHA",
+            #[cfg(not(target_os = "aros"))]
+            Format::Rar => "RAR",
         }
     }
 

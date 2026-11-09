@@ -931,6 +931,97 @@ impl Shell {
         self.move_grid_selection(c, true, cx);
     }
 
+    /// Scroll handle of the surface a marquee sweeps.
+    pub(super) fn marquee_scroll_handle(
+        &self,
+        surface: super::tab::MarqueeSurface,
+        cx: &App,
+    ) -> gpui::ScrollHandle {
+        let tab = self.active_tab();
+        match surface {
+            super::tab::MarqueeSurface::List => tab
+                .table
+                .read(cx)
+                .vertical_scroll_handle
+                .0
+                .borrow()
+                .base_handle
+                .clone(),
+            super::tab::MarqueeSurface::Grid => tab.grid_scroll.0.borrow().base_handle.clone(),
+        }
+    }
+
+    /// Window-space y of the marquee's press point after any scrolling
+    /// since the press: the anchor moves with the content it was pressed on.
+    pub(super) fn marquee_start_y_now(&self, marquee: &super::tab::Marquee, cx: &App) -> Pixels {
+        let offset = self.marquee_scroll_handle(marquee.surface, cx).offset().y;
+        marquee.start.y + (offset - marquee.start_scroll_y)
+    }
+
+    /// Start the edge auto-scroll loop when a moved marquee's pointer sits
+    /// above or below the swept surface. The loop ends by itself once the
+    /// pointer comes back inside or the gesture ends.
+    fn ensure_marquee_autoscroll(&mut self, cx: &mut Context<Self>) {
+        let Some(marquee) = self.active_tab().marquee.as_ref() else {
+            return;
+        };
+        if marquee.autoscrolling || !marquee.moved {
+            return;
+        }
+        let viewport = self.marquee_scroll_handle(marquee.surface, cx).bounds();
+        if marquee_edge_overshoot(marquee.current.y, viewport) == 0.0 {
+            return;
+        }
+        if let Some(marquee) = self.active_tab_mut().marquee.as_mut() {
+            marquee.autoscrolling = true;
+        }
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(16))
+                    .await;
+                let keep = this
+                    .update(cx, |shell, cx| shell.marquee_autoscroll_tick(cx))
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// One auto-scroll step. Returns whether the loop should keep running.
+    fn marquee_autoscroll_tick(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(marquee) = self.active_tab().marquee.as_ref() else {
+            return false;
+        };
+        let surface = marquee.surface;
+        let handle = self.marquee_scroll_handle(surface, cx);
+        let overshoot = marquee_edge_overshoot(marquee.current.y, handle.bounds());
+        if overshoot == 0.0 {
+            if let Some(marquee) = self.active_tab_mut().marquee.as_mut() {
+                marquee.autoscrolling = false;
+            }
+            return false;
+        }
+        // Farther past the edge scrolls faster, as in Finder and Explorer.
+        let step = (overshoot.abs() * 0.4).clamp(4.0, 60.0) * overshoot.signum();
+        let offset = handle.offset();
+        let max = handle.max_offset().y;
+        let new_y = (offset.y - px(step)).clamp(-max, Pixels::ZERO);
+        if new_y != offset.y {
+            handle.set_offset(gpui::point(offset.x, new_y));
+            match surface {
+                super::tab::MarqueeSurface::List => self.apply_list_marquee_selection(cx),
+                super::tab::MarqueeSurface::Grid => self.apply_marquee_selection(cx),
+            }
+            self.active_tab().table.update(cx, |_, cx| cx.notify());
+            cx.notify();
+        }
+        true
+    }
+
     // -- List/grid marquee (rubber-band) selection -----------------
     //
     // Both presentations share the tab-owned selection session. The list
@@ -956,6 +1047,10 @@ impl Shell {
         } else {
             HashSet::new()
         };
+        let start_scroll_y = self
+            .marquee_scroll_handle(super::tab::MarqueeSurface::List, cx)
+            .offset()
+            .y;
         self.active_tab_mut().marquee = Some(super::tab::Marquee {
             surface: super::tab::MarqueeSurface::List,
             start: ev.position,
@@ -966,6 +1061,8 @@ impl Shell {
             lead_row: None,
             applied: false,
             moved: false,
+            start_scroll_y,
+            autoscrolling: false,
         });
     }
 
@@ -993,6 +1090,7 @@ impl Shell {
         }
         if was_moved || past {
             self.apply_list_marquee_selection(cx);
+            self.ensure_marquee_autoscroll(cx);
             cx.notify();
         }
     }
@@ -1035,7 +1133,7 @@ impl Shell {
             let Some(m) = self.active_tab().marquee.as_ref() else {
                 return;
             };
-            (m.start.y, m.current.y)
+            (self.marquee_start_y_now(m, cx), m.current.y)
         };
         let (hits, last_hit, lead_row) = {
             let table = self.active_tab().table.read(cx);
@@ -1180,6 +1278,10 @@ impl Shell {
         } else {
             HashSet::new()
         };
+        let start_scroll_y = self
+            .marquee_scroll_handle(super::tab::MarqueeSurface::Grid, cx)
+            .offset()
+            .y;
         self.active_tab_mut().marquee = Some(super::tab::Marquee {
             surface: super::tab::MarqueeSurface::Grid,
             start: ev.position,
@@ -1190,6 +1292,8 @@ impl Shell {
             lead_row: None,
             applied: false,
             moved: false,
+            start_scroll_y,
+            autoscrolling: false,
         });
     }
 
@@ -1222,6 +1326,7 @@ impl Shell {
         }
         if was_moved || past {
             self.apply_marquee_selection(cx);
+            self.ensure_marquee_autoscroll(cx);
             cx.notify();
         }
     }
@@ -1289,6 +1394,9 @@ impl Shell {
             )
         };
         let (ax, ay) = to_content(start);
+        // The press point rides with the content when a held drag scrolls.
+        let start_scroll_y = tab.marquee.as_ref().map_or(off.y, |m| m.start_scroll_y);
+        let ay = ay + f32::from(off.y) - f32::from(start_scroll_y);
         let (bx, by) = to_content(current);
         let (x0, x1) = (ax.min(bx), ax.max(bx));
         let (y0, y1) = (ay.min(by), ay.max(by));
@@ -1761,5 +1869,21 @@ mod typeahead_tests {
         assert_eq!(typeahead_char(false, true, &plain(), Some("\u{7f}")), None);
         // Multi-scalar IME strings aren't single-key typeahead.
         assert_eq!(typeahead_char(false, true, &plain(), Some("ab")), None);
+    }
+}
+
+/// How far `y` lies past the top (negative) or bottom (positive) edge of
+/// `viewport`, or `0.0` inside it.
+fn marquee_edge_overshoot(y: Pixels, viewport: gpui::Bounds<Pixels>) -> f32 {
+    let top = viewport.origin.y;
+    let bottom = top + viewport.size.height;
+    if viewport.size.height <= Pixels::ZERO {
+        0.0
+    } else if y < top {
+        f32::from(y - top)
+    } else if y > bottom {
+        f32::from(y - bottom)
+    } else {
+        0.0
     }
 }

@@ -83,6 +83,14 @@ delharc = { version = "0.6", default-features = false, features = ["lh1", "lz"] 
 lofty.workspace = true
 filetime.workspace = true
 
+# RAR read + extract. Pure Rust (no UnRAR C++), decoder only: RAR creation
+# is proprietary and its licence forbids re-creating the compressor, which is
+# why Format::Rar can never be created. The licence travels with the binary:
+# see THIRD-PARTY-NOTICES.md. aws-lc is off so no C/asm crypto enters the build.
+# Not on AROS: its rayon/tempfile/SIMD-crc graph is untested there.
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+unrar-rs = { version = "0.15", default-features = false, features = ["crypto-rust"] }
+
 [target.'cfg(windows)'.dependencies]
 # The `#[implement]` macro (IFileSystemBindData for the simple-parse retry
 # in icons.rs) expands to `::windows_core::` paths, so windows-core must be
