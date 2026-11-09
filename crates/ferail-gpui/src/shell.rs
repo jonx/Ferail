@@ -5818,6 +5818,7 @@ impl Shell {
             self.tabs[idx].pending_select_names.clear();
         }
         let select_first = std::mem::take(&mut self.tabs[idx].pending_select_first)
+            && app_state::load().select_first_item.unwrap_or(true)
             && !self.tabs[idx].selection_all
             && self.tabs[idx].selection.is_empty()
             && self.tabs[idx].pending_reveal.is_none()

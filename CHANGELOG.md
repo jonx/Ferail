@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Choose whether folders open with their first item selected.** Settings →
+  Files offers a selection preference on every platform, enabled by default.
+  Turn it off to open folders without a selection.
+
 - **The viewer's Adjustments panel fits its labels in every language.** The
   panel had a fixed width sized for English, so longer translations such as
   French wrapped slider names onto two or three lines and pushed buttons past

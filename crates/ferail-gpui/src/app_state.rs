@@ -125,6 +125,7 @@ pub fn config_path() -> Option<PathBuf> {
 pub struct AppState {
     pub last_dir: Option<PathBuf>,
     pub show_hidden: Option<bool>,
+    pub select_first_item: Option<bool>,
     /// Whether the file list paints real Quick Look thumbnails instead
     /// of generic type icons. `None` == never set (defaults to `true`,
     /// thumbnails on).
@@ -434,6 +435,9 @@ fn load_from_disk() -> AppState {
             "show_hidden" => {
                 out.show_hidden = parse_bool(val);
             }
+            "select_first_item" => {
+                out.select_first_item = parse_bool(val);
+            }
             "show_thumbnails" => {
                 out.show_thumbnails = parse_bool(val);
             }
@@ -670,6 +674,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(b) = state.show_hidden {
         s.push_str(&format!("show_hidden={b}\n"));
+    }
+    if let Some(b) = state.select_first_item {
+        s.push_str(&format!("select_first_item={b}\n"));
     }
     if let Some(b) = state.show_thumbnails {
         s.push_str(&format!("show_thumbnails={b}\n"));

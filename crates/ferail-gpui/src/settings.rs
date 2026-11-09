@@ -197,6 +197,14 @@ fn persist_show_hidden(value: bool) {
     });
 }
 
+fn persist_select_first_item(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        select_first_item: Some(value),
+        ..existing
+    });
+}
+
 fn persist_show_thumbnails(value: bool) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -1884,6 +1892,18 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
                     |val: bool, _cx: &mut App| persist_show_hidden(val),
                 )),
         );
+    let page = page.group(
+        SettingGroup::new()
+            .title(tr!("Selection"))
+            .item(switch_setting(
+                tr!("Select the first item when opening a folder"),
+                tr!(
+                    "Show a preview and give keyboard navigation a starting point in newly opened folders."
+                ),
+                |_cx: &App| app_state::load().select_first_item.unwrap_or(true),
+                |val: bool, _cx: &mut App| persist_select_first_item(val),
+            )),
+    );
     // Sidebar special-folder root, only meaningful where OneDrive's
     // Known-Folder-Move can split a folder between local and cloud, i.e.
     // Windows. Omitted elsewhere.
