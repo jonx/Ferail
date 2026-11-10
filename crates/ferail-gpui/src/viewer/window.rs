@@ -295,6 +295,87 @@ impl SliderId {
                 | SliderId::Gamma
         )
     }
+
+    const ALL: [SliderId; 11] = [
+        SliderId::Brightness,
+        SliderId::Contrast,
+        SliderId::Saturation,
+        SliderId::Hue,
+        SliderId::Gamma,
+        SliderId::Denoise,
+        SliderId::Sharpen,
+        SliderId::Banding,
+        SliderId::Grain,
+        SliderId::Similarity,
+        SliderId::Blend,
+    ];
+}
+
+/// Widths of the Adjustments panel, sized to its text in the active
+/// language so a long translation neither wraps nor overflows.
+#[derive(Clone, Copy)]
+struct AdjustPanelWidth {
+    /// Whole panel, border included.
+    panel: Pixels,
+    /// Label column of the slider rows.
+    label: Pixels,
+}
+
+/// Measure the panel's labels and size it to the widest row. Every slider
+/// label is measured, shown or not, so the panel keeps one width whether a
+/// still or a video is open. Shaped lines are cached by the text system, so
+/// this costs a lookup per label once warm.
+fn adjust_panel_width(window: &Window, cx: &App) -> AdjustPanelWidth {
+    // Panel width at `ui_scale == 1` with the shortest English labels.
+    const MIN_PANEL: f32 = 248.0;
+    const MIN_LABEL: f32 = 64.0;
+    // Fixed parts of a slider row: track, value readout, two gaps.
+    const ROW_FIXED: f32 = 112.0 + 30.0 + 2.0 * 8.0;
+    let rem = window.rem_size();
+    let ui_scale = rem.as_f32() / crate::text::BASE_REM_PX;
+    let measure = |text: SharedString, size: Pixels, weight: FontWeight| -> f32 {
+        let mut font = window.text_style().font();
+        font.weight = weight;
+        let run = TextRun {
+            len: text.len(),
+            font,
+            color: cx.theme().foreground,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        // Round up: a label one sub-pixel short of its box still wraps.
+        f32::from(window.text_system().shape_line(text, size, &[run], None).width).ceil() + 1.0
+    };
+    let xs = crate::text::tier_rems(crate::text::TextSize::Xs).to_pixels(rem);
+    let sm = crate::text::tier_rems(crate::text::TextSize::Sm).to_pixels(rem);
+    // gpui-component's small buttons: text_sm, `px_2` padding, 1 px border.
+    let button_text = rems(0.875).to_pixels(rem);
+    let button = |label: SharedString| measure(label, button_text, FontWeight::NORMAL) + 18.0 * ui_scale;
+    let pad = 2.0 * 12.0 + 2.0;
+
+    let label = SliderId::ALL
+        .into_iter()
+        .map(SliderId::label)
+        .chain([tr!("Upscale")])
+        // Plus the half thumb that overhangs the track's start at zero.
+        .map(|text| measure(text, xs, FontWeight::NORMAL) + 6.0)
+        .fold(MIN_LABEL * ui_scale, f32::max);
+    let rows = label + ROW_FIXED * ui_scale;
+    // Title, then the wand icon button and Reset, with room between them.
+    let header = measure(tr!("Adjustments"), sm, FontWeight::SEMIBOLD)
+        + 12.0 * ui_scale
+        + 24.0 * ui_scale
+        + 4.0 * ui_scale
+        + button(tr!("Reset"));
+    let chroma = measure(tr!("Transparent colour"), xs, FontWeight::SEMIBOLD)
+        + 12.0 * ui_scale
+        + button(tr!("On")).max(button(tr!("Off")));
+    let panel = (rows.max(header).max(chroma) + pad).max(MIN_PANEL * ui_scale);
+    AdjustPanelWidth {
+        panel: px(panel),
+        label: px(label),
+    }
 }
 
 /// View-only colour grade applied to the displayed bitmap. Each field is
@@ -3502,7 +3583,7 @@ impl ViewerWindow {
     /// Upscale) and Reset, floating at the top-right of the stage. Pointer
     /// drags are handled at the panel level (see [`Self::on_adjust_move`])
     /// and `stop_propagation` keeps clicks off the stage beneath.
-    fn adjust_panel(&mut self, cx: &mut Context<Self>) -> Div {
+    fn adjust_panel(&mut self, width: AdjustPanelWidth, cx: &mut Context<Self>) -> Div {
         let bg = cx.theme().background;
         let border = cx.theme().border;
         let foreground = cx.theme().foreground;
@@ -3527,6 +3608,7 @@ impl ViewerWindow {
                     .text_scale_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(foreground)
+                    .whitespace_nowrap()
                     .child(tr!("Adjustments")),
             )
             .child(
@@ -3553,7 +3635,7 @@ impl ViewerWindow {
             .absolute()
             .top(px(top))
             .right(px(12.0))
-            .w(px(248.0))
+            .w(width.panel)
             .flex()
             .flex_col()
             .gap_2()
@@ -3591,33 +3673,33 @@ impl ViewerWindow {
             )
             .child(header)
             .child(self.section_header(tr!("Colour"), cx))
-            .child(self.slider_row(SliderId::Brightness, cx))
-            .child(self.slider_row(SliderId::Contrast, cx))
-            .child(self.slider_row(SliderId::Saturation, cx))
+            .child(self.slider_row(SliderId::Brightness, width.label, cx))
+            .child(self.slider_row(SliderId::Contrast, width.label, cx))
+            .child(self.slider_row(SliderId::Saturation, width.label, cx))
             // Hue + gamma are live libmpv colour-adjust controls, only the
             // mpv backend applies them, so they're hidden for stills and the
             // built-in player.
             .when(mpv_video, |d| {
-                d.child(self.slider_row(SliderId::Hue, cx))
-                    .child(self.slider_row(SliderId::Gamma, cx))
+                d.child(self.slider_row(SliderId::Hue, width.label, cx))
+                    .child(self.slider_row(SliderId::Gamma, width.label, cx))
             })
             .when(show_enhance, |d| {
                 let d = d
                     .child(self.section_header(tr!("Enhance"), cx))
-                    .child(self.slider_row(SliderId::Denoise, cx))
-                    .child(self.slider_row(SliderId::Sharpen, cx));
+                    .child(self.slider_row(SliderId::Denoise, width.label, cx))
+                    .child(self.slider_row(SliderId::Sharpen, width.label, cx));
                 // Debanding + film grain are mpv-only filters (gradfun /
                 // grain), baked into the decode like denoise/sharpen.
                 let d = d.when(mpv_video, |d| {
-                    d.child(self.slider_row(SliderId::Banding, cx))
-                        .child(self.slider_row(SliderId::Grain, cx))
+                    d.child(self.slider_row(SliderId::Banding, width.label, cx))
+                        .child(self.slider_row(SliderId::Grain, width.label, cx))
                 });
                 // Upscale is a still-only pre-scale; not meaningful for the
                 // video player (it plays at native size, fit to the stage).
                 if is_video {
                     d
                 } else {
-                    d.child(self.upscale_row(cx))
+                    d.child(self.upscale_row(width.label, cx))
                 }
             })
             // Transparent colour (chroma key): mpv video only. Keyed pixels
@@ -3638,6 +3720,7 @@ impl ViewerWindow {
                                 .text_scale_xs()
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(cx.theme().muted_foreground)
+                                .whitespace_nowrap()
                                 .child(tr!("Transparent colour")),
                         )
                         .child(
@@ -3716,8 +3799,8 @@ impl ViewerWindow {
                             .child(tr!("Click the video to sample a colour.")),
                     )
                 })
-                .child(self.slider_row(SliderId::Similarity, cx))
-                .child(self.slider_row(SliderId::Blend, cx))
+                .child(self.slider_row(SliderId::Similarity, width.label, cx))
+                .child(self.slider_row(SliderId::Blend, width.label, cx))
             })
     }
 
@@ -3726,7 +3809,7 @@ impl ViewerWindow {
     /// one-sided enhancement ones) and a thumb, plus a value readout. The
     /// track bounds are captured via `canvas` so a cursor x maps back to a
     /// value.
-    fn slider_row(&self, id: SliderId, cx: &mut Context<Self>) -> impl IntoElement {
+    fn slider_row(&self, id: SliderId, label_w: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
         const ROW_H: f32 = 16.0;
         let value = self.slider_value(id);
         let (lo_v, hi_v) = id.range();
@@ -3811,7 +3894,9 @@ impl ViewerWindow {
             .items_center()
             .child(
                 div()
-                    .w(px(64.0))
+                    .flex_none()
+                    .w(label_w)
+                    .whitespace_nowrap()
                     .text_scale_xs()
                     .text_color(muted)
                     .child(id.label()),
@@ -3827,7 +3912,7 @@ impl ViewerWindow {
     }
 
     /// The Upscale row: 1× / 2× / 4× Lanczos resample buttons (1× = off).
-    fn upscale_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn upscale_row(&self, label_w: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let cur = self.enhance.upscale;
         h_flex()
@@ -3835,7 +3920,9 @@ impl ViewerWindow {
             .items_center()
             .child(
                 div()
-                    .w(px(64.0))
+                    .flex_none()
+                    .w(label_w)
+                    .whitespace_nowrap()
                     .text_scale_xs()
                     .text_color(muted)
                     .child(tr!("Upscale")),
@@ -4248,7 +4335,8 @@ impl Render for ViewerWindow {
             });
 
         let panel = if self.adjust_panel_open {
-            Some(self.adjust_panel(cx))
+            let width = adjust_panel_width(window, cx);
+            Some(self.adjust_panel(width, cx))
         } else {
             None
         };

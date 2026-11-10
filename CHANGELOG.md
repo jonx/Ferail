@@ -8,6 +8,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The viewer's Adjustments panel fits its labels in every language.** The
+  panel had a fixed width sized for English, so longer translations such as
+  French wrapped slider names onto two or three lines and pushed buttons past
+  the edge. It now widens to the longest label.
+
 - **A Split View button in the toolbar.** Next to New Folder, a click splits
   the window side by side, a Shift-click stacks the panes, and a second click
   closes the split whichever way it runs.
