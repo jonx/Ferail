@@ -302,11 +302,11 @@ dependencies = [
 
 [[package]]
 name = "aros-alloc"
-version = "0.7.12"
+version = "0.7.13"
 
 [[package]]
 name = "aros-exit-probe"
-version = "0.7.12"
+version = "0.7.13"
 
 [[package]]
 name = "arraydeque"
@@ -1837,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "dnd-lab"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "ferail-shell-mac",
  "gpui-pre",
@@ -2146,14 +2146,14 @@ dependencies = [
 
 [[package]]
 name = "ferail-archive"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "ferail-core",
 ]
 
 [[package]]
 name = "ferail-aros-app"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "aros-alloc",
  "cc",
@@ -2162,7 +2162,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-core"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "arc-swap",
  "serde",
@@ -2173,18 +2173,18 @@ dependencies = [
 
 [[package]]
 name = "ferail-design"
-version = "0.7.12"
+version = "0.7.13"
 
 [[package]]
 name = "ferail-disk-usage"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "ferail-core",
 ]
 
 [[package]]
 name = "ferail-fs-native"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "blake3",
  "bzip2 0.6.1",
@@ -2225,7 +2225,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-gpui"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2271,7 +2271,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-meta"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "ferail-core",
  "rusqlite",
@@ -2280,11 +2280,11 @@ dependencies = [
 
 [[package]]
 name = "ferail-ntfs"
-version = "0.7.12"
+version = "0.7.13"
 
 [[package]]
 name = "ferail-ntfs-win32"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "ferail-ntfs",
  "rayon",
@@ -2295,7 +2295,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-shell-aros"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "cc",
  "ferail-core",
@@ -2304,7 +2304,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-shell-linux"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "arboard",
  "async-channel",
@@ -2322,7 +2322,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-shell-mac"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "block2 0.5.1",
  "ferail-core",
@@ -2337,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-shell-win32"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "ferail-core",
  "image",
@@ -2348,7 +2348,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-video-mpv"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "ferail-core",
 ]

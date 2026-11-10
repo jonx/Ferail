@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.13 - 2026-11-10
+
 - **Ferail reopens your tabs.** Launching Ferail brings back the tabs that
   were open when it last quit, in the same order, with the same one in
   front. Until now only the last folder came back, as a single tab. A folder
