@@ -162,7 +162,7 @@ The prioritized list of open work is in **[TODO.md](TODO.md)**.
 | **macOS** | **Primary, daily driver.** Feature-complete for everyday use, signed and notarized. |
 | **Windows** | **Active port** with broad native parity. Builds, runs and ships; unsigned. |
 | **Linux** | **Early port**: builds and runs, with volumes, Trash and Open With real. |
-| **AROS** | **Research port**: boots and browses through a from-scratch GPUI backend. |
+| **AROS** | **Research port**: boots and browses through a from-scratch GPUI backend, [pomaros/gpui-aros](https://github.com/pomaros/gpui-aros). |
 
 What each of those means in detail, and where every feature stands, is in
 **[docs/STATUS.md](docs/STATUS.md)**.
@@ -211,9 +211,13 @@ sit on different release tags. Check the
 [Releases](https://github.com/jonx/Ferail/releases) list for the latest of
 each.
 
-**AROS** has no download here. The research port ships inside the **Macaros**
-releases, as the `C:Ferail` command of the AROS image that Macaros boots on
-macOS. ([details](docs/features/aros-port.md))
+**AROS** has no download here. The research port is built from source
+([details](docs/features/aros-port.md)) and runs as `C:Ferail` in
+[PomAROS](https://github.com/pomaros), AROS on Apple Silicon Macs, as an
+optional payload of a source build: the PomAROS releases do not include it
+yet. It sits on [pomaros/gpui-aros](https://github.com/pomaros/gpui-aros), the
+AROS platform backend for GPUI, and the AROS port of gpui-kit in
+[pomaros/gpui-kit](https://github.com/pomaros/gpui-kit).
 
 > ### ⚠️ The Windows download is not code-signed yet
 >

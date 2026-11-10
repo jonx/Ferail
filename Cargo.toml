@@ -174,20 +174,13 @@ filetime = { path = "vendor/filetime" }
 
 # NOTE: local AROS source-path overrides deliberately do NOT live here.
 #
-# The AROS port needs four source overrides (gpui, gpui_platform,
-# gpui-component[-assets], plus AROS-only source shims) that resolve to
-# **sibling checkouts**: `../zed-aros`, `../gpui-component-aros`. Unlike the
-# in-repo path above, a *sibling* path in this shared manifest is a hard
-# requirement on every machine that builds the repo: cargo resolves `[patch]`
-# before it does anything else, so a missing sibling is not a degraded build, it
-# is an instant manifest error ("failed to read
-# ../zed-aros/vendor-aros/filetime/Cargo.toml") on macOS, Windows, Linux, and CI
-# alike. That broke every clean clone of `main`.
-#
-# Cargo honours `[patch]` in `.cargo/config.toml` identically, and that path is
-# already gitignored as per-machine config. AROS builders copy the template:
-#
-#     cp packaging/aros/cargo-config-aros.toml .cargo/config.toml
+# The AROS port overrides gpui-pre-platform and gpui-kit with checkouts of
+# pomaros/gpui-aros and pomaros/gpui-kit under `../aros-project/`. A path to a
+# checkout outside the repo is a hard requirement in this shared manifest:
+# cargo resolves `[patch]` before anything else, so a missing checkout is an
+# instant manifest error on macOS, Windows, Linux and CI alike. Those
+# overrides live in packaging/aros/aros-patches.toml, which only the AROS
+# scripts pass to cargo.
 #
 # See docs/features/aros-building.md § "Checkout layout". Keep this manifest free
 # of paths that are not committed inside the repo.
