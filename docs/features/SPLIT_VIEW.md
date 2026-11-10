@@ -20,7 +20,13 @@ without losing sight of either.
 | Move to Other Pane | Cmd+Option+M | Move the selection into the other pane's folder. |
 
 The split commands are in the View menu, the transfer commands in the Edit
-menu. A split along the other axis turns instead of closing. Every shortcut
+menu. A split along the other axis turns instead of closing.
+
+The toolbar's Split View button, beside New Folder and Refresh, toggles a
+split: a click splits side by side, a Shift-click stacks, and a click on an
+open split closes it whatever its axis. It shows as pressed while the window
+is split, with a glyph for the split's axis. A narrow window folds it into the
+toolbar's overflow menu as Split Right and Split Down. Every shortcut
 is a letter with modifiers, so it can be typed on any keyboard layout:
 punctuation such as `\` sits behind Option on AZERTY and others.
 

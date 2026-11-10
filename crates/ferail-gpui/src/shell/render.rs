@@ -2689,6 +2689,7 @@ impl Shell {
         const W_SORT: f32 = 34.0;
         const W_DESKTOP: f32 = 34.0;
         const W_NEW_REFRESH: f32 = 68.0;
+        const W_SPLIT: f32 = 34.0;
         const W_DOCK: f32 = 34.0;
         const W_SIZE_STEPS: f32 = 102.0; // − ＋ ⟲
         const W_SIZE_BAR: f32 = 138.0; // track + px readout
@@ -2714,10 +2715,11 @@ impl Shell {
             },
             if is_grid { W_SIZE_STEPS } else { 0.0 },
             W_SORT,
+            W_SPLIT,
             W_NEW_REFRESH,
         ];
         let mut need = W_BASE + W_VIEW + tiers.iter().sum::<f32>();
-        let mut hide = [false; 6];
+        let mut hide = [false; 7];
         // No `W_MENU` term as the viewer has: this toolbar's "…" is always
         // present, so folding never has to make room for it.
         for (i, w) in tiers.iter().enumerate() {
@@ -2733,8 +2735,11 @@ impl Shell {
             hide_desktop,
             hide_size_steps,
             hide_sort,
+            hide_split,
             hide_new_refresh,
         ] = hide;
+        // Split toggle: the axis of the open split, if any.
+        let split_axis = self.split.as_ref().map(|s| s.axis);
 
         // Below the last tier the remainder is still ~600 px, and a bar whose
         // children are all `flex_shrink_0` just pushes its own tail: the view
@@ -3274,6 +3279,36 @@ impl Shell {
                             this.on_refresh(&Refresh, window, cx);
                         }))
                 }))
+                // Split toggle: a click splits side by side, a Shift-click
+                // stacks, and any click on an open split closes it. The
+                // glyph shows the open split's axis.
+                .children((!hide_split).then(|| {
+                    let (icon, tooltip, action): (_, _, &dyn gpui::Action) = match split_axis {
+                        None => (
+                            "icons/split-right.svg",
+                            tr!("Split View (Shift-click to stack)"),
+                            &SplitRight,
+                        ),
+                        Some(gpui::Axis::Horizontal) => {
+                            ("icons/split-right.svg", tr!("Close Split View"), &SplitRight)
+                        }
+                        Some(gpui::Axis::Vertical) => {
+                            ("icons/split-down.svg", tr!("Close Split View"), &SplitDown)
+                        }
+                    };
+                    Button::new("toolbar-split")
+                        .small()
+                        .ghost()
+                        .selected(split_axis.is_some())
+                        .icon(gpui_component::Icon::empty().path(icon))
+                        .tooltip_with_action(tooltip, action, Some(SHELL_CONTEXT))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+                            this.on_split_button(event.modifiers().shift, window, cx);
+                        }))
+                }))
                 // Dock menu: park the whole window against a screen edge as
                 // an auto-hiding drawer (docs/features/DOCK.md). Pressed look
                 // while docked; the active edge carries a checkmark. Wrapped
@@ -3510,6 +3545,20 @@ impl Shell {
                                         menu = menu
                                             .menu(tr!("New Folder"), Box::new(NewFolder))
                                             .menu(tr!("Refresh"), Box::new(Refresh));
+                                        folded = true;
+                                    }
+                                    if hide_split {
+                                        menu = menu
+                                            .menu_with_check(
+                                                tr!("Split Right"),
+                                                split_axis == Some(gpui::Axis::Horizontal),
+                                                Box::new(SplitRight),
+                                            )
+                                            .menu_with_check(
+                                                tr!("Split Down"),
+                                                split_axis == Some(gpui::Axis::Vertical),
+                                                Box::new(SplitDown),
+                                            );
                                         folded = true;
                                     }
                                     if hide_desktop && show_desktop_available {

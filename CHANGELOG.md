@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **A Split View button in the toolbar.** Next to New Folder, a click splits
+  the window side by side, a Shift-click stacks the panes, and a second click
+  closes the split whichever way it runs.
+
 ## 0.7.12 - 2026-11-10
 
 - **Split view: two folders side by side.** *Split Right* (Cmd+Option+S) and

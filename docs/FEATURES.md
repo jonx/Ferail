@@ -315,7 +315,7 @@ Italian and Polish are bundled and complete, switchable live, every window
 repainting on the spot. The part that matters is what happens when yours is
 not in the list: *Settings ▸ Appearance ▸ New language…* picks from 34
 languages and writes `<code>.json` into your languages folder, a template
-holding all 1.392 strings in English with the translator brief inside the
+holding all 1.394 strings in English with the translator brief inside the
 file. Give it to a translator, or paste it into any chat assistant and say
 "translate this". Save the reply, press *Import…*, and Ferail validates it
 (unknown keys, lost `{placeholders}`, wrong plural categories are reported,

@@ -168,6 +168,8 @@ mod tests {
             "icons/dock-left.svg",
             "icons/dock-right.svg",
             "icons/undock.svg",
+            "icons/split-right.svg",
+            "icons/split-down.svg",
             "icons/external-link.svg",
             "icons/folder-open.svg",
             "icons/path-edit.svg",

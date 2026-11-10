@@ -244,6 +244,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Show Desktop | `icons/nav/show-desktop.svg` | In-house (corner-arrows) | render.rs:1562 |
 | New Folder | `icons/nav/folder.svg` | Lucide `folder` (1.75) | render.rs:1575 |
 | Refresh | `icons/nav/refresh.svg` | Lucide `refresh-cw` | render.rs:1588 |
+| Split View (toolbar toggle) | `icons/split-right.svg` / `icons/split-down.svg` | **In-house** from Lucide `columns-2` / `rows-2` (house style, stroke 1.75): a rect cut in two, vertically or horizontally. The glyph follows the open split's axis; the side-by-side one stands for the closed state. Distinct from the spare `panel-right` / `panel-bottom`, whose off-centre rule reads as a side panel (docs/features/SPLIT_VIEW.md). | render.rs `title_bar` |
 | Dock window to a screen edge (toolbar button) | `icons/dock.svg` | **In-house** (house style, stroke 1.75): a screen rect with a grip bar on each side (edge-neutral "dockable to a side"). Drawn distinct from the sidebar toggle's `panel-left-*` so the whole-window dock isn't confused with the sidebar (docs/features/DOCK.md). | render.rs `title_bar` |
 | → Dock Left / Dock Right (menu items) | `icons/dock-left.svg` / `icons/dock-right.svg` | **In-house** (house style): the screen rect with a docked drawer column + grip on the respective side. Same family as `dock.svg`. | dock dropdown |
 | → Undock (menu item) | `icons/undock.svg` | **In-house** (house style): a plain window (rect + titlebar line), i.e. "back to a free-floating window". | dock dropdown |

@@ -85,7 +85,7 @@ It targets the gap the default managers leave: **responsiveness under load** and
 - **It speaks your language, even if nobody shipped it.** French, German,
   Italian and Polish are bundled and complete, but the point is the mechanism:
   **Settings ▸ Appearance ▸ New language…** writes a JSON template of all
-  1.392 strings, with the translator brief inside the file. Hand it to a
+  1.394 strings, with the translator brief inside the file. Hand it to a
   translator or paste it into any chat assistant, save the reply, press
   **Import…**, and the whole app switches on the spot. No code, no build, no
   API key, nothing to recompile, and 34 languages are one click away in the

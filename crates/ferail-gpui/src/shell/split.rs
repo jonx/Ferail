@@ -232,6 +232,30 @@ impl Shell {
         self.toggle_split(Axis::Vertical, window, cx);
     }
 
+    /// The toolbar toggle: close an open split whatever its axis, otherwise
+    /// split side by side, or stacked with Shift held.
+    pub(super) fn on_split_button(
+        &mut self,
+        stacked: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_split();
+        if self.split.is_some() {
+            self.split = None;
+            self.split_dragging = false;
+            cx.notify();
+        } else {
+            let axis = if stacked {
+                Axis::Vertical
+            } else {
+                Axis::Horizontal
+            };
+            self.toggle_split(axis, window, cx);
+        }
+        self.focus_active_surface(window, cx);
+    }
+
     pub(super) fn on_switch_pane(
         &mut self,
         _: &SwitchPane,
