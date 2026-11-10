@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Choose whether folders open with their first item selected.** Settings →
+  Files offers a selection preference on every platform, enabled by default.
+  Turn it off to open folders without a selection.
+
 ## 0.7.13 - 2026-11-10
 
 - **Ferail reopens your tabs.** Launching Ferail brings back the tabs that
