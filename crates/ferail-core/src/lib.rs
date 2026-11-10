@@ -24,6 +24,7 @@ pub mod platform_namespace;
 pub mod platform_properties;
 pub mod platform_shortcuts;
 pub mod power;
+pub mod privacy;
 pub mod revision_cache;
 pub mod terminal;
 pub mod text_encoding;

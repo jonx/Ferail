@@ -113,6 +113,9 @@ keep the UI off the I/O path.
   language packs, and the translate-anywhere workflow.
 - [PRIVATE_MODE.md](PRIVATE_MODE.md): capture-safe presentation and a
   process-global interaction lock for screenshots of real sessions.
+- [PRIVACY_SETTINGS.md](PRIVACY_SETTINGS.md): what Ferail stores about the
+  folders you browse, the switches that stop it, session restore, and the
+  clear buttons.
 
 ## Privacy, health and updates
 

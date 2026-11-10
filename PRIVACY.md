@@ -1,6 +1,6 @@
 # Ferail Privacy Policy
 
-Effective date: 28 August 2026
+Effective date: 10 November 2026
 
 Ferail is a desktop file manager maintained by John Knipper. This policy
 applies to the official Ferail desktop application and command-line tools.
@@ -53,7 +53,16 @@ data directories. Local state can include:
 
 Ferail's own thumbnails and preview pixels are held in bounded process memory,
 not written to Ferail's persistent database. The operating system or an
-installed file provider may maintain its own caches independently.
+installed file provider may maintain its own caches independently: by default
+Ferail asks the system thumbnail service for thumbnails, and that service
+caches what it renders. **Settings > Privacy > Use the system thumbnail
+service** turns this off.
+
+**Settings > Privacy** controls the rest of this local state. You can stop
+Ferail recording visited folders, stop it reopening the last session, exclude
+folders or whole volumes from everything it stores, choose how long history
+and caches are kept, clear each kind of stored data, or turn on **Remember
+nothing**, which keeps all of it in memory for the session only.
 
 Archive-entry previews are also ephemeral. Text and supported images are read
 and rendered directly from memory. When an operating-system preview provider
@@ -114,8 +123,10 @@ report a Ferail bug.
 
 ## Retention and deletion
 
-Local state remains until Ferail replaces it, its bounded cache evicts it, or
-you delete it. Settings > Diagnostics provides shortcuts to Ferail's settings
+Local state remains until Ferail replaces it, its retention period (90 days
+unless you change it) expires, or you delete it from **Settings > Privacy >
+Clear stored data**. Reports are kept until you delete them unless you set a
+period there. Settings > Diagnostics provides shortcuts to Ferail's settings
 and reports folders. The principal locations are:
 
 - macOS: `~/Library/Application Support/Ferail`

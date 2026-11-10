@@ -64,6 +64,7 @@ pub mod prefetch;
 pub mod preview;
 pub mod preview_panel;
 mod preview_queue;
+pub mod privacy;
 pub mod private_mode;
 pub mod private_thumb;
 pub mod process_state;

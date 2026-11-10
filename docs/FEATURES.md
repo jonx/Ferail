@@ -295,6 +295,11 @@ disk-usage walker, the thumbnail pipeline: scriptable from a shell.
 - **A Trash you can act in**: its own menu, and **Put Back** returns an item
   to where it came from without overwriting whatever took its place.
   ([file ops](features/FILE_OPS.md))
+- **Privacy settings**: reopen your tabs at launch or start clean, stop
+  recording visits, exclude folders and volumes from everything Ferail
+  stores, bypass the system thumbnail cache, clear each kind of stored
+  data, or remember nothing at all.
+  ([privacy settings](features/PRIVACY_SETTINGS.md))
 - **Private Mode**: a capture-safe lock that projects invented names, paths
   and blurred thumbnails so a screenshot of a real session shows the app and
   not your files. ([private mode](features/PRIVATE_MODE.md))

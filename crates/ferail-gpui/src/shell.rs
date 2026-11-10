@@ -1897,6 +1897,15 @@ const SLOW_LOAD_INDICATOR_DELAY: Duration = Duration::from_millis(300);
 /// How long the first window waits for its restored folder to answer before
 /// opening home instead.
 const START_PATH_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// What a tab booted on a saved folder does when that folder is gone.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MissingStart {
+    /// The window's first tab: fall back to the home folder.
+    GoHome,
+    /// A restored extra tab: it does not come back.
+    CloseTab,
+}
 /// Pause in typing before the filter's token menu opens by itself. Long
 /// enough that ordinary typing never flashes it.
 const FILTER_MENU_DELAY: Duration = Duration::from_millis(600);
@@ -1983,9 +1992,14 @@ impl Shell {
         // the I/O on the background executor, then loads the canonical
         // path (or home). No persisted last-dir → home, which needs no
         // I/O to trust, so that case loads straight away.
+        // Line the process up with the privacy settings before anything
+        // is fetched or recorded, and honour "do not reopen the session":
+        // then the window starts at home whatever the state file holds.
+        crate::privacy::apply(cx);
+        let keeps_session = crate::privacy::Policy::from_state(&persisted).keeps_session();
         let (start, start_needs_resolution) = match persisted.last_dir.clone() {
-            Some(p) => (p, true),
-            None => (home_dir(), false),
+            Some(p) if keeps_session => (p, true),
+            _ => (home_dir(), false),
         };
         let start_id = process.fs.id_for_path(&start);
         // Seed the NodeStore with the start path so the very first
@@ -2639,7 +2653,8 @@ impl Shell {
             shell.start_metadata_load(cx);
         }
         if start_needs_resolution {
-            shell.resolve_start_path_then_load(start, cx);
+            let tab_id = shell.active_tab().id;
+            shell.resolve_start_path_then_load(tab_id, start, MissingStart::GoHome, cx);
         } else {
             shell.load_path(start, cx);
         }
@@ -2659,9 +2674,21 @@ impl Shell {
     /// the result is dropped. When the canonical spelling differs from
     /// the raw one (symlink, vanished → home), the tab's seed history
     /// entry is retargeted too, so Back can't land on the raw spelling.
-    fn resolve_start_path_then_load(&mut self, raw: PathBuf, cx: &mut Context<Self>) {
-        let tab_id = self.active_tab().id;
-        let generation = self.active_tab().load_generation;
+    fn resolve_start_path_then_load(
+        &mut self,
+        tab_id: TabId,
+        raw: PathBuf,
+        missing: MissingStart,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(generation) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .map(|tab| tab.load_generation)
+        else {
+            return;
+        };
         let task = self.process.tasks.borrow_mut().begin(
             TaskKind::Enumeration,
             tr!(
@@ -2697,6 +2724,10 @@ impl Shell {
                 if tab.current_dir != raw || tab.load_generation != generation {
                     return;
                 }
+                if resolved.is_none() && missing == MissingStart::CloseTab {
+                    this.drop_restored_tab(tab_id, cx);
+                    return;
+                }
                 let target = resolved.unwrap_or_else(home_dir);
                 if target != raw
                     && let Some(entry) = tab.history.get_mut(tab.history_index)
@@ -2707,6 +2738,80 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// Reopen the tabs of the last session around the window's first tab
+    /// (Settings → Privacy → Reopen the last session). `tabs` and `active`
+    /// are the saved session, read by the caller *before* this window
+    /// existed: the window's own first load already overwrites it.
+    ///
+    /// The first tab was booted on the saved last folder, so it stands for
+    /// one entry of the list; the others are created on either side of it,
+    /// in their saved order, and each validates its folder off-thread like
+    /// the first one does. A folder that has gone away simply does not
+    /// come back as a tab.
+    pub fn restore_session_tabs(
+        &mut self,
+        tabs: Vec<PathBuf>,
+        active: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if tabs.len() < 2 || self.tabs.len() != 1 {
+            return;
+        }
+        let here = self.tabs[0].current_dir.clone();
+        let Some(anchor) = active
+            .filter(|index| tabs.get(*index) == Some(&here))
+            .or_else(|| tabs.iter().position(|tab| *tab == here))
+        else {
+            return;
+        };
+        for (index, path) in tabs.into_iter().enumerate() {
+            if index == anchor {
+                continue;
+            }
+            let node_id = self.process.fs.id_for_path(&path);
+            self.process
+                .node_store
+                .borrow_mut()
+                .get_or_create_path_with_id(path.clone(), node_id);
+            let tab = self.make_tab(path.clone(), node_id, window, cx);
+            let tab_id = tab.id;
+            // Saved order: everything before the anchor goes in front of
+            // the first tab, everything after it behind.
+            let at = if index < anchor { index } else { self.tabs.len() };
+            self.tabs.insert(at, tab);
+            if index < anchor {
+                self.active += 1;
+            }
+            self.resolve_start_path_then_load(tab_id, path, MissingStart::CloseTab, cx);
+        }
+        cx.notify();
+    }
+
+    /// Remove a restored tab whose folder no longer exists. Not a user
+    /// close: nothing goes on the reopen-closed-tab stack.
+    fn drop_restored_tab(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        if self.tabs.len() < 2 {
+            return;
+        }
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return;
+        };
+        let active_id = self.tabs[self.active].id;
+        self.dismiss_tab_work(&self.tabs[index]);
+        self.tabs.remove(index);
+        self.active = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == active_id)
+            .unwrap_or_else(|| index.min(self.tabs.len() - 1));
+        self.sync_split();
+        let own_dirs: Vec<PathBuf> = self.tabs.iter().map(|t| t.current_dir.clone()).collect();
+        self.process.prune_watches(cx.entity_id(), own_dirs, cx);
+        self.save_state_async(cx);
+        cx.notify();
     }
 
     /// Build a fresh `Tab` with its own `TableState` entity + table-
@@ -5235,13 +5340,29 @@ impl Shell {
     /// `theme_pref` is owned by the Settings entity: persisted there
     /// after a tile click, not from Shell.
     fn save_state_async(&self, cx: &mut Context<Self>) {
-        let last_dir = self.active_tab().current_dir.clone();
+        // The session is the folder tabs, in order. A tool tab (search,
+        // duplicates, an archive) is a result, not a place to reopen.
+        let mut active = None;
+        let mut tabs = Vec::new();
+        for (index, tab) in self.tabs.iter().enumerate() {
+            if tab.tool_result.is_some() {
+                continue;
+            }
+            if index == self.active {
+                active = Some(tabs.len());
+            }
+            tabs.push(tab.current_dir.clone());
+        }
         let show_hidden = self.show_hidden;
         let ui_scale = self.ui_scale;
         cx.background_executor()
             .spawn(async move {
                 let mut s = app_state::load();
-                s.last_dir = Some(last_dir);
+                if !crate::privacy::session_frozen() {
+                    crate::privacy::Policy::from_state(&s)
+                        .session(&tabs, active)
+                        .store(&mut s);
+                }
                 s.show_hidden = Some(show_hidden);
                 s.ui_scale = Some(ui_scale);
                 app_state::save(&s);
@@ -6280,6 +6401,13 @@ impl Shell {
         });
     }
 
+    /// The visit log was erased (Settings → Privacy): drop the heat tint
+    /// this window is painting from it.
+    pub(crate) fn visits_cleared(&mut self, cx: &mut Context<Self>) {
+        self.refresh_active_tab_heats(cx);
+        cx.notify();
+    }
+
     fn start_metadata_load(&mut self, cx: &mut Context<Self>) {
         if self.process.metadata_loaded.replace(true) {
             self.favorites_section_collapsed = self.process.favorites_section_collapsed.get();
@@ -6291,6 +6419,16 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let db = open_metadata_db();
+                    let policy = crate::privacy::Policy::current();
+                    // Before the first read or write: a session that
+                    // remembers nothing must not hydrate from, or add to,
+                    // the stored history.
+                    if let Some(d) = db.as_ref() {
+                        if let Ok(mut g) = d.lock() {
+                            crate::privacy::apply_to_db(&mut g, &policy);
+                        }
+                    }
+                    crate::privacy::prune_reports(&policy);
                     // Once-per-launch cache pruning: the files /
                     // folder_sizes / folder_usage tables otherwise grow
                     // without bound (dead paths kept forever;
@@ -6301,7 +6439,7 @@ impl Shell {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_secs() as i64)
                                 .unwrap_or(0);
-                            if let Err(e) = g.prune_stale(now) {
+                            if let Err(e) = g.prune_stale(now, policy.retention_days) {
                                 crate::log_warn!(90, "metadata prune failed: {e}");
                             }
                             // Heal the magic cache across sniffer
@@ -7547,6 +7685,7 @@ impl Shell {
         // directory's file watch.
         let own_dirs: Vec<PathBuf> = self.tabs.iter().map(|t| t.current_dir.clone()).collect();
         self.process.prune_watches(cx.entity_id(), own_dirs, cx);
+        self.save_state_async(cx);
         // No re-load: the now-active tab already has its own
         // TableState populated from its earlier load (Phase A+B).
         cx.notify();
@@ -7630,6 +7769,7 @@ impl Shell {
         self.active = (self.active + 1) % self.tabs.len();
         self.refresh_file_list_selection_in_tab(self.active, cx);
         self.warm_loaded_viewport_in_tab(self.active, cx);
+        self.save_state_async(cx);
         cx.notify();
     }
 
@@ -7641,6 +7781,7 @@ impl Shell {
         self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
         self.refresh_file_list_selection_in_tab(self.active, cx);
         self.warm_loaded_viewport_in_tab(self.active, cx);
+        self.save_state_async(cx);
         cx.notify();
     }
 
@@ -7654,6 +7795,7 @@ impl Shell {
         self.active = idx;
         self.refresh_file_list_selection_in_tab(self.active, cx);
         self.warm_loaded_viewport_in_tab(self.active, cx);
+        self.save_state_async(cx);
         cx.notify();
     }
 
@@ -7681,6 +7823,7 @@ impl Shell {
             .iter()
             .position(|t| t.id == active_id)
             .unwrap_or(0);
+        self.save_state_async(cx);
         cx.notify();
     }
 
@@ -8347,6 +8490,13 @@ impl Shell {
         else {
             return;
         };
+        // Privacy: a visit that may not be recorded leaves no trace in
+        // memory either, so Recents and the heat tint never show a place
+        // the user asked Ferail not to remember.
+        let policy = crate::privacy::Policy::current();
+        if !policy.record_visits || policy.exclusions.covers(&path) {
+            return;
+        }
         self.process.record_ant_visit(path.clone());
         // Recents is a separate, user-toggleable view over the same
         // visit log: only feed it when the feature is on. The DB write

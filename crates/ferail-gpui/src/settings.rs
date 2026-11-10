@@ -52,6 +52,7 @@ pub enum SettingsCategory {
     Menus,
     Plugins,
     Shortcuts,
+    Privacy,
     Diagnostics,
     About,
 }
@@ -66,6 +67,7 @@ impl SettingsCategory {
         SettingsCategory::Menus,
         SettingsCategory::Plugins,
         SettingsCategory::Shortcuts,
+        SettingsCategory::Privacy,
         SettingsCategory::Diagnostics,
         SettingsCategory::About,
     ];
@@ -82,6 +84,7 @@ impl SettingsCategory {
             SettingsCategory::Layout => msgid!("Layout"),
             SettingsCategory::Menus => msgid!("Menus"),
             SettingsCategory::Shortcuts => msgid!("Keyboard Shortcuts"),
+            SettingsCategory::Privacy => msgid!("Privacy"),
             SettingsCategory::Diagnostics => msgid!("Diagnostics"),
             SettingsCategory::About => msgid!("About"),
         }
@@ -97,8 +100,9 @@ impl SettingsCategory {
             SettingsCategory::Menus => 5,
             SettingsCategory::Plugins => 6,
             SettingsCategory::Shortcuts => 7,
-            SettingsCategory::Diagnostics => 8,
-            SettingsCategory::About => 9,
+            SettingsCategory::Privacy => 8,
+            SettingsCategory::Diagnostics => 9,
+            SettingsCategory::About => 10,
         }
     }
 }
@@ -112,6 +116,7 @@ pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
         "menus" | "menu" | "context-menu" => SettingsCategory::Menus,
         "plugins" | "plugin" => SettingsCategory::Plugins,
         "shortcuts" | "keyboard" | "keys" => SettingsCategory::Shortcuts,
+        "privacy" | "private" => SettingsCategory::Privacy,
         "diagnostics" | "diag" | "health" | "doctor" => SettingsCategory::Diagnostics,
         "about" => SettingsCategory::About,
         _ => SettingsCategory::Appearance,
@@ -865,9 +870,418 @@ fn build_pages(
         menus_page(),
         plugins_page(),
         shortcuts_page(),
+        privacy_page(),
         diagnostics_page(diagnostics),
         about_page(),
     ]
+}
+
+// =============================================================================
+// Privacy (docs/features/PRIVACY_SETTINGS.md)
+// =============================================================================
+
+/// Persist one privacy setting, then bring the running process in line with
+/// it (`crate::privacy::apply`): the metadata store, the thumbnail switch and
+/// the saved session all follow without a relaunch.
+fn persist_privacy(change: impl FnOnce(&mut AppState), cx: &mut App) {
+    let mut state = app_state::load();
+    change(&mut state);
+    app_state::save(&state);
+    crate::privacy::apply(cx);
+}
+
+/// The Privacy page: everything that decides what Ferail writes down about
+/// the folders and files the user browses, and the buttons that erase it.
+/// The master switch leads; each group below is one kind of stored trace.
+fn privacy_page() -> SettingPage {
+    SettingPage::new(tr!("Privacy"))
+        .icon(Icon::empty().path("icons/fingerprint.svg"))
+        .group(
+            SettingGroup::new()
+                .title(tr!("Private session"))
+                .item(switch_setting(
+                    tr!("Remember nothing"),
+                    tr!(
+                        "Browse without leaving a trace on this computer. Visited folders, \
+                         file and folder caches, the open tabs and where trashed items came \
+                         from stay in memory and are gone when Ferail quits. Thumbnails come \
+                         from Ferail's own decoders, so fewer file types show one. What is \
+                         already stored is left alone and comes back when you turn this off. \
+                         Favorites and settings are always saved."
+                    ),
+                    |_cx: &App| app_state::load().remember_nothing.unwrap_or(false),
+                    |val: bool, cx: &mut App| {
+                        persist_privacy(|state| state.remember_nothing = Some(val), cx)
+                    },
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title(tr!("Session"))
+                .item(switch_setting(
+                    tr!("Reopen the last session"),
+                    tr!(
+                        "Start with the tabs and folders that were open when Ferail last quit. \
+                         Off always starts in your home folder and stops saving them."
+                    ),
+                    |_cx: &App| app_state::load().restore_session.unwrap_or(true),
+                    |val: bool, cx: &mut App| {
+                        persist_privacy(|state| state.restore_session = Some(val), cx)
+                    },
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title(tr!("History"))
+                .item(switch_setting(
+                    tr!("Record visited folders"),
+                    tr!(
+                        "Keep a log of the folders you open. Recents and the Ant Trail are \
+                         built from it. Off, new visits are not added to either."
+                    ),
+                    |_cx: &App| app_state::load().record_visits.unwrap_or(true),
+                    |val: bool, cx: &mut App| {
+                        persist_privacy(|state| state.record_visits = Some(val), cx)
+                    },
+                ))
+                .item(dropdown_setting_with(
+                    tr!("Keep history and caches for"),
+                    tr!(
+                        "Visits, cached file details, folder sizes and put-back records \
+                         older than this are deleted when Ferail starts."
+                    ),
+                    &[
+                        ("7", msgid!("7 days")),
+                        ("30", msgid!("30 days")),
+                        ("90", msgid!("90 days")),
+                        ("365", msgid!("1 year")),
+                    ],
+                    &[],
+                    || {
+                        app_state::load()
+                            .retention_days
+                            .unwrap_or(app_state::DEFAULT_RETENTION_DAYS)
+                            .to_string()
+                    },
+                    |value: &str, cx: &mut App| {
+                        let days = value.parse::<u32>().ok();
+                        persist_privacy(|state| state.retention_days = days, cx);
+                        cx.refresh_windows();
+                    },
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title(tr!("Excluded locations"))
+                .item(excluded_folders_setting())
+                .item(switch_setting(
+                    tr!("Never record other volumes"),
+                    excluded_volumes_description(),
+                    |_cx: &App| app_state::load().privacy_exclude_volumes.unwrap_or(false),
+                    |val: bool, cx: &mut App| {
+                        persist_privacy(|state| state.privacy_exclude_volumes = Some(val), cx)
+                    },
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title(tr!("Thumbnails"))
+                .item(switch_setting(
+                    tr!("Use the system thumbnail service"),
+                    tr!(
+                        "Let the operating system render thumbnails and previews. It supports \
+                         many more file types, and it keeps its own cache on disk that Ferail \
+                         cannot clear. Off, Ferail decodes common image formats itself and \
+                         other files show their type icon."
+                    ),
+                    // The effective value: "Remember nothing" forces it off.
+                    |_cx: &App| crate::privacy::Policy::current().system_thumbnails,
+                    |val: bool, cx: &mut App| {
+                        persist_privacy(|state| state.system_thumbnails = Some(val), cx)
+                    },
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title(tr!("Reports"))
+                .item(dropdown_setting_with(
+                    tr!("Keep reports for"),
+                    tr!(
+                        "Crash, freeze and issue reports older than this are deleted when \
+                         Ferail starts. They never leave this computer unless you send them."
+                    ),
+                    &[
+                        ("0", msgid!("Forever")),
+                        ("7", msgid!("7 days")),
+                        ("30", msgid!("30 days")),
+                        ("90", msgid!("90 days")),
+                    ],
+                    &[],
+                    || {
+                        app_state::load()
+                            .report_retention_days
+                            .unwrap_or(0)
+                            .to_string()
+                    },
+                    |value: &str, cx: &mut App| {
+                        let days = value.parse::<u32>().ok().filter(|days| *days > 0);
+                        persist_privacy(|state| state.report_retention_days = days, cx);
+                        cx.refresh_windows();
+                    },
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title(tr!("Clear stored data"))
+                .item(clear_setting(
+                    "visits",
+                    tr!("Visited folders"),
+                    tr!("Recents and the Ant Trail heat."),
+                    crate::privacy::ClearTarget::Visits,
+                ))
+                .item(clear_setting(
+                    "caches",
+                    tr!("File and folder caches"),
+                    tr!(
+                        "Detected file types, checksums, download origins and folder sizes. \
+                         They are rebuilt as you browse."
+                    ),
+                    crate::privacy::ClearTarget::FileCaches,
+                ))
+                .item(clear_setting(
+                    "put-back",
+                    tr!("Put-back records"),
+                    tr!(
+                        "Where the items in the Trash came from. Ferail can no longer put \
+                         back the items that are in the Trash now."
+                    ),
+                    crate::privacy::ClearTarget::PutBack,
+                ))
+                .item(clear_setting(
+                    "session",
+                    tr!("Saved session"),
+                    tr!("The last folder and the tabs to reopen at the next launch."),
+                    crate::privacy::ClearTarget::Session,
+                ))
+                .item(clear_setting(
+                    "reports",
+                    tr!("Reports"),
+                    tr!("Crash, freeze and issue reports in the reports folder."),
+                    crate::privacy::ClearTarget::Reports,
+                )),
+        )
+}
+
+/// What "other volumes" means on this platform: the mount roots
+/// `ferail_core::privacy::volume_roots` excludes.
+fn excluded_volumes_description() -> SharedString {
+    #[cfg(target_os = "macos")]
+    {
+        tr!(
+            "Treat every volume under /Volumes the same way: external and network disks, \
+             disk images and additional internal disks."
+        )
+    }
+    #[cfg(windows)]
+    {
+        tr!(
+            "Treat network shares the same way. A removable drive has a drive letter: add \
+             it as a folder above."
+        )
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        tr!("Treat everything under /media, /run/media and /mnt the same way.")
+    }
+}
+
+/// One "Clear stored data" row: title, a Clear button, and the description
+/// spanning the full width below, like [`switch_setting`].
+fn clear_setting(
+    id: &'static str,
+    title: SharedString,
+    description: SharedString,
+    target: crate::privacy::ClearTarget,
+) -> SettingItem {
+    let keyword_title = title.clone();
+    let keyword_description = description.clone();
+    SettingItem::render(move |_options, _window, cx| {
+        use gpui_component::{ActiveTheme as _, Sizable as _, button::Button};
+        let foreground = cx.theme().foreground;
+        let muted = cx.theme().muted_foreground;
+        let cleared = title.clone();
+        gpui_component::v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                gpui_component::h_flex()
+                    .w_full()
+                    .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
+                    .items_center()
+                    .gap(px(SETTINGS_CONTROL_GAP))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_scale_sm()
+                            .text_color(foreground)
+                            .child(title.clone()),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("privacy-clear-{id}")))
+                            .label(tr!("Clear"))
+                            .outline()
+                            .small()
+                            .on_click(move |_, window, cx| {
+                                use crate::overlay::OverlayWindowExt as _;
+                                use gpui_component::notification::Notification;
+                                crate::privacy::clear(target, cx);
+                                window.push_notice(
+                                    Notification::info(tr!(
+                                        "Cleared: {what}",
+                                        what = cleared.clone()
+                                    )),
+                                    cx,
+                                );
+                                cx.refresh_windows();
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .text_scale_sm()
+                    .text_color(muted)
+                    .child(description.clone()),
+            )
+    })
+    .keywords([keyword_title, keyword_description])
+}
+
+/// The excluded-folders editor: the stored list, a Remove button per folder,
+/// and "Add Folder…" behind the system folder picker.
+fn excluded_folders_setting() -> SettingItem {
+    let title = tr!("Never record these folders");
+    let description = tr!(
+        "Ferail browses these folders normally and stores nothing about them or anything \
+         inside: no visit, no cached detail, no saved tab. Items trashed from them cannot be \
+         put back by Ferail. Adding a folder also deletes what was already stored about it."
+    );
+    let keyword_title = title.clone();
+    let keyword_description = description.clone();
+    SettingItem::render(move |_options, _window, cx| {
+        use gpui_component::{ActiveTheme as _, Sizable as _, button::{Button, ButtonVariants as _}};
+        let foreground = cx.theme().foreground;
+        let muted = cx.theme().muted_foreground;
+        let folders = app_state::load().privacy_excluded;
+        let mut list = gpui_component::v_flex().w_full().gap_1();
+        for (index, folder) in folders.iter().enumerate() {
+            let remove = folder.clone();
+            list = list.child(
+                gpui_component::h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap(px(SETTINGS_CONTROL_GAP))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_scale_sm()
+                            .text_color(foreground)
+                            .child(crate::private_mode::present_path(folder)),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("privacy-exclude-remove-{index}")))
+                            .label(tr!("Remove"))
+                            .ghost()
+                            .xsmall()
+                            .on_click(move |_, _window, cx| {
+                                let remove = remove.clone();
+                                persist_privacy(
+                                    move |state| state.privacy_excluded.retain(|f| *f != remove),
+                                    cx,
+                                );
+                                cx.refresh_windows();
+                            }),
+                    ),
+            );
+        }
+        gpui_component::v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                gpui_component::h_flex()
+                    .w_full()
+                    .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
+                    .items_center()
+                    .gap(px(SETTINGS_CONTROL_GAP))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_scale_sm()
+                            .text_color(foreground)
+                            .child(title.clone()),
+                    )
+                    .child(
+                        Button::new("privacy-exclude-add")
+                            .label(tr!("Add Folder\u{2026}"))
+                            .outline()
+                            .small()
+                            .on_click(|_, window, cx| add_excluded_folders(window, cx)),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .text_scale_sm()
+                    .text_color(muted)
+                    .child(description.clone()),
+            )
+            .when(!folders.is_empty(), |this| this.child(list))
+    })
+    .keywords([keyword_title, keyword_description])
+}
+
+/// "Add Folder…": pick folders, resolve them to the spelling tabs use (off
+/// the UI thread: canonicalizing stats the disk), store them.
+fn add_excluded_folders(window: &mut Window, cx: &mut App) {
+    let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: true,
+        prompt: Some(tr!("Exclude")),
+    });
+    window
+        .spawn(cx, async move |cx| {
+            let Some(paths) = picked.await.ok().and_then(Result::ok).flatten() else {
+                return;
+            };
+            let folders: Vec<std::path::PathBuf> = cx
+                .background_executor()
+                .spawn(async move {
+                    paths
+                        .into_iter()
+                        .map(crate::shell::canonicalize_for_identity)
+                        .collect()
+                })
+                .await;
+            let _ = cx.update(|_window, cx| {
+                persist_privacy(
+                    move |state| {
+                        for folder in folders {
+                            if !state.privacy_excluded.contains(&folder) {
+                                state.privacy_excluded.push(folder);
+                            }
+                        }
+                    },
+                    cx,
+                );
+                cx.refresh_windows();
+            });
+        })
+        .detach();
 }
 
 /// The Diagnostics page: the health-check report grouped by area, the recent

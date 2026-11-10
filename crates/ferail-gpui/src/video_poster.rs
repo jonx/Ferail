@@ -161,7 +161,11 @@ fn fetch_content_inner(
     if cancel.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
         return Fetched::Done(None);
     }
+    // Privacy: the system thumbnail service keeps its own on-disk cache of
+    // what it renders. When the user turned it off, skip it and let the
+    // decoders below answer for the formats they know.
     let shell_hit = match tier {
+        _ if !crate::privacy::system_thumbnails_allowed() => None,
         Tier::Thumbnail => crate::platform_shell::fetch_quick_look_thumbnail(path, size_px),
         Tier::Preview => {
             #[cfg(windows)]

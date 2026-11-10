@@ -411,6 +411,9 @@ It stores derived file metadata, Ant Trail data, window/layout state, and
 other app-owned records.
 
 Simple UI preferences also flow through `crates/ferail-gpui/src/app_state.rs`.
+What may be written at all (visits, caches, the session) is decided by one
+policy, `crates/ferail-gpui/src/privacy.rs`: see
+[Privacy settings](features/PRIVACY_SETTINGS.md).
 Anything persisted must be treated as a cache or user preference, never as
 the sole source of filesystem truth.
 

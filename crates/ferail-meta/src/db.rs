@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use ferail_core::favorites::{Favorite, FavoriteIcon, FavoriteId, FavoriteKind, FavoriteTarget};
+use ferail_core::privacy::Exclusions;
 use rusqlite::{params, Connection};
 
 /// Schema version. Bump on any structural change.
@@ -84,6 +85,11 @@ pub enum ResetScope {
     Caches,
     /// Only `folder_usage`: the Ant Trail heat map.
     AntTrail,
+    /// `files` + `folder_sizes`: what Ferail derived about files and
+    /// folders it listed. Leaves the visit log alone.
+    FileCaches,
+    /// `put_back`: where trashed items came from.
+    PutBack,
     /// `files.magic_label` only. Keeps quarantine + hash data.
     Magic,
     /// `files.quarantine_*` only. Keeps magic + hash data.
@@ -103,6 +109,8 @@ impl ResetScope {
             "ui" => Some(Self::Ui),
             "caches" | "cache" => Some(Self::Caches),
             "ant-trail" | "anttrail" | "ant_trail" => Some(Self::AntTrail),
+            "file-caches" | "filecaches" | "file_caches" => Some(Self::FileCaches),
+            "put-back" | "putback" | "put_back" => Some(Self::PutBack),
             "magic" => Some(Self::Magic),
             "quarantine" => Some(Self::Quarantine),
             "favorites" | "favourites" => Some(Self::Favorites),
@@ -117,6 +125,8 @@ impl ResetScope {
             Self::Ui => "window size, splitters, tabs, pinned items",
             Self::Caches => "every derived cache (files + Ant Trail)",
             Self::AntTrail => "Ant Trail heat (folder_usage)",
+            Self::FileCaches => "file and folder caches (files + folder_sizes)",
+            Self::PutBack => "where trashed items came from (put_back)",
             Self::Magic => "files.magic_label only",
             Self::Quarantine => "files.quarantine_* only",
             Self::Favorites => "user-curated Favorites only",
@@ -227,7 +237,62 @@ fn sibling_path(path: &Path, suffix: &str) -> std::path::PathBuf {
 /// `Mutex` at the call site if cross-thread access is needed.
 pub struct MetadataDb {
     conn: Connection,
+    /// Locations nothing is recorded under. See [`Self::set_exclusions`].
+    exclusions: Exclusions,
+    /// Whether the session tables shadow the on-disk ones. See
+    /// [`Self::set_ephemeral`].
+    ephemeral: std::cell::Cell<bool>,
 }
+
+/// The tables that describe what the user browsed, as opposed to what
+/// they configured (favorites, preferences). These are the ones
+/// [`MetadataDb::set_ephemeral`] shadows and [`MetadataDb::forget_under`]
+/// purges; the column each keys its path on comes second.
+const BROWSING_TABLES: &[(&str, &str)] = &[
+    ("files", "path"),
+    ("folder_sizes", "path"),
+    ("folder_usage", "folder_path"),
+    ("put_back", "original_path"),
+];
+
+/// In-memory twins of [`BROWSING_TABLES`], created in SQLite's `temp`
+/// schema. Column shape must match the on-disk tables in `init_schema`;
+/// `ephemeral_tables_match_the_disk_schema` holds the two together.
+const EPHEMERAL_SCHEMA: &str = r#"
+    CREATE TABLE IF NOT EXISTS temp.files (
+        path TEXT PRIMARY KEY,
+        mtime_unix INTEGER NOT NULL,
+        size INTEGER NOT NULL,
+        magic_label TEXT,
+        description TEXT,
+        partial_hash TEXT,
+        full_hash TEXT,
+        mime TEXT,
+        quarantined INTEGER,
+        quarantine_agent TEXT,
+        quarantine_iso TEXT,
+        quarantine_where_from TEXT,
+        indexed_at_unix INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS temp.folder_sizes (
+        path TEXT PRIMARY KEY,
+        mtime_unix INTEGER NOT NULL,
+        size INTEGER NOT NULL,
+        computed_at_unix INTEGER NOT NULL,
+        file_count INTEGER NOT NULL DEFAULT 0,
+        dir_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS temp.folder_usage (
+        folder_path TEXT PRIMARY KEY,
+        hits INTEGER NOT NULL DEFAULT 0,
+        last_access_unix INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS temp.put_back (
+        trashed_path TEXT PRIMARY KEY,
+        original_path TEXT NOT NULL,
+        trashed_at INTEGER NOT NULL
+    );
+"#;
 
 impl MetadataDb {
     /// Open or create the database at `path`. If the on-disk schema
@@ -299,7 +364,10 @@ impl MetadataDb {
             .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
             .unwrap_or_else(|_| "delete".into());
         let _ = conn.pragma_update(None, "synchronous", "NORMAL");
-        let db = Self { conn };
+        // Overwrite deleted rows with zeros, so a path the user asked
+        // Ferail to forget is not left readable in the file's free pages.
+        let _ = conn.pragma_update(None, "secure_delete", "ON");
+        let db = Self::with_connection(conn);
         db.init_schema()?;
         db.set_preference("db_version", &DB_VERSION.to_string())?;
         Ok(db)
@@ -310,9 +378,115 @@ impl MetadataDb {
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.busy_timeout(std::time::Duration::from_millis(250))?;
-        let db = Self { conn };
+        let db = Self::with_connection(conn);
         db.init_schema()?;
         Ok(db)
+    }
+
+    fn with_connection(conn: Connection) -> Self {
+        Self {
+            conn,
+            exclusions: Exclusions::default(),
+            ephemeral: std::cell::Cell::new(false),
+        }
+    }
+
+    // ---- privacy policy ----
+
+    /// Stop or resume writing browsing data to disk.
+    ///
+    /// While on, in-memory tables shadow [`BROWSING_TABLES`]: SQLite
+    /// resolves an unqualified table name to the `temp` schema first, so
+    /// every read and write in this file lands in memory and vanishes with
+    /// the connection. What is already on disk is neither read nor
+    /// changed, and comes back when the mode is turned off. Favorites and
+    /// preferences are not shadowed.
+    pub fn set_ephemeral(&self, on: bool) -> Result<()> {
+        if on == self.ephemeral.get() {
+            return Ok(());
+        }
+        if on {
+            // Must precede the first temp table: without it SQLite may
+            // spill the temp schema to a file in the system temp folder.
+            self.conn.pragma_update(None, "temp_store", "MEMORY")?;
+            self.conn.execute_batch(EPHEMERAL_SCHEMA)?;
+        } else {
+            for (table, _) in BROWSING_TABLES {
+                self.conn
+                    .execute_batch(&format!("DROP TABLE IF EXISTS temp.{table};"))?;
+            }
+        }
+        self.ephemeral.set(on);
+        Ok(())
+    }
+
+    pub fn is_ephemeral(&self) -> bool {
+        self.ephemeral.get()
+    }
+
+    /// Set the locations nothing is recorded under. Writes for a covered
+    /// path become no-ops; rows already stored are removed by
+    /// [`Self::purge_excluded`].
+    pub fn set_exclusions(&mut self, exclusions: Exclusions) {
+        self.exclusions = exclusions;
+    }
+
+    fn excluded(&self, path: &str) -> bool {
+        !self.exclusions.is_empty() && self.exclusions.covers(Path::new(path))
+    }
+
+    /// Delete every stored row at or under `root`, on disk and in the
+    /// session tables alike.
+    pub fn forget_under(&self, root: &Path) -> Result<()> {
+        let exact = root.to_string_lossy().to_string();
+        let mut prefix = exact.clone();
+        if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
+            prefix.push(std::path::MAIN_SEPARATOR);
+        }
+        for schema in self.schemas() {
+            for (table, column) in BROWSING_TABLES {
+                // `substr` rather than LIKE: a folder name may contain
+                // `%` or `_`, which LIKE would treat as wildcards.
+                self.conn.execute(
+                    &format!(
+                        "DELETE FROM {schema}.{table} \
+                         WHERE {column} = ?1 OR substr({column}, 1, length(?2)) = ?2"
+                    ),
+                    params![exact, prefix],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove what was stored about the excluded locations before they
+    /// were excluded.
+    pub fn purge_excluded(&self) -> Result<()> {
+        for root in self.exclusions.prefixes() {
+            self.forget_under(root)?;
+        }
+        Ok(())
+    }
+
+    /// Give freed pages back to the filesystem and empty the write-ahead
+    /// log, so cleared rows leave no copy behind. Rewrites the whole file:
+    /// run it after a clear, never on a hot path.
+    pub fn compact(&self) -> Result<()> {
+        // The checkpoint answers with a row, so it cannot be `execute`d.
+        let _ = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+        self.conn.execute_batch("VACUUM")?;
+        Ok(())
+    }
+
+    /// Schemas holding [`BROWSING_TABLES`] right now.
+    fn schemas(&self) -> &'static [&'static str] {
+        if self.ephemeral.get() {
+            &["main", "temp"]
+        } else {
+            &["main"]
+        }
     }
 
     fn init_schema(&self) -> Result<()> {
@@ -505,6 +679,9 @@ impl MetadataDb {
     /// must never fail the deletion the user actually asked for, so callers
     /// log and continue.
     pub fn record_put_back(&self, trashed: &Path, original: &Path) -> Result<()> {
+        if !self.exclusions.is_empty() && self.exclusions.covers(original) {
+            return Ok(());
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|since| since.as_secs() as i64)
@@ -604,6 +781,9 @@ impl MetadataDb {
 
     /// Record one folder visit. Atomically inserts-or-bumps the row.
     pub fn record_folder_visit(&self, path: &str, now_unix: i64) -> Result<()> {
+        if self.excluded(path) {
+            return Ok(());
+        }
         self.conn.execute(
             "INSERT INTO folder_usage (folder_path, hits, last_access_unix) \
              VALUES (?1, 1, ?2) \
@@ -695,6 +875,9 @@ impl MetadataDb {
     /// have their derived columns reset (the caller passes whatever
     /// fields it has; the rest stay NULL until next probe).
     pub fn upsert_file(&self, rec: &FileMetaRecord) -> Result<()> {
+        if self.excluded(&rec.path) {
+            return Ok(());
+        }
         // ONE statement, atomic: when the stored mtime differs the row
         // is effectively replaced (stale derived data must not ride
         // alongside a changed file), otherwise incoming NULLs preserve
@@ -768,28 +951,40 @@ impl MetadataDb {
         Ok(())
     }
 
-    /// Age out cache rows so the store stops growing without bound:
-    /// `files` and `folder_sizes` entries not refreshed in 90 days are
-    /// dead weight (their mtime checks would re-derive anyway), and
-    /// `folder_usage`: loaded wholesale into memory at startup: is
-    /// capped to its most recent 4,096 rows. User-curated tables
-    /// (favorites, pinned items) are never touched. Run once per
-    /// launch on the background executor.
-    pub fn prune_stale(&self, now_unix: i64) -> Result<()> {
-        const MAX_AGE_SECS: i64 = 90 * 86_400;
+    /// Age out stored rows so the store stops growing without bound and
+    /// nothing outlives the user's retention setting: `files`,
+    /// `folder_sizes` and `put_back` rows, and `folder_usage` visits, not
+    /// refreshed in `max_age_days` are deleted, and `folder_usage` (loaded
+    /// wholesale into memory at startup) is capped to its most recent
+    /// 4,096 rows. User-curated tables (favorites, pinned items) are never
+    /// touched. Always prunes the on-disk tables, whatever
+    /// [`Self::set_ephemeral`] says. Run once per launch on the background
+    /// executor.
+    pub fn prune_stale(&self, now_unix: i64, max_age_days: u32) -> Result<()> {
         const FOLDER_USAGE_CAP: i64 = 4096;
-        let cutoff = now_unix.saturating_sub(MAX_AGE_SECS);
+        let cutoff = now_unix.saturating_sub(i64::from(max_age_days) * 86_400);
         self.conn.execute(
-            "DELETE FROM files WHERE indexed_at_unix < ?1",
+            "DELETE FROM main.files WHERE indexed_at_unix < ?1",
             params![cutoff],
         )?;
         self.conn.execute(
-            "DELETE FROM folder_sizes WHERE computed_at_unix < ?1",
+            "DELETE FROM main.folder_sizes WHERE computed_at_unix < ?1",
             params![cutoff],
         )?;
         self.conn.execute(
-            "DELETE FROM folder_usage WHERE folder_path NOT IN ( \
-               SELECT folder_path FROM folder_usage \
+            "DELETE FROM main.put_back WHERE trashed_at < ?1",
+            params![cutoff],
+        )?;
+        self.conn.execute(
+            // 0 is the "removed from Recents" sentinel, not an age: such
+            // a row has no date to judge it by and keeps its heat.
+            "DELETE FROM main.folder_usage \
+             WHERE last_access_unix > 0 AND last_access_unix < ?1",
+            params![cutoff],
+        )?;
+        self.conn.execute(
+            "DELETE FROM main.folder_usage WHERE folder_path NOT IN ( \
+               SELECT folder_path FROM main.folder_usage \
                ORDER BY last_access_unix DESC LIMIT ?1)",
             params![FOLDER_USAGE_CAP],
         )?;
@@ -825,6 +1020,9 @@ impl MetadataDb {
     /// Insert or replace a folder-size row. The table holds a single
     /// derived value, so a whole-row replace is always correct.
     pub fn upsert_folder_size(&self, rec: &FolderSizeRecord) -> Result<()> {
+        if self.excluded(&rec.path) {
+            return Ok(());
+        }
         self.conn.execute(
             "INSERT OR REPLACE INTO folder_sizes \
                (path, mtime_unix, size, computed_at_unix, file_count, dir_count) \
@@ -995,53 +1193,77 @@ impl MetadataDb {
     /// leaves the version row intact so subsequent opens don't
     /// trigger the version-mismatch recreate path.
     pub fn reset(&self, scope: ResetScope) -> Result<()> {
+        // Unqualified names would hit the session tables while
+        // `set_ephemeral` is on and leave the disk untouched, so every
+        // statement names `main`, and the session tables are emptied by
+        // recreating them.
+        let was_ephemeral = self.ephemeral.get();
+        self.set_ephemeral(false)?;
+        let result = self.reset_main(scope);
+        self.set_ephemeral(was_ephemeral)?;
+        result
+    }
+
+    fn reset_main(&self, scope: ResetScope) -> Result<()> {
         match scope {
             ResetScope::All => {
                 self.conn.execute_batch(
                     r#"
-                    DELETE FROM files;
-                    DELETE FROM folder_sizes;
-                    DELETE FROM folder_usage;
-                    DELETE FROM window_state;
-                    DELETE FROM layout_state;
-                    DELETE FROM tabs;
-                    DELETE FROM pinned_items;
-                    DELETE FROM favorites;
-                    DELETE FROM preferences WHERE key != 'db_version';
+                    DELETE FROM main.files;
+                    DELETE FROM main.folder_sizes;
+                    DELETE FROM main.folder_usage;
+                    DELETE FROM main.put_back;
+                    DELETE FROM main.window_state;
+                    DELETE FROM main.layout_state;
+                    DELETE FROM main.tabs;
+                    DELETE FROM main.pinned_items;
+                    DELETE FROM main.favorites;
+                    DELETE FROM main.preferences WHERE key != 'db_version';
                     "#,
                 )?;
             }
             ResetScope::Ui => {
                 self.conn.execute_batch(
                     r#"
-                    DELETE FROM window_state;
-                    DELETE FROM layout_state;
-                    DELETE FROM tabs;
-                    DELETE FROM pinned_items;
+                    DELETE FROM main.window_state;
+                    DELETE FROM main.layout_state;
+                    DELETE FROM main.tabs;
+                    DELETE FROM main.pinned_items;
                     "#,
                 )?;
             }
             ResetScope::Caches => {
                 self.conn.execute_batch(
                     r#"
-                    DELETE FROM files;
-                    DELETE FROM folder_sizes;
-                    DELETE FROM folder_usage;
+                    DELETE FROM main.files;
+                    DELETE FROM main.folder_sizes;
+                    DELETE FROM main.folder_usage;
                     "#,
                 )?;
             }
             ResetScope::AntTrail => {
-                self.conn.execute("DELETE FROM folder_usage", [])?;
+                self.conn.execute("DELETE FROM main.folder_usage", [])?;
+            }
+            ResetScope::FileCaches => {
+                self.conn.execute_batch(
+                    r#"
+                    DELETE FROM main.files;
+                    DELETE FROM main.folder_sizes;
+                    "#,
+                )?;
+            }
+            ResetScope::PutBack => {
+                self.conn.execute("DELETE FROM main.put_back", [])?;
             }
             ResetScope::Magic => {
                 self.conn.execute(
-                    "UPDATE files SET magic_label = NULL, description = NULL",
+                    "UPDATE main.files SET magic_label = NULL, description = NULL",
                     [],
                 )?;
             }
             ResetScope::Quarantine => {
                 self.conn.execute(
-                    "UPDATE files \
+                    "UPDATE main.files \
                      SET quarantined = NULL, \
                          quarantine_agent = NULL, \
                          quarantine_iso = NULL, \
@@ -1050,9 +1272,9 @@ impl MetadataDb {
                 )?;
             }
             ResetScope::Favorites => {
-                self.conn.execute("DELETE FROM favorites", [])?;
+                self.conn.execute("DELETE FROM main.favorites", [])?;
                 self.conn.execute(
-                    "DELETE FROM preferences WHERE key = 'favorites_section_collapsed'",
+                    "DELETE FROM main.preferences WHERE key = 'favorites_section_collapsed'",
                     [],
                 )?;
             }
@@ -1885,5 +2107,188 @@ mod tests {
         db.save_favorite(&fav("F", "/f", 1.0)).unwrap();
         db.reset(ResetScope::All).unwrap();
         assert!(db.load_favorites().unwrap().is_empty());
+    }
+
+    // ---- privacy policy ----
+
+    fn file_row(path: &str) -> FileMetaRecord {
+        FileMetaRecord {
+            path: path.into(),
+            mtime_unix: 1,
+            size: 1,
+            magic_label: Some("PNG image".into()),
+            description: None,
+            partial_hash: None,
+            full_hash: None,
+            mime: None,
+            quarantined: None,
+            quarantine_agent: None,
+            quarantine_iso: None,
+            quarantine_where_from: None,
+            indexed_at_unix: 1,
+        }
+    }
+
+    fn folder_row(path: &str) -> FolderSizeRecord {
+        FolderSizeRecord {
+            path: path.into(),
+            mtime_unix: 1,
+            size: 1,
+            computed_at_unix: 1,
+            file_count: 0,
+            dir_count: 0,
+        }
+    }
+
+    #[test]
+    fn ephemeral_tables_match_the_disk_schema() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.set_ephemeral(true).unwrap();
+        for (table, _) in BROWSING_TABLES {
+            let columns = |schema: &str| -> Vec<(String, String, i64, i64)> {
+                let mut stmt = db
+                    .conn
+                    .prepare(&format!("PRAGMA {schema}.table_info({table})"))
+                    .unwrap();
+                stmt.query_map([], |row| {
+                    Ok((row.get(1)?, row.get(2)?, row.get(3)?, row.get(5)?))
+                })
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect()
+            };
+            let disk = columns("main");
+            assert!(!disk.is_empty(), "{table} missing on disk");
+            assert_eq!(disk, columns("temp"), "{table} drifted");
+        }
+    }
+
+    #[test]
+    fn ephemeral_writes_never_reach_the_disk_tables() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.record_folder_visit("/before", 10).unwrap();
+        db.set_ephemeral(true).unwrap();
+
+        // The stored history is hidden, not read.
+        assert!(db.load_recent_folders(10).unwrap().is_empty());
+
+        db.record_folder_visit("/during", 20).unwrap();
+        db.upsert_file(&file_row("/during/a.png")).unwrap();
+        db.upsert_folder_size(&folder_row("/during")).unwrap();
+        db.record_put_back(Path::new("/trash/a"), Path::new("/during/a"))
+            .unwrap();
+        // The session still works on its own data.
+        assert_eq!(db.load_recent_folders(10).unwrap(), vec!["/during"]);
+        assert!(db.get_file("/during/a.png").unwrap().is_some());
+        assert!(db.put_back_target(Path::new("/trash/a")).unwrap().is_some());
+        // A favorite is a setting, not history: it is stored for real.
+        db.save_favorite(&fav("F", "/f", 1.0)).unwrap();
+
+        db.set_ephemeral(false).unwrap();
+        assert_eq!(db.load_recent_folders(10).unwrap(), vec!["/before"]);
+        assert!(db.get_file("/during/a.png").unwrap().is_none());
+        assert!(db.get_folder_size("/during").unwrap().is_none());
+        assert!(db.put_back_target(Path::new("/trash/a")).unwrap().is_none());
+        assert_eq!(db.load_favorites().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reset_reaches_the_disk_while_ephemeral() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.record_folder_visit("/before", 10).unwrap();
+        db.set_ephemeral(true).unwrap();
+        db.record_folder_visit("/during", 20).unwrap();
+
+        db.reset(ResetScope::AntTrail).unwrap();
+
+        assert!(db.is_ephemeral());
+        assert!(db.load_recent_folders(10).unwrap().is_empty());
+        db.set_ephemeral(false).unwrap();
+        assert!(db.load_recent_folders(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn excluded_locations_are_never_recorded() {
+        let mut db = MetadataDb::in_memory().unwrap();
+        db.set_exclusions(Exclusions::new([PathBuf::from("/secret")], false));
+
+        db.record_folder_visit("/secret/plans", 10).unwrap();
+        db.record_folder_visit("/secret-ish", 10).unwrap();
+        db.upsert_file(&file_row("/secret/plans/a.png")).unwrap();
+        db.upsert_files(&[file_row("/secret/b.png"), file_row("/open/c.png")])
+            .unwrap();
+        db.upsert_folder_size(&folder_row("/secret/plans")).unwrap();
+        db.record_put_back(Path::new("/trash/a"), Path::new("/secret/a"))
+            .unwrap();
+
+        assert_eq!(db.load_recent_folders(10).unwrap(), vec!["/secret-ish"]);
+        assert!(db.get_file("/secret/plans/a.png").unwrap().is_none());
+        assert!(db.get_file("/secret/b.png").unwrap().is_none());
+        assert!(db.get_file("/open/c.png").unwrap().is_some());
+        assert!(db.get_folder_size("/secret/plans").unwrap().is_none());
+        assert!(db.put_back_target(Path::new("/trash/a")).unwrap().is_none());
+    }
+
+    #[test]
+    fn purge_excluded_removes_what_was_stored_before() {
+        let mut db = MetadataDb::in_memory().unwrap();
+        db.record_folder_visit("/secret", 10).unwrap();
+        db.record_folder_visit("/secret/100%_real", 10).unwrap();
+        db.record_folder_visit("/secretary", 10).unwrap();
+        db.upsert_file(&file_row("/secret/a.png")).unwrap();
+        db.upsert_folder_size(&folder_row("/secret/sub")).unwrap();
+        db.record_put_back(Path::new("/trash/a"), Path::new("/secret/a"))
+            .unwrap();
+
+        db.set_exclusions(Exclusions::new([PathBuf::from("/secret")], false));
+        db.purge_excluded().unwrap();
+
+        assert_eq!(db.load_recent_folders(10).unwrap(), vec!["/secretary"]);
+        assert!(db.get_file("/secret/a.png").unwrap().is_none());
+        assert!(db.get_folder_size("/secret/sub").unwrap().is_none());
+        assert!(db.put_back_target(Path::new("/trash/a")).unwrap().is_none());
+    }
+
+    #[test]
+    fn prune_honours_the_retention_and_keeps_cleared_recents() {
+        let db = MetadataDb::in_memory().unwrap();
+        let day = 86_400;
+        let now = 100 * day;
+        db.record_folder_visit("/old", now - 40 * day).unwrap();
+        db.record_folder_visit("/new", now - 2 * day).unwrap();
+        db.record_folder_visit("/heat-only", now - 40 * day).unwrap();
+        db.forget_recent_access("/heat-only").unwrap();
+
+        db.prune_stale(now, 30).unwrap();
+
+        let kept: Vec<String> = db
+            .load_ant_trail()
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.folder_path)
+            .collect();
+        assert!(kept.contains(&"/new".to_string()));
+        assert!(kept.contains(&"/heat-only".to_string()));
+        assert!(!kept.contains(&"/old".to_string()));
+    }
+
+    #[test]
+    fn reset_file_caches_and_put_back_are_narrow() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.record_folder_visit("/v", 10).unwrap();
+        db.upsert_file(&file_row("/v/a.png")).unwrap();
+        db.upsert_folder_size(&folder_row("/v")).unwrap();
+        db.record_put_back(Path::new("/trash/a"), Path::new("/v/a"))
+            .unwrap();
+
+        db.reset(ResetScope::FileCaches).unwrap();
+        assert!(db.get_file("/v/a.png").unwrap().is_none());
+        assert!(db.get_folder_size("/v").unwrap().is_none());
+        assert_eq!(db.load_recent_folders(10).unwrap(), vec!["/v"]);
+        assert!(db.put_back_target(Path::new("/trash/a")).unwrap().is_some());
+
+        db.reset(ResetScope::PutBack).unwrap();
+        assert!(db.put_back_target(Path::new("/trash/a")).unwrap().is_none());
+        db.compact().unwrap();
     }
 }

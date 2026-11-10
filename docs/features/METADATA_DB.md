@@ -228,6 +228,8 @@ Ferail --reset-db all          # delete the DB file outright
 Ferail --reset-db ui           # window size, splitters, tabs, pinned
 Ferail --reset-db caches       # files table + folder_usage (all derived)
 Ferail --reset-db ant-trail    # just the folder_usage table
+Ferail --reset-db file-caches  # files + folder_sizes, visits kept
+Ferail --reset-db put-back     # where trashed items came from
 Ferail --reset-db magic        # NULL out files.magic_label
 Ferail --reset-db quarantine   # NULL out files.quarantine_*
 ```

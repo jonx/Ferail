@@ -194,6 +194,9 @@ pub fn decode_full_res(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     // A cold request above QL's on-demand size ceiling can return nil,
     // so fall back to a smaller, always-generatable size rather than
     // leaving the viewer on "No preview available".
+    if !crate::privacy::system_thumbnails_allowed() {
+        return None;
+    }
     crate::platform_shell::fetch_quick_look_thumbnail(path, QL_FALLBACK_PX)
         .or_else(|| crate::platform_shell::fetch_quick_look_thumbnail(path, QL_RETRY_PX))
 }

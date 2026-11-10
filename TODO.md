@@ -130,6 +130,13 @@ Net-new, but each sits on plumbing that already exists.
   Design: [TARGET_PANEL.md](docs/features/TARGET_PANEL.md). Composes with
   [split view](docs/features/SPLIT_VIEW.md): each pane is a source for the
   same target.
+- **Privacy follow-ups** ([PRIVACY_SETTINGS.md](docs/features/PRIVACY_SETTINGS.md)).
+  Detect removable drives on Windows for "other volumes" (drive type, off the
+  UI thread) instead of asking the user to add the drive letter. Stop caching
+  the download-origin URL in `files` and read it on demand for Get Info. Do
+  not trigger a cloud download for a thumbnail. Restore the Split View with
+  the session. Qualify session restore and the thumbnail bypass on Windows
+  and Linux.
 - **Split view follow-ups** ([SPLIT_VIEW.md](docs/features/SPLIT_VIEW.md)).
   Dragging a tab chip onto the file area to choose which tab joins the
   split; a `--screenshot` gesture that drags between panes, since the

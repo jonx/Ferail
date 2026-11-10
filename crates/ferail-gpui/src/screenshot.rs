@@ -596,6 +596,9 @@ pub fn run(args: Args) -> Result<()> {
     crate::performance_hud::set_start_enabled(
         args.performance_hud || crate::performance_hud::from_env(),
     );
+    // A capture opens fixture folders: it must not replace the tabs the
+    // user's next real launch reopens.
+    crate::privacy::freeze_session();
     // Before any menu is built, and only when asked: a capture never reads or
     // writes the user's own menu customization.
     if args.menu_hidden.is_some() || args.menu_layout.is_some() {

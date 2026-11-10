@@ -25,6 +25,10 @@ use std::path::PathBuf;
 /// scheduling, tests, and the public policy cannot silently drift apart.
 pub const DEFAULT_REDACT_DIAGNOSTICS: bool = true;
 pub const DEFAULT_UPDATE_CHECK: bool = false;
+pub const DEFAULT_RETENTION_DAYS: u32 = 90;
+/// Upper bound on restored tabs: a corrupt or hand-edited state file must
+/// not open hundreds of directory loads at launch.
+pub const MAX_SESSION_TABS: usize = 32;
 #[cfg(not(target_os = "aros"))]
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Mutex, OnceLock};
@@ -339,6 +343,40 @@ pub struct AppState {
     /// deliberately off: WSL discovery and activation remain opt-in rather
     /// than probing a subsystem most users never browse from Ferail.
     pub show_linux_locations: Option<bool>,
+
+    // ---- Privacy (docs/features/PRIVACY_SETTINGS.md) ----
+    /// Master switch: while `true`, nothing about what the user browses is
+    /// written to disk (visits, file and folder caches, put-back records,
+    /// the session) and the system thumbnail service is bypassed. `None`
+    /// == never set (off). See [`crate::privacy`].
+    pub remember_nothing: Option<bool>,
+    /// Reopen the tabs of the last session at launch. `None` == never set
+    /// (defaults to `true`). Off starts in the home folder and stops
+    /// saving `last_dir` and the tab list.
+    pub restore_session: Option<bool>,
+    /// Folders of the tabs open in the window that was last used, in tab
+    /// order. Tool tabs (search, duplicates, archives) are not sessions
+    /// and are left out. Empty == a single tab at `last_dir`.
+    pub session_tabs: Vec<PathBuf>,
+    /// Index into `session_tabs` of the tab that was in front.
+    pub session_active: Option<usize>,
+    /// Whether visited folders are recorded at all. `None` == never set
+    /// (defaults to `true`). Off starves both Recents and the Ant Trail.
+    pub record_visits: Option<bool>,
+    /// Folders nothing is recorded under.
+    pub privacy_excluded: Vec<PathBuf>,
+    /// Also record nothing on removable, network and disk-image volumes.
+    /// `None` == never set (off).
+    pub privacy_exclude_volumes: Option<bool>,
+    /// Days a stored visit or cache row survives without being refreshed.
+    /// `None` == [`DEFAULT_RETENTION_DAYS`].
+    pub retention_days: Option<u32>,
+    /// Days a crash or freeze report is kept. `None` or 0 == forever.
+    pub report_retention_days: Option<u32>,
+    /// Whether thumbnails and previews may come from the operating
+    /// system's thumbnail service, which keeps its own on-disk cache.
+    /// `None` == never set (defaults to `true`).
+    pub system_thumbnails: Option<bool>,
 }
 
 #[cfg(target_os = "macos")]
@@ -415,6 +453,10 @@ fn load_from_disk() -> AppState {
     let Ok(text) = std::fs::read_to_string(dir.join(FILENAME)) else {
         return AppState::default();
     };
+    parse(&text)
+}
+
+fn parse(text: &str) -> AppState {
     let mut out = AppState::default();
     for line in text.lines() {
         let Some((k, v)) = line.split_once('=') else {
@@ -638,6 +680,38 @@ fn load_from_disk() -> AppState {
             "show_linux_locations" => {
                 out.show_linux_locations = parse_bool(val);
             }
+            "remember_nothing" => {
+                out.remember_nothing = parse_bool(val);
+            }
+            "restore_session" => {
+                out.restore_session = parse_bool(val);
+            }
+            // One line per open tab, in tab order. Stored raw like
+            // `last_dir`: the startup consumer validates off-thread.
+            "tab" if !val.is_empty() && out.session_tabs.len() < MAX_SESSION_TABS => {
+                out.session_tabs.push(PathBuf::from(val));
+            }
+            "tab_active" => {
+                out.session_active = val.parse::<usize>().ok();
+            }
+            "record_visits" => {
+                out.record_visits = parse_bool(val);
+            }
+            "privacy_exclude" if !val.is_empty() => {
+                out.privacy_excluded.push(PathBuf::from(val));
+            }
+            "privacy_exclude_volumes" => {
+                out.privacy_exclude_volumes = parse_bool(val);
+            }
+            "retention_days" => {
+                out.retention_days = val.parse::<u32>().ok().filter(|days| *days > 0);
+            }
+            "report_retention_days" => {
+                out.report_retention_days = val.parse::<u32>().ok();
+            }
+            "system_thumbnails" => {
+                out.system_thumbnails = parse_bool(val);
+            }
             _ => {}
         }
     }
@@ -824,6 +898,36 @@ fn serialize(state: &AppState) -> String {
     if let Some(b) = state.show_linux_locations {
         s.push_str(&format!("show_linux_locations={b}\n"));
     }
+    if let Some(b) = state.remember_nothing {
+        s.push_str(&format!("remember_nothing={b}\n"));
+    }
+    if let Some(b) = state.restore_session {
+        s.push_str(&format!("restore_session={b}\n"));
+    }
+    for tab in state.session_tabs.iter().take(MAX_SESSION_TABS) {
+        s.push_str(&format!("tab={}\n", tab.display()));
+    }
+    if let Some(n) = state.session_active {
+        s.push_str(&format!("tab_active={n}\n"));
+    }
+    if let Some(b) = state.record_visits {
+        s.push_str(&format!("record_visits={b}\n"));
+    }
+    for folder in &state.privacy_excluded {
+        s.push_str(&format!("privacy_exclude={}\n", folder.display()));
+    }
+    if let Some(b) = state.privacy_exclude_volumes {
+        s.push_str(&format!("privacy_exclude_volumes={b}\n"));
+    }
+    if let Some(n) = state.retention_days {
+        s.push_str(&format!("retention_days={n}\n"));
+    }
+    if let Some(n) = state.report_retention_days {
+        s.push_str(&format!("report_retention_days={n}\n"));
+    }
+    if let Some(b) = state.system_thumbnails {
+        s.push_str(&format!("system_thumbnails={b}\n"));
+    }
     s
 }
 
@@ -851,6 +955,40 @@ mod tests {
         let fresh = AppState::default();
         assert_eq!(fresh.update_check, None);
         assert_eq!(fresh.redact_diagnostics, None);
+    }
+
+    #[test]
+    fn privacy_state_round_trips() {
+        let state = AppState {
+            remember_nothing: Some(true),
+            restore_session: Some(false),
+            session_tabs: vec![PathBuf::from("/a b"), PathBuf::from("/c=d")],
+            session_active: Some(1),
+            record_visits: Some(false),
+            privacy_excluded: vec![PathBuf::from("/secret")],
+            privacy_exclude_volumes: Some(true),
+            retention_days: Some(7),
+            report_retention_days: Some(30),
+            system_thumbnails: Some(false),
+            ..AppState::default()
+        };
+        let back = parse(&serialize(&state));
+        assert_eq!(back.remember_nothing, Some(true));
+        assert_eq!(back.restore_session, Some(false));
+        assert_eq!(back.session_tabs, state.session_tabs);
+        assert_eq!(back.session_active, Some(1));
+        assert_eq!(back.record_visits, Some(false));
+        assert_eq!(back.privacy_excluded, state.privacy_excluded);
+        assert_eq!(back.privacy_exclude_volumes, Some(true));
+        assert_eq!(back.retention_days, Some(7));
+        assert_eq!(back.report_retention_days, Some(30));
+        assert_eq!(back.system_thumbnails, Some(false));
+    }
+
+    #[test]
+    fn restored_tabs_are_capped() {
+        let text = "tab=/x\n".repeat(MAX_SESSION_TABS + 10);
+        assert_eq!(parse(&text).session_tabs.len(), MAX_SESSION_TABS);
     }
 
     #[test]

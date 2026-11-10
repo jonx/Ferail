@@ -494,6 +494,7 @@ pub fn run_gui(args: screenshot::Args) {
                         Some(initial_size),
                         initial_archive,
                         initial_directory,
+                        true,
                     );
                 });
             })
@@ -523,7 +524,7 @@ fn settings_window_opts(width: f32, height: f32) -> WindowOptions {
 /// route through this so there's one place that owns window options
 /// and process-state hookup.
 pub fn open_shell_window(cx: &mut App) {
-    open_shell_window_sized(cx, None, None, None);
+    open_shell_window_sized(cx, None, None, None, false);
 }
 
 #[cfg(feature = "screenshot-harness")]
@@ -664,6 +665,9 @@ fn open_shell_window_sized(
     size_hint: Option<(f32, f32)>,
     initial_archive: Option<std::path::PathBuf>,
     initial_directory: Option<std::path::PathBuf>,
+    // The launch window reopens the last session's tabs; a later Cmd+N
+    // window is a new one and starts with a single tab.
+    restore_session: bool,
 ) {
     let (w, h) = size_hint.unwrap_or((1180.0, 760.0));
     let opts = WindowOptions {
@@ -681,7 +685,21 @@ fn open_shell_window_sized(
         if let Err(e) = cx.open_window(opts, |window, cx| {
             install_dev_window_callback_cleanup(window, cx);
             let process = crate::process_state::process_state(cx);
+            // Read before the Shell exists: its first load saves a
+            // one-tab session over this one. Opening Ferail *on*
+            // something (a folder, an archive) is not a session resume.
+            let session = (restore_session
+                && initial_directory.is_none()
+                && initial_archive.is_none())
+            .then(crate::app_state::load)
+            .filter(|state| crate::privacy::Policy::from_state(state).keeps_session())
+            .map(|state| (state.session_tabs, state.session_active));
             let view = cx.new(|cx| Shell::new(process, window, cx));
+            if let Some((tabs, active)) = session {
+                view.update(cx, |shell, cx| {
+                    shell.restore_session_tabs(tabs, active, window, cx)
+                });
+            }
             if let Some(directory) = initial_directory.clone() {
                 view.update(cx, |shell, cx| shell.navigate(directory, cx));
             }

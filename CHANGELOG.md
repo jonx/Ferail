@@ -8,6 +8,40 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Ferail reopens your tabs.** Launching Ferail brings back the tabs that
+  were open when it last quit, in the same order, with the same one in
+  front. Until now only the last folder came back, as a single tab. A folder
+  that has since disappeared is skipped. Split View is not restored.
+
+- **A Privacy page in Settings.** One place for everything Ferail stores
+  about the folders you browse:
+  - **Remember nothing** keeps visits, file and folder caches, the open tabs
+    and put-back records in memory only, and bypasses the system thumbnail
+    cache. What was stored before is left alone and returns when you turn it
+    off.
+  - **Reopen the last session** can be turned off to always start in your
+    home folder.
+  - **Record visited folders** can be turned off; Recents and the Ant Trail
+    then stop growing.
+  - **Excluded locations**: folders, and optionally every other volume,
+    that Ferail browses normally and records nothing about.
+  - **Use the system thumbnail service** can be turned off. Ferail then
+    decodes common image formats itself, and PDFs, most videos and
+    documents show their type icon.
+  - **Clear stored data** erases visited folders, caches, put-back records,
+    the saved session or reports, one button each.
+  - History and caches are kept 7, 30 or 90 days or a year, and reports can
+    be deleted after 7, 30 or 90 days.
+
+- **Stored history now expires.** A folder not visited for 90 days (or the
+  period you choose) leaves Recents and loses its Ant Trail tint, and
+  put-back records older than that are dropped. Before, only file and
+  folder caches aged out.
+
+- **Taking a screenshot from the command line no longer changes the folder
+  Ferail opens next.** A `--screenshot` run used to overwrite the saved last
+  folder with the one it captured.
+
 - **The viewer's Adjustments panel fits its labels in every language.** The
   panel had a fixed width sized for English, so longer translations such as
   French wrapped slider names onto two or three lines and pushed buttons past

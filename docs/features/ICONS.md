@@ -348,6 +348,7 @@ table's icon set. The one addition is the tree disclosure caret on folder rows.
 | Plugins | `icons/settings.svg` ↑ | Lucide |
 | Menus | `icons/menu.svg` ↑ | Lucide (from the spare upstream pool) |
 | Keyboard Shortcuts | `icons/keyboard.svg` | **In-house** Lucide `keyboard` (stroke 2, matches rail) |
+| Privacy | `icons/fingerprint.svg` | **In-house** Lucide `fingerprint-pattern` (stroke 2, matches rail). The spare pool has no privacy glyph, and the shield is Private Mode's. |
 | Diagnostics | `icons/activity.svg` | **In-house** Lucide `activity` (heartbeat line; stroke 2, matches rail). Spare pool lacked a health/diagnostic glyph (only `circle-check`/`heart`, both taken). |
 | About | `icons/info.svg` ↑ | Lucide |
 | (in-page checkmark) | `icons/circle-check.svg` ↑ | Lucide |
