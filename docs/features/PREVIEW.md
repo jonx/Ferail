@@ -112,6 +112,7 @@ videos Quick Look refuses. It is used for:
 - PDFs,
 - videos,
 - audio files with embedded cover art,
+- EPUB e-books and comic archives (`.cbz`, `.cbr`, `.cbt`),
 - other file types Quick Look can render.
 
 Quick Look only thumbnails what AVFoundation decodes; whole container
@@ -128,6 +129,15 @@ one bounded deadline and are negative-cached. Audio cover art is read with
 album art work on Windows/Linux where there is no Quick Look. Every
 thumbnail surface (list rows, icon grid, this pane, `ferail thumb`) rides
 the same fetch.
+
+E-book and comic covers come from `ferail_fs_native::ebook::read_cover`,
+after the shell and before audio cover art, gated on the extension. An EPUB
+answers with the cover its package document declares (the EPUB 3
+`cover-image` property, the EPUB 2 `<meta name="cover">` pointer, a manifest
+image named like a cover, then the first manifest image). A comic archive
+answers with its first image in natural name order. The container is opened
+by content, so a `.cbr` that is really a zip reads like a `.cbz`. Encrypted
+members and covers over 64 MB yield no thumbnail.
 
 The fetch carries a **tier** (`video_poster::Tier`): the grid, list rows,
 viewer fallback and `ferail thumb` ask for `Thumbnail`; this pane (and

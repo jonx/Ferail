@@ -256,6 +256,8 @@ pub fn read_entry_bytes(
     let format = probe_format(archive).ok_or(ArchiveError::UnsupportedFormat)?;
     match format {
         Format::Zip => zip_codec::read_entry_bytes(archive, entry, password, cap),
+        #[cfg(not(target_os = "aros"))]
+        Format::Rar => rar::read_entry_bytes(archive, entry, password, cap),
         f if f.is_tar_family() => tarball::read_entry_bytes(archive, f, entry, cap),
         // 7z and the single-member compressors go through the staging path.
         _ => Ok(None),

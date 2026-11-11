@@ -1107,6 +1107,12 @@ impl FlatPathStore {
         }
     }
 
+    /// Whether the recursive walk is still streaming rows in: the
+    /// append-time directory index lives exactly that long.
+    fn scanning(&self) -> bool {
+        self.directory_index.is_some()
+    }
+
     fn finish(&mut self) {
         self.directory_index = None;
         self.display_texts = None;
@@ -1802,10 +1808,19 @@ impl FileListDelegate {
         self.flat_paths.is_some()
     }
 
+    /// Whether a Flat surface is still receiving rows from its walker.
+    pub fn flat_scan_running(&self) -> bool {
+        self.flat_paths.as_ref().is_some_and(FlatPathStore::scanning)
+    }
+
     pub fn begin_flat(&mut self, root: PathBuf, id_base: u64) {
         self.clear();
         self.flat_paths = Some(FlatPathStore::new(root, id_base));
-        self.detail_ready = true;
+        // Content analysis (format sniffing, thumbnails) waits for the walk
+        // to finish, like an ordinary listing: both read the same volume,
+        // and on a spinning or network disk the header reads make the heads
+        // seek away from the directory walk for rows that are still moving.
+        self.detail_ready = false;
         if !self.is_column_visible("path") {
             self.columns.push(flat_path_column());
         }
@@ -2296,7 +2311,7 @@ impl FileListDelegate {
         target: crate::asset_dispatcher::ThumbnailTarget,
         cx: &mut Context<TableState<Self>>,
     ) {
-        if !show_thumbnails(cx) {
+        if !show_thumbnails(cx) || self.flat_scan_running() {
             return;
         }
         // Synchronize this surface's local generation before admitting any
@@ -3546,6 +3561,15 @@ impl TableDelegate for FileListDelegate {
             .unwrap_or(false);
         // icon (18) + icon→text gap (8) + trailing star (12) + its gap (8).
         if is_name { px(46.0) } else { px(0.0) }
+    }
+
+    /// Name paints in the row tier; every other column is the smaller
+    /// metadata tier (see `render_td`).
+    fn autofit_text_size(&self, col_ix: usize, _cx: &App) -> crate::text::TextSize {
+        match self.columns.get(col_ix).map(|col| col.key.as_ref()) {
+            Some("name") => crate::text::TextSize::Sm,
+            _ => crate::text::TextSize::Xs,
+        }
     }
 
     fn header_has_menu(&self, _cx: &App) -> bool {

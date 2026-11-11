@@ -24,6 +24,7 @@ pub mod deadline;
 mod directory_reader;
 mod disk_usage_scanner;
 mod dupes;
+pub mod ebook;
 pub mod file_ops;
 mod icons;
 pub mod image_meta;

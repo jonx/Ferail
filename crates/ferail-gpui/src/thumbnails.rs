@@ -84,7 +84,8 @@ const CACHE_CAP: usize = 512;
 /// about. Generic data files (archives, binaries, plain text) thumbnail
 /// to something indistinguishable from their type icon, so we leave those
 /// on the icon path and spend the fetch only where it pays off: images,
-/// video poster frames, audio cover art, and PDF first pages.
+/// video poster frames, audio cover art, PDF first pages, and e-book or
+/// comic covers.
 pub fn is_thumbnailable(entry: &FileEntry) -> bool {
     if !matches!(entry.kind, EntryKind::File) {
         return false;
@@ -95,14 +96,9 @@ pub fn is_thumbnailable(entry: &FileEntry) -> bool {
     ) {
         return true;
     }
-    matches!(
-        entry
-            .name
-            .rsplit_once('.')
-            .map(|(_, e)| e.to_ascii_lowercase())
-            .as_deref(),
-        Some("pdf")
-    )
+    entry.name.rsplit_once('.').is_some_and(|(_, ext)| {
+        ext.eq_ignore_ascii_case("pdf") || ferail_fs_native::ebook::is_ebook_extension(ext)
+    })
 }
 
 /// Cache key: a file path at a specific physical fetch size. The list

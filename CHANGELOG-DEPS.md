@@ -27,6 +27,13 @@ the graph are two incompatible GPUIs.
 - The AROS overrides in `packaging/aros/` still target the old git sources and
   do not build until the AROS forks are rebased (port on standby).
 
+## 2026-11-11 - `roxmltree` becomes a direct dependency
+
+`ferail-fs-native` reads EPUB container and package documents with
+`roxmltree` 0.21 (MIT/Apache-2.0) to find the declared cover
+(docs/features/PREVIEW.md). The crate was already in the graph through the
+SVG renderer, so the lockfile gains an edge and no package.
+
 ## 2026-09-01 - add `thumbhash` for Private Mode stand-in thumbnails
 
 `thumbhash` 0.1 (MIT) is Evan Wallace's own crate for the compact

@@ -81,6 +81,8 @@ delharc = { version = "0.6", default-features = false, features = ["lh1", "lz"] 
 # Embedded-tag / audio-property reader for the media module. Cross-platform
 # pure Rust, so it lives in the shared dependency table, not a target block.
 lofty.workspace = true
+# EPUB container/package documents (ebook.rs): read-only XML tree, pure Rust.
+roxmltree = "0.21"
 filetime.workspace = true
 
 # RAR read + extract. Pure Rust (no UnRAR C++), decoder only: RAR creation

@@ -105,8 +105,12 @@ impl<T: 'static, E: 'static + Render> Element for ResizeHandle<T, E> {
         window.with_element_state(id.unwrap(), |state, window| {
             let state = state.unwrap_or(ResizeHandleState::default());
 
+            // Same look as the split-view divider (`shell/split.rs`): a
+            // 1px rule that turns accent while dragged, inside a hit band
+            // that tints on hover.
+            let accent = cx.theme().primary;
             let bg_color = if state.is_active() {
-                cx.theme().drag_border
+                accent
             } else {
                 cx.theme().border
             };
@@ -117,6 +121,7 @@ impl<T: 'static, E: 'static + Render> Element for ResizeHandle<T, E> {
                 .absolute()
                 .flex_shrink_0()
                 .group("handle")
+                .hover(|style| style.bg(accent.opacity(0.25)))
                 .when_some(self.on_drag.clone(), |this, on_drag| {
                     this.on_drag(
                         self.drag_value.clone().unwrap(),

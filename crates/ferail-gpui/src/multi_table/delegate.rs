@@ -294,4 +294,11 @@ pub trait TableDelegate: Sized + 'static {
     fn autofit_extra(&self, _col_ix: usize, _cx: &App) -> Pixels {
         gpui::px(0.0)
     }
+
+    /// The type tier this column's cells paint their text in, so
+    /// double-click-to-fit measures at the rendered size. Defaults to the
+    /// table's own tier.
+    fn autofit_text_size(&self, _col_ix: usize, _cx: &App) -> crate::text::TextSize {
+        crate::text::TextSize::Sm
+    }
 }

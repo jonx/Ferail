@@ -182,6 +182,12 @@ The whole-list passes remain off on Flat. Its viewport detail pass records one
 byte of unseen/in-flight/complete state per row so revisiting a viewport does
 not repeat I/O; the derived text itself lives only on rows actually viewed.
 
+The viewport detail pass and the thumbnail warmer both wait for the walk to
+finish (`FileListDelegate::flat_scan_running`), as an ordinary listing waits
+for its enumeration. Rows shift under the viewport while batches stream in,
+and on a spinning or network volume every header read pulls the disk away
+from the directory walk.
+
 ### 2.6 Two O(N)-on-paint hazards
 
 - `build_drag_snapshot` ([file_list.rs:791](../../crates/ferail-gpui/src/file_list.rs#L791))

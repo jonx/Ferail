@@ -202,6 +202,11 @@ fn fetch_content_inner(
     // cover art. The shared media reader uses the extension as its fast path
     // and a bounded content check for renamed files. This path only runs for
     // viewport-owned thumbnail requests, never across an entire listing.
+    // E-books and comic archives: the declared cover or the first page.
+    // Gated on the extension, so no other file pays an archive open.
+    if let Some(cover) = fetch_ebook_cover(path, size_px) {
+        return Fetched::Done(Some(cover));
+    }
     if let Some(cover) = fetch_audio_cover(path, size_px) {
         return Fetched::Done(Some(cover));
     }
@@ -327,10 +332,24 @@ fn enqueue_poster(job: PosterJob) {
 /// RGBA8 + dimensions, or `None` when there is no cover or the picture bytes
 /// won't decode. Blocking: background pool only.
 fn fetch_audio_cover(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
-    let encoded = ferail_fs_native::media::read_cover_art(path)?;
+    decode_cover(&ferail_fs_native::media::read_cover_art(path)?, size_px)
+}
+
+/// The cover of an EPUB or comic archive (`.cbz` / `.cbr` / `.cbt`), read
+/// straight out of the container by `ferail_fs_native::ebook::read_cover`
+/// and scaled to fit a `size_px` square. Blocking: background pool only.
+fn fetch_ebook_cover(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    if !ferail_fs_native::ebook::is_ebook_path(path) {
+        return None;
+    }
+    decode_cover(&ferail_fs_native::ebook::read_cover(path)?, size_px)
+}
+
+/// Decode embedded cover bytes and fit them inside a `size_px` square.
+fn decode_cover(encoded: &[u8], size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     // The image crate sniffs the format from the bytes (cover art is almost
     // always JPEG or PNG, both in our decoder feature set).
-    let decoded = image::load_from_memory(&encoded).ok()?;
+    let decoded = image::load_from_memory(encoded).ok()?;
     // `thumbnail` is a fast box filter that fits the image inside the square
     // without cropping or distorting a non-square cover.
     let rgba = decoded.thumbnail(size_px, size_px).to_rgba8();

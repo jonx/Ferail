@@ -740,6 +740,12 @@ impl EntryInfoView {
         self.refresh(cx);
     }
 
+    /// Re-read the record for the entry already shown, after the user
+    /// asked for the folder's current state.
+    pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
+        self.refresh(cx);
+    }
+
     /// (Re-)gather the record on the background executor and apply it.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         if let Some(previous) = self.details_cancel.take() {

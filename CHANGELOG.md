@@ -8,6 +8,32 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **E-books and comics show their cover.** EPUB files and comic archives
+  (`.cbz`, `.cbr`, `.cbt`) get a thumbnail in the list, the icon grid and the
+  preview pane: the cover an EPUB declares, or the first page of a comic.
+  Password-protected archives stay on their type icon.
+
+- **Column separators are easier to grab.** The resize cursor appears a few
+  pixels on either side of a column border in the header, instead of on a
+  two-pixel strip that was hard to hit on a high-resolution display.
+
+- **Double-clicking a column border fits the column to its content.** The fit
+  left a wide empty margin, about a third of the column, because the text was
+  measured at a larger size than the one the list draws it in.
+
+- **Include Subfolders no longer fights itself on slow disks.** While the
+  recursive listing was still running, Ferail already read the visible files
+  to work out their format, description and thumbnail. On an external or
+  network disk those reads competed with the listing and slowed both. They
+  now start when the listing is complete.
+
+- **Refresh keeps the preview.** Pressing Refresh with a file shown in the
+  preview pane emptied its content preview until you selected the file again,
+  and the details kept the old size and dates. Both are read again.
+
+- **The sidebar and preview pane borders look like the Split View divider.**
+  They tint on hover and turn the accent colour while dragged.
+
 - **Choose whether folders open with their first item selected.** Settings →
   Files offers a selection preference on every platform, enabled by default.
   Turn it off to open folders without a selection.

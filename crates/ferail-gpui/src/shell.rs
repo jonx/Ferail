@@ -3216,6 +3216,23 @@ impl Shell {
         }
     }
 
+    /// Ask for the preview of the row the pane is showing once a listing
+    /// has landed. A reload keeps the selection, so no selection gesture
+    /// runs, and a Refresh has just dropped that row's cached previews.
+    /// A no-op when the caches still hold them.
+    fn request_preview_for_lead_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx != self.active || !self.preview_visible {
+            return;
+        }
+        let lead = {
+            let entries = &self.active_tab().table.read(cx).delegate().entries;
+            self.active_tab().lead_row(entries)
+        };
+        if let Some(row) = lead {
+            self.request_preview_for_row(row, cx);
+        }
+    }
+
     pub fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
         let entry = self
             .active_tab()
@@ -3504,6 +3521,12 @@ impl Shell {
             .thumbnails
             .borrow_mut()
             .invalidate_ready_under(&path);
+        // The pane's Get Info record is held by its own view, not by the
+        // caches above; the content previews are requested again when the
+        // reloaded listing lands (`request_preview_for_lead_in_tab`).
+        if let Some(panel) = self.preview_panel.clone() {
+            panel.update(cx, |panel, cx| panel.reload_info(cx));
+        }
         self.load_path(path, cx);
         if let Some(sidecar) = sidecar_to_reload {
             crate::text_preview::request(self, sidecar, cx);
@@ -6004,6 +6027,7 @@ impl Shell {
         // any future external-mutation reload route through here.
         self.reconcile_done_in_tab(idx, cx);
         self.reveal_pending_navigation_target_in_tab(idx, cx);
+        self.request_preview_for_lead_in_tab(idx, cx);
 
         // Stage 4: arm viewport-owned magic/description/quarantine warming
         // after the foreground table has received its final snapshot. The

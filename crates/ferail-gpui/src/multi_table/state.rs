@@ -27,6 +27,12 @@ use super::context_menu::PlatformContextMenuExt as _;
 use super::virtual_list::VirtualListScrollHandle;
 use super::*;
 
+/// How far the column separator's resize grip reaches on each side of the
+/// 1px rule: before it (inside the column being resized) and after it
+/// (over the leading edge of the next header cell).
+const RESIZE_GRIP_BEFORE: Pixels = px(5.);
+const RESIZE_GRIP_AFTER: Pixels = px(4.);
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SelectionMode {
     Column,
@@ -1453,15 +1459,18 @@ where
         }
         let header = self.delegate.column_name(ix, cx);
 
-        // Measure against the window's current text style: an
-        // approximation of the cell font (good enough for a fit hint;
-        // exact per-cell fonts aren't exposed here).
-        let text_style = window.text_style();
-        let font = text_style.font();
-        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        // Measure at the sizes the table paints at: the header in the
+        // table's own tier, the cells in the tier the delegate reports
+        // for this column. The ambient window text style is the 16px
+        // root size, which overshoots a dense column by a third.
+        let font = window.text_style().font();
+        let rem_size = window.rem_size();
+        let header_size = crate::text::tier_rems(crate::text::TextSize::Sm).to_pixels(rem_size);
+        let cell_size =
+            crate::text::tier_rems(self.delegate.autofit_text_size(ix, cx)).to_pixels(rem_size);
         let color = cx.theme().foreground;
         let text_system = window.text_system().clone();
-        let measure = |s: &str| -> Pixels {
+        let measure = |s: &str, font_size: Pixels| -> Pixels {
             // cell_text is single-line, but guard against stray newlines.
             let line = s.lines().next().unwrap_or("");
             if line.is_empty() {
@@ -1485,11 +1494,18 @@ where
                 .width
         };
 
-        let mut widest = measure(&header);
+        // The header also carries its sort glyph (12px icon + 2px
+        // padding each side) when the column sorts.
+        let sort_icon = if self.sortable && col_group.column.sort.is_some() {
+            px(16.0)
+        } else {
+            px(0.0)
+        };
+        let mut widest = measure(&header, header_size) + sort_icon;
         let rows = self.delegate.rows_count(cx).min(Self::AUTOFIT_SAMPLE_ROWS);
         for row_ix in 0..rows {
             let text = self.delegate.cell_text(row_ix, ix, cx);
-            let w = measure(&text);
+            let w = measure(&text, cell_size);
             if w > widest {
                 widest = w;
             }
@@ -1678,8 +1694,6 @@ where
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        const HANDLE_SIZE: Pixels = px(2.);
-
         let resizable = self.col_resizable
             && self
                 .col_groups
@@ -1698,8 +1712,8 @@ where
             .occlude()
             .cursor_col_resize()
             .h_full()
-            .w(HANDLE_SIZE)
-            .ml(-(HANDLE_SIZE))
+            .w(RESIZE_GRIP_BEFORE)
+            .ml(-RESIZE_GRIP_BEFORE)
             .justify_end()
             .items_center()
             .child(
@@ -1735,7 +1749,7 @@ where
 
                             view.resize_cols(
                                 ix,
-                                e.event.position.x - HANDLE_SIZE - col_group.bounds.left(),
+                                e.event.position.x - col_group.bounds.left(),
                                 window,
                                 cx,
                             );
@@ -1774,6 +1788,38 @@ where
                 }),
             )
             .into_any_element()
+    }
+
+    /// The part of the previous column's resize grip that reaches into
+    /// this header cell, so the separator can be grabbed from either side
+    /// of the rule. Drag moves and the release are handled by the trailing
+    /// handles (`render_resize_handle`), which listen window-wide.
+    fn render_leading_resize_grip(&self, col_ix: usize, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let ix = col_ix.checked_sub(1)?;
+        if !self.col_resizable || !self.col_groups.get(ix)?.is_resizable() {
+            return None;
+        }
+        Some(
+            div()
+                .id(("resizable-handle-lead", ix))
+                .occlude()
+                .cursor_col_resize()
+                .absolute()
+                .top_0()
+                .left_0()
+                .h_full()
+                .w(RESIZE_GRIP_AFTER)
+                .on_drag(ResizeColumn((cx.entity_id(), ix)), |drag, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.new(|_| drag.clone())
+                })
+                .on_click(cx.listener(move |view, e: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    if e.click_count() >= 2 {
+                        view.autofit_col(ix, window, cx);
+                    }
+                })),
+        )
     }
 
     /// Render the row selector cell (when cell_selectable is enabled)
@@ -1861,6 +1907,7 @@ where
         let name = self.delegate.column_name(col_ix, cx);
 
         h_flex()
+            .relative()
             .h_full()
             .child(
                 self.render_cell(None, col_ix, window, cx)
@@ -1915,6 +1962,7 @@ where
             )
             // resize handle
             .child(self.render_resize_handle(col_ix, window, cx))
+            .children(self.render_leading_resize_grip(col_ix, cx))
             // to save the bounds of this col.
             .on_prepaint({
                 let view = cx.entity().clone();

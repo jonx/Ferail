@@ -333,6 +333,13 @@ impl PreviewPanel {
             )
     }
 
+    /// Re-gather the embedded Get Info record for the entry it shows.
+    pub(crate) fn reload_info(&mut self, cx: &mut Context<Self>) {
+        if let Some(view) = &self.preview_info {
+            view.update(cx, |view, cx| view.reload(cx));
+        }
+    }
+
     /// Create-or-retarget the embedded Get Info view. Mirrors the Shell method
     /// it replaced; the view still reports back to the Shell, which is why the
     /// panel carries a weak handle.

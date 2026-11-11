@@ -1746,6 +1746,12 @@ fn rar_lists_and_extracts() {
     assert_eq!(toc.entries[0].uncompressed_size, Some(11));
     assert!(!toc.needs_password);
 
+    assert_eq!(
+        super::read_entry_bytes(tf.path(), "VERSION", None, 1024).unwrap().as_deref(),
+        Some(&b"unrar-0.4.0"[..])
+    );
+    assert!(super::read_entry_bytes(tf.path(), "VERSION", None, 4).unwrap().is_none());
+
     let out = TempDir::new("rar-extract");
     let (progress, cancel) = rig();
     let outcome = extract_all(tf.path(), out.path(), ExtractOptions::default(), &progress, &cancel)

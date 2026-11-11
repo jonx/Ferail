@@ -176,6 +176,36 @@ pub(super) fn read_toc(archive: &Path, password: Option<&str>) -> Result<Toc, Ar
     })
 }
 
+/// One member's bytes, or `None` when it is absent, not a plain file, or
+/// larger than `cap`.
+pub(super) fn read_entry_bytes(
+    archive: &Path,
+    entry: &str,
+    password: Option<&str>,
+    cap: u64,
+) -> Result<Option<Vec<u8>>, ArchiveError> {
+    let mut rar = open(archive, password)?;
+    let found = rar.entries().enumerate().find(|(_, info)| {
+        !info.is_directory && !info.is_symlink && entry_path(info) == entry
+    });
+    let Some((index, info)) = found else {
+        return Ok(None);
+    };
+    // An unknown size cannot be bounded up front, so it is refused too.
+    if info.unpacked_size.is_none_or(|size| size > cap) {
+        return Ok(None);
+    }
+    if info.is_encrypted && password.is_none() {
+        return Err(ArchiveError::PasswordRequired);
+    }
+    let mut bytes = Vec::with_capacity(info.unpacked_size.unwrap_or(0) as usize);
+    rar.by_index(index)
+        .map_err(map_err)?
+        .copy_to(&mut bytes)
+        .map_err(map_err)?;
+    Ok(Some(bytes))
+}
+
 pub(super) fn extract(
     archive: &Path,
     dest: &Path,
