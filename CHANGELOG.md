@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.7.14 - 2026-11-11
+
 - **E-books and comics show their cover.** EPUB files and comic archives
   (`.cbz`, `.cbr`, `.cbt`) get a thumbnail in the list, the icon grid and the
   preview pane: the cover an EPUB declares, or the first page of a comic.

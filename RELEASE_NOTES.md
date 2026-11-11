@@ -1,53 +1,49 @@
-# Ferail 0.7.13 - Privacy settings and tab restore
+# Ferail 0.7.14 - E-book covers and easier columns
 
-Ferail reopens the tabs you had, and a new Privacy page in Settings decides
-what it keeps about the folders you browse.
+E-books and comics show their cover, column borders are easier to grab, and
+a handful of preview and listing annoyances are gone.
 
-## Your tabs come back
+## Covers for e-books and comics
 
-- **Launching Ferail reopens the tabs of the last session**, in the same
-  order, with the same one in front. Before, only the last folder came back.
-- A folder that has since disappeared is skipped. Search, duplicate, archive
-  and Disk Usage tabs are not reopened, and neither is a split.
+- **EPUB files and comic archives (`.cbz`, `.cbr`, `.cbt`) get a thumbnail**
+  in the list, the icon grid and the preview pane: the cover an EPUB
+  declares, or the first page of a comic.
+- A comic archive saved under the wrong extension, a zip named `.cbr` for
+  instance, still shows its cover.
+- Password-protected archives stay on their type icon.
 
-## Settings > Privacy
+## Columns
 
-- **Remember nothing** keeps visited folders, file and folder caches, the
-  open tabs and put-back records in memory only, and bypasses the system
-  thumbnail cache. What was stored before is left alone and returns when you
-  turn it off. Favorites and settings are still saved.
-- **Reopen the last session** can be turned off to always start in your home
-  folder.
-- **Record visited folders** can be turned off; Recents and the Ant Trail
-  then stop growing.
-- **Excluded locations**: folders, and optionally every other volume, that
-  Ferail browses normally and records nothing about. Adding one also erases
-  what was already stored under it.
-- **Use the system thumbnail service** can be turned off. Ferail then decodes
-  common image formats itself; PDFs, most videos and documents show their
-  type icon.
-- **Clear stored data** erases visited folders, caches, put-back records,
-  the saved session or reports, one button each.
-- History and caches are kept 7, 30 or 90 days or a year. Reports can be
-  deleted after 7, 30 or 90 days.
+- **Column separators are easier to grab.** The resize cursor appears a few
+  pixels on either side of a column border in the header, instead of on a
+  two-pixel strip that was hard to hit on a high-resolution display.
+- **Double-clicking a column border fits the column to its content.** The fit
+  left a wide empty margin, about a third of the column, because the text was
+  measured at a larger size than the one the list draws it in.
 
 ## Also in this release
 
-- **A Split View button in the toolbar**, next to New Folder. Click to split
-  side by side, Shift-click to stack, click again to close the split.
-- **The viewer's Adjustments panel fits its labels in every language.**
-  Longer translations no longer wrap or push buttons past the edge.
-- **A `--screenshot` run no longer changes the folder Ferail opens next.**
+- **Refresh keeps the preview.** Pressing Refresh with a file shown in the
+  preview pane emptied its content preview until you selected the file again,
+  and the details kept the old size and dates. Both are read again.
+- **Include Subfolders no longer fights itself on slow disks.** Ferail read
+  the visible files for their format, description and thumbnail while the
+  recursive listing was still running. On an external or network disk those
+  reads slowed the listing. They now start when the listing is complete.
+- **The sidebar and preview pane borders look like the Split View divider.**
+  They tint on hover and turn the accent colour while dragged.
+- **Choose whether folders open with their first item selected**, in
+  Settings > Files, on every platform. It is on by default.
 
 ## Worth knowing
 
-**Stored history now expires.** A folder not visited for 90 days leaves
-Recents and loses its Ant Trail tint, unless you pick a longer period in
-Settings > Privacy. Before, only file and folder caches aged out.
+**Include Subfolders shows formats, descriptions and thumbnails only once the
+listing is complete.** On a very large disk those columns stay empty until
+the walk ends.
 
-Tab restore and the Privacy page were exercised on macOS. Remember nothing is
-covered by automated tests of the store, not by a full session by hand, and
-none of this has been tried on Windows or Linux yet.
+Covers were checked on macOS with EPUB and CBZ files. Reading from `.cbr`
+archives is covered by automated tests, not by hand, and none of this
+release has been tried on Windows or Linux yet.
 
 The Windows build is not code-signed, so SmartScreen warns on first launch:
 choose **More info ▸ Run anyway**. **Unblock the download before extracting or
