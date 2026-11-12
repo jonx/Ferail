@@ -322,6 +322,21 @@ table's icon set. The one addition is the tree disclosure caret on folder rows.
 | Zoom out / in | `icons/minus.svg` / `plus.svg` ↑ | Lucide, the app-wide ± stepper pair. |
 | More (Wrap Lines, Line Numbers) | `icons/ellipsis.svg` ↑ | Lucide, the same "More" affordance as the shell and viewer toolbars. |
 
+### Image editor window ([image_edit.rs](../../crates/ferail-gpui/src/image_edit.rs))
+
+| Command | Icon path | Origin |
+| --- | --- | --- |
+| Redact mode | `icons/eraser.svg` | **In-house** Lucide `eraser` (house style, stroke 1.75). |
+| Annotate mode | `icons/pencil.svg` | **In-house** Lucide `pencil` (house style, stroke 1.75). |
+| Rectangle tool | `icons/square.svg` | **In-house** Lucide `square` (house style, stroke 1.75). |
+| Brush tool | `icons/brush.svg` | **In-house** Lucide `brush` (house style, stroke 1.75). |
+
+### Section and group disclosure ([favorites_section.rs](../../crates/ferail-gpui/src/favorites_section.rs), [dupe_panel.rs](../../crates/ferail-gpui/src/shell/dupe_panel.rs))
+
+| Surface | Icon path | Origin |
+| --- | --- | --- |
+| Sidebar section and duplicate-group triangle (collapsed / expanded) | `icons/nav/disclosure-right.svg` / `icons/nav/disclosure-down.svg` | **In-house** filled triangles (`fill="currentColor"`, no stroke). A state affordance, not a command. Drawn as SVG because the `▸` / `▾` text glyphs are missing from the font bundled on AROS. |
+
 ### Disk Usage window ([disk_usage.rs](../../crates/ferail-gpui/src/disk_usage.rs))
 
 | Command | Icon path | Origin |

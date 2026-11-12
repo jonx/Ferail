@@ -8,6 +8,47 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The window no longer stalls on a sleeping or network disk in six places.**
+  Each of these read the disk, or waited on a helper program, on the same
+  thread that draws the window:
+  - the Recents section of the sidebar, which asked the system for a folder
+    icon while drawing when that icon was not cached yet;
+  - **New Archive**, which looked for a free name in the destination folder
+    when you pressed Create;
+  - Settings → Language: Export, Show Folder and New Language;
+  - on Linux, the start and end of every copy or move, and video playback in
+    the viewer, which launched and waited for the sleep-inhibitor helper;
+  - the preview of a file inside an archive.
+
+- **Disk Usage stays responsive while a large scan is flooding in.** The
+  scanner slept while holding the lock the window needs to take results, so on
+  a very large tree the two could trade places slowly. The scanner now lets go
+  of the lock before it waits.
+
+- **A missing mpv library is looked for once, not on every video.** When the
+  mpv backend was selected in Settings but the library could not be loaded,
+  the viewer searched for it again each time a video opened.
+
+- **A very large Cut no longer slows the icon grid.** After cutting thousands
+  of files, every visible cell was compared against the whole cut list on each
+  frame.
+
+- **Counts are grouped everywhere.** The viewer's title and position overlay
+  ("1.205 of 3.400"), the archive **Extract Selected** button, the duplicates
+  **Trash marked** button, the "and more" line in Bulk Rename, and duplicate
+  group numbers showed four-digit numbers ungrouped.
+
+- **Fewer English fragments in translated messages.** The details of a failed
+  update download, a failed language import or export, a Bulk Rename failure
+  and a failed Put Back are translated, as are the Windows Get Info section
+  titles and property labels (with Yes and No in place of true and false) and
+  the Windows scan duration in Disk Usage. Polish gains the six entries it was
+  missing: the five bidirectional-control names and the glyph count.
+
+- **Three labels follow the interface size setting.** The confirmation text
+  for a large multi-item action, the status lines under a sidebar location,
+  and the check mark in the checksum report used a fixed size.
+
 ## 0.7.14 - 2026-11-11
 
 - **E-books and comics show their cover.** EPUB files and comic archives

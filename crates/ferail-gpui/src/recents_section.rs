@@ -225,6 +225,10 @@ fn render_recent_row(
     layout: RecentRowLayout,
     cx: &App,
 ) -> AnyElement {
+    // gpui-component's `Sidebar` is `RenderOnce`, so this runs after
+    // `Shell::render`'s guard has dropped: re-enter it so a cold icon cache
+    // returns the placeholder instead of asking the platform during render.
+    let _render_guard = ferail_core::path_guard::enter_render();
     let RecentRowLayout { icon_px, icon_only } = layout;
     let theme = cx.theme();
     let locations = crate::special_folders::locations(cx);

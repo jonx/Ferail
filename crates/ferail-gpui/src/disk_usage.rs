@@ -3263,14 +3263,18 @@ fn push_scan_msg(
         if cancel.load(Ordering::Relaxed) {
             return false;
         }
-        match queue.lock() {
-            Ok(mut queue) if queue.len() < DU_QUEUE_CAP => {
+        // The guard is scoped to this block so the nap below never holds
+        // the lock the UI drain needs to make room.
+        {
+            let Ok(mut queue) = queue.lock() else {
+                return false;
+            };
+            if queue.len() < DU_QUEUE_CAP {
                 queue.push_back(pending.take().expect("scan message is queued once"));
                 return true;
             }
-            Ok(_) => std::thread::sleep(DU_BACKPRESSURE_NAP),
-            Err(_) => return false,
         }
+        std::thread::sleep(DU_BACKPRESSURE_NAP);
     }
 }
 
@@ -3511,14 +3515,14 @@ fn humanize_bytes(b: u64) -> String {
 #[cfg(any(target_os = "windows", test))]
 fn humanize_duration(duration: Duration) -> String {
     if duration < Duration::from_secs(1) {
-        return format!("{} ms", duration.as_millis());
+        return tr!("{ms} ms", ms = duration.as_millis()).to_string();
     }
     if duration < Duration::from_secs(60) {
-        return format!("{:.1} s", duration.as_secs_f64());
+        return tr!("{secs} s", secs = format!("{:.1}", duration.as_secs_f64())).to_string();
     }
     let minutes = duration.as_secs() / 60;
     let seconds = duration.as_secs() % 60;
-    format!("{minutes} min {seconds} s")
+    tr!("{minutes} min {seconds} s", minutes = minutes, seconds = seconds).to_string()
 }
 
 fn size_for_mode(apparent: u64, allocated: u64, mode: SizeMode) -> u64 {

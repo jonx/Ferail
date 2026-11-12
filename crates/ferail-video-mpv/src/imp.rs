@@ -282,23 +282,30 @@ impl LibMpv {
 // ---- libmpv loader (the dylib is loaded once; handles are per-stream) -------
 
 thread_local! {
-    // (mpv hint path, resolved libmpv). First path wins for the session.
-    static LIB: RefCell<Option<(PathBuf, Rc<LibMpv>)>> = const { RefCell::new(None) };
+    // (mpv hint path, loaded libmpv or `None` when that hint failed to load).
+    // A loaded library wins for the session. A failure is remembered per hint
+    // so the probe (stats plus `dlopen`) runs once, not on every video open;
+    // a different hint, set in Settings, is tried afresh.
+    static LIB: RefCell<Option<(PathBuf, Option<Rc<LibMpv>>)>> = const { RefCell::new(None) };
 }
 
 fn load_lib(hint: &Path) -> Option<Rc<LibMpv>> {
     LIB.with(|cell| {
         let mut slot = cell.borrow_mut();
-        if slot.is_none() {
-            match unsafe { LibMpv::load(hint) } {
-                Ok(l) => *slot = Some((hint.to_path_buf(), Rc::new(l))),
-                Err(e) => {
-                    eprintln!("[ferail] mpv backend unavailable: {e}");
-                    return None;
-                }
-            }
+        match slot.as_ref() {
+            Some((_, Some(lib))) => return Some(lib.clone()),
+            Some((failed_hint, None)) if failed_hint == hint => return None,
+            _ => {}
         }
-        Some(slot.as_ref().unwrap().1.clone())
+        let loaded = match unsafe { LibMpv::load(hint) } {
+            Ok(l) => Some(Rc::new(l)),
+            Err(e) => {
+                eprintln!("[ferail] mpv backend unavailable: {e}");
+                None
+            }
+        };
+        *slot = Some((hint.to_path_buf(), loaded.clone()));
+        loaded
     })
 }
 

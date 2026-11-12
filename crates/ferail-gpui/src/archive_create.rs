@@ -59,6 +59,19 @@ pub struct NewArchiveView {
     level: CompressionLevel,
 }
 
+/// `<parent>/<name>.<ext>`, deduped with a `" 2"` suffix while taken. Stats the
+/// destination folder, so it never runs on the UI thread.
+fn free_output_path(parent: &std::path::Path, name: &str, ext: &str) -> Result<PathBuf, String> {
+    ferail_core::path_guard::assert_off_ui_thread("archive_create::free_output_path");
+    let mut candidate = ferail_fs_native::paths::join_display_leaf(parent, &format!("{name}.{ext}")).map_err(|error| error.to_string())?;
+    let mut n = 2;
+    while candidate.exists() {
+        candidate = ferail_fs_native::paths::join_display_leaf(parent, &format!("{name} {n}.{ext}")).map_err(|error| error.to_string())?;
+        n += 1;
+    }
+    Ok(candidate)
+}
+
 impl NewArchiveView {
     fn new(sources: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Default name mirrors the one-click Compress convention: the item's
@@ -85,10 +98,11 @@ impl NewArchiveView {
         }
     }
 
-    /// The archive path this dialog would create: `<parent>/<name>.<ext>`,
-    /// deduped with a `" 2"` suffix if taken. `None` when the name is empty or
-    /// the sources have no parent.
-    fn output_path(&self, cx: &App) -> Result<Option<PathBuf>, String> {
+    /// The pieces of the archive path this dialog would create:
+    /// `<parent>/<name>.<ext>`. `None` when the name is empty or the sources
+    /// have no parent. Pure: the free-name probe that touches the disk is
+    /// [`free_output_path`], which runs off the UI thread.
+    fn output_plan(&self, cx: &App) -> Result<Option<(PathBuf, String, &'static str)>, String> {
         let name = self.name_input.read(cx).value().trim().to_string();
         if name.is_empty() {
             return Ok(None);
@@ -96,13 +110,9 @@ impl NewArchiveView {
         let Some(parent) = self.sources.first().and_then(|source| ferail_fs_native::paths::os_parent(source)) else { return Ok(None); };
         let parent = parent.to_path_buf();
         let ext = self.format.canonical_extension();
-        let mut candidate = ferail_fs_native::paths::join_display_leaf(&parent, &format!("{name}.{ext}")).map_err(|error| error.to_string())?;
-        let mut n = 2;
-        while candidate.exists() {
-            candidate = ferail_fs_native::paths::join_display_leaf(&parent, &format!("{name} {n}.{ext}")).map_err(|error| error.to_string())?;
-            n += 1;
-        }
-        Ok(Some(candidate))
+        // Validate the typed name here so a bad one keeps the dialog open.
+        ferail_fs_native::paths::join_display_leaf(&parent, &format!("{name}.{ext}")).map_err(|error| error.to_string())?;
+        Ok(Some((parent, name, ext)))
     }
 
     fn password(&self, cx: &App) -> Option<String> {
@@ -264,8 +274,8 @@ pub fn open_dialog(sources: Vec<PathBuf>, window: &mut Window, cx: &mut Context<
             )
             .on_ok(move |_, window, cx: &mut App| {
                 let plan = state.read(cx);
-                let output = match plan.output_path(cx) {
-                    Ok(Some(path)) => path,
+                let (parent, name, ext) = match plan.output_plan(cx) {
+                    Ok(Some(plan)) => plan,
                     Ok(None) => return false,
                     Err(error) => {
                         window.push_notice(gpui_component::notification::Notification::error(error), cx);
@@ -276,8 +286,25 @@ pub fn open_dialog(sources: Vec<PathBuf>, window: &mut Window, cx: &mut Context<
                 let format = plan.format;
                 let level = plan.level;
                 let password = plan.password(cx);
-                shell.update(cx, |shell, cx| {
-                    shell.create_archive_from(sources, output, format, level, password, window, cx);
+                // Picking a free name stats the destination folder, which can
+                // sit on a sleeping or network volume: resolve it on the
+                // background executor, then start the operation.
+                shell.update(cx, |_, cx| {
+                    cx.spawn_in(window, async move |shell, cx| {
+                        let output = cx
+                            .background_executor()
+                            .spawn(async move { free_output_path(&parent, &name, ext) })
+                            .await;
+                        let _ = shell.update_in(cx, |shell, window, cx| match output {
+                            Ok(output) => {
+                                shell.create_archive_from(sources, output, format, level, password, window, cx);
+                            }
+                            Err(error) => {
+                                window.push_notice(gpui_component::notification::Notification::error(error), cx);
+                            }
+                        });
+                    })
+                    .detach();
                 });
                 true
             })

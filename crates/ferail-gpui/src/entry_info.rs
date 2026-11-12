@@ -526,7 +526,7 @@ fn append_windows_details(
 ) {
     if let Some(properties) = properties {
         for section in &properties.sections {
-            let mut output = InfoSection::new(section.title.to_string());
+            let mut output = InfoSection::new(crate::i18n::tr_dyn(&section.title).to_string());
             for property in &section.properties {
                 let value = match &property.value {
                     PlatformPropertyValue::Text(value) => value.to_string(),
@@ -535,12 +535,13 @@ fn append_windows_details(
                         .map(AsRef::<str>::as_ref)
                         .collect::<Vec<_>>()
                         .join(", "),
-                    PlatformPropertyValue::Boolean(value) => value.to_string(),
+                    PlatformPropertyValue::Boolean(true) => tr!("Yes").to_string(),
+                    PlatformPropertyValue::Boolean(false) => tr!("No").to_string(),
                     PlatformPropertyValue::Signed(value) => value.to_string(),
                     PlatformPropertyValue::Unsigned(value) => value.to_string(),
                     PlatformPropertyValue::TimestampUnixMillis(value) => value.to_string(),
                 };
-                output = output.private_text_if(property.display_name.to_string(), value);
+                output = output.private_text_if(crate::i18n::tr_dyn(&property.display_name).to_string(), value);
             }
             if !output.rows.is_empty() {
                 info.sections.push(output);

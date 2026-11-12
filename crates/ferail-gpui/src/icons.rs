@@ -71,7 +71,9 @@ impl IconCache {
         if let Some(arc) = self.by_kind.get(&key) {
             return arc.clone();
         }
-        if ferail_core::path_guard::is_rendering() {
+        // Cache-only on the UI thread (render or not): the platform fetch
+        // can block on a sleeping volume. `asset_dispatcher` warms the cache.
+        if ferail_core::path_guard::is_rendering() || ferail_core::path_guard::is_ui_thread() {
             return self.blank_icon();
         }
         match fetch_icon_rgba(path, ICON_PX) {
@@ -92,7 +94,9 @@ impl IconCache {
         if let Some(arc) = self.by_path.get(path).and_then(|sizes| sizes.get(&ICON_PX)) {
             return arc.clone();
         }
-        if ferail_core::path_guard::is_rendering() {
+        // Cache-only on the UI thread (render or not): the platform fetch
+        // can block on a sleeping volume. `asset_dispatcher` warms the cache.
+        if ferail_core::path_guard::is_rendering() || ferail_core::path_guard::is_ui_thread() {
             return self.blank_icon();
         }
         match fetch_icon_rgba(path, ICON_PX) {

@@ -20,6 +20,7 @@ use std::path::Path;
 /// `NSGraphicsContext`, so concurrent fetches don't share drawing state.
 #[cfg(target_os = "macos")]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    ferail_core::path_guard::assert_off_ui_thread("fetch_icon_rgba");
     use objc2::msg_send;
     use objc2::ClassType;
     use objc2_app_kit::{
@@ -105,6 +106,7 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
 /// glyphs are the cases where it'd matter.)
 #[cfg(windows)]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    ferail_core::path_guard::assert_off_ui_thread("fetch_icon_rgba");
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::SIZE;
     use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, DIBSECTION, HBITMAP};
@@ -207,6 +209,7 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
 /// never on the render path (the caller gates on `path_guard::is_rendering`).
 #[cfg(target_os = "linux")]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    ferail_core::path_guard::assert_off_ui_thread("fetch_icon_rgba");
     linux_icons::fetch(path, size_px)
 }
 

@@ -1202,8 +1202,8 @@ impl ViewerWindow {
             Some(e) => tr!(
                 "{name} - {index} of {total}",
                 name = crate::private_mode::present_leaf_str(&e.name, false),
-                index = self.index + 1,
-                total = self.playlist.len()
+                index = ferail_core::counts::format_count((self.index + 1) as u64),
+                total = ferail_core::counts::format_count(self.playlist.len() as u64)
             )
             .to_string(),
             None => tr!("Viewer").to_string(),
@@ -3980,8 +3980,8 @@ impl ViewerWindow {
             .unwrap_or_default();
         let pos = tr!(
             "{index} of {total}",
-            index = (self.index + 1).min(self.playlist.len()),
-            total = self.playlist.len()
+            index = ferail_core::counts::format_count((self.index + 1).min(self.playlist.len()) as u64),
+            total = ferail_core::counts::format_count(self.playlist.len() as u64)
         );
         h_flex()
             .h(px(STATUS_H))

@@ -562,7 +562,7 @@ pub struct FileListDelegate {
     /// Cut-marked paths (Cmd+X), shared `Rc` with `ProcessState` so the
     /// set is always current; `render_tr` dims any row whose path is in
     /// it. (docs/features/FILE_OPS.md)
-    pub cut_marker: Rc<RefCell<Vec<PathBuf>>>,
+    pub cut_marker: Rc<RefCell<std::collections::HashSet<PathBuf>>>,
     /// Ant Trail heat per row, parallel to `entries`. Populated by
     /// `Shell::load_path` after each enumerate. 0.0 = never visited
     /// (no tint); 1.0 = the most-visited folder. Renderer maps to
@@ -1289,7 +1289,7 @@ impl FileListDelegate {
         icons: Rc<RefCell<IconCache>>,
         thumbnails: Rc<RefCell<ThumbnailCache>>,
         tasks: Rc<RefCell<TaskRegistry>>,
-        cut_marker: Rc<RefCell<Vec<PathBuf>>>,
+        cut_marker: Rc<RefCell<std::collections::HashSet<PathBuf>>>,
         sort_state: Rc<Cell<Option<(SortColumn, bool)>>>,
         shell_focus: gpui::FocusHandle,
     ) -> Self {
@@ -2529,7 +2529,7 @@ impl TableDelegate for FileListDelegate {
         let is_cut = has_cut_marks
             && entry_id
                 .and_then(|id| self.path_for_entry(id))
-                .is_some_and(|path| self.cut_marker.borrow().iter().any(|cut| cut == &path));
+                .is_some_and(|path| self.cut_marker.borrow().contains(&path));
         // Hidden entries (visible because show-hidden is on) dim more
         // gently, text and icon in one stroke, so they read as
         // distinct from normal files, Finder-style. `else if`: a cut

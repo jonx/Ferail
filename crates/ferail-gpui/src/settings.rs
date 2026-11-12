@@ -1332,9 +1332,9 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                         version = report.app_version,
                         os = report.os,
                         arch = report.arch,
-                        ok = ok,
-                        warn = warn,
-                        fail = fail
+                        ok = ferail_core::counts::format_count(ok as u64),
+                        warn = ferail_core::counts::format_count(warn as u64),
+                        fail = ferail_core::counts::format_count(fail as u64)
                     )))
                     .child(
                         div()

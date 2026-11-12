@@ -467,7 +467,7 @@ fn render_platform_location_row(
             .when_some(status, |this, status| {
                 this.child(
                     div()
-                        .text_xs()
+                        .text_scale_xs()
                         .text_color(theme.sidebar_foreground.opacity(0.7))
                         .child(status),
                 )
@@ -475,7 +475,7 @@ fn render_platform_location_row(
             .when(is_default, |this| {
                 this.child(
                     div()
-                        .text_xs()
+                        .text_scale_xs()
                         .text_color(theme.primary)
                         .child(tr!("Default")),
                 )

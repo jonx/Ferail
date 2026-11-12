@@ -1772,6 +1772,25 @@
     "Use the system thumbnail service": "Usa il servizio miniature di sistema",
     "Visited folders": "Cartelle visitate",
     "Visits, cached file details, folder sizes and put-back records older than this are deleted when Ferail starts.": "Le visite, i dettagli dei file in cache, le dimensioni delle cartelle e i dati di ripristino più vecchi vengono eliminati all’avvio di Ferail.",
-    "Where the items in the Trash came from. Ferail can no longer put back the items that are in the Trash now.": "Da dove provengono gli elementi nel Cestino. Ferail non potrà più ripristinare quelli che si trovano ora nel Cestino."
+    "Where the items in the Trash came from. Ferail can no longer put back the items that are in the Trash now.": "Da dove provengono gli elementi nel Cestino. Ferail non potrà più ripristinare quelli che si trovano ora nel Cestino.",
+    "Authors": "Autori",
+    "Camera manufacturer": "Produttore della fotocamera",
+    "Camera model": "Modello della fotocamera",
+    "Comments": "Commenti",
+    "No": "No",
+    "Yes": "Sì",
+    "Subject": "Oggetto",
+    "Windows image": "Immagine Windows",
+    "cannot create {path}: {error}": "impossibile creare {path}: {error}",
+    "download failed": "download non riuscito",
+    "download failed: HTTP {status}": "download non riuscito: HTTP {status}",
+    "download truncated: got {got} of {total} bytes": "download troncato: ricevuti {got} di {total} byte",
+    "no configuration directory available": "nessuna cartella di configurazione disponibile",
+    "something else is there now": "ora lì c’è qualcos’altro",
+    "this is the English source catalog, not a translation": "questo è il catalogo sorgente inglese, non una traduzione",
+    "{error}; original item preserved at {path}": "{error}; l’elemento originale è conservato in {path}",
+    "{minutes} min {seconds} s": "{minutes} min {seconds} s",
+    "{ms} ms": "{ms} ms",
+    "{path} already exists": "{path} esiste già"
   }
 }

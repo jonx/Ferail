@@ -77,22 +77,64 @@ pub enum SetIconResult {
 }
 
 /// RAII guard that keeps the system awake while held: twin of shell-mac's
-/// `SleepBlocker`. On Linux it owns a `systemd-inhibit` child holding an `idle`
-/// inhibitor lock; dropping the guard kills the child, releasing the lock. The
-/// shape differs per platform (it carries a `Child` only on Linux), which is
-/// fine because the type is only ever constructed/used on its own target.
+/// `SleepBlocker`. On Linux the inhibitor lock belongs to a helper child
+/// process (`systemd-inhibit` or `gnome-session-inhibit`) that a small owner
+/// thread spawns, holds, kills and reaps. The guard itself is only the sending
+/// half of a channel, so taking and dropping it never forks or waits on the
+/// calling thread: both are safe from the UI thread.
 #[cfg(target_os = "linux")]
 pub struct SleepBlocker {
-    child: std::process::Child,
+    /// Dropping the sender wakes the owner thread, which releases the lock.
+    _release: std::sync::mpsc::Sender<()>,
 }
+
+/// Run the first inhibitor command that starts and hold it until the returned
+/// guard drops. Each candidate is `(program, args)`.
 #[cfg(target_os = "linux")]
-impl Drop for SleepBlocker {
-    fn drop(&mut self) {
-        // Kill the systemd-inhibit child (releasing its lock) and reap it so we
-        // don't leave a zombie. Errors here are benign (already exited).
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
+fn hold_inhibitor(candidates: Vec<(&'static str, Vec<String>)>) -> Option<SleepBlocker> {
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    std::thread::Builder::new()
+        .name("ferail-sleep-inhibit".into())
+        .spawn(move || {
+            let mut child = None;
+            for (program, args) in candidates {
+                let spawned = std::process::Command::new(program)
+                    .args(&args)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+                if let Ok(spawned) = spawned {
+                    child = Some(spawned);
+                    break;
+                }
+            }
+            // Returns when the guard drops (the sender disconnects).
+            let _ = released.recv();
+            if let Some(mut child) = child {
+                // Kill the helper (releasing its lock) and reap it so no
+                // zombie is left. Errors are benign (already exited).
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        })
+        .ok()?;
+    Some(SleepBlocker { _release: release })
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_inhibit_idle(reason: &str) -> (&'static str, Vec<String>) {
+    (
+        "systemd-inhibit",
+        vec![
+            "--what=idle".into(),
+            "--who=Ferail".into(),
+            format!("--why={reason}"),
+            "--mode=block".into(),
+            "sleep".into(),
+            "infinity".into(),
+        ],
+    )
 }
 #[cfg(not(target_os = "linux"))]
 pub struct SleepBlocker;
@@ -1384,27 +1426,15 @@ pub fn start_power_observer(_callback: Box<dyn Fn(PowerEvent) + 'static>) {}
 
 /// Inhibit idle-triggered system sleep while the returned guard is held, via
 /// `systemd-inhibit --what=idle`. systemd-inhibit holds the lock for the
-/// lifetime of the command it wraps, so we wrap `sleep infinity` and keep that
-/// child alive inside the [`SleepBlocker`]; dropping the guard kills it and
-/// releases the lock. `--what=idle` mirrors macOS's "prevent idle system sleep"
-/// (an explicit user suspend / lid close is still allowed). Returns `None` if
-/// `systemd-inhibit` isn't available (non-systemd host): callers treat that as
-/// "couldn't inhibit", same as the macOS failure path.
+/// lifetime of the command it wraps, so the owner thread wraps `sleep
+/// infinity` and keeps that child alive until the [`SleepBlocker`] drops.
+/// `--what=idle` mirrors macOS's "prevent idle system sleep" (an explicit user
+/// suspend / lid close is still allowed). On a host without `systemd-inhibit`
+/// the guard is still returned and simply holds nothing. `None` only when the
+/// owner thread cannot start.
 #[cfg(target_os = "linux")]
 pub fn prevent_idle_sleep(reason: &str) -> Option<SleepBlocker> {
-    let child = std::process::Command::new("systemd-inhibit")
-        .arg("--what=idle")
-        .arg("--who=Ferail")
-        .arg(format!("--why={reason}"))
-        .arg("--mode=block")
-        .arg("sleep")
-        .arg("infinity")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-    Some(SleepBlocker { child })
+    hold_inhibitor(vec![systemd_inhibit_idle(reason)])
 }
 #[cfg(not(target_os = "linux"))]
 pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
@@ -1423,23 +1453,22 @@ pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
 /// terms are not covered.
 #[cfg(target_os = "linux")]
 pub fn prevent_display_sleep(reason: &str) -> Option<SleepBlocker> {
-    let child = std::process::Command::new("gnome-session-inhibit")
-        .arg("--inhibit")
-        .arg("idle")
-        .arg("--reason")
-        .arg(reason)
-        .arg("--app-id")
-        .arg("ferail")
-        .arg("sleep")
-        .arg("infinity")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    match child {
-        Ok(child) => Some(SleepBlocker { child }),
-        Err(_) => prevent_idle_sleep(reason),
-    }
+    hold_inhibitor(vec![
+        (
+            "gnome-session-inhibit",
+            vec![
+                "--inhibit".into(),
+                "idle".into(),
+                "--reason".into(),
+                reason.to_string(),
+                "--app-id".into(),
+                "ferail".into(),
+                "sleep".into(),
+                "infinity".into(),
+            ],
+        ),
+        systemd_inhibit_idle(reason),
+    ])
 }
 #[cfg(not(target_os = "linux"))]
 pub fn prevent_display_sleep(_reason: &str) -> Option<SleepBlocker> {

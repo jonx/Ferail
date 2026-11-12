@@ -1338,7 +1338,7 @@ impl Shell {
                     // scaled by visit heat (matches file_list.rs heat tint).
                     let heat = del.heats.get(i).copied().unwrap_or(0.0);
                     // Cut (Cmd+X) cells dim until the move pastes.
-                    let is_cut = del.cut_marker.borrow().iter().any(|c| c == &path);
+                    let is_cut = del.cut_marker.borrow().contains(&path);
                     // §5 favorite star: folder cells whose path is in the
                     // favorites index. Star is crowding-prone, so gated.
                     let show_star = !is_editing

@@ -676,10 +676,11 @@ impl ArchiveView {
                             let _ = std::fs::remove_dir_all(ferail_fs_native::archive::entry_os_path(&scratch, top).ok()?);
                         }
                     }
-                    Some((staged, scratch))
+                    let size = std::fs::metadata(&staged).map(|m| m.len()).unwrap_or(0);
+                    Some((staged, scratch, size))
                 })
                 .await;
-            if let Some((staged, scratch)) = staged {
+            if let Some((staged, scratch, staged_size)) = staged {
                 let _ = this.update(cx, |this: &mut ArchiveView, cx| {
                     this.scratch = Some(scratch);
                     this.staged_file = Some(staged.clone());
@@ -693,8 +694,8 @@ impl ArchiveView {
                     let target = crate::preview_panel::PreviewTarget::File {
                         path: staged.clone(),
                         entry: Box::new(crate::preview_panel::synthetic_entry(
-                            &staged,
                             &display_name,
+                            staged_size,
                         )),
                     };
                     this.set_preview_target(target, cx);
@@ -1666,7 +1667,7 @@ impl ArchiveView {
         let changes = self.edits.change_count();
         let editable = self.can_stage_edits();
         let extract_selected_label = if selected > 0 {
-            tr!("Extract {selected} Selected", selected = selected)
+            tr!("Extract {selected} Selected", selected = ferail_core::counts::format_count(selected as u64))
         } else {
             tr!("Extract Selected")
         };

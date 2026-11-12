@@ -229,7 +229,7 @@ pub(super) fn member_row(
     let location = location_with_note(&location, is_hardlink, is_clone);
     entry.display_description = tr!(
         "#{group} \u{00B7} {location}",
-        group = group_no,
+        group = ferail_core::counts::format_count(group_no as u64),
         location = location
     )
     .to_string()

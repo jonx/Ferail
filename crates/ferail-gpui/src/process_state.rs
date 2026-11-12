@@ -326,7 +326,7 @@ pub struct ProcessState {
     /// one tab/window pastes-as-move in another, and shared (the same
     /// `Rc`) with each file-list delegate so cut rows render dimmed.
     /// (docs/features/FILE_OPS.md)
-    pub cut_marker: Rc<RefCell<Vec<std::path::PathBuf>>>,
+    pub cut_marker: Rc<RefCell<std::collections::HashSet<std::path::PathBuf>>>,
 
     /// Latest app-footprint sample (uptime / CPU / RSS / redraws/s) for the
     /// status bar's stats segment. `None` until the sampler publishes
@@ -439,7 +439,7 @@ impl ProcessState {
             closed_tabs: RefCell::new(VecDeque::new()),
             viewers: RefCell::new(Vec::new()),
             aux_windows: RefCell::new(Vec::new()),
-            cut_marker: Rc::new(RefCell::new(Vec::new())),
+            cut_marker: Rc::new(RefCell::new(std::collections::HashSet::new())),
             system_stats: RefCell::new(None),
         })
     }

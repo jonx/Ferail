@@ -37,7 +37,7 @@ itself unavailable instead of imitating another desktop.
 | gpui-kit v0.7.1 with the AROS delta (`async-channel`, no client-side window controls) | [pomaros/gpui-kit](https://github.com/pomaros/gpui-kit), checked out at `../aros-project/gpui-component-aros-0.7.1` | `aros-port-0.7.1` |
 | Rust for native AROS: the official nightly, the target and std patch, installed as an SDK prefix (`AROS_RUST_SDK`) | [pomaros/rust-aros](https://github.com/pomaros/rust-aros) `toolchain/` | `main` |
 | Patched crates (libc, rustix, errno, mio, tempfile, serde, getrandom, parking_lot_core, memmap2, ctor, inventory, sqlite), built into a store (`AROS_CRATE_STORE`) by `crates/store.py` | [pomaros/rust-aros](https://github.com/pomaros/rust-aros) `crates/` | `main` |
-| Native C SDK and tools (`Developer`, `collect-aros`) | an AROS build for AArch64 | — |
+| Native C SDK and tools (`Developer`, `collect-aros`) | an AROS build for AArch64 | n/a |
 
 GPUI itself is the `gpui-pre` 0.3.8 crates.io snapshot and gpui-component
 is 0.7.1, the same pins as the desktop builds. The AROS forks are swapped in

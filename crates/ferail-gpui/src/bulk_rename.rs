@@ -411,7 +411,7 @@ pub(crate) fn run_renames(
             match rename_guarded(&cur_src[i], &dest) {
                 Ok(()) => renamed.push((pairs[i].0.clone(), dest)),
                 Err(e) => {
-                    if parked[i] { errors.push(format!("{e}; original item preserved at {}", ferail_fs_native::paths::display_path(&cur_src[i]))); }
+                    if parked[i] { errors.push(tr!("{error}; original item preserved at {path}", error = e, path = ferail_fs_native::paths::display_path(&cur_src[i])).to_string()); }
                     else { errors.push(e); }
                 },
             }
@@ -784,7 +784,7 @@ impl Render for BulkRenameView {
                 div()
                     .text_scale_xxs()
                     .text_color(muted)
-                    .child(tr!("\u{2026}and {overflow} more", overflow = overflow)),
+                    .child(tr!("\u{2026}and {overflow} more", overflow = ferail_core::counts::format_count(overflow as u64))),
             );
         }
 

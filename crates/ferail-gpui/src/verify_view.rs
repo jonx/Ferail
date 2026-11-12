@@ -21,7 +21,7 @@ use gpui_component::{
 };
 
 use crate::tasks::{TaskId, TaskKind, TaskRegistry};
-use crate::text::{TextScale as _, TruncateMiddle as _};
+use crate::text::{IconScale as _, TextScale as _, TruncateMiddle as _};
 
 enum Phase {
     Running,
@@ -293,7 +293,7 @@ impl Render for VerifyView {
                     .child(
                         svg()
                             .path("icons/check.svg")
-                            .size(px(20.))
+                            .icon_px(20.)
                             .text_color(cx.theme().success),
                     )
                     .child(

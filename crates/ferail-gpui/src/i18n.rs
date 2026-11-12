@@ -197,8 +197,8 @@ pub fn user_dir() -> Option<PathBuf> {
 }
 
 fn ensure_user_dir() -> Result<PathBuf, String> {
-    let dir = user_dir().ok_or_else(|| "no configuration directory available".to_owned())?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let dir = user_dir().ok_or_else(|| tr!("no configuration directory available").to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| tr!("cannot create {path}: {error}", path = dir.display(), error = e).to_string())?;
     Ok(dir)
 }
 
@@ -595,7 +595,7 @@ fn import_path(path: &std::path::Path) -> Result<(LanguageInfo, ValidationReport
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut pack = LanguagePack::parse(&text)?;
     if pack.code == ENGLISH {
-        return Err("this is the English source catalog, not a translation".to_owned());
+        return Err(tr!("this is the English source catalog, not a translation").to_string());
     }
     let report = pack.validate();
     // Strip the translator scaffolding: an imported file is a pack now.
@@ -624,10 +624,16 @@ pub fn export_current(window: &mut Window, cx: &mut App) {
         Some(i) => (i.code.clone(), format!("ferail-{}.json", i.code)),
         None => (ENGLISH.to_owned(), "ferail-en.json".to_owned()),
     };
-    let start_dir = dirs_download_or_home();
-    let rx = cx.prompt_for_new_path(&start_dir, Some(&suggested));
     window
         .spawn(cx, async move |cx| {
+            // The Downloads probe is a stat on the home volume: off-thread.
+            let start_dir = cx
+                .background_executor()
+                .spawn(async move { dirs_download_or_home() })
+                .await;
+            let Ok(rx) = cx.update(|_, cx| cx.prompt_for_new_path(&start_dir, Some(&suggested))) else {
+                return;
+            };
             let Some(dest) = rx.await.ok().and_then(Result::ok).flatten() else {
                 return;
             };
@@ -706,7 +712,7 @@ pub fn create_template(
                     let dir = ensure_user_dir()?;
                     let dest = dir.join(format!("{code}.json"));
                     if dest.exists() {
-                        return Err(format!("{} already exists", dest.display()));
+                        return Err(tr!("{path} already exists", path = dest.display()).to_string());
                     }
                     let pack = LanguagePack::empty(&code, &name, &english_name).template();
                     write_atomic(&dest, &pack.to_json())?;
@@ -726,7 +732,9 @@ pub fn create_template(
                         window,
                         cx,
                     );
-                    crate::platform_shell::reveal_in_finder(&dest);
+                    cx.background_executor()
+                        .spawn(async move { crate::platform_shell::reveal_in_finder(&dest) })
+                        .detach();
                     reload(cx);
                 }
                 Err(e) => notify(
@@ -745,12 +753,19 @@ pub fn reveal_folder(cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
         let dir = cx
             .background_executor()
-            .spawn(async move { ensure_user_dir() })
+            .spawn(async move {
+                // The reveal shells out on Linux and walks the path on
+                // Windows: keep it on the worker with the directory probe.
+                let dir = ensure_user_dir();
+                if let Ok(dir) = &dir {
+                    crate::platform_shell::reveal_in_finder(dir);
+                }
+                dir
+            })
             .await;
-        cx.update(|_cx| match dir {
-            Ok(dir) => crate::platform_shell::reveal_in_finder(&dir),
-            Err(e) => crate::log_warn!(90, "languages folder: {e}"),
-        });
+        if let Err(e) = dir {
+            crate::log_warn!(90, "languages folder: {e}");
+        }
     })
     .detach();
 }

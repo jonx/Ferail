@@ -158,7 +158,7 @@ impl Shell {
                             return;
                         }
                         if moving {
-                            *this.process.cut_marker.borrow_mut() = paths;
+                            *this.process.cut_marker.borrow_mut() = paths.into_iter().collect();
                         } else {
                             this.process.cut_marker.borrow_mut().clear();
                         }
@@ -214,7 +214,7 @@ impl Shell {
                     Ok((sources, operation)) => {
                         if update_marker {
                             if operation == crate::platform_shell::ClipboardFileOperation::Move {
-                                *this.process.cut_marker.borrow_mut() = sources.clone();
+                                *this.process.cut_marker.borrow_mut() = sources.iter().cloned().collect();
                             } else {
                                 this.process.cut_marker.borrow_mut().clear();
                             }
@@ -391,7 +391,7 @@ impl Shell {
                 ),
                 many => trn!("Cut {n} item", "Cut {n} items", many.len()),
             };
-            *self.process.cut_marker.borrow_mut() = paths;
+            *self.process.cut_marker.borrow_mut() = paths.into_iter().collect();
             window.push_notice(Notification::info(msg), cx);
             cx.notify();
         }
@@ -3342,7 +3342,7 @@ impl Shell {
                                 failures.push(ferail_fs_native::file_ops::FileOpError::from_io(
                                     &std::io::Error::new(
                                         std::io::ErrorKind::AlreadyExists,
-                                        "something else is there now",
+                                        tr!("something else is there now").to_string(),
                                     ),
                                     &target,
                                 ));
@@ -3684,7 +3684,10 @@ impl Shell {
             let body = body.clone();
             dialog
                 .title(title.clone())
-                .child(div().text_sm().child(body))
+                .child({
+                    use crate::text::TextScale as _;
+                    div().text_scale_sm().child(body)
+                })
                 .child(
                     h_flex().pt_2().child(
                         Button::new("confirm-fanout-go")

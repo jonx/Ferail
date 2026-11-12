@@ -844,8 +844,8 @@ fn start_download(info: &ReleaseInfo, cx: &mut App) {
                     let brief = brief
                         .lines()
                         .next()
-                        .unwrap_or("download failed")
-                        .to_string();
+                        .map(str::to_string)
+                        .unwrap_or_else(|| tr!("download failed").to_string());
                     tx.send(DlMsg::Failed(brief)).await
                 }
             };
@@ -917,8 +917,8 @@ async fn download_worker(
     let response = client.send(request).await?;
     anyhow::ensure!(
         response.status().is_success(),
-        "download failed: HTTP {}",
-        response.status().as_u16()
+        "{}",
+        tr!("download failed: HTTP {status}", status = response.status().as_u16())
     );
     let total: Option<u64> = response
         .headers()
@@ -963,7 +963,11 @@ async fn download_worker(
         }
         file.flush()?;
         if let Some(t) = total {
-            anyhow::ensure!(got == t, "download truncated: got {got} of {t} bytes");
+            anyhow::ensure!(
+                got == t,
+                "{}",
+                tr!("download truncated: got {got} of {total} bytes", got = got, total = t)
+            );
         }
         Ok(())
     }

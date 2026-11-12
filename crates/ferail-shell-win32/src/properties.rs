@@ -20,29 +20,32 @@ use windows::Win32::UI::Shell::PropertiesSystem::{
     GPS_OPENSLOWITEM, PROPERTYKEY,
 };
 
+/// The section titles and row labels are English message ids: they cross the
+/// broker pipe as-is and Get Info translates them at display time.
+///
 /// Deliberate allow-list: arbitrary property handlers may expose private or
 /// huge data. Ferail asks only for scalar values useful in Get Info and never
 /// enumerates a handler's complete schema.
 const APPROVED_PROPERTIES: &[(&str, &str, &str)] = &[
-    ("System.ItemTypeText", "Windows", "Type"),
-    ("System.FileOwner", "Windows", "Owner"),
-    ("System.Author", "Document", "Authors"),
-    ("System.Title", "Document", "Title"),
-    ("System.Subject", "Document", "Subject"),
-    ("System.Comment", "Document", "Comments"),
-    ("System.Keywords", "Document", "Tags"),
-    ("System.Rating", "Document", "Rating"),
-    ("System.Media.Duration", "Media", "Duration"),
-    ("System.Media.Year", "Media", "Year"),
-    ("System.Photo.DateTaken", "Windows image", "Date taken"),
+    ("System.ItemTypeText", ferail_core::msgid!("Windows"), ferail_core::msgid!("Type")),
+    ("System.FileOwner", ferail_core::msgid!("Windows"), ferail_core::msgid!("Owner")),
+    ("System.Author", ferail_core::msgid!("Document"), ferail_core::msgid!("Authors")),
+    ("System.Title", ferail_core::msgid!("Document"), ferail_core::msgid!("Title")),
+    ("System.Subject", ferail_core::msgid!("Document"), ferail_core::msgid!("Subject")),
+    ("System.Comment", ferail_core::msgid!("Document"), ferail_core::msgid!("Comments")),
+    ("System.Keywords", ferail_core::msgid!("Document"), ferail_core::msgid!("Tags")),
+    ("System.Rating", ferail_core::msgid!("Document"), ferail_core::msgid!("Rating")),
+    ("System.Media.Duration", ferail_core::msgid!("Media"), ferail_core::msgid!("Duration")),
+    ("System.Media.Year", ferail_core::msgid!("Media"), ferail_core::msgid!("Year")),
+    ("System.Photo.DateTaken", ferail_core::msgid!("Windows image"), ferail_core::msgid!("Date taken")),
     (
         "System.Photo.CameraManufacturer",
-        "Windows image",
-        "Camera manufacturer",
+        ferail_core::msgid!("Windows image"),
+        ferail_core::msgid!("Camera manufacturer"),
     ),
-    ("System.Photo.CameraModel", "Windows image", "Camera model"),
-    ("System.Photo.LensModel", "Windows image", "Lens"),
-    ("System.Photo.Orientation", "Windows image", "Orientation"),
+    ("System.Photo.CameraModel", ferail_core::msgid!("Windows image"), ferail_core::msgid!("Camera model")),
+    ("System.Photo.LensModel", ferail_core::msgid!("Windows image"), ferail_core::msgid!("Lens")),
+    ("System.Photo.Orientation", ferail_core::msgid!("Windows image"), ferail_core::msgid!("Orientation")),
 ];
 
 pub struct WindowsPropertiesProvider;

@@ -373,6 +373,22 @@ Net-new, but each sits on plumbing that already exists.
   writes in the copy, cut and paste handlers run on the main thread. They are
   fast (no per-path stat: the handlers pre-collect cached `is_dir`), and this is
   listed for strict-compliance completeness.
+- **Prime Directive: the mpv backend opens and tears down from render.**
+  With the mpv backend selected, `ViewerWindow::render` reaches
+  `open_video_stream`, which stats the library candidates and `dlopen`s libmpv
+  on first use, then runs `mpv_create`, `mpv_initialize` and a synchronous
+  `loadfile`; stepping off a video runs `mpv_terminate_destroy` from render
+  too. The library handle is a thread-local `Rc`, so the fix is a design
+  change: load the library and open or destroy streams on a dedicated mpv
+  thread, with the viewer holding a handle that reports readiness.
+- **Prime Directive: unguarded helpers.** `Shell::ensure_tree_children` and
+  `Shell::reveal_path_in_tree` enumerate synchronously and are reachable only
+  from the `--expand` screenshot harness; route the harness through
+  `run_tree_children_load` and add `assert_off_ui_thread`. Add the same assert
+  to `shell::path::canonicalize_for_identity` after confirming the
+  `favorites_section.rs` and `create_checksum.rs` callers are on a worker.
+  Clippy's deny list covers `Command::output` and `status` but not `spawn` or
+  `Child::wait`.
 - Add slow-path tests or fixtures for slow folders, network volumes, cloud
   placeholders, permission failures and stale worker results.
 - Streaming-enumeration tests: delayed and full-channel cancellation, stale
@@ -396,7 +412,8 @@ Net-new, but each sits on plumbing that already exists.
   genitive does not take the nominative plural the bare rule suggests. See
   [LOCALIZATION.md](docs/features/LOCALIZATION.md#known-gap-polish-plurals-need-a-few-form).
 - **Localization follow-ups**: translate backend error text
-  (`ferail-fs-native`, `ferail-archive`) and the failure-report bodies, once
+  (`ferail-fs-native`, `ferail-archive`, the elevation helper, and the
+  platform shell crates' eject, context-menu and clipboard errors) and the failure-report bodies, once
   bug reports can carry the English alongside; locale-aware numbers, sizes and
   dates; RTL mirroring (blocked on gpui layout support); contribute Ferail's
   languages to gpui-component's own `ui.yml` so the widgets' OK and Cancel

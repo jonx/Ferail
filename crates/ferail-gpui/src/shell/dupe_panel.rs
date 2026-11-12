@@ -139,7 +139,7 @@ impl Shell {
                     .label(if selected == 0 {
                         tr!("Trash marked")
                     } else {
-                        tr!("Trash {n} marked", n = selected)
+                        tr!("Trash {n} marked", n = ferail_core::counts::format_count(selected as u64))
                     })
                     .disabled(selected == 0)
                     .on_click(

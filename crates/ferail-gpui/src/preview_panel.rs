@@ -163,8 +163,10 @@ impl std::fmt::Debug for PreviewContent {
 /// A stand-in row for content that has no listing entry of its own: an
 /// archive entry staged to a scratch file, labelled with its real name rather
 /// than the scratch filename.
-pub fn synthetic_entry(path: &std::path::Path, name: &str) -> FileEntry {
-    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+///
+/// `size` is the staged file's length, read by the worker that staged it: this
+/// runs on the UI thread and must not stat.
+pub fn synthetic_entry(name: &str, size: u64) -> FileEntry {
     FileEntry {
         id: ferail_core::NodeId::from_raw(1).expect("nonzero"),
         name: name.into(),
