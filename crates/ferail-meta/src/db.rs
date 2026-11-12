@@ -468,6 +468,12 @@ impl MetadataDb {
         !self.exclusions.is_empty() && self.exclusions.covers(Path::new(path))
     }
 
+    /// Whether `path` lies under a location nothing is recorded for, where
+    /// every write method is a no-op. Lexical, no I/O.
+    pub fn is_excluded(&self, path: &str) -> bool {
+        self.excluded(path)
+    }
+
     /// Delete every stored row at or under `root`, on disk and in the
     /// session tables alike.
     pub fn forget_under(&self, root: &Path) -> Result<()> {

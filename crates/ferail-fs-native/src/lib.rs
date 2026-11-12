@@ -27,8 +27,10 @@ mod dupes;
 pub mod ebook;
 pub mod folder_compare;
 pub mod file_ops;
+pub mod git;
 mod icons;
 pub mod image_meta;
+pub mod integrity;
 #[cfg(target_os = "linux")]
 pub mod linux_trash;
 mod magic;
@@ -54,7 +56,7 @@ pub use archive::{
 };
 pub use disk_usage_scanner::{recursive_size, recursive_totals, SubtreeTotals, DEFAULT_DU_BATCH};
 pub use dupes::{
-    clone_dedup, file_content_hash, DupeFact, DupeHashCache, DupeMember, DupeMode, DupeOpts, DupePhase, DupeStats,
+    clone_dedup, file_content_hash, CachedHash, DupeFact, DupeHashCache, DupeMember, DupeMode, DupeOpts, DupePhase, DupeStats,
     SimilarImageIndexEntry, SimilarImageInfo, DEFAULT_DUPE_BATCH, PARTIAL_HASH_BYTES,
 };
 pub use dupes::{find_duplicates_among, KnownFile};

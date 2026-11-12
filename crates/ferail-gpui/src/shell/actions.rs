@@ -42,6 +42,11 @@ actions!(
         /// cancellable tab-local result surface.
         VerifyChecksums,
         CreateChecksumFile,
+        /// Re-hash the selected files and folders and report files whose
+        /// content changed under an unchanged size and modification time
+        /// (silent corruption), in a tab-local result surface
+        /// (docs/features/INTEGRITY.md).
+        VerifyIntegrity,
         /// Copy the *entire* list of items currently shown in the active
         /// tab: folder contents, duplicate-finder groups, or search
         /// results, as newline-joined full paths, regardless of

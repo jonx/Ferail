@@ -695,6 +695,14 @@ impl Shell {
         use gpui_component::notification::Notification;
 
         let cancel = Arc::new(AtomicBool::new(false));
+        // "Verify copies" (docs/features/INTEGRITY.md): a cached settings
+        // read, no I/O. The metadata database receives the verified hashes.
+        let verify = crate::app_state::load().verify_copies.unwrap_or(false);
+        let hash_db = if verify {
+            self.process.db_snapshot()
+        } else {
+            None
+        };
         // English verb for the power assertion's reason string (a system
         // diagnostic, not UI); every user-facing label is built by the
         // `transfer_*_label` helpers below, which translate.
@@ -741,7 +749,12 @@ impl Shell {
             let done = done.clone();
             let base_label = base_label.clone();
             let live_label = live_label.clone();
+            let noun = noun.clone();
             cx.spawn(async move |_this, cx| {
+                // Consecutive samples that caught the worker reading a copy
+                // back. Two in a row (≥100 ms of verifying) switch the label,
+                // so a run of small files does not flicker between verbs.
+                let mut verify_streak: u8 = 0;
                 // Rolling window of (t, bytes_done) samples (~6 s at the
                 // 10 Hz tick). The displayed rate is the trimmed mean of
                 // the window's per-sample rates, refreshed only once per
@@ -793,8 +806,15 @@ impl Shell {
                         current: prog.current().to_string(),
                     };
                     let planned = prog.planned();
+                    verify_streak = if prog.is_verifying() {
+                        verify_streak.saturating_add(1)
+                    } else {
+                        0
+                    };
                     let label = if planning {
                         transfer_preparing_label(mode, planned).to_string()
+                    } else if verify_streak >= 2 {
+                        transfer_verifying_label(&noun).to_string()
                     } else {
                         live_label
                             .lock()
@@ -1105,9 +1125,24 @@ impl Shell {
                             TransferMode::Auto => TransferMode::Copy,
                             m => m,
                         };
+                        // Verified hashes go to the duplicate finder's
+                        // cache, whose store applies the privacy rules
+                        // (exclusions, Remember nothing).
+                        let cache = hash_db.map(|db| {
+                            crate::dupe_cache::DbHashCache::new(db, ferail_core::now_unix())
+                        });
+                        let opts = engine::TransferOpts {
+                            verify,
+                            hash_cache: cache
+                                .as_ref()
+                                .map(|c| c as &dyn ferail_fs_native::DupeHashCache),
+                            before_verify: None,
+                        };
                         let outcome = match effective {
-                            TransferMode::Move => engine::run_move(&plan, &policy_for, &p, &c),
-                            _ => engine::run_copy(&plan, &policy_for, &p, &c),
+                            TransferMode::Move => {
+                                engine::run_move_with(&plan, &policy_for, &opts, &p, &c)
+                            }
+                            _ => engine::run_copy_with(&plan, &policy_for, &opts, &p, &c),
                         };
                         outcome.map(|o| (o, all_same_volume, effective))
                     })
@@ -1279,6 +1314,9 @@ impl Shell {
                             (false, true) => trn!("Moved {n} item", "Moved {n} items", n),
                             (false, false) => trn!("Copied {n} item", "Copied {n} items", n),
                         };
+                        if verify && outcome.all_verified() {
+                            msg = tr!("{summary}, verified", summary = msg);
+                        }
                         if outcome.skipped > 0 {
                             msg = trn!(
                                 "{summary}, {n} skipped",
@@ -5856,6 +5894,11 @@ fn transfer_running_label(mode: TransferMode, what: &str, dest: &str) -> SharedS
             dest = dest
         ),
     }
+}
+
+/// The task label while "Verify copies" reads finished copies back.
+fn transfer_verifying_label(what: &str) -> SharedString {
+    tr!("Verifying {what}\u{2026}", what = what)
 }
 
 /// The planning-phase task label ("Copying, preparing (N items)…").

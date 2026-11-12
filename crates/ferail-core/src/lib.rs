@@ -9,6 +9,7 @@ pub mod counts;
 pub mod entry_info;
 pub mod favorites;
 pub mod filter_expr;
+pub mod git_status;
 pub mod private_presentation;
 #[macro_use]
 pub mod i18n;

@@ -3,7 +3,7 @@ use ferail_core::EntryKind;
 use gpui::{AppContext as _, Context, Window};
 use gpui_component::notification::Notification;
 
-use super::{CreateChecksumFile, Shell, VerifyChecksums, tab::ToolResultSurface};
+use super::{CreateChecksumFile, Shell, VerifyChecksums, VerifyIntegrity, tab::ToolResultSurface};
 
 /// Whether a listing row looks like a checksum manifest.
 ///
@@ -69,5 +69,38 @@ impl Shell {
         }
 
         self.open_verify_path(path, cx);
+    }
+
+    /// Verify Integrity over the selection, or the current folder when
+    /// nothing is selected. The report replaces the listing as a Verify
+    /// result surface; the walk and the hashing run on the background
+    /// executor inside [`crate::integrity_view::IntegrityView`].
+    pub(crate) fn on_verify_integrity(
+        &mut self,
+        _: &VerifyIntegrity,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Verify integrity");
+        let current = self.active_tab().current_dir.clone();
+        let mut roots: Vec<std::path::PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if roots.is_empty() {
+            roots.push(current.clone());
+        }
+        let surface_root = match roots.as_slice() {
+            [single] => single.clone(),
+            _ => current,
+        };
+        let db = self.process.db_snapshot();
+        let tasks = self.process.tasks.clone();
+        let root = surface_root.clone();
+        let view =
+            cx.new(|cx| crate::verify_view::VerifyView::integrity(root, roots, db, tasks, cx));
+        self.active_tab_mut().tool_result = Some(ToolResultSurface::verify(surface_root, view));
+        cx.notify();
     }
 }

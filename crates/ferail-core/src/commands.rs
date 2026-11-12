@@ -314,6 +314,12 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::File,
         shortcuts: &[],
     },
+    CommandSpec {
+        id: CommandId("file.verify_integrity"),
+        title: msgid!("Verify Integrity"),
+        category: Category::File,
+        shortcuts: &[],
+    },
     // Copy the whole displayed list (folder contents, duplicate-finder
     // groups, or search results) as newline-joined paths. No default
     // shortcut: reached via the toolbar menu and command palette.

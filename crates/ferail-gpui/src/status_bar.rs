@@ -92,6 +92,9 @@ pub struct StatusMetrics {
     /// full contents.
     pub filtered_count: usize,
     pub filtered_bytes: u64,
+    /// Branch of the Git work tree the tab shows, `None` outside one
+    /// (docs/features/GIT_STATUS.md).
+    pub git_branch: Option<crate::git_status::BranchLabel>,
     /// App-footprint figures (up · CPU · MEM · redraws/s), pre-formatted by
     /// the off-thread sampler's snapshot (or `--simulate-stats`).
     /// `None` until the sampler's first real reading.
@@ -147,6 +150,8 @@ pub(crate) struct Segments {
     /// space ticks down does not shift every segment to its left.
     pub free_slot: Option<String>,
     pub hidden_slot: Option<String>,
+    /// Branch and ahead/behind, see [`git_label`].
+    pub git: Option<String>,
     pub stats: Option<StatsTexts>,
     /// `None` at [`Density::Minimal`]: the switch keeps its meaning
     /// through a tooltip there rather than a word.
@@ -163,6 +168,7 @@ pub(crate) struct Plan {
     /// anything is hidden.
     pub small_text: bool,
     pub show_stats: bool,
+    pub show_git: bool,
     pub show_hidden_chip: bool,
     pub show_filtered: bool,
     pub show_free: bool,
@@ -177,6 +183,7 @@ impl Plan {
             density: Density::Full,
             small_text: false,
             show_stats: true,
+            show_git: true,
             show_hidden_chip: true,
             show_filtered: true,
             show_free: true,
@@ -387,6 +394,78 @@ fn hidden_label(metrics: &StatusMetrics, density: Density) -> Option<String> {
     })
 }
 
+/// Git branch wording for a density: "On branch main ↑2 ↓1" in full,
+/// the bare name below that. The arrows are the commit counts ahead of and
+/// behind the upstream; they are symbols, not words, and stay at every
+/// density. Private Mode presents the branch name like any personal label.
+pub(crate) fn git_label(metrics: &StatusMetrics, density: Density) -> Option<String> {
+    let branch = metrics.git_branch.as_ref()?;
+    let name = crate::private_mode::present_label(&branch.name);
+    let mut label = match (branch.detached, density) {
+        (false, Density::Full) => tr!("On branch {branch}", branch = name).to_string(),
+        (true, Density::Full) => tr!("Detached at {commit}", commit = name).to_string(),
+        _ => name,
+    };
+    if let Some((ahead, behind)) = branch.ahead_behind {
+        if ahead > 0 {
+            label.push_str(&format!(
+                " \u{2191}{}",
+                ferail_core::counts::format_count(u64::from(ahead))
+            ));
+        }
+        if behind > 0 {
+            label.push_str(&format!(
+                " \u{2193}{}",
+                ferail_core::counts::format_count(u64::from(behind))
+            ));
+        }
+    }
+    Some(label)
+}
+
+/// The branch segment's tooltip: what the arrows mean, spelled out.
+fn git_tooltip(branch: &crate::git_status::BranchLabel) -> SharedString {
+    let name = crate::private_mode::present_label(&branch.name);
+    let mut lines: Vec<String> = vec![if branch.detached {
+        tr!("Detached at {commit}", commit = name).to_string()
+    } else {
+        tr!("On branch {branch}", branch = name).to_string()
+    }];
+    match (&branch.upstream, branch.ahead_behind) {
+        (Some(upstream), Some((ahead, behind))) => {
+            let upstream = crate::private_mode::present_label(upstream);
+            if ahead == 0 && behind == 0 {
+                lines.push(tr!("Up to date with {upstream}", upstream = upstream.clone()).to_string());
+            }
+            if ahead > 0 {
+                lines.push(
+                    trn!(
+                        "{n} commit ahead of {upstream}",
+                        "{n} commits ahead of {upstream}",
+                        ahead as usize,
+                        upstream = upstream.clone()
+                    )
+                    .to_string(),
+                );
+            }
+            if behind > 0 {
+                lines.push(
+                    trn!(
+                        "{n} commit behind {upstream}",
+                        "{n} commits behind {upstream}",
+                        behind as usize,
+                        upstream = upstream
+                    )
+                    .to_string(),
+                );
+            }
+        }
+        (Some(_), None) => lines.push(tr!("Upstream branch is gone").to_string()),
+        (None, _) => lines.push(tr!("No upstream branch").to_string()),
+    }
+    SharedString::from(lines.join("\n"))
+}
+
 /// App-footprint figures for a density. `CPU` / `MEM` are already the
 /// shortest honest form in every language we ship, so only the
 /// uptime changes: the translated "up" wording gives way to the
@@ -423,6 +502,7 @@ pub(crate) fn segments(metrics: &StatusMetrics, density: Density) -> Segments {
         hidden: hidden_label(metrics, density),
         free_slot: free_label(&widest, density).map(|s| s.to_string()),
         hidden_slot: hidden_label(&widest, density),
+        git: git_label(metrics, density),
         stats: metrics.stats.as_ref().map(|p| stats_texts(p, density)),
         switch_label: match density {
             Density::Full => Some(tr!("Show hidden")),
@@ -479,6 +559,11 @@ fn estimated_width(
     if has_progress {
         boxes.push(plan.progress_w());
     }
+    if plan.show_git
+        && let Some(t) = &seg.git
+    {
+        boxes.push(text_w(t, font));
+    }
     if plan.show_free
         && let Some(t) = &seg.free
     {
@@ -517,7 +602,7 @@ fn estimated_width(
 ///
 /// The ladder, in order: shorten the wording, then minimalize it, then
 /// give up one type tier, then start hiding: stats first (developer
-/// telemetry), then the hidden chip, the filtered chip, free space, and
+/// telemetry), then the Git branch, the hidden chip, the filtered chip, free space, and
 /// last of all the task label. The entry count and the Show-Hidden
 /// switch are not on the ladder at all; they survive every width.
 ///
@@ -552,13 +637,15 @@ pub(crate) fn plan(
     // The minimal wording still overflows: give up one type tier, then
     // start taking segments away, least essential first.
     chosen.small_text = true;
-    for drop in 0..5 {
+    for drop in 0..6 {
         match drop {
             0 => {}
             1 => chosen.show_stats = false,
-            2 => chosen.show_hidden_chip = false,
-            3 => chosen.show_filtered = false,
-            4 => chosen.show_free = false,
+            // The branch is context the user mostly knows already.
+            2 => chosen.show_git = false,
+            3 => chosen.show_hidden_chip = false,
+            4 => chosen.show_filtered = false,
+            5 => chosen.show_free = false,
             _ => unreachable!(),
         }
         if fits(&seg, &chosen) {
@@ -732,6 +819,26 @@ pub fn render(
             )
         })
         .when(!has_left_cluster, |this| this.child(div().flex_1()))
+        // Git branch of the folder's work tree, with commits ahead/behind
+        // its upstream (docs/features/GIT_STATUS.md). Read from the tab's
+        // cached label; absent outside a repository.
+        .when_some(
+            seg.git
+                .filter(|_| plan.show_git)
+                .zip(metrics.git_branch.as_ref().map(git_tooltip)),
+            |this, (label, tip)| {
+                this.child(
+                    div()
+                        .id("status-bar-git-branch")
+                        .flex_shrink_0()
+                        .text_color(theme_muted_fg.opacity(0.85))
+                        .tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+                        })
+                        .child(label),
+                )
+            },
+        )
         // Phase 8: free-disk-space label sits between the task
         // summary and the Show-Hidden toggle. Only rendered when we
         // could query the volume info: non-macOS / sandboxed

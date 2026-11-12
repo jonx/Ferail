@@ -198,6 +198,10 @@ pub struct ProcessState {
     /// drains its channel on a foreground-executor timer.
     pub watcher: Rc<RefCell<Option<FsWatcher>>>,
 
+    /// Git status per repository root, shared by every tab and window
+    /// (docs/features/GIT_STATUS.md). In-memory only.
+    pub git: RefCell<crate::git_status::GitCache>,
+
     /// User-curated favorites. An Entity so subscriptions / observers
     /// across multiple windows all see the same mutations.
     ///
@@ -408,6 +412,7 @@ impl ProcessState {
             next_asset_scope: Cell::new(1),
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
             watcher,
+            git: RefCell::new(Default::default()),
             favorites: RefCell::new(Some(favorites)),
             undo_stack: RefCell::new(VecDeque::new()),
             ant_visits: RefCell::new(HashMap::new()),

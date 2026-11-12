@@ -33,6 +33,7 @@ pub(crate) const COPY_PATH: CommandId = CommandId("file.copy_path");
 pub(crate) const GENERATE_SHA256: CommandId = CommandId("file.generate_sha256");
 pub(crate) const VERIFY_CHECKSUMS: CommandId = CommandId("file.verify_checksums");
 pub(crate) const CREATE_CHECKSUM_FILE: CommandId = CommandId("file.create_checksum_file");
+pub(crate) const VERIFY_INTEGRITY: CommandId = CommandId("file.verify_integrity");
 pub(crate) const OPEN_TERMINAL_HERE: CommandId = CommandId("file.open_terminal_here");
 pub(crate) const RENAME: CommandId = CommandId("file.rename");
 pub(crate) const DUPLICATE: CommandId = CommandId("file.duplicate");
@@ -115,7 +116,7 @@ const MENU_ONLY: [CommandId; 10] = [
 
 /// Every id this module declares, for the checks below.
 #[cfg(test)]
-const ALL: [CommandId; 38] = [
+const ALL: [CommandId; 39] = [
     OPEN,
     OPEN_IN_NEW_TAB,
     EDIT,
@@ -127,6 +128,7 @@ const ALL: [CommandId; 38] = [
     GENERATE_SHA256,
     VERIFY_CHECKSUMS,
     CREATE_CHECKSUM_FILE,
+    VERIFY_INTEGRITY,
     OPEN_TERMINAL_HERE,
     RENAME,
     DUPLICATE,

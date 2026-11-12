@@ -582,6 +582,12 @@ pub struct FileListDelegate {
     /// lookup synchronously on the UI thread). Renderer pairs each
     /// row's slot with the name cell to draw small coloured dots.
     pub tags: Vec<Vec<ferail_core::commands::TagColor>>,
+    /// Git state per row, parallel to `entries` (docs/features/GIT_STATUS.md).
+    /// Written by `Shell::apply_git_to_tab` from the process Git cache when
+    /// a load completes or a `git status` result lands. **Empty** outside a
+    /// work tree and in a clean folder, so the Git column costs nothing
+    /// there; the cell reads `get(row)` and paints nothing on a miss.
+    pub git_marks: Vec<ferail_core::git_status::GitCell>,
     /// `is_favorited[row]` is `true` when the entry's path is currently
     /// in the user-curated Favorites list: drives the §5 star indicator
     /// on the Name cell. Recomputed by `Shell::refresh_file_list_favorited`
@@ -1344,6 +1350,7 @@ impl FileListDelegate {
             heats: Vec::new(),
             compare_marks: None,
             tags: Vec::new(),
+            git_marks: Vec::new(),
             is_favorited: Vec::new(),
             selected_set: HashSet::new(),
             selection_all: false,
@@ -1634,6 +1641,14 @@ impl FileListDelegate {
                     )
                 })
                 .collect();
+        // Git marks ride along only when the listing has any (empty outside
+        // a work tree and in clean folders).
+        let mut git_state: HashMap<NodeId, ferail_core::git_status::GitCell> = self
+            .entries
+            .iter()
+            .zip(self.git_marks.iter())
+            .map(|(entry, cell)| (entry.id, *cell))
+            .collect();
 
         if col == SortColumn::AntTrail {
             let heats = &row_state;
@@ -1653,6 +1668,13 @@ impl FileListDelegate {
         let had_heats = !self.heats.is_empty();
         let had_tags = !self.tags.is_empty();
         let had_favorites = !self.is_favorited.is_empty();
+        if !self.git_marks.is_empty() {
+            self.git_marks = self
+                .entries
+                .iter()
+                .map(|entry| git_state.remove(&entry.id).unwrap_or_default())
+                .collect();
+        }
         self.heats.clear();
         self.tags.clear();
         self.is_favorited.clear();
@@ -1710,6 +1732,7 @@ impl FileListDelegate {
             .retain(|column| column.key.as_ref() != "path");
         self.heats.clear();
         self.tags.clear();
+        self.git_marks.clear();
         self.is_favorited.clear();
         // selected_set / lead are NodeId-keyed and reconciled by
         // Shell against the new model; not cleared here.
@@ -1752,6 +1775,8 @@ impl FileListDelegate {
         self.paths = paths;
         self.heats = heats;
         self.tags = vec![Vec::new(); self.entries.len()];
+        // Re-derived from the Git cache by the shell right after the swap.
+        self.git_marks.clear();
         self.is_favorited = vec![false; self.entries.len()];
         self.apply_effective_sort();
         // selected_set / lead are NodeId-keyed; reconciliation is
@@ -1787,6 +1812,9 @@ impl FileListDelegate {
         self.entries.extend(entries);
         self.heats.extend(heats);
         self.tags.extend((0..n).map(|_| Vec::new()));
+        if !self.git_marks.is_empty() {
+            self.git_marks.resize(self.entries.len(), Default::default());
+        }
         self.is_favorited.extend(favorites);
         // selected_set / lead untouched: NodeId-keyed, not row-keyed.
     }
@@ -2082,6 +2110,7 @@ impl FileListDelegate {
         self.paths = HashMap::new();
         self.heats = vec![0.0; n];
         self.tags = vec![Vec::new(); n];
+        self.git_marks.clear();
         self.is_favorited = vec![false; n];
     }
 
@@ -3469,6 +3498,39 @@ impl TableDelegate for FileListDelegate {
                     crate::i18n::tr_dyn(&entry.display_description).to_string()
                 }))
                 .into_any_element(),
+            // Git state: one letter for a path's own state, a dot for a
+            // folder summarizing what is inside it. Reads the row-parallel
+            // cache only; empty outside a work tree and for clean rows.
+            "git" => {
+                let cell = self.git_marks.get(row_ix).copied().unwrap_or_default();
+                if cell.is_clean() {
+                    return div().into_any_element();
+                }
+                let color = git_mark_color(cell.mark, cx);
+                let glyph = if cell.contents {
+                    div()
+                        .flex_shrink_0()
+                        .size(gpui::rems(6.0 / 16.0))
+                        .rounded_full()
+                        .bg(color)
+                        .into_any_element()
+                } else {
+                    div()
+                        .text_scale_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(color)
+                        .child(cell.mark.letter())
+                        .into_any_element()
+                };
+                div()
+                    .id(("file-row-git", row_ix))
+                    .flex()
+                    .items_center()
+                    .pl_1()
+                    .child(glyph)
+                    .tooltip(move |window, cx| Tooltip::new(git_cell_tooltip(cell)).build(window, cx))
+                    .into_any_element()
+            }
             "path" => {
                 let raw_path = self
                     .flat_paths
@@ -3539,6 +3601,17 @@ impl TableDelegate for FileListDelegate {
             "format" => entry.format_label().0.to_string(),
             "modified" => ferail_core::humanize_mtime(entry.mtime_unix, ferail_core::now_unix()),
             "description" => crate::i18n::tr_dyn(&entry.display_description).to_string(),
+            "git" => self
+                .git_marks
+                .get(row_ix)
+                .map(|cell| {
+                    if cell.contents && !cell.is_clean() {
+                        "\u{2022}".to_string()
+                    } else {
+                        cell.mark.letter().to_string()
+                    }
+                })
+                .unwrap_or_default(),
             "path" => self
                 .flat_paths
                 .as_ref()
@@ -3866,6 +3939,11 @@ impl TableDelegate for FileListDelegate {
             ids::CREATE_CHECKSUM_FILE,
             tr!("Create Checksum File…"),
             Box::new(CreateChecksumFile),
+        );
+        plan = plan.action(
+            ids::VERIFY_INTEGRITY,
+            tr!("Verify Integrity"),
+            Box::new(crate::shell::VerifyIntegrity),
         );
         if crate::platform_shell::lock_diagnostics_available() {
             // Batch diagnostic over the whole resolved set: name the
@@ -4442,6 +4520,48 @@ pub(crate) fn tag_color_rgba(c: ferail_core::commands::TagColor) -> gpui::Rgba {
     }
 }
 
+/// Colour of a Git mark, from the theme's status palette so it reads in
+/// light and dark alike (docs/features/GIT_STATUS.md).
+fn git_mark_color(mark: ferail_core::git_status::GitMark, cx: &App) -> gpui::Hsla {
+    use ferail_core::git_status::GitMark;
+    let theme = cx.theme();
+    match mark {
+        GitMark::Conflicted | GitMark::Deleted => theme.danger,
+        GitMark::Modified => theme.warning,
+        GitMark::Staged | GitMark::Renamed => theme.info,
+        GitMark::Untracked => theme.success,
+        GitMark::Ignored | GitMark::Clean => theme.muted_foreground.opacity(0.7),
+    }
+}
+
+/// The Git cell's tooltip: the state in words, for a path's own state or
+/// for a folder summarizing its contents.
+fn git_cell_tooltip(cell: ferail_core::git_status::GitCell) -> SharedString {
+    use ferail_core::git_status::GitMark;
+    if cell.contents {
+        match cell.mark {
+            GitMark::Conflicted => tr!("Contains merge conflicts"),
+            GitMark::Modified => tr!("Contains modified files"),
+            GitMark::Deleted => tr!("Contains deleted files"),
+            GitMark::Renamed => tr!("Contains renamed files"),
+            GitMark::Staged => tr!("Contains staged changes"),
+            GitMark::Untracked => tr!("Contains untracked files"),
+            GitMark::Ignored | GitMark::Clean => SharedString::default(),
+        }
+    } else {
+        match cell.mark {
+            GitMark::Conflicted => tr!("Conflicted: unresolved merge"),
+            GitMark::Modified => tr!("Modified, not staged"),
+            GitMark::Deleted => tr!("Deleted"),
+            GitMark::Renamed => tr!("Renamed"),
+            GitMark::Staged => tr!("Staged for commit"),
+            GitMark::Untracked => tr!("Untracked"),
+            GitMark::Ignored => tr!("Ignored by Git"),
+            GitMark::Clean => SharedString::default(),
+        }
+    }
+}
+
 /// Mark-of-the-Web quarantine badge: small red dot in the icon's
 /// top-right corner. Pulled out of `render_td` so the file-icon and
 /// folder-icon paths share one stylesheet.
@@ -4510,6 +4630,7 @@ fn column_title(key: &str) -> &'static str {
         "modified" => ferail_core::msgid!("Modified"),
         "description" => ferail_core::msgid!("Description"),
         "path" => ferail_core::msgid!("Path"),
+        "git" => ferail_core::msgid!("Git"),
         _ => "",
     }
 }
@@ -4521,6 +4642,12 @@ fn default_columns() -> Vec<Column> {
         Column::new("name", column_title("name"))
             .width(360.0)
             .sortable(),
+        // Git state (docs/features/GIT_STATUS.md), beside the name it
+        // qualifies. Always offered in the header's show/hide menu like any
+        // column and simply empty outside a work tree: showing and hiding
+        // it per repository would fight the user's own choice in that menu.
+        // Narrow, since a cell holds one letter or a dot.
+        Column::new("git", column_title("git")).width(COLUMN_WIDTH_MIN),
         Column::new("size", column_title("size"))
             .width(100.0)
             .sortable(),
@@ -4828,9 +4955,12 @@ mod column_persist_tests {
         let (cols, hidden) = split_persisted_columns(Some("modified:200,name:420,size:90"));
         assert!(hidden.is_empty());
         let keys: Vec<&str> = cols.iter().map(|c| c.key.as_ref()).collect();
-        // Listed keys in spec order; unlisted (format, description)
+        // Listed keys in spec order; unlisted (git, format, description)
         // trail in default relative order.
-        assert_eq!(keys, ["modified", "name", "size", "format", "description"]);
+        assert_eq!(
+            keys,
+            ["modified", "name", "size", "git", "format", "description"]
+        );
         assert_eq!(cols[0].width, px(200.0));
         assert_eq!(cols[1].width, px(420.0));
         assert_eq!(cols[2].width, px(90.0));

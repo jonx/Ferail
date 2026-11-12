@@ -46,11 +46,38 @@ pub struct VerifyView {
     scroll: UniformListScrollHandle,
     tasks: Rc<RefCell<TaskRegistry>>,
     task_id: Option<TaskId>,
+    /// Set when this Verify surface hosts a Verify Integrity report instead
+    /// of a manifest check; the manifest machinery then stays idle.
+    integrity: Option<Entity<crate::integrity_view::IntegrityView>>,
 }
 
 impl VerifyView {
     pub fn new(source: PathBuf, tasks: Rc<RefCell<TaskRegistry>>, cx: &mut Context<Self>) -> Self {
-        let mut view = Self {
+        let mut view = Self::idle(source, tasks);
+        view.start(cx);
+        view
+    }
+
+    /// The Verify surface hosting a Verify Integrity run over `roots`.
+    /// `source` is the folder or file the surface is rooted at.
+    pub fn integrity(
+        source: PathBuf,
+        roots: Vec<PathBuf>,
+        db: Option<Arc<std::sync::Mutex<ferail_meta::MetadataDb>>>,
+        tasks: Rc<RefCell<TaskRegistry>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let report = {
+            let tasks = tasks.clone();
+            cx.new(|cx| crate::integrity_view::IntegrityView::new(roots, db, tasks, cx))
+        };
+        let mut view = Self::idle(source, tasks);
+        view.integrity = Some(report);
+        view
+    }
+
+    fn idle(source: PathBuf, tasks: Rc<RefCell<TaskRegistry>>) -> Self {
+        Self {
             source,
             phase: Phase::Running,
             cancel: Arc::new(AtomicBool::new(false)),
@@ -66,9 +93,8 @@ impl VerifyView {
             scroll: UniformListScrollHandle::new(),
             tasks,
             task_id: None,
-        };
-        view.start(cx);
-        view
+            integrity: None,
+        }
     }
 
     pub fn source(&self) -> &PathBuf {
@@ -269,6 +295,9 @@ impl Drop for VerifyView {
 
 impl Render for VerifyView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(report) = &self.integrity {
+            return report.clone().into_any_element();
+        }
         let muted = cx.theme().muted_foreground;
         let title = self
             .source
@@ -602,5 +631,6 @@ impl Render for VerifyView {
             .text_scale_xs()
             .child(header)
             .child(body)
+            .into_any_element()
     }
 }

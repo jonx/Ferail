@@ -672,6 +672,10 @@ pub struct Tab {
     /// free-space label for "is read-only" when set, "0 B free" on
     /// a CD is true but the wrong message.
     pub volume_read_only: bool,
+    /// Branch of the Git work tree this tab shows, `None` outside one.
+    /// Written by `Shell::apply_git_to_tab` from the process Git cache;
+    /// the status bar reads it (docs/features/GIT_STATUS.md).
+    pub git_branch: Option<crate::git_status::BranchLabel>,
     /// Count + bytes of the hidden entries the last completed load
     /// skipped (show-hidden off). Written by
     /// `finish_directory_load_in_tab`, zeroed when a load starts;
@@ -829,6 +833,7 @@ impl Tab {
             volume_free_bytes: None,
             volume_name: None,
             volume_read_only: false,
+            git_branch: None,
             hidden_summary: Default::default(),
             filter_summary: Default::default(),
             pending_select_row: None,

@@ -140,6 +140,7 @@
     "Cancel": "Annuler",
     "Cancel scan": "Annuler l'analyse",
     "Cancelled": "Annulé",
+    "Cancelled.": "Annulé.",
     "Cancelled: {n} item copied": {
       "one": "Annulé, {n} élément copié",
       "other": "Annulé, {n} éléments copiés"
@@ -160,6 +161,7 @@
     "Channels": "Canaux",
     "Check for Updates…": "Rechercher les mises à jour…",
     "Check for updates automatically": "Rechercher automatiquement les mises à jour",
+    "Checked {n} files ({size})": "{n} fichiers contrôlés ({size})",
     "Checking Fast NTFS availability…": "Vérification de la disponibilité de NTFS rapide…",
     "Checking GitHub for the latest release…": "Recherche de la dernière version sur GitHub…",
     "Checking which programs have files open…": "Vérification des programmes ayant des fichiers ouverts…",
@@ -226,6 +228,13 @@
     },
     "Compression": "Compression",
     "Confirm each match byte-for-byte after hashing. Removes any hash-collision doubt at the cost of re-reading confirmed groups.": "Confirmez chaque correspondance octet par octet après le hachage. Supprime tout doute de collision de hachage au prix de la relecture des groupes confirmés.",
+    "Conflicted: unresolved merge": "En conflit : fusion non résolue",
+    "Contains deleted files": "Contient des fichiers supprimés",
+    "Contains merge conflicts": "Contient des conflits de fusion",
+    "Contains modified files": "Contient des fichiers modifiés",
+    "Contains renamed files": "Contient des fichiers renommés",
+    "Contains staged changes": "Contient des modifications indexées",
+    "Contains untracked files": "Contient des fichiers non suivis",
     "Context": "Contexte",
     "Context menus": "Menus contextuels",
     "Contrast": "Contraste",
@@ -276,12 +285,14 @@
     "Copy missing and newer to top": "Copier les manquants et les plus récents vers le haut",
     "Copy report": "Copier le rapport",
     "Copy to Other Pane": "Copier vers l’autre volet",
+    "Copying": "Copie",
     "Copying failed: {detail}": "Échec de la copie : {detail}",
     "Copying {what} to “{dest}”…": "Copie de {what} dans « {dest} »…",
     "Copying: preparing ({n} item)…": {
       "one": "Copie, préparation (élément {n})…",
       "other": "Copie, préparation (éléments {n})…"
     },
+    "Corrupted": "Corrompu",
     "Could not calculate SHA-256: {detail}": "Impossible de calculer le SHA-256 : {detail}",
     "Could not compare: {error}": "Comparaison impossible : {error}",
     "Could not create checksum file: {detail}": "Impossible de créer le fichier de contrôle : {detail}",
@@ -375,6 +386,7 @@
     "Delete Immediately?": "Supprimer immédiatement ?",
     "Delete Immediately…": "Supprimer immédiatement…",
     "Delete as administrator…": "Supprimer en tant qu'administrateur…",
+    "Deleted": "Supprimé",
     "Deleted {n} item": {
       "one": "Élément {n} supprimé",
       "other": "Éléments {n} supprimés"
@@ -398,6 +410,7 @@
     "Descend into Packages": "Parcourir les paquets",
     "Description": "Description",
     "Desktop": "Bureau",
+    "Detached at {commit}": "Détaché sur {commit}",
     "Detail ≤ {value}": "Détail ≤ {value}",
     "Details": "Détails",
     "Detect file types and tags": "Détecter les types de fichiers et les balises",
@@ -594,6 +607,7 @@
     "Finding duplicates in {root}": "Recherche de doublons dans {root}",
     "Finding duplicates: {files} files compared": "Recherche de doublons : {files} fichiers comparés",
     "Finding similar images in {root}": "Recherche d’images similaires dans {root}",
+    "Finds files whose contents changed while their size and modification date stayed the same. Only files hashed before can be checked: by a verified copy, Find Duplicates, Compare Folders or an earlier Verify Integrity.": "Trouve les fichiers dont le contenu a changé alors que leur taille et leur date de modification sont restées identiques. Seuls les fichiers déjà hachés peuvent être contrôlés : par une copie vérifiée, Rechercher les doublons, Comparer les dossiers ou une vérification d’intégrité précédente.",
     "Fit": "Ajuster",
     "Fit height": "Ajuster la hauteur",
     "Fit to Window": "Ajuster à la fenêtre",
@@ -626,6 +640,7 @@
     "Get Info": "Obtenir des informations",
     "Get Info: {name}": "Obtenir des informations : {name}",
     "Get Info?": "Obtenir des informations ?",
+    "Git": "Git",
     "GitHub returned update information that Ferail couldn't understand.": "GitHub a renvoyé des informations de mise à jour que Ferail n’a pas pu interpréter.",
     "GitHub's update service is temporarily unavailable. Try again later.": "Le service de mise à jour de GitHub est temporairement indisponible. Réessayez plus tard.",
     "GitHub's update-check limit was reached. Try again later.": "La limite de vérification des mises à jour de GitHub a été atteinte. Réessayez plus tard.",
@@ -671,6 +686,7 @@
     "Icon view": "Vue en icônes",
     "Identical: {count}": "Identiques : {count}",
     "Ignore small files": "Ignorer les petits fichiers",
+    "Ignored by Git": "Ignoré par Git",
     "Image": "Image",
     "Import": "Importer",
     "Imported {language}: {translated} of {total} strings translated": "{language} importé : {translated} chaînes traduites sur {total}",
@@ -778,6 +794,7 @@
     "Missing": "Manquant",
     "Modified": "Modifié",
     "Modified since the previous scan": "Modifié depuis l’analyse précédente",
+    "Modified, not staged": "Modifié, non indexé",
     "More": "Plus",
     "More options from Windows…": "Plus d’options de Windows…",
     "More sidecars may be present.": "D’autres fichiers annexes peuvent être présents.",
@@ -848,6 +865,8 @@
     "No active tasks.": "Aucune tâche active.",
     "No activity recorded yet.": "Aucune activité enregistrée pour l'instant.",
     "No applications found": "Aucune application trouvée",
+    "No corruption found in the files checked before cancelling.": "Aucune corruption trouvée dans les fichiers contrôlés avant l’annulation.",
+    "No corruption found.": "Aucune corruption trouvée.",
     "No downloadable Ferail release was found on GitHub.": "Aucune version téléchargeable de Ferail n’a été trouvée sur GitHub.",
     "No duplicates": "Aucun doublon",
     "No duplicates found": "Aucun doublon trouvé",
@@ -871,9 +890,11 @@
     "No selection": "Aucune sélection",
     "No similar images found.": "Aucune image similaire trouvée.",
     "No subfolders": "Aucun sous-dossier",
+    "No upstream branch": "Pas de branche amont",
     "No visible items": "Aucun élément visible",
     "Node.js script": "Script Node.js",
     "None": "Aucun",
+    "None of these files had been hashed before, so nothing could be compared yet. Their checksums are recorded now, and the next Verify Integrity will check them.": "Aucun de ces fichiers n’avait encore été haché, donc rien n’a pu être comparé. Leurs sommes de contrôle sont maintenant enregistrées, et la prochaine vérification d’intégrité les contrôlera.",
     "Normal": "Normal",
     "Not compared: {count}": "Non comparés : {count}",
     "Not downloaded": "Non téléchargé",
@@ -887,6 +908,7 @@
     "Off": "Désactivé",
     "Ogg audio": "Audio Ogg",
     "On": "Activé",
+    "On branch {branch}": "Sur la branche {branch}",
     "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default: when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.": "Une fois par jour, demandez à GitHub si une version plus récente de Ferail existe et affichez une notification lorsqu'elle existe. Désactivé par défaut : lorsqu'il est désactivé, Ferail n'effectue aucune requête réseau par lui-même. Rien n'est jamais téléchargé ou installé sans que vous le choisissiez ; utilisez Ferail → Vérifier les mises à jour… pour vérifier manuellement à tout moment.",
     "OneDrive": "OneDrive",
     "Only bottom: {count}": "En bas seulement : {count}",
@@ -1029,6 +1051,7 @@
     "Read & write": "Lire et écrire",
     "Read NTFS metadata with a temporary administrator helper": "Lire les métadonnées NTFS avec un assistant administrateur temporaire",
     "Read each file's contents to name its type in the Format column and read its Finder tags for the colour dots. Both are per-file disk reads on every folder. Off falls back to types from the file extension and hides tag dots.": "Lisez le contenu de chaque fichier pour nommer son type dans la colonne Format et lisez ses balises Finder pour les points de couleur. Les deux sont des lectures de disque par fichier sur chaque dossier. Désactivé revient aux types de l'extension de fichier et masque les points de balise.",
+    "Read every copied file back from the destination and compare it with the original. Copies take longer. A copy that does not match is removed and reported, and a move keeps its original. Moves on the same disk and instant clones need no check.": "Relit chaque fichier copié depuis la destination et le compare à l’original. Les copies prennent plus de temps. Une copie qui ne correspond pas est supprimée et signalée, et un déplacement conserve son original. Les déplacements sur le même disque et les clones instantanés n’ont pas besoin de contrôle.",
     "Read-only": "Lecture seule",
     "Read-only volume": "Volume en lecture seule",
     "Reading NTFS metadata… {percent}% · {completed} / {total} records": "Lecture des métadonnées NTFS… {percent}% · {completed} / {total} enregistrements",
@@ -1084,6 +1107,7 @@
       "one": "Renommer {n} élément…",
       "other": "Renommer {n} éléments…"
     },
+    "Renamed": "Renommé",
     "Renamed {n} item": {
       "one": "{n} élément renommé",
       "other": "{n} éléments renommés"
@@ -1255,6 +1279,7 @@
     "Show the expandable Home folder tree in the sidebar.": "Afficher l’arborescence dépliable du dossier personnel dans la barre latérale.",
     "Show the full treemap and dim non-matches": "Afficher tout le treemap et griser les autres fichiers",
     "Showing info for the first {cap} of {total} items.": "Affichage des informations pour les {cap} premiers éléments sur {total}.",
+    "Showing the first {shown} of {total} corrupted files.": "Affichage des {shown} premiers fichiers corrompus sur {total}.",
     "Showing {n} item in {app}": {
       "one": "Affichage de l'élément {n} dans {app}",
       "other": "Affichage des éléments {n} dans {app}"
@@ -1314,6 +1339,7 @@
     "Split View (Shift-click to stack)": "Vue scindée (Maj-clic pour empiler)",
     "Split the window first: there is no other pane to send items to.": "Scindez d’abord la fenêtre : il n’y a pas d’autre volet vers lequel envoyer les éléments.",
     "Spotlight": "Spotlight",
+    "Staged for commit": "Indexé pour le commit",
     "Standard": "Standard",
     "Standard opens the terminal normally. Administrator opens it with elevated rights: a UAC prompt on Windows; on macOS and Linux the window opens into a root shell, with sudo asking for your password inside the terminal.": "Standard ouvre le terminal normalement. L'administrateur l'ouvre avec des droits élevés : une invite UAC sous Windows ; sur macOS et Linux, la fenêtre s'ouvre dans un shell racine, sudo vous demandant votre mot de passe dans le terminal.",
     "Start": "Démarrer",
@@ -1364,9 +1390,11 @@
     "The comparison will appear when calculation finishes.": "La comparaison apparaîtra une fois le calcul terminé.",
     "The converted archive name must be a single non-empty filename.": "Le nom de l’archive convertie doit être un nom de fichier unique et non vide.",
     "The destination is read-only. Choose a writable folder or change the volume's permissions.": "La destination est en lecture seule. Choisissez un dossier accessible en écriture ou modifiez les autorisations du volume.",
+    "The faulty copy was removed and the original kept. Check the destination disk, then try again.": "La copie défectueuse a été supprimée et l’original conservé. Vérifiez le disque de destination, puis réessayez.",
     "The highlight behind selected files in the list and grid. Clear it to follow the theme's blue.": "La couleur derrière les fichiers sélectionnés dans la liste et la grille. Effacez-la pour utiliser le bleu du thème.",
     "The item may have moved or been deleted. Refresh the folder and try again.": "L'élément a peut-être été déplacé ou supprimé. Actualisez le dossier et réessayez.",
     "The last folder and the tabs to reopen at the next launch.": "Le dernier dossier et les onglets à rouvrir au prochain lancement.",
+    "The metadata database is not available, so there are no recorded checksums to compare with.": "La base de métadonnées n’est pas disponible, il n’y a donc aucune somme de contrôle enregistrée à comparer.",
     "The name must be a single non-empty filename.": "Le nom doit être un nom de fichier unique et non vide.",
     "The other pane is not showing a folder.": "L’autre volet n’affiche pas de dossier.",
     "The shortcut target is missing": "La cible du raccourci est introuvable",
@@ -1467,10 +1495,13 @@
     "Unsaved": "Non enregistré",
     "Unsaved Changes": "Modifications non enregistrées",
     "Untitled folder": "Dossier sans titre",
+    "Untracked": "Non suivi",
     "Unusual whitespace": "Espaces inhabituels",
+    "Up to date with {upstream}": "À jour avec {upstream}",
     "Update available": "Mise à jour disponible",
     "Updates": "Mises à jour",
     "Upscale": "Agrandir",
+    "Upstream branch is gone": "La branche amont n’existe plus",
     "Use a shorter name or move the item to a path with fewer nested folders.": "Utilisez un nom plus court ou déplacez l'élément vers un chemin contenant moins de dossiers imbriqués.",
     "Use the system thumbnail service": "Utiliser le service de vignettes du système",
     "Used": "Utilisé",
@@ -1478,9 +1509,13 @@
     "Verification failed": "Échec de la vérification",
     "Verify": "Vérifier",
     "Verify Checksums…": "Vérifier les sommes de contrôle…",
+    "Verify Integrity": "Vérifier l’intégrité",
     "Verify again": "Vérifier à nouveau",
+    "Verify copies": "Vérifier les copies",
     "Verifying checksum manifest…": "Vérification du manifeste de sommes de contrôle…",
     "Verifying file {current} of {total}": "Vérification du fichier {current} sur {total}",
+    "Verifying integrity…": "Vérification de l’intégrité…",
+    "Verifying {what}…": "Vérification de {what}…",
     "Version {version}": "Version {version}",
     "Very similar · structure {structure}/64 · detail {detail}/64": "Très similaire · structure {structure}/64 · détail {detail}/64",
     "Video": "Vidéo",
@@ -1609,6 +1644,7 @@
     "space": "espace",
     "stereo": "stéréo",
     "tab": "onglet",
+    "the copy did not match the original": "la copie ne correspondait pas à l’original",
     "the disk": "le disque",
     "this is the English source catalog, not a translation": "c’est le catalogue source anglais, pas une traduction",
     "up {uptime}": "en service depuis {uptime}",
@@ -1668,11 +1704,21 @@
       "one": "{n} tâche en arrière-plan",
       "other": "{n} tâches en arrière-plan"
     },
+    "{n} baseline recorded": "{n} références enregistrées",
     "{n} channels": "{n} canaux",
+    "{n} commit ahead of {upstream}": {
+      "one": "{n} commit d’avance sur {upstream}",
+      "other": "{n} commits d’avance sur {upstream}"
+    },
+    "{n} commit behind {upstream}": {
+      "one": "{n} commit de retard sur {upstream}",
+      "other": "{n} commits de retard sur {upstream}"
+    },
     "{n} copy · {each} each · {reclaimable} reclaimable": {
       "one": "{n} copie · {each} chacune · {reclaimable} récupérables",
       "other": "{n} copies · {each} chacune · {reclaimable} récupérables"
     },
+    "{n} corrupted": "{n} corrompus",
     "{n} day ago": {
       "one": "il y a {n} jour",
       "other": "il y a {n} jours"
@@ -1763,6 +1809,8 @@
     },
     "{n} mismatches": "{n} non-correspondances",
     "{n} missing": "{n} manquants",
+    "{n} modified since last check": "{n} modifiés depuis le dernier contrôle",
+    "{n} not checked: excluded in Privacy settings": "{n} non contrôlés : exclus dans les réglages de confidentialité",
     "{n} of {total} selected · {size}": {
       "one": "{n} sur {total} sélectionné · {size}",
       "other": "{n} sur {total} sélectionné · {size}"
@@ -1791,10 +1839,12 @@
       "one": "{n} tâche en cours",
       "other": "{n} tâches en cours"
     },
+    "{n} unreadable": "{n} illisibles",
     "{n} unsaved change": {
       "one": "{n} modification non enregistrée",
       "other": "{n} modifications non enregistrées"
     },
+    "{n} verified OK": "{n} vérifiés OK",
     "{old} → {new}: an item with that name already exists": "{old} → {new} : un élément portant ce nom existe déjà",
     "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.": "Échec de {operation} : NotFound. Le dossier a peut-être été déplacé, supprimé ou démonté. Actualisez l'emplacement parent et réessayez.",
     "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.": "Échec de {operation} : autorisation refusée. Accordez à Ferail l'accès à cet emplacement ou exécutez-le avec les autorisations suffisantes, puis réessayez.",
@@ -1823,6 +1873,7 @@
       "one": "{size} récupérables dans {n} groupe de doublons",
       "other": "{size} récupérables dans {n} groupes de doublons"
     },
+    "{summary}, verified": "{summary}, vérifié",
     "{summary}, {n} skipped": {
       "one": "{summary}, {n} ignorés",
       "other": "{summary}, {n} ignorés"

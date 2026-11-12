@@ -130,6 +130,9 @@ pub struct AppState {
     pub last_dir: Option<PathBuf>,
     pub show_hidden: Option<bool>,
     pub select_first_item: Option<bool>,
+    /// "Verify copies": read every copied file back and compare it with the
+    /// source (docs/features/INTEGRITY.md). `None` == never set (off).
+    pub verify_copies: Option<bool>,
     /// Whether the file list paints real Quick Look thumbnails instead
     /// of generic type icons. `None` == never set (defaults to `true`,
     /// thumbnails on).
@@ -480,6 +483,9 @@ fn parse(text: &str) -> AppState {
             "select_first_item" => {
                 out.select_first_item = parse_bool(val);
             }
+            "verify_copies" => {
+                out.verify_copies = parse_bool(val);
+            }
             "show_thumbnails" => {
                 out.show_thumbnails = parse_bool(val);
             }
@@ -752,6 +758,9 @@ fn serialize(state: &AppState) -> String {
     if let Some(b) = state.select_first_item {
         s.push_str(&format!("select_first_item={b}\n"));
     }
+    if let Some(b) = state.verify_copies {
+        s.push_str(&format!("verify_copies={b}\n"));
+    }
     if let Some(b) = state.show_thumbnails {
         s.push_str(&format!("show_thumbnails={b}\n"));
     }
@@ -990,6 +999,17 @@ mod tests {
         assert_eq!(back.retention_days, Some(7));
         assert_eq!(back.report_retention_days, Some(30));
         assert_eq!(back.system_thumbnails, Some(false));
+    }
+
+    #[test]
+    fn verify_copies_round_trips_and_defaults_off() {
+        assert_eq!(AppState::default().verify_copies, None);
+        let state = AppState {
+            verify_copies: Some(true),
+            ..AppState::default()
+        };
+        assert_eq!(serialize(&state), "verify_copies=true\n");
+        assert_eq!(parse(&serialize(&state)).verify_copies, Some(true));
     }
 
     #[test]

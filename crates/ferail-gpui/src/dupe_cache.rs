@@ -75,6 +75,27 @@ impl DupeHashCache for DbHashCache {
         // Write-through; a failed upsert just means the next scan re-hashes.
         let _ = guard.upsert_file(&rec);
     }
+
+    fn get_record(&self, path: &Path) -> Option<ferail_fs_native::CachedHash> {
+        let path_str = path.to_str()?;
+        let guard = self.db.lock().ok()?;
+        let rec = guard.get_file(path_str).ok().flatten()?;
+        Some(ferail_fs_native::CachedHash {
+            size: rec.size,
+            mtime_unix: rec.mtime_unix,
+            hash: rec.full_hash?,
+        })
+    }
+
+    fn records(&self, path: &Path) -> bool {
+        let Some(path_str) = path.to_str() else {
+            return false;
+        };
+        self.db
+            .lock()
+            .map(|guard| !guard.is_excluded(path_str))
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
@@ -103,5 +124,16 @@ mod tests {
         // mtime change wipes the row via upsert's stale-clear, but the
         // lookup guard also rejects it.
         assert!(cache.get_full(p, 10, 6).is_none(), "mtime changed → miss");
+    }
+
+    #[test]
+    fn record_keeps_its_key_whatever_the_file_is_now() {
+        let cache = DbHashCache::new(db(), 100);
+        let p = Path::new("/tmp/z.bin");
+        assert!(cache.get_record(p).is_none());
+        cache.put_full(p, 10, 5, "ABC");
+        let rec = cache.get_record(p).unwrap();
+        assert_eq!((rec.size, rec.mtime_unix, rec.hash.as_str()), (10, 5, "ABC"));
+        assert!(cache.records(p));
     }
 }

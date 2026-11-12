@@ -210,6 +210,14 @@ fn persist_select_first_item(value: bool) {
     });
 }
 
+fn persist_verify_copies(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        verify_copies: Some(value),
+        ..existing
+    });
+}
+
 fn persist_show_thumbnails(value: bool) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -2355,6 +2363,18 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
                 ),
                 |_cx: &App| app_state::load().select_first_item.unwrap_or(true),
                 |val: bool, _cx: &mut App| persist_select_first_item(val),
+            )),
+    );
+    let page = page.group(
+        SettingGroup::new()
+            .title(tr!("Copying"))
+            .item(switch_setting(
+                tr!("Verify copies"),
+                tr!(
+                    "Read every copied file back from the destination and compare it with the original. Copies take longer. A copy that does not match is removed and reported, and a move keeps its original. Moves on the same disk and instant clones need no check."
+                ),
+                |_cx: &App| app_state::load().verify_copies.unwrap_or(false),
+                |val: bool, _cx: &mut App| persist_verify_copies(val),
             )),
     );
     // Sidebar special-folder root, only meaningful where OneDrive's

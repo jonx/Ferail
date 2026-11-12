@@ -140,6 +140,7 @@
     "Cancel": "Cancel",
     "Cancel scan": "Cancel scan",
     "Cancelled": "Cancelled",
+    "Cancelled.": "Cancelled.",
     "Cancelled: {n} item copied": {
       "one": "Cancelled: {n} item copied",
       "other": "Cancelled: {n} items copied"
@@ -160,6 +161,7 @@
     "Channels": "Channels",
     "Check for Updates…": "Check for Updates…",
     "Check for updates automatically": "Check for updates automatically",
+    "Checked {n} files ({size})": "Checked {n} files ({size})",
     "Checking Fast NTFS availability…": "Checking Fast NTFS availability…",
     "Checking GitHub for the latest release…": "Checking GitHub for the latest release…",
     "Checking which programs have files open…": "Checking which programs have files open…",
@@ -226,6 +228,13 @@
     },
     "Compression": "Compression",
     "Confirm each match byte-for-byte after hashing. Removes any hash-collision doubt at the cost of re-reading confirmed groups.": "Confirm each match byte-for-byte after hashing. Removes any hash-collision doubt at the cost of re-reading confirmed groups.",
+    "Conflicted: unresolved merge": "Conflicted: unresolved merge",
+    "Contains deleted files": "Contains deleted files",
+    "Contains merge conflicts": "Contains merge conflicts",
+    "Contains modified files": "Contains modified files",
+    "Contains renamed files": "Contains renamed files",
+    "Contains staged changes": "Contains staged changes",
+    "Contains untracked files": "Contains untracked files",
     "Context": "Context",
     "Context menus": "Context menus",
     "Contrast": "Contrast",
@@ -276,12 +285,14 @@
     "Copy missing and newer to top": "Copy missing and newer to top",
     "Copy report": "Copy report",
     "Copy to Other Pane": "Copy to Other Pane",
+    "Copying": "Copying",
     "Copying failed: {detail}": "Copying failed: {detail}",
     "Copying {what} to “{dest}”…": "Copying {what} to “{dest}”…",
     "Copying: preparing ({n} item)…": {
       "one": "Copying: preparing ({n} item)…",
       "other": "Copying: preparing ({n} items)…"
     },
+    "Corrupted": "Corrupted",
     "Could not calculate SHA-256: {detail}": "Could not calculate SHA-256: {detail}",
     "Could not compare: {error}": "Could not compare: {error}",
     "Could not create checksum file: {detail}": "Could not create checksum file: {detail}",
@@ -375,6 +386,7 @@
     "Delete Immediately?": "Delete Immediately?",
     "Delete Immediately…": "Delete Immediately…",
     "Delete as administrator…": "Delete as administrator…",
+    "Deleted": "Deleted",
     "Deleted {n} item": {
       "one": "Deleted {n} item",
       "other": "Deleted {n} items"
@@ -398,6 +410,7 @@
     "Descend into Packages": "Descend into Packages",
     "Description": "Description",
     "Desktop": "Desktop",
+    "Detached at {commit}": "Detached at {commit}",
     "Detail ≤ {value}": "Detail ≤ {value}",
     "Details": "Details",
     "Detect file types and tags": "Detect file types and tags",
@@ -594,6 +607,7 @@
     "Finding duplicates in {root}": "Finding duplicates in {root}",
     "Finding duplicates: {files} files compared": "Finding duplicates: {files} files compared",
     "Finding similar images in {root}": "Finding similar images in {root}",
+    "Finds files whose contents changed while their size and modification date stayed the same. Only files hashed before can be checked: by a verified copy, Find Duplicates, Compare Folders or an earlier Verify Integrity.": "Finds files whose contents changed while their size and modification date stayed the same. Only files hashed before can be checked: by a verified copy, Find Duplicates, Compare Folders or an earlier Verify Integrity.",
     "Fit": "Fit",
     "Fit height": "Fit height",
     "Fit to Window": "Fit to Window",
@@ -626,6 +640,7 @@
     "Get Info": "Get Info",
     "Get Info: {name}": "Get Info: {name}",
     "Get Info?": "Get Info?",
+    "Git": "Git",
     "GitHub returned update information that Ferail couldn't understand.": "GitHub returned update information that Ferail couldn't understand.",
     "GitHub's update service is temporarily unavailable. Try again later.": "GitHub's update service is temporarily unavailable. Try again later.",
     "GitHub's update-check limit was reached. Try again later.": "GitHub's update-check limit was reached. Try again later.",
@@ -671,6 +686,7 @@
     "Icon view": "Icon view",
     "Identical: {count}": "Identical: {count}",
     "Ignore small files": "Ignore small files",
+    "Ignored by Git": "Ignored by Git",
     "Image": "Image",
     "Import": "Import",
     "Imported {language}: {translated} of {total} strings translated": "Imported {language}: {translated} of {total} strings translated",
@@ -778,6 +794,7 @@
     "Missing": "Missing",
     "Modified": "Modified",
     "Modified since the previous scan": "Modified since the previous scan",
+    "Modified, not staged": "Modified, not staged",
     "More": "More",
     "More options from Windows…": "More options from Windows…",
     "More sidecars may be present.": "More sidecars may be present.",
@@ -848,6 +865,8 @@
     "No active tasks.": "No active tasks.",
     "No activity recorded yet.": "No activity recorded yet.",
     "No applications found": "No applications found",
+    "No corruption found in the files checked before cancelling.": "No corruption found in the files checked before cancelling.",
+    "No corruption found.": "No corruption found.",
     "No downloadable Ferail release was found on GitHub.": "No downloadable Ferail release was found on GitHub.",
     "No duplicates": "No duplicates",
     "No duplicates found": "No duplicates found",
@@ -871,9 +890,11 @@
     "No selection": "No selection",
     "No similar images found.": "No similar images found.",
     "No subfolders": "No subfolders",
+    "No upstream branch": "No upstream branch",
     "No visible items": "No visible items",
     "Node.js script": "Node.js script",
     "None": "None",
+    "None of these files had been hashed before, so nothing could be compared yet. Their checksums are recorded now, and the next Verify Integrity will check them.": "None of these files had been hashed before, so nothing could be compared yet. Their checksums are recorded now, and the next Verify Integrity will check them.",
     "Normal": "Normal",
     "Not compared: {count}": "Not compared: {count}",
     "Not downloaded": "Not downloaded",
@@ -887,6 +908,7 @@
     "Off": "Off",
     "Ogg audio": "Ogg audio",
     "On": "On",
+    "On branch {branch}": "On branch {branch}",
     "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default: when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.": "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default: when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.",
     "OneDrive": "OneDrive",
     "Only bottom: {count}": "Only bottom: {count}",
@@ -1029,6 +1051,7 @@
     "Read & write": "Read & write",
     "Read NTFS metadata with a temporary administrator helper": "Read NTFS metadata with a temporary administrator helper",
     "Read each file's contents to name its type in the Format column and read its Finder tags for the colour dots. Both are per-file disk reads on every folder. Off falls back to types from the file extension and hides tag dots.": "Read each file's contents to name its type in the Format column and read its Finder tags for the colour dots. Both are per-file disk reads on every folder. Off falls back to types from the file extension and hides tag dots.",
+    "Read every copied file back from the destination and compare it with the original. Copies take longer. A copy that does not match is removed and reported, and a move keeps its original. Moves on the same disk and instant clones need no check.": "Read every copied file back from the destination and compare it with the original. Copies take longer. A copy that does not match is removed and reported, and a move keeps its original. Moves on the same disk and instant clones need no check.",
     "Read-only": "Read-only",
     "Read-only volume": "Read-only volume",
     "Reading NTFS metadata… {percent}% · {completed} / {total} records": "Reading NTFS metadata… {percent}% · {completed} / {total} records",
@@ -1084,6 +1107,7 @@
       "one": "Rename {n} Item…",
       "other": "Rename {n} Items…"
     },
+    "Renamed": "Renamed",
     "Renamed {n} item": {
       "one": "Renamed {n} item",
       "other": "Renamed {n} items"
@@ -1255,6 +1279,7 @@
     "Show the expandable Home folder tree in the sidebar.": "Show the expandable Home folder tree in the sidebar.",
     "Show the full treemap and dim non-matches": "Show the full treemap and dim non-matches",
     "Showing info for the first {cap} of {total} items.": "Showing info for the first {cap} of {total} items.",
+    "Showing the first {shown} of {total} corrupted files.": "Showing the first {shown} of {total} corrupted files.",
     "Showing {n} item in {app}": {
       "one": "Showing {n} item in {app}",
       "other": "Showing {n} items in {app}"
@@ -1314,6 +1339,7 @@
     "Split View (Shift-click to stack)": "Split View (Shift-click to stack)",
     "Split the window first: there is no other pane to send items to.": "Split the window first: there is no other pane to send items to.",
     "Spotlight": "Spotlight",
+    "Staged for commit": "Staged for commit",
     "Standard": "Standard",
     "Standard opens the terminal normally. Administrator opens it with elevated rights: a UAC prompt on Windows; on macOS and Linux the window opens into a root shell, with sudo asking for your password inside the terminal.": "Standard opens the terminal normally. Administrator opens it with elevated rights: a UAC prompt on Windows; on macOS and Linux the window opens into a root shell, with sudo asking for your password inside the terminal.",
     "Start": "Start",
@@ -1364,9 +1390,11 @@
     "The comparison will appear when calculation finishes.": "The comparison will appear when calculation finishes.",
     "The converted archive name must be a single non-empty filename.": "The converted archive name must be a single non-empty filename.",
     "The destination is read-only. Choose a writable folder or change the volume's permissions.": "The destination is read-only. Choose a writable folder or change the volume's permissions.",
+    "The faulty copy was removed and the original kept. Check the destination disk, then try again.": "The faulty copy was removed and the original kept. Check the destination disk, then try again.",
     "The highlight behind selected files in the list and grid. Clear it to follow the theme's blue.": "The highlight behind selected files in the list and grid. Clear it to follow the theme's blue.",
     "The item may have moved or been deleted. Refresh the folder and try again.": "The item may have moved or been deleted. Refresh the folder and try again.",
     "The last folder and the tabs to reopen at the next launch.": "The last folder and the tabs to reopen at the next launch.",
+    "The metadata database is not available, so there are no recorded checksums to compare with.": "The metadata database is not available, so there are no recorded checksums to compare with.",
     "The name must be a single non-empty filename.": "The name must be a single non-empty filename.",
     "The other pane is not showing a folder.": "The other pane is not showing a folder.",
     "The shortcut target is missing": "The shortcut target is missing",
@@ -1467,10 +1495,13 @@
     "Unsaved": "Unsaved",
     "Unsaved Changes": "Unsaved Changes",
     "Untitled folder": "Untitled folder",
+    "Untracked": "Untracked",
     "Unusual whitespace": "Unusual whitespace",
+    "Up to date with {upstream}": "Up to date with {upstream}",
     "Update available": "Update available",
     "Updates": "Updates",
     "Upscale": "Upscale",
+    "Upstream branch is gone": "Upstream branch is gone",
     "Use a shorter name or move the item to a path with fewer nested folders.": "Use a shorter name or move the item to a path with fewer nested folders.",
     "Use the system thumbnail service": "Use the system thumbnail service",
     "Used": "Used",
@@ -1478,9 +1509,13 @@
     "Verification failed": "Verification failed",
     "Verify": "Verify",
     "Verify Checksums…": "Verify Checksums…",
+    "Verify Integrity": "Verify Integrity",
     "Verify again": "Verify again",
+    "Verify copies": "Verify copies",
     "Verifying checksum manifest…": "Verifying checksum manifest…",
     "Verifying file {current} of {total}": "Verifying file {current} of {total}",
+    "Verifying integrity…": "Verifying integrity…",
+    "Verifying {what}…": "Verifying {what}…",
     "Version {version}": "Version {version}",
     "Very similar · structure {structure}/64 · detail {detail}/64": "Very similar · structure {structure}/64 · detail {detail}/64",
     "Video": "Video",
@@ -1609,6 +1644,7 @@
     "space": "space",
     "stereo": "stereo",
     "tab": "tab",
+    "the copy did not match the original": "the copy did not match the original",
     "the disk": "the disk",
     "this is the English source catalog, not a translation": "this is the English source catalog, not a translation",
     "up {uptime}": "up {uptime}",
@@ -1668,11 +1704,21 @@
       "one": "{n} background task",
       "other": "{n} background tasks"
     },
+    "{n} baseline recorded": "{n} baseline recorded",
     "{n} channels": "{n} channels",
+    "{n} commit ahead of {upstream}": {
+      "one": "{n} commit ahead of {upstream}",
+      "other": "{n} commits ahead of {upstream}"
+    },
+    "{n} commit behind {upstream}": {
+      "one": "{n} commit behind {upstream}",
+      "other": "{n} commits behind {upstream}"
+    },
     "{n} copy · {each} each · {reclaimable} reclaimable": {
       "one": "{n} copy · {each} each · {reclaimable} reclaimable",
       "other": "{n} copies · {each} each · {reclaimable} reclaimable"
     },
+    "{n} corrupted": "{n} corrupted",
     "{n} day ago": {
       "one": "{n} day ago",
       "other": "{n} days ago"
@@ -1763,6 +1809,8 @@
     },
     "{n} mismatches": "{n} mismatches",
     "{n} missing": "{n} missing",
+    "{n} modified since last check": "{n} modified since last check",
+    "{n} not checked: excluded in Privacy settings": "{n} not checked: excluded in Privacy settings",
     "{n} of {total} selected · {size}": {
       "one": "{n} of {total} selected · {size}",
       "other": "{n} of {total} selected · {size}"
@@ -1791,10 +1839,12 @@
       "one": "{n} task running",
       "other": "{n} tasks running"
     },
+    "{n} unreadable": "{n} unreadable",
     "{n} unsaved change": {
       "one": "{n} unsaved change",
       "other": "{n} unsaved changes"
     },
+    "{n} verified OK": "{n} verified OK",
     "{old} → {new}: an item with that name already exists": "{old} → {new}: an item with that name already exists",
     "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.": "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.",
     "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.": "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.",
@@ -1823,6 +1873,7 @@
       "one": "{size} reclaimable in {n} duplicate group",
       "other": "{size} reclaimable in {n} duplicate groups"
     },
+    "{summary}, verified": "{summary}, verified",
     "{summary}, {n} skipped": {
       "one": "{summary}, {n} skipped",
       "other": "{summary}, {n} skipped"

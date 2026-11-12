@@ -5033,6 +5033,11 @@ impl Render for Shell {
             } else {
                 filter_summary.bytes
             },
+            git_branch: if archive_mode || platform_mode {
+                None
+            } else {
+                self.active_tab().git_branch.clone()
+            },
             // Filled in just before the status_bar::render call, where
             // the window id is in hand.
             stats: None,
@@ -5147,6 +5152,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_generate_sha256))
             .on_action(cx.listener(Self::on_verify_checksums))
             .on_action(cx.listener(Self::on_create_checksum_file))
+            .on_action(cx.listener(Self::on_verify_integrity))
             .on_action(cx.listener(Self::on_copy_file_list))
             .on_action(cx.listener(Self::on_copy_files))
             .on_action(cx.listener(Self::on_cut_files))

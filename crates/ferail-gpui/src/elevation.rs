@@ -202,6 +202,7 @@ fn kind_name(k: FileOpErrorKind) -> &'static str {
         FileOpErrorKind::ReadOnly => "ReadOnly",
         FileOpErrorKind::NameTooLong => "NameTooLong",
         FileOpErrorKind::AlreadyExists => "AlreadyExists",
+        FileOpErrorKind::VerifyFailed => "VerifyFailed",
         FileOpErrorKind::Other => "Other",
     }
 }
@@ -214,6 +215,7 @@ fn kind_from_name(s: &str) -> FileOpErrorKind {
         "ReadOnly" => FileOpErrorKind::ReadOnly,
         "NameTooLong" => FileOpErrorKind::NameTooLong,
         "AlreadyExists" => FileOpErrorKind::AlreadyExists,
+        "VerifyFailed" => FileOpErrorKind::VerifyFailed,
         _ => FileOpErrorKind::Other,
     }
 }

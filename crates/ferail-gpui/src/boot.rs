@@ -910,6 +910,10 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                     title("file.create_checksum_file", "Create Checksum File…"),
                     CreateChecksumFile,
                 ),
+                MenuItem::action(
+                    title("file.verify_integrity", "Verify Integrity"),
+                    crate::shell::VerifyIntegrity,
+                ),
                 MenuItem::separator(),
                 // Favorites (docs/features/FAVORITES.md). The Cmd+D toggle
                 // acts on the selected folder, else the current folder:

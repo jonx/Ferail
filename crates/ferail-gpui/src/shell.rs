@@ -490,6 +490,7 @@ fn dominant_failure_kind(
         K::NameTooLong => 4,
         K::AlreadyExists => 5,
         K::NotFound => 6,
+        K::VerifyFailed => 7,
         K::Other => 9,
     };
     failed
@@ -2651,6 +2652,7 @@ impl Shell {
             this.was_window_active = active;
             if returned {
                 this.restart_folder_size_passes(false, cx);
+                this.refresh_git_on_activation(cx);
             }
         });
         shell._subscriptions.push(activation_subscription);
@@ -3536,6 +3538,7 @@ impl Shell {
         if let Some(panel) = self.preview_panel.clone() {
             panel.update(cx, |panel, cx| panel.reload_info(cx));
         }
+        crate::git_status::invalidate(&self.process, std::slice::from_ref(&path), true);
         self.load_path(path, cx);
         if let Some(sidecar) = sidecar_to_reload {
             crate::text_preview::request(self, sidecar, cx);
@@ -6112,6 +6115,7 @@ impl Shell {
         // visible range matches the previous one's.
         self.warm_loaded_viewport_in_tab(idx, cx);
         self.refresh_volume_info_in_tab(idx, cx);
+        self.refresh_git_in_tab(idx, cx);
         if visible {
             cx.notify();
         }
@@ -6716,6 +6720,7 @@ impl Shell {
             return;
         }
         Self::invalidate_folder_size_ancestors(process, &paths, cx);
+        crate::git_status::invalidate(process, &paths, false);
         for weak in process.live_shells() {
             if let Some(shell) = weak.upgrade() {
                 let paths = paths.clone();

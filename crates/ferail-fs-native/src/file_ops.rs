@@ -18,12 +18,12 @@
 //!
 //! Never touches UI, pasteboard, SQLite, or AppKit.
 
+use crate::dupes::{mtime_unix, DupeHashCache};
 use ferail_core::msgid;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
-#[cfg(not(target_os = "macos"))]
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -64,6 +64,10 @@ pub enum FileOpErrorKind {
     ReadOnly,
     NameTooLong,
     AlreadyExists,
+    /// "Verify copies" read the copy back and it did not match what was read
+    /// from the source, or it could not be read back at all. The copy is
+    /// removed; a move keeps its source.
+    VerifyFailed,
     /// Anything not specifically classified: the raw text still carries it.
     Other,
 }
@@ -80,6 +84,7 @@ impl FileOpErrorKind {
             Self::ReadOnly => msgid!("destination is read-only"),
             Self::NameTooLong => msgid!("name too long"),
             Self::AlreadyExists => msgid!("already exists"),
+            Self::VerifyFailed => msgid!("the copy did not match the original"),
             Self::Other => msgid!("could not be completed"),
         }
     }
@@ -107,6 +112,9 @@ impl FileOpErrorKind {
             Self::AlreadyExists => {
                 msgid!("Choose a different name or remove the existing item, then try again.")
             }
+            Self::VerifyFailed => msgid!(
+                "The faulty copy was removed and the original kept. Check the destination disk, then try again."
+            ),
             Self::Other => msgid!(
                 "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager."
             ),
@@ -251,6 +259,9 @@ pub struct TransferProgress {
     /// doesn't look hung while `plan_transfer` walks it.
     planned: AtomicU64,
     planning: AtomicBool,
+    /// Set while "Verify copies" reads a finished copy back, so the UI can
+    /// say so instead of "Copying".
+    verifying: AtomicBool,
     name: Mutex<NameState>,
 }
 
@@ -274,6 +285,7 @@ impl TransferProgress {
             items_done: AtomicU64::new(0),
             planned: AtomicU64::new(0),
             planning: AtomicBool::new(true),
+            verifying: AtomicBool::new(false),
             name: Mutex::new(NameState {
                 last: None,
                 name: Arc::from(""),
@@ -318,6 +330,20 @@ impl TransferProgress {
     }
     pub fn items_total(&self) -> u64 {
         self.items_total.load(Ordering::Relaxed)
+    }
+
+    /// Grow the byte total: verification adds a second read of every copied
+    /// byte, and the bar should account for it rather than sit at 100%.
+    pub fn add_bytes_total(&self, n: u64) {
+        self.bytes_total.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// Whether a finished copy is being read back for verification.
+    pub fn is_verifying(&self) -> bool {
+        self.verifying.load(Ordering::Relaxed)
+    }
+    fn set_verifying(&self, on: bool) {
+        self.verifying.store(on, Ordering::Relaxed);
     }
 
     /// Publish `path`'s file name as the current item, throttled to
@@ -399,6 +425,13 @@ pub struct OpOutcome {
     /// and moves on, so a 10-item paste that trips on item 3 still attempts
     /// 4..10 and reports exactly what failed and why.
     pub failed: Vec<FileOpError>,
+    /// Files whose copy was read back and matched the source ("Verify
+    /// copies"). Always 0 when verification was off.
+    pub verified: u64,
+    /// Top-level items copied as an APFS clone while verification was on.
+    /// A clone shares the source's blocks, so it is verified by
+    /// construction and is not read back.
+    pub cloned: u64,
 }
 
 impl OpOutcome {
@@ -406,6 +439,37 @@ impl OpOutcome {
     pub fn has_failures(&self) -> bool {
         !self.failed.is_empty()
     }
+
+    /// True when verification ran and everything that landed was either
+    /// read back and matched, or cloned (verified by construction).
+    pub fn all_verified(&self) -> bool {
+        !self.cancelled && !self.has_failures() && (self.verified > 0 || self.cloned > 0)
+    }
+}
+
+/// Options for [`run_copy_with`] / [`run_move_with`]. The default is the
+/// plain transfer that [`run_copy`] / [`run_move`] perform.
+#[derive(Clone, Copy, Default)]
+pub struct TransferOpts<'a> {
+    /// "Verify copies": hash each file with BLAKE3 while it is copied, read
+    /// the copy back from the destination, and fail the item (removing the
+    /// copy) when the two differ. Same-volume moves (a rename) and APFS
+    /// clones need no check.
+    pub verify: bool,
+    /// Where verified hashes are recorded, so Verify Integrity and the
+    /// duplicate finder can reuse them. Only consulted when `verify` is on.
+    pub hash_cache: Option<&'a dyn DupeHashCache>,
+    /// Test seam: runs on each finished copy just before it is read back.
+    pub before_verify: Option<&'a dyn Fn(&Path)>,
+}
+
+/// Per-run state the leaf copier threads through a tree walk.
+struct LeafCtx<'o, 'a> {
+    opts: &'o TransferOpts<'a>,
+    /// Also record the source's hash. A copy keeps its source; a move is
+    /// about to delete it.
+    seed_source: bool,
+    verified: u64,
 }
 
 /// Naming scheme for collision-free names.
@@ -774,6 +838,233 @@ fn copy_file_chunked(
     Ok(true)
 }
 
+/// Buffer for the verifying copy and for its read-back.
+const VERIFY_CHUNK: usize = 1024 * 1024;
+
+/// Copy one leaf file and prove the copy: [`copy_file_hashed`] hashes the
+/// source as it is read (one read of the source), then the destination is
+/// read back from disk and hashed again. A difference, or a destination that
+/// cannot be read back, removes the copy and fails the item with
+/// [`FileOpErrorKind::VerifyFailed`], recorded against the source so Retry
+/// re-runs it. `Ok(false)` on cancellation, with the copy removed.
+fn copy_leaf_verified(
+    src: &Path,
+    dst: &Path,
+    prog: &TransferProgress,
+    cancel: &AtomicBool,
+    ctx: &mut LeafCtx<'_, '_>,
+) -> Result<bool, FileOpError> {
+    let before = fs::symlink_metadata(src).map_err(|e| FileOpError::from_io(&e, src))?;
+    let Some((expected, copied_len)) = copy_file_hashed(src, dst, prog, cancel)? else {
+        return Ok(false);
+    };
+    if let Some(hook) = ctx.opts.before_verify {
+        hook(dst);
+    }
+    prog.set_verifying(true);
+    let reread = hash_file_uncached(dst, prog, cancel);
+    prog.set_verifying(false);
+    let actual = match reread {
+        Ok(Some(hash)) => hash,
+        Ok(None) => {
+            let _ = fs::remove_file(dst);
+            return Ok(false);
+        }
+        Err(e) => {
+            let _ = fs::remove_file(dst);
+            return Err(FileOpError {
+                kind: FileOpErrorKind::VerifyFailed,
+                path: src.to_path_buf(),
+                raw: format!(
+                    "{}: the copy could not be read back to verify it ({e}); the copy was removed",
+                    dst.display()
+                ),
+                os_code: e.raw_os_error(),
+            });
+        }
+    };
+    if actual != expected {
+        let _ = fs::remove_file(dst);
+        return Err(FileOpError::other(
+            src,
+            FileOpErrorKind::VerifyFailed,
+            format!(
+                "{}: the copy read back as BLAKE3 {} but {} was written; the copy was removed",
+                dst.display(),
+                actual.to_hex(),
+                expected.to_hex()
+            ),
+        ));
+    }
+    ctx.verified += 1;
+    if let Some(cache) = ctx.opts.hash_cache {
+        let hex = expected.to_hex();
+        if let Ok(meta) = fs::symlink_metadata(dst) {
+            if meta.len() == copied_len {
+                cache.put_full(dst, meta.len(), mtime_unix(&meta), hex.as_str());
+            }
+        }
+        // The source's hash is only worth keeping when the source did not
+        // change while it was read: same size and mtime before and after,
+        // and exactly that many bytes read.
+        if ctx.seed_source {
+            if let Ok(after) = fs::symlink_metadata(src) {
+                if after.len() == before.len()
+                    && after.len() == copied_len
+                    && mtime_unix(&after) == mtime_unix(&before)
+                {
+                    cache.put_full(src, after.len(), mtime_unix(&after), hex.as_str());
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// Copy `src` to `dst` in [`VERIFY_CHUNK`] pieces, hashing every byte read
+/// with BLAKE3. Runs of zeros are skipped with a seek rather than written, so
+/// a sparse source stays sparse. On macOS the source's metadata (xattrs,
+/// ACLs, flags, mode, timestamps) is applied afterwards with `fcopyfile`, the
+/// metadata half of what the unverified `copyfile` path carries; elsewhere
+/// the permissions, as the chunked fallback does. Returns the hash and the
+/// number of bytes copied, or `None` on cancellation. Any failure or
+/// cancellation removes the partial destination.
+fn copy_file_hashed(
+    src: &Path,
+    dst: &Path,
+    prog: &TransferProgress,
+    cancel: &AtomicBool,
+) -> Result<Option<(blake3::Hash, u64)>, FileOpError> {
+    let mut reader = fs::File::open(src).map_err(|e| FileOpError::from_io(&e, src))?;
+    let mut writer = fs::File::create(dst).map_err(|e| FileOpError::from_io(&e, dst))?;
+    let result = (|| -> Result<Option<(blake3::Hash, u64)>, FileOpError> {
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = vec![0u8; VERIFY_CHUNK];
+        let mut len: u64 = 0;
+        let mut trailing_hole = false;
+        loop {
+            let n = reader
+                .read(&mut buf)
+                .map_err(|e| FileOpError::from_io(&e, src))?;
+            if n == 0 {
+                break;
+            }
+            // Same rule as the chunked copy: cancel only while bytes remain.
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
+            let chunk = &buf[..n];
+            hasher.update(chunk);
+            if chunk.iter().all(|&b| b == 0) {
+                writer
+                    .seek(SeekFrom::Current(n as i64))
+                    .map_err(|e| FileOpError::from_io(&e, dst))?;
+                trailing_hole = true;
+            } else {
+                writer
+                    .write_all(chunk)
+                    .map_err(|e| FileOpError::from_io(&e, dst))?;
+                trailing_hole = false;
+            }
+            len += n as u64;
+            prog.add_bytes(n as u64);
+        }
+        if trailing_hole {
+            writer
+                .set_len(len)
+                .map_err(|e| FileOpError::from_io(&e, dst))?;
+        }
+        copy_metadata(src, &reader, dst, &writer);
+        Ok(Some((hasher.finalize(), len)))
+    })();
+    match result {
+        Ok(Some(done)) => Ok(Some(done)),
+        other => {
+            drop(writer);
+            let _ = fs::remove_file(dst);
+            other
+        }
+    }
+}
+
+/// Carry the source's metadata onto a copy whose bytes were written by hand.
+/// Best effort, like the permissions copy of the chunked fallback: a refusal
+/// leaves a correct copy with default metadata.
+fn copy_metadata(src: &Path, reader: &fs::File, dst: &Path, writer: &fs::File) {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let _ = (src, dst);
+        // SAFETY: both descriptors are open for the duration of the call and
+        // a null state is documented as allowed.
+        unsafe {
+            libc::fcopyfile(
+                reader.as_raw_fd(),
+                writer.as_raw_fd(),
+                std::ptr::null_mut(),
+                libc::COPYFILE_METADATA,
+            );
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (reader, writer);
+        if let Ok(meta) = fs::metadata(src) {
+            let _ = fs::set_permissions(dst, meta.permissions());
+        }
+    }
+}
+
+/// BLAKE3 of `path`, read back for verification. On macOS the descriptor is
+/// opened with `F_NOCACHE`, asking the kernel not to keep these pages; pages
+/// still resident from the write can satisfy the read regardless, so this is
+/// a hint, not a guarantee of a media read. Credits the bytes to `prog`.
+/// `Ok(None)` on cancellation.
+fn hash_file_uncached(
+    path: &Path,
+    prog: &TransferProgress,
+    cancel: &AtomicBool,
+) -> std::io::Result<Option<blake3::Hash>> {
+    let mut file = fs::File::open(path)?;
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::io::AsRawFd;
+        // SAFETY: plain fcntl on a descriptor we own.
+        unsafe {
+            libc::fcntl(file.as_raw_fd(), libc::F_NOCACHE, 1);
+        }
+    }
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = vec![0u8; VERIFY_CHUNK];
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        prog.add_bytes(n as u64);
+    }
+    Ok(Some(hasher.finalize()))
+}
+
+/// One leaf file through the plain or the verifying copier.
+fn copy_leaf(
+    src: &Path,
+    dst: &Path,
+    prog: &TransferProgress,
+    cancel: &AtomicBool,
+    ctx: &mut LeafCtx<'_, '_>,
+) -> Result<bool, FileOpError> {
+    if ctx.opts.verify {
+        copy_leaf_verified(src, dst, prog, cancel, ctx)
+    } else {
+        copy_leaf_file(src, dst, prog, cancel)
+    }
+}
+
 /// Copy one top-level item (file, dir tree, or symlink) by real byte
 /// movement: the path taken when the instant clone isn't available
 /// (cross-volume, non-APFS, non-mac). Returns `false` on cancellation;
@@ -784,6 +1075,7 @@ fn copy_item(
     dst: &Path,
     prog: &TransferProgress,
     cancel: &AtomicBool,
+    ctx: &mut LeafCtx<'_, '_>,
 ) -> Result<bool, FileOpError> {
     let meta = fs::symlink_metadata(src).map_err(|e| FileOpError::from_io(&e, src))?;
     if meta.is_symlink() {
@@ -793,7 +1085,7 @@ fn copy_item(
     }
     if !meta.is_dir() {
         prog.note_current(src);
-        let ok = copy_leaf_file(src, dst, prog, cancel)?;
+        let ok = copy_leaf(src, dst, prog, cancel, ctx)?;
         if ok {
             prog.add_items(1);
         }
@@ -824,7 +1116,7 @@ fn copy_item(
                 stack.push((sp, dp));
             } else {
                 prog.note_current(&sp);
-                if !copy_leaf_file(&sp, &dp, prog, cancel)? {
+                if !copy_leaf(&sp, &dp, prog, cancel, ctx)? {
                     return Ok(false);
                 }
                 prog.add_items(1);
@@ -886,6 +1178,9 @@ fn recreate_symlink(src: &Path, dst: &Path) -> Result<(), FileOpError> {
 /// any clonefile refusal: clonefile is atomic, so a refusal leaves no
 /// partial destination behind).
 fn try_clone(src: &Path, dst: &Path, dest_dir: &Path) -> bool {
+    if test_seam::forced_cross_volume() {
+        return false;
+    }
     #[cfg(target_os = "macos")]
     {
         same_volume(src, dest_dir) && mac::clone_path(src, dst).is_ok()
@@ -907,10 +1202,35 @@ pub fn run_copy(
     prog: &TransferProgress,
     cancel: &AtomicBool,
 ) -> Result<OpOutcome, String> {
+    run_copy_with(plan, policy_for, &TransferOpts::default(), prog, cancel)
+}
+
+/// [`run_copy`] with [`TransferOpts`]. With `verify`, the progress total
+/// grows by the planned bytes (every copied byte is read twice) and a clone
+/// credits its bytes twice, so the bar still ends at 100%.
+pub fn run_copy_with(
+    plan: &OpPlan,
+    policy_for: &dyn Fn(&Path) -> CollisionPolicy,
+    opts: &TransferOpts<'_>,
+    prog: &TransferProgress,
+    cancel: &AtomicBool,
+) -> Result<OpOutcome, String> {
+    let weight = if opts.verify {
+        prog.add_bytes_total(plan.total_bytes);
+        2
+    } else {
+        1
+    };
+    let mut ctx = LeafCtx {
+        opts,
+        seed_source: true,
+        verified: 0,
+    };
     let mut outcome = OpOutcome::default();
     for (i, src) in plan.sources.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             outcome.cancelled = true;
+            outcome.verified = ctx.verified;
             return Ok(outcome);
         }
         // A per-item resolution failure (bad name, failed Replace-delete, no
@@ -932,23 +1252,28 @@ pub fn run_copy(
         prog.note_current(src);
         // Tier 1: same-volume clone: instant, whole tree, zero bytes.
         let item = if try_clone(src, &dst, &plan.dest_dir) {
-            prog.add_bytes(plan.source_bytes.get(i).copied().unwrap_or(0));
+            prog.add_bytes(plan.source_bytes.get(i).copied().unwrap_or(0) * weight);
             prog.add_items(plan.source_items.get(i).copied().unwrap_or(0));
+            if opts.verify {
+                outcome.cloned += 1;
+            }
             Ok(true)
         } else {
-            copy_item(src, &dst, prog, cancel)
+            copy_item(src, &dst, prog, cancel, &mut ctx)
         };
         match item {
             Ok(true) => outcome.created.push((src.clone(), dst)),
             // Cancellation mid-item stops the whole batch (partial reported).
             Ok(false) => {
                 outcome.cancelled = true;
+                outcome.verified = ctx.verified;
                 return Ok(outcome);
             }
             // A hard failure on this item is recorded; the batch continues.
             Err(e) => outcome.failed.push(e),
         }
     }
+    outcome.verified = ctx.verified;
     Ok(outcome)
 }
 
@@ -962,10 +1287,35 @@ pub fn run_move(
     prog: &TransferProgress,
     cancel: &AtomicBool,
 ) -> Result<OpOutcome, String> {
+    run_move_with(plan, policy_for, &TransferOpts::default(), prog, cancel)
+}
+
+/// [`run_move`] with [`TransferOpts`]. Verification applies to the copy half
+/// of a cross-volume move; a source is deleted only after its copy verified.
+/// A same-volume rename moves no bytes and is not verified.
+pub fn run_move_with(
+    plan: &OpPlan,
+    policy_for: &dyn Fn(&Path) -> CollisionPolicy,
+    opts: &TransferOpts<'_>,
+    prog: &TransferProgress,
+    cancel: &AtomicBool,
+) -> Result<OpOutcome, String> {
+    let weight = if opts.verify {
+        prog.add_bytes_total(plan.total_bytes);
+        2
+    } else {
+        1
+    };
+    let mut ctx = LeafCtx {
+        opts,
+        seed_source: false,
+        verified: 0,
+    };
     let mut outcome = OpOutcome::default();
     for (i, src) in plan.sources.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             outcome.cancelled = true;
+            outcome.verified = ctx.verified;
             return Ok(outcome);
         }
         let (dst, replaced) = match resolve_dest(src, &plan.dest_dir, policy_for(src)) {
@@ -983,11 +1333,13 @@ pub fn run_move(
             outcome.replaced += 1;
         }
         prog.note_current(src);
-        let item: Result<bool, FileOpError> = if same_volume(src, &plan.dest_dir) {
+        let item: Result<bool, FileOpError> = if !test_seam::forced_cross_volume()
+            && same_volume(src, &plan.dest_dir)
+        {
             match fs::rename(src, &dst) {
                 Ok(()) => {
                     // Credit the whole item's bytes/items in one jump.
-                    prog.add_bytes(plan.source_bytes.get(i).copied().unwrap_or(0));
+                    prog.add_bytes(plan.source_bytes.get(i).copied().unwrap_or(0) * weight);
                     prog.add_items(plan.source_items.get(i).copied().unwrap_or(0));
                     Ok(true)
                 }
@@ -996,7 +1348,7 @@ pub fn run_move(
         } else {
             // Cross-volume: copy, then delete the source only when its copy
             // fully landed (a cancelled copy leaves the source intact).
-            match copy_item(src, &dst, prog, cancel) {
+            match copy_item(src, &dst, prog, cancel, &mut ctx) {
                 Ok(false) => Ok(false),
                 Ok(true) => match fs::symlink_metadata(src) {
                     Ok(meta) => {
@@ -1018,12 +1370,40 @@ pub fn run_move(
             Ok(true) => outcome.created.push((src.clone(), dst)),
             Ok(false) => {
                 outcome.cancelled = true;
+                outcome.verified = ctx.verified;
                 return Ok(outcome);
             }
             Err(e) => outcome.failed.push(e),
         }
     }
+    outcome.verified = ctx.verified;
     Ok(outcome)
+}
+
+/// Unit tests run in one temp directory, where a copy clones and a move
+/// renames. This per-thread switch sends them down the byte-copy path that a
+/// cross-volume transfer takes. Always off outside tests.
+mod test_seam {
+    #[cfg(test)]
+    thread_local! {
+        static FORCE_CROSS_VOLUME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    #[cfg(test)]
+    pub(super) fn force_cross_volume(on: bool) {
+        FORCE_CROSS_VOLUME.with(|f| f.set(on));
+    }
+
+    #[cfg(test)]
+    pub(super) fn forced_cross_volume() -> bool {
+        FORCE_CROSS_VOLUME.with(|f| f.get())
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    pub(super) fn forced_cross_volume() -> bool {
+        false
+    }
 }
 
 /// macOS-native copy primitives: `clonefile(2)` (instant CoW clone) and
@@ -1680,5 +2060,437 @@ mod write_new_file_tests {
         assert_eq!(std::fs::read(&first).unwrap(), b"one");
         assert_eq!(std::fs::read(&second).unwrap(), b"two");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+    use crate::dupes::CachedHash;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    /// In-memory stand-in for the metadata-database hash cache.
+    #[derive(Default)]
+    struct MemCache(RefCell<HashMap<PathBuf, CachedHash>>);
+
+    impl DupeHashCache for MemCache {
+        fn get_full(&self, path: &Path, size: u64, mtime_unix: i64) -> Option<String> {
+            self.0
+                .borrow()
+                .get(path)
+                .filter(|r| r.size == size && r.mtime_unix == mtime_unix)
+                .map(|r| r.hash.clone())
+        }
+        fn put_full(&self, path: &Path, size: u64, mtime_unix: i64, hash: &str) {
+            self.0.borrow_mut().insert(
+                path.to_path_buf(),
+                CachedHash {
+                    size,
+                    mtime_unix,
+                    hash: hash.to_string(),
+                },
+            );
+        }
+        fn get_record(&self, path: &Path) -> Option<CachedHash> {
+            self.0.borrow().get(path).cloned()
+        }
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ferail-verify-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(p: &Path, contents: &[u8]) {
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(p, contents).unwrap();
+    }
+
+    /// Flip one byte of a finished copy: what a bad cable, controller or
+    /// medium does between the write and the read-back.
+    fn corrupt(p: &Path) {
+        let mut bytes = fs::read(p).unwrap();
+        bytes[0] ^= 0xff;
+        fs::write(p, bytes).unwrap();
+    }
+
+    struct CrossVolume;
+    impl CrossVolume {
+        fn on() -> Self {
+            test_seam::force_cross_volume(true);
+            CrossVolume
+        }
+    }
+    impl Drop for CrossVolume {
+        fn drop(&mut self) {
+            test_seam::force_cross_volume(false);
+        }
+    }
+
+    fn plan(sources: &[PathBuf], dest: &Path, prog: &TransferProgress) -> OpPlan {
+        plan_transfer(sources, dest, prog, &AtomicBool::new(false)).unwrap()
+    }
+
+    #[test]
+    fn verified_copy_matches_and_seeds_the_cache() {
+        let _cross = CrossVolume::on();
+        let root = scratch("ok");
+        let src = root.join("src/proj");
+        let mut data = vec![0u8; 3 * VERIFY_CHUNK + 17];
+        data[VERIFY_CHUNK + 5] = 7; // one data chunk between zero runs
+        write(&src.join("a.bin"), &data);
+        write(&src.join("sub/b.txt"), b"hello");
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+
+        let cache = MemCache::default();
+        let opts = TransferOpts {
+            verify: true,
+            hash_cache: Some(&cache),
+            before_verify: None,
+        };
+        let prog = TransferProgress::new();
+        let plan = plan(std::slice::from_ref(&src), &dest, &prog);
+        let out = run_copy_with(
+            &plan,
+            &|_| CollisionPolicy::KeepBoth,
+            &opts,
+            &prog,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+
+        assert!(out.failed.is_empty(), "{:?}", out.failed);
+        assert_eq!(out.verified, 2);
+        assert_eq!(out.cloned, 0);
+        assert!(out.all_verified());
+        assert_eq!(fs::read(dest.join("proj/a.bin")).unwrap(), data);
+        assert_eq!(fs::read(dest.join("proj/sub/b.txt")).unwrap(), b"hello");
+        // Both reads are accounted for: the bar ends full, not at 200%.
+        assert_eq!(prog.bytes_total(), 2 * plan.total_bytes);
+        assert_eq!(prog.bytes_done(), prog.bytes_total());
+        // Destination and source hashes recorded for later checks.
+        let expected = blake3::hash(&data).to_hex().to_string();
+        let map = cache.0.borrow();
+        assert_eq!(map[&dest.join("proj/a.bin")].hash, expected);
+        assert_eq!(map[&src.join("a.bin")].hash, expected);
+        drop(map);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn corrupted_copy_fails_and_is_removed() {
+        let _cross = CrossVolume::on();
+        let root = scratch("corrupt");
+        let src = root.join("src/a.txt");
+        write(&src, b"precious bytes");
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+
+        let cache = MemCache::default();
+        let hook = |p: &Path| corrupt(p);
+        let opts = TransferOpts {
+            verify: true,
+            hash_cache: Some(&cache),
+            before_verify: Some(&hook),
+        };
+        let prog = TransferProgress::new();
+        let plan = plan(std::slice::from_ref(&src), &dest, &prog);
+        let out = run_copy_with(
+            &plan,
+            &|_| CollisionPolicy::KeepBoth,
+            &opts,
+            &prog,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+
+        assert!(out.created.is_empty());
+        assert_eq!(out.failed.len(), 1);
+        assert_eq!(out.failed[0].kind, FileOpErrorKind::VerifyFailed);
+        // Recorded against the source, so Retry re-runs this item.
+        assert_eq!(out.failed[0].path, src);
+        assert!(!out.all_verified());
+        assert!(
+            !dest.join("a.txt").exists(),
+            "a copy that failed verification must not be left behind"
+        );
+        assert!(cache.0.borrow().is_empty(), "nothing recorded for a bad copy");
+        assert_eq!(fs::read(&src).unwrap(), b"precious bytes");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn move_keeps_the_source_when_verification_fails() {
+        let _cross = CrossVolume::on();
+        let root = scratch("move-fail");
+        let src = root.join("src/dir");
+        write(&src.join("f.txt"), b"only copy");
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+
+        let hook = |p: &Path| corrupt(p);
+        let opts = TransferOpts {
+            verify: true,
+            hash_cache: None,
+            before_verify: Some(&hook),
+        };
+        let prog = TransferProgress::new();
+        let plan = plan(std::slice::from_ref(&src), &dest, &prog);
+        let out = run_move_with(
+            &plan,
+            &|_| CollisionPolicy::KeepBoth,
+            &opts,
+            &prog,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+
+        assert_eq!(out.failed.len(), 1);
+        assert_eq!(out.failed[0].kind, FileOpErrorKind::VerifyFailed);
+        assert!(out.failed[0].path.starts_with(&src));
+        assert_eq!(fs::read(src.join("f.txt")).unwrap(), b"only copy");
+        assert!(!dest.join("dir/f.txt").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn verified_move_deletes_the_source_after_the_check() {
+        let _cross = CrossVolume::on();
+        let root = scratch("move-ok");
+        let src = root.join("src/a.txt");
+        write(&src, b"payload");
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+
+        let cache = MemCache::default();
+        let opts = TransferOpts {
+            verify: true,
+            hash_cache: Some(&cache),
+            before_verify: None,
+        };
+        let prog = TransferProgress::new();
+        let plan = plan(std::slice::from_ref(&src), &dest, &prog);
+        let out = run_move_with(
+            &plan,
+            &|_| CollisionPolicy::KeepBoth,
+            &opts,
+            &prog,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+
+        assert!(out.all_verified());
+        assert_eq!(out.verified, 1);
+        assert!(!src.exists());
+        assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"payload");
+        // The source is gone, so only the destination is recorded.
+        let map = cache.0.borrow();
+        assert!(map.contains_key(&dest.join("a.txt")));
+        assert!(!map.contains_key(&src));
+        drop(map);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn verification_off_reads_nothing_back() {
+        let _cross = CrossVolume::on();
+        let root = scratch("off");
+        let src = root.join("src/a.txt");
+        write(&src, b"plain");
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+        let hook = |_: &Path| panic!("no read-back without verification");
+        let opts = TransferOpts {
+            verify: false,
+            hash_cache: None,
+            before_verify: Some(&hook),
+        };
+        let prog = TransferProgress::new();
+        let plan = plan(std::slice::from_ref(&src), &dest, &prog);
+        let out = run_copy_with(
+            &plan,
+            &|_| CollisionPolicy::KeepBoth,
+            &opts,
+            &prog,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(out.verified, 0);
+        assert!(!out.all_verified());
+        assert_eq!(prog.bytes_total(), plan.total_bytes);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Same volume, no forcing: on APFS the copy is a clone, which is
+    /// verified by construction and not read back. On another filesystem it
+    /// falls back to the verified byte copy. Either way it counts.
+    #[test]
+    fn same_volume_copy_counts_as_verified() {
+        let root = scratch("clone");
+        let src = root.join("src/a.txt");
+        write(&src, b"cow");
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+        let opts = TransferOpts {
+            verify: true,
+            hash_cache: None,
+            before_verify: None,
+        };
+        let prog = TransferProgress::new();
+        let plan = plan(std::slice::from_ref(&src), &dest, &prog);
+        let out = run_copy_with(
+            &plan,
+            &|_| CollisionPolicy::KeepBoth,
+            &opts,
+            &prog,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(out.all_verified());
+        assert_eq!(out.cloned + out.verified, 1);
+        assert_eq!(prog.bytes_done(), prog.bytes_total());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The verifying copy writes the bytes itself, so it must still carry
+    /// what `copyfile` carries on the unverified path: xattrs and times.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn verified_copy_keeps_xattrs_and_mtime() {
+        let _cross = CrossVolume::on();
+        let root = scratch("meta");
+        let src = root.join("src/tagged.txt");
+        write(&src, b"hello");
+        xattr::set(&src, "com.ferail.test", b"v1").unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_500_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&src)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+        let opts = TransferOpts {
+            verify: true,
+            hash_cache: None,
+            before_verify: None,
+        };
+        let prog = TransferProgress::new();
+        let plan = plan(std::slice::from_ref(&src), &dest, &prog);
+        let out = run_copy_with(
+            &plan,
+            &|_| CollisionPolicy::KeepBoth,
+            &opts,
+            &prog,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(out.verified, 1);
+        let copy = dest.join("tagged.txt");
+        assert_eq!(
+            xattr::get(&copy, "com.ferail.test").unwrap().as_deref(),
+            Some(&b"v1"[..])
+        );
+        assert_eq!(fs::metadata(&copy).unwrap().modified().unwrap(), old);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A trailing run of zeros is a hole the copy must still end with: the
+    /// length comes from `set_len`, not from written bytes.
+    #[test]
+    fn verified_copy_keeps_a_trailing_hole() {
+        let _cross = CrossVolume::on();
+        let root = scratch("hole");
+        let src = root.join("src/sparse.bin");
+        let mut data = vec![0u8; 4 * VERIFY_CHUNK];
+        data[0] = 1;
+        write(&src, &data);
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+        let opts = TransferOpts {
+            verify: true,
+            hash_cache: None,
+            before_verify: None,
+        };
+        let prog = TransferProgress::new();
+        let plan = plan(std::slice::from_ref(&src), &dest, &prog);
+        let out = run_copy_with(
+            &plan,
+            &|_| CollisionPolicy::KeepBoth,
+            &opts,
+            &prog,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(out.verified, 1);
+        assert_eq!(fs::read(dest.join("sparse.bin")).unwrap(), data);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Overhead of verification on one large file through the byte-copy
+    /// path. Run by hand:
+    /// `cargo test -p ferail-fs-native --release verify_overhead -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn verify_overhead() {
+        let _cross = CrossVolume::on();
+        let root = scratch("overhead");
+        let size = 2usize * 1024 * 1024 * 1024;
+        let src = root.join("src/big.bin");
+        {
+            let mut f = fs::File::create({
+                fs::create_dir_all(root.join("src")).unwrap();
+                &src
+            })
+            .unwrap();
+            let mut chunk = vec![0u8; 8 * 1024 * 1024];
+            let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+            for _ in 0..(size / chunk.len()) {
+                for b in chunk.iter_mut() {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    *b = x as u8;
+                }
+                f.write_all(&chunk).unwrap();
+            }
+        }
+        for verify in [false, true, false, true] {
+            let dest = root.join(format!("dest-{verify}"));
+            let _ = fs::remove_dir_all(&dest);
+            fs::create_dir_all(&dest).unwrap();
+            let opts = TransferOpts {
+                verify,
+                hash_cache: None,
+                before_verify: None,
+            };
+            let prog = TransferProgress::new();
+            let plan = plan(std::slice::from_ref(&src), &dest, &prog);
+            let t = Instant::now();
+            let out = run_copy_with(
+                &plan,
+                &|_| CollisionPolicy::KeepBoth,
+                &opts,
+                &prog,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            assert!(out.failed.is_empty());
+            println!(
+                "verify={verify}: {:.2} s for {} MiB",
+                t.elapsed().as_secs_f64(),
+                size / (1024 * 1024)
+            );
+            let _ = fs::remove_dir_all(&dest);
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 }

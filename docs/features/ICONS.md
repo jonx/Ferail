@@ -89,7 +89,7 @@ bump gpui-component:
 
 - **Arrows / chevrons**: `chevron-up` (`chevron-down` is used by the file list's tree caret; `arrow-down` `arrow-left` `arrow-right` by the Compare Folders sync buttons)
 - **Stars / reactions**: `star` `star-fill` `star-off` `heart` `heart-off` `thumbs-up` `thumbs-down`
-- **Files / storage**: `file` `folder-closed` `hard-drive` (`gallery-vertical-end` is used by Disk Usage's Show duplicates)
+- **Files / storage**: `file` `folder-closed` (`hard-drive` is used by the Verify Integrity report; `gallery-vertical-end` is used by Disk Usage's Show duplicates)
 - **Windows / panels**: `panel-left` `panel-right` `panel-bottom` `panel-bottom-open` `window-close` `window-maximize` `window-minimize` `window-restore` `frame` `resize-corner` (`panel-left-open` / `-close` and `chevrons-up-down` are *not* free: gpui-component draws them itself for the sidebar toggle and the sort header)
 - **Theme / view**: `sun` `moon` `layout-dashboard` `chart-pie` (`eye` / `eye-off` now used by the checksum report's problems-only filter and the archive workbench)
 - **Text / search controls**: `case-sensitive` `asterisk` `dash` (`a-large-small` now used by the text-size control, `check` by the checksum report header, `replace` by the text editor's Find and Replace button)
@@ -255,6 +255,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Flat view / include subfolders | `icons/folder-tree.svg` | In-house (folder feeding a two-branch tree, stroke 1.75) | render.rs `title_bar` |
 | Edit breadcrumb path | `icons/path-edit.svg` | **In-house** text cursor inside an input outline (house style, stroke 1.75), distinct from rename and text-size commands | breadcrumb row tail |
 | Private Mode | `icons/privacy.svg` | **In-house** shield-and-eye (house style, stroke 1.75), distinct from the lock-holder and show/hide glyphs; the existing title-bar button highlights in place while active | render.rs title bar (sole visible Private Mode affordance) |
+| Verify Integrity report header | `icons/hard-drive.svg` ↑ | Lucide `hard-drive`, from the spare upstream pool. | `IntegrityView` report header |
 | Verify checksum manifest | `icons/check.svg` ↑ | Lucide `check` | `VerifyView` report header |
 | Smaller / larger icons | `icons/minus.svg` / `plus.svg` ↑ | Lucide | render.rs `title_bar` |
 | Reset icon size | `icons/undo-2.svg` | Lucide `undo-2` (from the spare upstream pool, stroke 2: it sits in the all-upstream ±/ellipsis cluster, so the heavier weight is the consistent one here). A revert arrow, not a refresh circle: `nav/refresh.svg` is the Refresh *command* two buttons away and the two must not read alike. Grid view only, beside the −/＋ stepper it undoes. | render.rs `title_bar` |

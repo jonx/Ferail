@@ -202,6 +202,29 @@ pub trait DupeHashCache {
     fn get_full(&self, path: &Path, size: u64, mtime_unix: i64) -> Option<String>;
     /// Record a freshly computed BLAKE3 hex.
     fn put_full(&self, path: &Path, size: u64, mtime_unix: i64, hash: &str);
+    /// The stored hash for `path` together with the size and mtime it was
+    /// recorded against, whatever they are now. Verify Integrity needs the
+    /// key as well as the hash: a different hash under an unchanged key is
+    /// corruption, under a changed key an ordinary edit. `None` when nothing
+    /// is stored (the default for caches that cannot answer).
+    fn get_record(&self, _path: &Path) -> Option<CachedHash> {
+        None
+    }
+    /// Whether a hash for `path` would be kept at all. `false` under a
+    /// location the privacy settings exclude, where [`Self::put_full`] is a
+    /// no-op.
+    fn records(&self, _path: &Path) -> bool {
+        true
+    }
+}
+
+/// A stored content hash with the key it was recorded under.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CachedHash {
+    pub size: u64,
+    pub mtime_unix: i64,
+    /// BLAKE3 hex.
+    pub hash: String,
 }
 
 /// A candidate file gathered during the walk.
@@ -869,7 +892,7 @@ fn full_hash(path: &Path) -> Option<String> {
     Some(hasher.finalize().to_hex().to_string())
 }
 
-fn mtime_unix(meta: &fs::Metadata) -> i64 {
+pub(crate) fn mtime_unix(meta: &fs::Metadata) -> i64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -892,14 +915,14 @@ fn file_id(_meta: &fs::Metadata) -> Option<(u64, u64)> {
 /// Undownloaded cloud placeholder (APFS `SF_DATALESS`), reading it would
 /// trigger a network download.
 #[cfg(target_os = "macos")]
-fn is_dataless(meta: &fs::Metadata) -> bool {
+pub(crate) fn is_dataless(meta: &fs::Metadata) -> bool {
     use std::os::macos::fs::MetadataExt;
     const SF_DATALESS: u32 = 0x4000_0000;
     (meta.st_flags() & SF_DATALESS) != 0
 }
 
 #[cfg(not(target_os = "macos"))]
-fn is_dataless(_meta: &fs::Metadata) -> bool {
+pub(crate) fn is_dataless(_meta: &fs::Metadata) -> bool {
     false
 }
 

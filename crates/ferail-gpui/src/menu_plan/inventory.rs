@@ -65,6 +65,7 @@ const FILE_ROW: &[Item] = &[
     E(ids::GENERATE_SHA256),
     E(ids::VERIFY_CHECKSUMS),
     E(ids::CREATE_CHECKSUM_FILE),
+    E(ids::VERIFY_INTEGRITY),
     E(ids::SHOW_LOCK_HOLDERS),
     E(ids::OPEN_TERMINAL_HERE),
     S,

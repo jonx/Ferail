@@ -91,6 +91,10 @@ keep the UI off the I/O path.
 - [ARCHIVES.md](ARCHIVES.md): browsing inside an archive without extracting,
   the capability matrix per format, and ZIP editing as a reviewable
   transaction.
+- [GIT_STATUS.md](GIT_STATUS.md): read-only Git awareness, a status column
+  and the current branch, from the installed `git` on a worker.
+- [INTEGRITY.md](INTEGRITY.md): verifying a copy against its source, and
+  finding silent corruption on demand from recorded hashes.
 - [COMPARE_FOLDERS.md](COMPARE_FOLDERS.md): colour the two panes of a split
   view by how their folders differ, and copy what is missing or newer across.
 - [BULK_RENAME.md](BULK_RENAME.md): pattern-rule bulk rename modal with

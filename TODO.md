@@ -394,6 +394,24 @@ Net-new, but each sits on plumbing that already exists.
   `favorites_section.rs` and `create_checksum.rs` callers are on a worker.
   Clippy's deny list covers `Command::output` and `status` but not `spawn` or
   `Child::wait`.
+- **Integrity follow-ups** ([INTEGRITY.md](docs/features/INTEGRITY.md)): run a
+  verified copy across two real volumes; keep a file's recorded hash when the
+  metadata prefetch sees a new modification time, so an edited file reports as
+  modified instead of as a new baseline; compare modification times below one
+  second where the filesystem records them, so a same-size rewrite within the
+  same second is not reported as corruption; verify elevated retries and the
+  copy behind an undone move.
+- **Git status follow-ups** ([GIT_STATUS.md](docs/features/GIT_STATUS.md)):
+  marks in the icon grid; match names across Unicode normalization forms on
+  macOS; exercise watcher, Refresh and window-activation refreshes, the
+  timeout and the no-git path in a running app on each platform.
+- **Compare Folders follow-ups**
+  ([COMPARE_FOLDERS.md](docs/features/COMPARE_FOLDERS.md)): tint the icon
+  grid; a harness gesture that clicks the sync buttons; merging two folders
+  that differ without replacing either as a whole.
+- **Disk Usage: a selected duplicate can miss its selection border.** In the
+  duplicates overlay one of three selected copies drew no border while the
+  footer counted three.
 - Add slow-path tests or fixtures for slow folders, network volumes, cloud
   placeholders, permission failures and stale worker results.
 - Streaming-enumeration tests: delayed and full-channel cancellation, stale

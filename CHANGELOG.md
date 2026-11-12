@@ -8,6 +8,28 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Git status in the file list.** In a folder that belongs to a Git
+  repository, a Git column marks each file: M modified, S staged, R renamed,
+  D deleted, C in conflict, ? untracked, I ignored. A folder carries a dot for
+  the most serious state inside it, and the status bar shows the branch with
+  how many commits it is ahead of or behind its upstream. It is read-only and
+  uses the `git` already on your machine: without it, the column stays empty.
+  With a saved column layout the new column appears at the far right; Reset
+  Columns puts it next to the name.
+
+- **Copies can be verified.** With Settings → Files → **Verify copies** on,
+  every copied file is read back from the destination and compared with the
+  original. A copy that does not match is removed and reported, and a move
+  keeps its original. It is off by default because it makes copying slower:
+  on a fast internal disk, about 560 MB per second instead of several GB.
+
+- **Verify Integrity finds silently corrupted files.** The new command, in the
+  File menu, the context menu and the palette, re-reads files whose content
+  Ferail has hashed before and reports any whose content changed while its
+  size and date did not. It only knows files hashed earlier, by a verified
+  copy, Find Duplicates, Compare Folders or a previous run, and records the
+  others so the next run can check them. It runs only when you ask.
+
 - **Compare two folders side by side.** In Split View, **Compare Folders**
   (Cmd+Option+K, also in the toolbar and the View menu) tints every row in
   both panes: blue exists on one side only, amber differs, green is identical.
