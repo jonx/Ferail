@@ -170,6 +170,7 @@ mod tests {
             "icons/undock.svg",
             "icons/split-right.svg",
             "icons/split-down.svg",
+            "icons/compare-folders.svg",
             "icons/external-link.svg",
             "icons/folder-open.svg",
             "icons/path-edit.svg",

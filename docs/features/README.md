@@ -91,6 +91,8 @@ keep the UI off the I/O path.
 - [ARCHIVES.md](ARCHIVES.md): browsing inside an archive without extracting,
   the capability matrix per format, and ZIP editing as a reviewable
   transaction.
+- [COMPARE_FOLDERS.md](COMPARE_FOLDERS.md): colour the two panes of a split
+  view by how their folders differ, and copy what is missing or newer across.
 - [BULK_RENAME.md](BULK_RENAME.md): pattern-rule bulk rename modal with
   live before→after preview and batch undo.
 - [TEXT_EDITOR.md](TEXT_EDITOR.md): built-in lightweight text editor:

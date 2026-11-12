@@ -49,6 +49,8 @@ pub enum TaskKind {
     DuplicateScan,
     /// Streaming SHA-256 calculation for one user-selected file.
     Checksum,
+    /// Compare Folders over the two panes (docs/features/COMPARE_FOLDERS.md).
+    FolderCompare,
 }
 
 impl TaskKind {
@@ -67,6 +69,7 @@ impl TaskKind {
                 | TaskKind::DiskUsage
                 | TaskKind::DuplicateScan
                 | TaskKind::Checksum
+                | TaskKind::FolderCompare
         )
     }
 }

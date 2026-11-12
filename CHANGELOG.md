@@ -8,6 +8,48 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Compare two folders side by side.** In Split View, **Compare Folders**
+  (Cmd+Option+K, also in the toolbar and the View menu) tints every row in
+  both panes: blue exists on one side only, amber differs, green is identical.
+  Files are compared by content, not by date, and folders of the same name are
+  compared all the way down. A strip above the panes counts each kind and
+  offers two buttons, **Copy missing and newer** to one side or the other.
+  Syncing never deletes anything, and asks first when it is about to replace
+  older files, because that cannot be undone. Two folders that differ are not
+  merged: open them in both panes to sync their contents.
+
+- **Disk Usage shows what grew.** Each completed scan leaves a small summary,
+  and the calendar button recolours the map against the previous scan of the
+  same folder: orange grew, blue shrank, purple is new. The header gives the
+  net change and what deleted folders held, and the side panel lists the
+  folders responsible. The summary is path data and follows your privacy
+  settings like cached folder sizes.
+
+- **Disk Usage shows duplicates in place.** A new button hatches every file
+  that has an identical copy elsewhere in the scanned folder and totals the
+  space you could reclaim. Click a hatched file to light up its copies. It
+  uses the same engine and the same honest accounting as Find Duplicates:
+  hard links and APFS clones are not counted as reclaimable.
+
+- **Disk Usage scans large folders much faster and keeps the window fluid.**
+  The window used to repaint the whole map up to 60 times a second while
+  results arrived, and took them in too slowly. Scanning a folder of 1,8
+  million items took 130 seconds in the window and now takes 11.
+
+- **Windows: search can use the NTFS index, and Disk Usage reuses it.**
+  Settings → Search offers **NTFS index (administrator)**, which answers a
+  name search from the drive's file table instead of reading every folder.
+  The administrator helper now keeps its index between requests and updates
+  it from the drive's change journal, so a second scan, a Refresh or a search
+  no longer rereads the whole table. It gives the index back after five idle
+  minutes and runs at low priority. Results only list items your account can
+  reach. The size on disk of compressed and sparse files is now correct in
+  Fast NTFS scans. **This path has been tested on recorded data only, not yet
+  on a Windows machine.**
+
+- **The search engine setting only offers engines that exist on your
+  system.** Windows and Linux listed Spotlight, which can only run on macOS.
+
 - **The window no longer stalls on a sleeping or network disk in six places.**
   Each of these read the disk, or waited on a helper program, on the same
   thread that draws the window:

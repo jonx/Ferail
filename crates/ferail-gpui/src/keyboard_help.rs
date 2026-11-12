@@ -94,6 +94,7 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "view.split_right" => Box::new(crate::shell::SplitRight),
         "view.split_down" => Box::new(crate::shell::SplitDown),
         "view.switch_pane" => Box::new(crate::shell::SwitchPane),
+        "view.compare_folders" => Box::new(crate::shell::CompareFolders),
         "window.prev_tab" => Box::new(PrevTab),
         "window.bring_all_to_front" => Box::new(crate::boot::BringAllToFront),
         _ => return None,

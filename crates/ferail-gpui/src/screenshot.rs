@@ -173,6 +173,12 @@ pub struct Args {
     /// With `--disk-usage` and `--filter`, render only matching DU tiles
     /// instead of keeping the complete map and dimming non-matches.
     pub du_results_only: bool,
+    /// With `--disk-usage`, turn the duplicates overlay on and select the
+    /// largest group once it is found.
+    pub du_dupes: bool,
+    /// With `--disk-usage`, open this metadata DB file for the scan history
+    /// instead of running without one.
+    pub du_db: Option<PathBuf>,
     /// Open the archive workbench on this archive file and render its
     /// contents view headless.
     pub archive: Option<PathBuf>,
@@ -432,6 +438,8 @@ pub fn parse_args() -> Args {
             "--sidebar-expanded" => args.sidebar_collapsed = Some(false),
             "--disk-usage" => args.disk_usage = iter.next().map(PathBuf::from),
             "--du-results-only" => args.du_results_only = true,
+            "--du-dupes" => args.du_dupes = true,
+            "--du-db" => args.du_db = iter.next().map(PathBuf::from),
             "--archive" => args.archive = iter.next().map(PathBuf::from),
             "--archive-preview-row" => {
                 args.archive_preview_row = iter.next().and_then(|s| s.parse().ok())
@@ -537,7 +545,10 @@ OPTIONS
   --archive-preview-row N  With --archive: select row N and show its preview.
   --archive-convert        With --archive: open the Convert Archive dialog.
   --du-depth <N>           Treemap recursion depth (default 4).
-  --du-coloring <mode>     'category' (default) or 'depth'.
+  --du-coloring <mode>     'category' (default) or 'changes' (diff against
+                           the previous scan of the same root; needs --du-db).
+  --du-dupes               Show the duplicates overlay, largest group selected.
+  --du-db <file>           Metadata DB for the Disk Usage scan history.
   --settings <page>        Open Settings instead of Shell.
                            appearance / files / layout / about.
   --paste-source <path>    Copy <path> into the current dir via the real
@@ -615,6 +626,11 @@ pub fn run(args: Args) -> Result<()> {
     let disk_usage_root = args.disk_usage.clone();
     let disk_usage_filter = args.filter.clone();
     let du_results_only = args.du_results_only;
+    let du_coloring = args.disk_usage_coloring.clone();
+    let du_dupes = args.du_dupes;
+    // `--du-db <file>`: give the Disk Usage capture a real metadata store so
+    // the scan history (Changes since…) persists between runs.
+    let du_db = args.du_db.clone();
     let viewer_target = args.viewer.clone();
     let viewer_adjust = args.viewer_adjust;
     let viewer_adjust_video = args.viewer_adjust_video;
@@ -669,6 +685,17 @@ pub fn run(args: Args) -> Result<()> {
         let shell_args = shell_args.clone();
         let disk_usage_root = disk_usage_root.clone();
         let disk_usage_filter = disk_usage_filter.clone();
+        let du_coloring = du_coloring.clone();
+        if let Some(path) = du_db.as_ref() {
+            match ferail_meta::MetadataDb::open(path) {
+                Ok(db) => {
+                    crate::process_state::process_state(cx)
+                        .metadata_db
+                        .replace(Some(std::sync::Arc::new(std::sync::Mutex::new(db))));
+                }
+                Err(e) => eprintln!("--du-db {}: {e}", path.display()),
+            }
+        }
         let viewer_target = viewer_target.clone();
         let text_editor_target = text_editor_target.clone();
         let image_editor_target = image_editor_target.clone();
@@ -697,6 +724,7 @@ pub fn run(args: Args) -> Result<()> {
             // depends on whether this is the Shell or Settings path.
             #[allow(clippy::type_complexity)]
             let mut shell_entity: Option<Entity<Shell>> = None;
+            let mut du_entity: Option<Entity<crate::disk_usage::DiskUsageView>> = None;
             let handle = cx
                 .open_window(opts, |window, cx| {
                     if let Some(du_root) = disk_usage_root.clone() {
@@ -721,6 +749,14 @@ pub fn run(args: Args) -> Result<()> {
                                 view.set_filter_results_only_for_screenshot(du_results_only, cx);
                             });
                         }
+                        view.update(cx, |view, cx| {
+                            view.configure_for_screenshot(
+                                du_coloring.as_str() == "changes",
+                                du_dupes,
+                                cx,
+                            );
+                        });
+                        du_entity = Some(view.clone());
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(target) = viewer_target.clone() {
                         // Headless viewer window: build the playlist
@@ -865,6 +901,35 @@ pub fn run(args: Args) -> Result<()> {
                 })
                 .expect("failed to open window for screenshot");
 
+            // Disk Usage: drive a real frame loop (one draw per vsync while
+            // the view is dirty, like a visible window) until the scan and
+            // any requested overlay have settled, so the capture shows the
+            // finished state and FERAIL_DU_PROFILE sees honest frame costs.
+            if let Some(du) = du_entity.clone() {
+                let dirty = std::rc::Rc::new(std::cell::Cell::new(true));
+                let flag = dirty.clone();
+                let _observe = cx.update(|cx| cx.observe(&du, move |_, _| flag.set(true)));
+                let started = std::time::Instant::now();
+                while started.elapsed() < std::time::Duration::from_secs(180) {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(16))
+                        .await;
+                    if dirty.replace(false) {
+                        let _ = cx.update_window(handle.into(), |_, window, cx| {
+                            window.draw(cx).clear(cx);
+                        });
+                    }
+                    if cx.update(|cx| du.read(cx).settled_for_screenshot()) {
+                        break;
+                    }
+                }
+                if crate::disk_usage::profile_enabled() {
+                    eprintln!(
+                        "du-prof screenshot settled after {} ms",
+                        started.elapsed().as_millis()
+                    );
+                }
+            }
             let simulate_slow_load = shell_args.simulate_slow_load.clone();
             // Read before `apply` consumes shell_args below.
             let capture_newest_window = shell_args.properties;

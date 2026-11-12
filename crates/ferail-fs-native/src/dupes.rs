@@ -343,113 +343,224 @@ impl NativeFs {
 
         // Stage 2 + 3: within each size collision, partial-hash, then
         // full-hash the partial collisions, then group + emit.
-        let mut buffer: Vec<DupeFact> = Vec::with_capacity(batch_size);
-        for (size, cands) in by_size {
-            if cands.len() < 2 {
+        if exact_funnel(
+            by_size,
+            opts,
+            cache,
+            batch_size,
+            cancel,
+            &mut stats,
+            &mut on_batch,
+        ) {
+            on_progress(stats);
+        }
+        None
+    }
+}
+
+/// A file the caller already enumerated (a Disk Usage scan): its identity
+/// in the caller's tree, its absolute path, and the size the walk saw.
+#[derive(Clone, Debug)]
+pub struct KnownFile {
+    pub node: NodeId,
+    pub path: PathBuf,
+    pub size: u64,
+}
+
+/// Run the exact funnel over files the caller already knows instead of
+/// walking a root again. Sizes from the caller's walk bucket the files
+/// with zero I/O; only members of a size collision are then stat-ed (live
+/// size, mtime, `(dev, inode)`, dataless flag), so a file that changed
+/// since the walk is judged by what is on disk now. Directories (opaque
+/// packages), symlinks and, unless `opts.scan_cloud`, cloud placeholders
+/// are skipped exactly as [`NativeFs::find_duplicates`] skips them, and
+/// the same hard-link / clone flags keep `distinct_occupants` honest.
+/// Member `node`s are the caller's ids. `cancel` is honoured throughout.
+pub fn find_duplicates_among(
+    files: Vec<KnownFile>,
+    opts: &DupeOpts,
+    cache: Option<&dyn DupeHashCache>,
+    batch_size: usize,
+    cancel: &AtomicBool,
+    mut on_batch: impl FnMut(Vec<DupeFact>),
+    mut on_progress: impl FnMut(DupeStats),
+) {
+    ferail_core::path_guard::assert_off_ui_thread("find_duplicates_among");
+    let mut stats = DupeStats::default();
+    let mut by_known_size: HashMap<u64, Vec<KnownFile>> = HashMap::new();
+    for file in files {
+        if file.size == 0 || file.size < opts.min_size {
+            continue;
+        }
+        by_known_size.entry(file.size).or_default().push(file);
+    }
+    let mut by_size: HashMap<u64, Vec<Candidate>> = HashMap::new();
+    let mut last_progress = Instant::now();
+    for (_, group) in by_known_size {
+        if group.len() < 2 {
+            continue;
+        }
+        for file in group {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let Ok(meta) = fs::symlink_metadata(&file.path) else {
+                continue;
+            };
+            if !meta.file_type().is_file() || (!opts.scan_cloud && is_dataless(&meta)) {
+                continue;
+            }
+            let size = meta.len();
+            if size == 0 || size < opts.min_size {
+                continue;
+            }
+            stats.files_scanned = stats.files_scanned.saturating_add(1);
+            by_size.entry(size).or_default().push(Candidate {
+                node: file.node,
+                path: file.path,
+                size,
+                mtime_unix: mtime_unix(&meta),
+                file_id: file_id(&meta),
+            });
+            if last_progress.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
+                on_progress(stats);
+                last_progress = Instant::now();
+            }
+        }
+    }
+    stats.phase = DupePhase::Analyzing;
+    on_progress(stats);
+    if exact_funnel(
+        by_size,
+        opts,
+        cache,
+        batch_size,
+        cancel,
+        &mut stats,
+        &mut on_batch,
+    ) {
+        on_progress(stats);
+    }
+}
+
+/// Stages 2 to 4 of the exact funnel over size-bucketed candidates:
+/// partial hash, cache-aware full hash (optionally byte-verified), group
+/// and emit. Returns `false` early, flushing what it has, when `cancel` is
+/// raised.
+fn exact_funnel(
+    by_size: HashMap<u64, Vec<Candidate>>,
+    opts: &DupeOpts,
+    cache: Option<&dyn DupeHashCache>,
+    batch_size: usize,
+    cancel: &AtomicBool,
+    stats: &mut DupeStats,
+    on_batch: &mut impl FnMut(Vec<DupeFact>),
+) -> bool {
+    let mut buffer: Vec<DupeFact> = Vec::with_capacity(batch_size);
+    for (size, cands) in by_size {
+        if cands.len() < 2 {
+            continue;
+        }
+        if cancel.load(Ordering::Relaxed) {
+            if !buffer.is_empty() {
+                on_batch(std::mem::take(&mut buffer));
+            }
+            return false;
+        }
+
+        // Partial-hash filter.
+        let mut by_partial: HashMap<u64, Vec<Candidate>> = HashMap::new();
+        for c in cands {
+            if cancel.load(Ordering::Relaxed) {
+                if !buffer.is_empty() {
+                    on_batch(std::mem::take(&mut buffer));
+                }
+                return false;
+            }
+            let Some(ph) = partial_hash(&c.path) else {
+                continue;
+            };
+            stats.bytes_hashed = stats
+                .bytes_hashed
+                .saturating_add(size.min(PARTIAL_HASH_BYTES as u64));
+            by_partial.entry(ph).or_default().push(c);
+        }
+
+        for (_ph, group) in by_partial {
+            if group.len() < 2 {
                 continue;
             }
             if cancel.load(Ordering::Relaxed) {
                 if !buffer.is_empty() {
                     on_batch(std::mem::take(&mut buffer));
                 }
-                return None;
+                return false;
             }
 
-            // Partial-hash filter.
-            let mut by_partial: HashMap<u64, Vec<Candidate>> = HashMap::new();
-            for c in cands {
-                if cancel.load(Ordering::Relaxed) {
-                    if !buffer.is_empty() {
-                        on_batch(std::mem::take(&mut buffer));
-                    }
-                    return None;
-                }
-                let Some(ph) = partial_hash(&c.path) else {
-                    continue;
-                };
-                stats.bytes_hashed = stats
-                    .bytes_hashed
-                    .saturating_add(size.min(PARTIAL_HASH_BYTES as u64));
-                by_partial.entry(ph).or_default().push(c);
-            }
-
-            for (_ph, group) in by_partial {
-                if group.len() < 2 {
-                    continue;
-                }
-                if cancel.load(Ordering::Relaxed) {
-                    if !buffer.is_empty() {
-                        on_batch(std::mem::take(&mut buffer));
-                    }
-                    return None;
-                }
-
-                // Full-hash (cache-aware) the partial collision.
-                let mut by_full: HashMap<String, Vec<Candidate>> = HashMap::new();
-                for c in group {
-                    let full = match cache.and_then(|cc| cc.get_full(&c.path, c.size, c.mtime_unix))
-                    {
-                        Some(h) => h,
-                        None => {
-                            let Some(h) = full_hash(&c.path) else {
-                                continue;
-                            };
-                            stats.bytes_hashed = stats.bytes_hashed.saturating_add(size);
-                            if let Some(cc) = cache {
-                                cc.put_full(&c.path, c.size, c.mtime_unix, &h);
-                            }
-                            h
+            // Full-hash (cache-aware) the partial collision.
+            let mut by_full: HashMap<String, Vec<Candidate>> = HashMap::new();
+            for c in group {
+                let full = match cache.and_then(|cc| cc.get_full(&c.path, c.size, c.mtime_unix))
+                {
+                    Some(h) => h,
+                    None => {
+                        let Some(h) = full_hash(&c.path) else {
+                            continue;
+                        };
+                        stats.bytes_hashed = stats.bytes_hashed.saturating_add(size);
+                        if let Some(cc) = cache {
+                            cc.put_full(&c.path, c.size, c.mtime_unix, &h);
                         }
-                    };
-                    by_full.entry(full).or_default().push(c);
-                }
+                        h
+                    }
+                };
+                by_full.entry(full).or_default().push(c);
+            }
 
-                for (full_hash_hex, members) in by_full {
-                    if members.len() < 2 {
+            for (full_hash_hex, members) in by_full {
+                if members.len() < 2 {
+                    continue;
+                }
+                let groups = if opts.paranoid {
+                    byte_verify_split(members)
+                } else {
+                    vec![members]
+                };
+                for grp in groups {
+                    if grp.len() < 2 {
                         continue;
                     }
-                    let groups = if opts.paranoid {
-                        byte_verify_split(members)
-                    } else {
-                        vec![members]
-                    };
-                    for grp in groups {
-                        if grp.len() < 2 {
-                            continue;
-                        }
-                        let members = build_members(grp);
-                        // Distinct on-disk occupants = members that own
-                        // their storage (neither a hard link nor a clone
-                        // of an earlier member). Reclaim counts the rest.
-                        let distinct_occupants =
-                            members.iter().filter(|m| !m.shares_storage()).count();
-                        stats.groups_found = stats.groups_found.saturating_add(1);
-                        buffer.push(DupeFact::Group {
-                            mode: DupeMode::Exact,
-                            full_hash: if opts.paranoid {
-                                String::new()
-                            } else {
-                                full_hash_hex.clone()
-                            },
-                            bytes_each: size,
-                            distinct_occupants,
-                            members,
-                        });
-                        if buffer.len() >= batch_size {
-                            on_batch(std::mem::take(&mut buffer));
-                            buffer.reserve(batch_size);
-                        }
+                    let members = build_members(grp);
+                    // Distinct on-disk occupants = members that own
+                    // their storage (neither a hard link nor a clone
+                    // of an earlier member). Reclaim counts the rest.
+                    let distinct_occupants =
+                        members.iter().filter(|m| !m.shares_storage()).count();
+                    stats.groups_found = stats.groups_found.saturating_add(1);
+                    buffer.push(DupeFact::Group {
+                        mode: DupeMode::Exact,
+                        full_hash: if opts.paranoid {
+                            String::new()
+                        } else {
+                            full_hash_hex.clone()
+                        },
+                        bytes_each: size,
+                        distinct_occupants,
+                        members,
+                    });
+                    if buffer.len() >= batch_size {
+                        on_batch(std::mem::take(&mut buffer));
+                        buffer.reserve(batch_size);
                     }
                 }
             }
         }
-
-        if !buffer.is_empty() {
-            on_batch(buffer);
-        }
-        on_progress(stats);
-        None
     }
+
+    if !buffer.is_empty() {
+        on_batch(buffer);
+    }
+    true
 }
 
 struct IndexedCandidate {
@@ -700,6 +811,44 @@ fn partial_hash(path: &Path) -> Option<u64> {
         }
     }
     Some(xxhash_rust::xxh3::xxh3_64(&buf[..filled]))
+}
+
+/// BLAKE3 hex of one file through the duplicate finder's hash cache: the
+/// entry point for callers outside the funnel (Compare Folders). A cache hit
+/// for this exact `(path, size, mtime)` skips the read; a miss hashes the
+/// file and writes the result through. `None` when the file cannot be read
+/// or `cancel` was raised mid-read.
+pub fn file_content_hash(
+    path: &Path,
+    size: u64,
+    mtime_unix: i64,
+    cache: Option<&dyn DupeHashCache>,
+    cancel: &AtomicBool,
+) -> Option<String> {
+    ferail_core::path_guard::assert_off_ui_thread("file_content_hash");
+    if let Some(hash) = cache.and_then(|c| c.get_full(path, size, mtime_unix)) {
+        return Some(hash);
+    }
+    let mut file = fs::File::open(path).ok()?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                hasher.update(&buf[..n]);
+            }
+            Err(_) => return None,
+        }
+    }
+    let hash = hasher.finalize().to_hex().to_string();
+    if let Some(c) = cache {
+        c.put_full(path, size, mtime_unix, &hash);
+    }
+    Some(hash)
 }
 
 /// BLAKE3 hex of the entire file, read in chunks so we never hold a huge
@@ -1139,5 +1288,63 @@ mod tests {
         );
         assert!(err.is_none());
         assert!(facts.is_empty());
+    }
+
+    #[test]
+    fn known_files_run_the_same_funnel_with_the_callers_ids() {
+        let fx = fixture();
+        let a = fx.write("a/one.bin", &[7u8; 5000]);
+        let b = fx.write("b/two.bin", &[7u8; 5000]);
+        let c = fx.write("c/three.bin", &[8u8; 5000]); // same size, other bytes
+        let d = fx.write("d/lonely.bin", &[7u8; 4000]); // unique size: never opened
+        let link = fx.root.join("a/link.bin");
+        fs::hard_link(&a, &link).unwrap();
+        let id = |raw: u64| NodeId::from_raw((1 << 62) | raw).unwrap();
+        let files = vec![
+            KnownFile { node: id(1), path: a, size: 5000 },
+            KnownFile { node: id(2), path: b, size: 5000 },
+            KnownFile { node: id(3), path: c, size: 5000 },
+            KnownFile { node: id(4), path: d, size: 4000 },
+            KnownFile { node: id(5), path: link, size: 5000 },
+            // An opaque package directory reaches the funnel as a "file".
+            KnownFile { node: id(6), path: fx.root.join("a"), size: 5000 },
+        ];
+        let cancel = AtomicBool::new(false);
+        let mut facts = Vec::new();
+        find_duplicates_among(
+            files,
+            &DupeOpts::default(),
+            None,
+            8,
+            &cancel,
+            |batch| facts.extend(batch),
+            |_| {},
+        );
+        assert_eq!(facts.len(), 1);
+        let DupeFact::Group { members, distinct_occupants, bytes_each, .. } = &facts[0] else {
+            panic!("exact group expected")
+        };
+        assert_eq!(*bytes_each, 5000);
+        let mut nodes: Vec<_> = members.iter().map(|m| m.node).collect();
+        nodes.sort();
+        assert_eq!(nodes, vec![id(1), id(2), id(5)]);
+        // The hard link shares storage: two occupants, one reclaimable copy.
+        assert_eq!(*distinct_occupants, 2);
+
+        cancel.store(true, Ordering::Relaxed);
+        let mut cancelled = Vec::new();
+        find_duplicates_among(
+            vec![
+                KnownFile { node: id(1), path: fx.root.join("a/one.bin"), size: 5000 },
+                KnownFile { node: id(2), path: fx.root.join("b/two.bin"), size: 5000 },
+            ],
+            &DupeOpts::default(),
+            None,
+            8,
+            &cancel,
+            |batch| cancelled.extend(batch),
+            |_| {},
+        );
+        assert!(cancelled.is_empty());
     }
 }

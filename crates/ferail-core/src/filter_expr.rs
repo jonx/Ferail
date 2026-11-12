@@ -117,6 +117,20 @@ impl FilterExpr {
     /// Do all text terms match this haystack? The caller supplies the
     /// haystack already lowercased (name, or name+format, or relative
     /// path, per surface).
+    /// The text terms one by one, already lowercased by `parse`. An index
+    /// engine that matches names itself needs them separately: joining
+    /// them, as [`Self::text_needle`] does, would turn two required terms
+    /// into one phrase.
+    pub fn text_terms(&self) -> Vec<String> {
+        self.terms
+            .iter()
+            .filter_map(|t| match t {
+                Term::Text(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn text_matches(&self, haystack_lower: &str) -> bool {
         self.terms.iter().all(|t| match t {
             Term::Text(needle) => haystack_lower.contains(needle),

@@ -177,9 +177,11 @@ nothing usable; macOS already ships Spotlight, kept live by FSEvents.
   **elevation / admin rights** (raw volume handle access). The plan: ship our
   **own recursive walker as the always-available fallback** (no privileges
   needed), offer the MFT engine when we can elevate, and **let the user choose
-  which engine to use** rather than forcing elevation. The same MFT reader is
-  also the fast path for Windows disk usage: build it once, use it for both.
-  See [windows-port.md](windows-port.md).
+  which engine to use** rather than forcing elevation. The same MFT index
+  serves Windows Disk Usage: it is built once and used for both. The name
+  search over that index is built and awaits Windows qualification; USN
+  tailing replays the journal on each request instead of running live. See
+  [WINDOWS_FAST_NTFS.md](WINDOWS_FAST_NTFS.md#shared-index-cache-journal-replay-and-search).
 - **Linux: Tracker / Baloo, else own walk.** Query the desktop index via
   D-Bus when present; otherwise the Tier 1 walker. See
   [linux-port.md](linux-port.md).

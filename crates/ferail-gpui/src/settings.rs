@@ -1641,6 +1641,47 @@ fn report_folder_item(
     .keywords([keyword_title, keyword_description])
 }
 
+/// The engines this platform can actually run. The persisted value
+/// `"spotlight"` means "the platform's index engine": Spotlight on macOS,
+/// the Fast NTFS helper's MFT index on Windows.
+#[cfg(target_os = "macos")]
+const SEARCH_ENGINE_OPTIONS: &[(&str, &str)] = &[
+    ("auto", msgid!("Automatic (recommended)")),
+    ("spotlight", msgid!("Spotlight")),
+    ("walker", msgid!("Built-in walker")),
+];
+#[cfg(windows)]
+const SEARCH_ENGINE_OPTIONS: &[(&str, &str)] = &[
+    ("auto", msgid!("Automatic (recommended)")),
+    ("spotlight", msgid!("NTFS index (administrator)")),
+    ("walker", msgid!("Built-in walker")),
+];
+#[cfg(not(any(target_os = "macos", windows)))]
+const SEARCH_ENGINE_OPTIONS: &[(&str, &str)] = &[
+    ("auto", msgid!("Automatic (recommended)")),
+    ("walker", msgid!("Built-in walker")),
+];
+
+fn search_engine_description() -> SharedString {
+    if cfg!(target_os = "macos") {
+        tr!(
+            "Automatic uses Spotlight's live index when available (instant, \
+         content-aware, near-zero CPU) and falls back to the built-in \
+         recursive walker where Spotlight is disabled or blind (some external / \
+         network volumes). Force one if you prefer."
+        )
+    } else if cfg!(windows) {
+        tr!(
+            "The NTFS index answers a name search on a local NTFS drive from the drive's \
+         own file table instead of reading every folder. It needs the administrator \
+         helper, which asks for permission once. Automatic uses the index only when \
+         Disk Usage has already started that helper, and the built-in walker otherwise."
+        )
+    } else {
+        tr!("The built-in walker reads every folder under the one you search.")
+    }
+}
+
 fn search_dupes_page() -> SettingPage {
     SettingPage::new(tr!("Search & Duplicates"))
         .icon(Icon::empty().path("icons/search.svg"))
@@ -1650,22 +1691,20 @@ fn search_dupes_page() -> SettingPage {
                 .title(tr!("Search"))
                 .item(dropdown_setting(
                     tr!("Search engine"),
-                    tr!(
-                        "Automatic uses Spotlight's live index when available (instant, \
-                     content-aware, near-zero CPU) and falls back to the built-in \
-                     recursive walker where Spotlight is disabled or blind (some external / \
-                     network volumes). Force one if you prefer."
-                    ),
-                    &[
-                        ("auto", msgid!("Automatic (recommended)")),
-                        ("spotlight", msgid!("Spotlight")),
-                        ("walker", msgid!("Built-in walker")),
-                    ],
+                    search_engine_description(),
+                    SEARCH_ENGINE_OPTIONS,
                     &[],
                     || {
-                        app_state::load()
+                        let saved = app_state::load()
                             .search_engine
-                            .unwrap_or_else(|| "auto".into())
+                            .unwrap_or_else(|| "auto".into());
+                        // A value this platform does not offer (a settings
+                        // file carried over from macOS) shows as Automatic.
+                        if SEARCH_ENGINE_OPTIONS.iter().any(|(value, _)| *value == saved) {
+                            saved
+                        } else {
+                            "auto".into()
+                        }
                     },
                     persist_search_engine,
                 ))

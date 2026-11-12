@@ -667,6 +667,29 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.spawn_transfer_op_with_presets(
+            sources,
+            dest,
+            mode,
+            std::collections::HashMap::new(),
+            window,
+            cx,
+        );
+    }
+
+    /// [`Self::spawn_transfer_op`] with collisions already decided for some
+    /// sources: a source in `presets` takes that policy without a prompt,
+    /// every other collision prompts as usual. Compare Folders uses it to
+    /// replace the older side of a file that differs.
+    pub(crate) fn spawn_transfer_op_with_presets(
+        &mut self,
+        sources: Vec<PathBuf>,
+        dest: PathBuf,
+        mode: TransferMode,
+        presets: std::collections::HashMap<PathBuf, ferail_fs_native::file_ops::CollisionPolicy>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use ferail_fs_native::file_ops::{self as engine, CollisionPolicy};
         use gpui_component::button::ButtonVariants as _;
         use gpui_component::notification::Notification;
@@ -912,6 +935,7 @@ impl Shell {
             } else {
                 sources
                     .iter()
+                    .filter(|s| !presets.contains_key(*s))
                     .filter(|s| {
                         s.file_name()
                             .map(|n| {
@@ -926,8 +950,7 @@ impl Shell {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| dest.display().to_string());
-            let mut policies: std::collections::HashMap<PathBuf, CollisionPolicy> =
-                std::collections::HashMap::new();
+            let mut policies: std::collections::HashMap<PathBuf, CollisionPolicy> = presets;
             let mut apply_rest: Option<CollisionPolicy> = None;
             let total = conflicting.len();
             for (i, src) in conflicting.iter().enumerate() {

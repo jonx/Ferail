@@ -12,6 +12,8 @@ mod diagnostic;
 #[cfg(windows)]
 mod helper;
 #[cfg(windows)]
+mod index_cache;
+#[cfg(windows)]
 mod pipe;
 #[cfg(windows)]
 mod raw;
@@ -23,15 +25,24 @@ pub use attest::{
     set_helper_attestation, HelperAttestation, HelperTrust,
 };
 #[cfg(windows)]
-pub use client::{run_fast_ntfs, ClientError, FastNtfsEvent, FastNtfsRequest};
+pub use client::{
+    helper_session_state, release_ntfs_index, run_fast_ntfs, run_ntfs_search, ClientError,
+    FastNtfsEvent, FastNtfsRequest, HelperLaunch, HelperSessionState, NtfsSearchEvent,
+    NtfsSearchRequest, SessionWait,
+};
 #[cfg(windows)]
 pub use diagnostic::run_diagnostic;
 #[cfg(windows)]
 pub use helper::helper_main;
 #[cfg(windows)]
+pub use index_cache::{
+    IDLE_RELEASE, MAX_CACHED_VOLUMES, MAX_JOURNAL_READ_BYTES, MAX_REPLAY_RECORDS,
+    SETTLE_WINDOW_SECONDS,
+};
+#[cfg(windows)]
 pub use raw::{
-    file_identity, probe_fast_ntfs, FastNtfsProbe, RawNtfsGeometry, RawVolumeError,
-    RawVolumeReader, Result,
+    file_identity, probe_fast_ntfs, DirectVolumeReader, FastNtfsProbe, JournalReadError,
+    RawNtfsGeometry, RawVolumeError, RawVolumeReader, Result,
 };
 #[cfg(windows)]
 pub use scan::{scan_mft, RawScanSummary};

@@ -123,9 +123,9 @@ impl ResetScope {
         match self {
             Self::All => "everything (deletes the DB file)",
             Self::Ui => "window size, splitters, tabs, pinned items",
-            Self::Caches => "every derived cache (files + Ant Trail)",
+            Self::Caches => "every derived cache (files, folder sizes, Disk Usage history, Ant Trail)",
             Self::AntTrail => "Ant Trail heat (folder_usage)",
-            Self::FileCaches => "file and folder caches (files + folder_sizes)",
+            Self::FileCaches => "file and folder caches (files, folder_sizes, du_history)",
             Self::PutBack => "where trashed items came from (put_back)",
             Self::Magic => "files.magic_label only",
             Self::Quarantine => "files.quarantine_* only",
@@ -197,6 +197,29 @@ pub struct FolderSizeRecord {
     pub dir_count: u64,
 }
 
+/// One folder of a Disk Usage scan summary (`du_history`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuHistoryDir {
+    /// Absolute folder path; the scan root is one of the rows.
+    pub path: String,
+    pub apparent: u64,
+    pub allocated: u64,
+    /// Every direct subfolder was recorded too.
+    pub children_complete: bool,
+}
+
+/// A bounded summary of one completed Disk Usage scan of `root`, kept so the
+/// next scan of the same root can show what changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuHistorySnapshot {
+    pub root: String,
+    pub taken_at_unix: i64,
+    pub dirs: Vec<DuHistoryDir>,
+}
+
+/// Summaries kept per scan root: the latest, and the one before it.
+pub const DU_HISTORY_PER_ROOT: i64 = 2;
+
 #[derive(Debug, Clone, Default)]
 pub struct WindowState {
     pub width: i32,
@@ -253,6 +276,7 @@ const BROWSING_TABLES: &[(&str, &str)] = &[
     ("folder_sizes", "path"),
     ("folder_usage", "folder_path"),
     ("put_back", "original_path"),
+    ("du_history", "path"),
 ];
 
 /// In-memory twins of [`BROWSING_TABLES`], created in SQLite's `temp`
@@ -291,6 +315,15 @@ const EPHEMERAL_SCHEMA: &str = r#"
         trashed_path TEXT PRIMARY KEY,
         original_path TEXT NOT NULL,
         trashed_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS temp.du_history (
+        root TEXT NOT NULL,
+        taken_at_unix INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        apparent INTEGER NOT NULL,
+        allocated INTEGER NOT NULL,
+        children_complete INTEGER NOT NULL,
+        PRIMARY KEY (root, taken_at_unix, path)
     );
 "#;
 
@@ -583,6 +616,21 @@ impl MetadataDb {
                 trashed_path TEXT PRIMARY KEY,
                 original_path TEXT NOT NULL,
                 trashed_at INTEGER NOT NULL
+            );
+
+            -- Disk Usage scan summaries (docs/features/DISK_USAGE.md):
+            -- per-folder recursive sizes of a completed scan, bounded by
+            -- size threshold and row cap, the latest two per root. Path
+            -- data like folder_sizes: same retention, clears and
+            -- exclusions. Additive, so no DB_VERSION bump.
+            CREATE TABLE IF NOT EXISTS du_history (
+                root TEXT NOT NULL,
+                taken_at_unix INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                apparent INTEGER NOT NULL,
+                allocated INTEGER NOT NULL,
+                children_complete INTEGER NOT NULL,
+                PRIMARY KEY (root, taken_at_unix, path)
             );
 
             -- Pinned sidebar items (ordered). Legacy placeholder kept
@@ -976,6 +1024,10 @@ impl MetadataDb {
             params![cutoff],
         )?;
         self.conn.execute(
+            "DELETE FROM main.du_history WHERE taken_at_unix < ?1",
+            params![cutoff],
+        )?;
+        self.conn.execute(
             // 0 is the "removed from Recents" sentinel, not an age: such
             // a row has no date to judge it by and keeps its heat.
             "DELETE FROM main.folder_usage \
@@ -1049,6 +1101,105 @@ impl MetadataDb {
         self.conn
             .execute("DELETE FROM folder_sizes WHERE path = ?1", params![path])?;
         Ok(())
+    }
+
+    // ---- Disk Usage history ----
+
+    /// Store a scan summary and keep only the latest
+    /// [`DU_HISTORY_PER_ROOT`] for its root. A root under an excluded
+    /// location stores nothing; rows under an excluded subfolder are left
+    /// out and their parent is marked incomplete, so the next comparison
+    /// calls those folders unknown rather than new.
+    pub fn save_du_snapshot(&self, snapshot: &DuHistorySnapshot) -> Result<()> {
+        if self.excluded(&snapshot.root) {
+            return Ok(());
+        }
+        let skipped: Vec<&str> = snapshot
+            .dirs
+            .iter()
+            .filter(|d| self.excluded(&d.path))
+            .map(|d| d.path.as_str())
+            .collect();
+        let parent_of_skipped = |path: &str| {
+            skipped.iter().any(|s| {
+                Path::new(s)
+                    .parent()
+                    .is_some_and(|parent| parent == Path::new(path))
+            })
+        };
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> Result<()> {
+            // Re-saving the same second replaces, never duplicates.
+            self.conn.execute(
+                "DELETE FROM du_history WHERE root = ?1 AND taken_at_unix = ?2",
+                params![snapshot.root, snapshot.taken_at_unix],
+            )?;
+            let mut stmt = self.conn.prepare(
+                "INSERT INTO du_history                    (root, taken_at_unix, path, apparent, allocated, children_complete)                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            for dir in &snapshot.dirs {
+                if self.excluded(&dir.path) {
+                    continue;
+                }
+                let complete = dir.children_complete && !parent_of_skipped(&dir.path);
+                stmt.execute(params![
+                    snapshot.root,
+                    snapshot.taken_at_unix,
+                    dir.path,
+                    dir.apparent.min(i64::MAX as u64) as i64,
+                    dir.allocated.min(i64::MAX as u64) as i64,
+                    complete as i64,
+                ])?;
+            }
+            self.conn.execute(
+                "DELETE FROM du_history WHERE root = ?1 AND taken_at_unix NOT IN ( \
+                   SELECT DISTINCT taken_at_unix FROM du_history WHERE root = ?1 \
+                   ORDER BY taken_at_unix DESC LIMIT ?2)",
+                params![snapshot.root, DU_HISTORY_PER_ROOT],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
+    /// The most recent stored summary of `root`, if any.
+    pub fn latest_du_snapshot(&self, root: &str) -> Result<Option<DuHistorySnapshot>> {
+        let taken_at: Option<i64> = self.conn.query_row(
+            "SELECT MAX(taken_at_unix) FROM du_history WHERE root = ?1",
+            params![root],
+            |row| row.get(0),
+        )?;
+        let Some(taken_at_unix) = taken_at else {
+            return Ok(None);
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT path, apparent, allocated, children_complete FROM du_history \
+             WHERE root = ?1 AND taken_at_unix = ?2",
+        )?;
+        let dirs = stmt
+            .query_map(params![root, taken_at_unix], |row| {
+                Ok(DuHistoryDir {
+                    path: row.get(0)?,
+                    apparent: row.get::<_, i64>(1)?.max(0) as u64,
+                    allocated: row.get::<_, i64>(2)?.max(0) as u64,
+                    children_complete: row.get::<_, i64>(3)? != 0,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(Some(DuHistorySnapshot {
+            root: root.to_string(),
+            taken_at_unix,
+            dirs,
+        }))
     }
 
     // ---- window / layout / tabs ----
@@ -1213,6 +1364,7 @@ impl MetadataDb {
                     DELETE FROM main.folder_sizes;
                     DELETE FROM main.folder_usage;
                     DELETE FROM main.put_back;
+                    DELETE FROM main.du_history;
                     DELETE FROM main.window_state;
                     DELETE FROM main.layout_state;
                     DELETE FROM main.tabs;
@@ -1238,6 +1390,7 @@ impl MetadataDb {
                     DELETE FROM main.files;
                     DELETE FROM main.folder_sizes;
                     DELETE FROM main.folder_usage;
+                    DELETE FROM main.du_history;
                     "#,
                 )?;
             }
@@ -1249,6 +1402,7 @@ impl MetadataDb {
                     r#"
                     DELETE FROM main.files;
                     DELETE FROM main.folder_sizes;
+                    DELETE FROM main.du_history;
                     "#,
                 )?;
             }
@@ -2290,5 +2444,99 @@ mod tests {
         db.reset(ResetScope::PutBack).unwrap();
         assert!(db.put_back_target(Path::new("/trash/a")).unwrap().is_none());
         db.compact().unwrap();
+    }
+
+    fn du_snapshot(root: &str, taken_at_unix: i64, dirs: &[(&str, u64)]) -> DuHistorySnapshot {
+        DuHistorySnapshot {
+            root: root.into(),
+            taken_at_unix,
+            dirs: dirs
+                .iter()
+                .map(|(path, bytes)| DuHistoryDir {
+                    path: (*path).into(),
+                    apparent: *bytes,
+                    allocated: *bytes + 1,
+                    children_complete: true,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn du_history_round_trips_and_keeps_the_latest_two_per_root() {
+        let db = MetadataDb::in_memory().unwrap();
+        assert!(db.latest_du_snapshot("/r").unwrap().is_none());
+        for t in [10, 20, 30] {
+            db.save_du_snapshot(&du_snapshot("/r", t, &[("/r", t as u64), ("/r/a", 1)]))
+                .unwrap();
+        }
+        db.save_du_snapshot(&du_snapshot("/other", 5, &[("/other", 9)]))
+            .unwrap();
+        let latest = db.latest_du_snapshot("/r").unwrap().unwrap();
+        assert_eq!(latest.taken_at_unix, 30);
+        let mut dirs = latest.dirs.clone();
+        dirs.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(dirs[0].apparent, 30);
+        assert_eq!(dirs[0].allocated, 31);
+        let kept: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(DISTINCT taken_at_unix) FROM du_history WHERE root = '/r'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, DU_HISTORY_PER_ROOT);
+        assert!(db.latest_du_snapshot("/other").unwrap().is_some());
+    }
+
+    #[test]
+    fn du_history_follows_exclusions_retention_and_clears() {
+        let mut db = MetadataDb::in_memory().unwrap();
+        db.set_exclusions(Exclusions::new([PathBuf::from("/r/private")], false));
+        db.save_du_snapshot(&du_snapshot(
+            "/r",
+            100,
+            &[("/r", 10), ("/r/private", 5), ("/r/private/x", 1)],
+        ))
+        .unwrap();
+        let snap = db.latest_du_snapshot("/r").unwrap().unwrap();
+        assert_eq!(snap.dirs.len(), 1, "excluded rows are never written");
+        assert!(!snap.dirs[0].children_complete, "its parent is incomplete");
+
+        db.save_du_snapshot(&du_snapshot("/r/private", 100, &[("/r/private", 5)]))
+            .unwrap();
+        assert!(db.latest_du_snapshot("/r/private").unwrap().is_none());
+
+        // Retention ages summaries out like folder sizes.
+        db.prune_stale(100 + 31 * 86_400, 30).unwrap();
+        assert!(db.latest_du_snapshot("/r").unwrap().is_none());
+
+        // "File and folder caches" clears them.
+        db.save_du_snapshot(&du_snapshot("/r", 200, &[("/r", 10)]))
+            .unwrap();
+        db.reset(ResetScope::FileCaches).unwrap();
+        assert!(db.latest_du_snapshot("/r").unwrap().is_none());
+
+        // Adding an exclusion purges stored rows under it.
+        db.save_du_snapshot(&du_snapshot("/s", 300, &[("/s", 10), ("/s/t", 4)]))
+            .unwrap();
+        db.set_exclusions(Exclusions::new([PathBuf::from("/s")], false));
+        db.purge_excluded().unwrap();
+        assert!(db.latest_du_snapshot("/s").unwrap().is_none());
+    }
+
+    #[test]
+    fn du_history_written_while_remembering_nothing_stays_in_memory() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.save_du_snapshot(&du_snapshot("/r", 1, &[("/r", 10)]))
+            .unwrap();
+        db.set_ephemeral(true).unwrap();
+        assert!(db.latest_du_snapshot("/r").unwrap().is_none());
+        db.save_du_snapshot(&du_snapshot("/r", 2, &[("/r", 20)]))
+            .unwrap();
+        assert_eq!(db.latest_du_snapshot("/r").unwrap().unwrap().taken_at_unix, 2);
+        db.set_ephemeral(false).unwrap();
+        assert_eq!(db.latest_du_snapshot("/r").unwrap().unwrap().taken_at_unix, 1);
     }
 }

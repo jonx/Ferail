@@ -6,10 +6,18 @@ use crate::{
     NtfsError, Result,
 };
 
-const FILE_DIRECTORY: u16 = 0x0001;
-const FILE_REPARSE: u16 = 0x0002;
-const FILE_CLOUD_REPARSE: u16 = 0x0004;
-const MAX_BATCH_ROWS: usize = 256;
+pub(crate) const FILE_DIRECTORY: u16 = 0x0001;
+pub(crate) const FILE_REPARSE: u16 = 0x0002;
+pub(crate) const FILE_CLOUD_REPARSE: u16 = 0x0004;
+pub(crate) const MAX_BATCH_ROWS: usize = 256;
+
+/// `FILE_ATTRIBUTE_HIDDEN`.
+pub const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0000_0002;
+/// `FILE_ATTRIBUTE_DIRECTORY`. Not stored in `$STANDARD_INFORMATION`; search
+/// rows add it for directories so callers see the Win32 view.
+pub const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+/// `FILE_ATTRIBUTE_REPARSE_POINT`.
+pub const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
 /// Packed base-record metadata. The single UTF-16 arena and adjacency arrays
 /// live on [`CompactNtfsIndex`], never as a `PathBuf` per entry.
@@ -18,11 +26,15 @@ const MAX_BATCH_ROWS: usize = 256;
 pub struct FileMeta {
     pub record: u64,
     pub logical_bytes: u64,
+    /// Bytes on disk: the "total allocated" field for compressed and sparse
+    /// streams, the header allocation otherwise.
     pub allocated_bytes: u64,
     pub modified_ticks: u64,
+    pub created_ticks: u64,
     pub sequence: u16,
-    flags: u16,
-    _reserved: u32,
+    pub(crate) flags: u16,
+    /// `$STANDARD_INFORMATION` Win32 attributes (0 when absent).
+    pub attributes: u32,
 }
 
 impl FileMeta {
@@ -44,6 +56,61 @@ impl FileMeta {
     pub fn is_cloud_reparse(self) -> bool {
         self.flags & FILE_CLOUD_REPARSE != 0
     }
+
+    /// A non-directory carrying a reparse point: a file symlink, a cloud
+    /// placeholder, a deduplicated file and similar.
+    pub fn is_reparse_file(self) -> bool {
+        !self.is_directory() && self.is_reparse_point()
+    }
+
+    pub fn is_hidden_attribute(self) -> bool {
+        self.attributes & FILE_ATTRIBUTE_HIDDEN != 0
+    }
+
+    // One call site per record source (scan, overlay create, re-read); a
+    // parameter struct would only rename these eight values.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_record_parts(
+        record_number: u64,
+        sequence: u16,
+        directory: bool,
+        reparse_point: bool,
+        cloud_reparse: bool,
+        standard: StandardInfo,
+        data: &[DataAttribute],
+        names: &[FileName],
+    ) -> Self {
+        let (logical_bytes, allocated_bytes) = primary_sizes(data, names);
+        Self {
+            record: record_number,
+            logical_bytes,
+            allocated_bytes,
+            modified_ticks: standard.modified_ticks,
+            created_ticks: standard.created_ticks,
+            sequence,
+            flags: (u16::from(directory) * FILE_DIRECTORY)
+                | (u16::from(reparse_point) * FILE_REPARSE)
+                | (u16::from(cloud_reparse) * FILE_CLOUD_REPARSE),
+            attributes: standard.attributes & !FILE_ATTRIBUTE_DIRECTORY,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct StandardInfo {
+    pub modified_ticks: u64,
+    pub created_ticks: u64,
+    pub attributes: u32,
+}
+
+impl StandardInfo {
+    pub(crate) fn of(record: &FileRecord) -> Self {
+        Self {
+            modified_ticks: record.modified_ticks.unwrap_or(0),
+            created_ticks: record.created_ticks.unwrap_or(0),
+            attributes: record.file_attributes.unwrap_or(0),
+        }
+    }
 }
 
 /// One real filename link. This stays at the 24-byte structural gate on 64-
@@ -57,8 +124,8 @@ pub struct NameLink {
     pub parent_sequence: u16,
     pub name_length: u16,
     pub namespace: u8,
-    flags: u8,
-    _reserved: u16,
+    pub(crate) flags: u8,
+    pub(crate) _reserved: u16,
 }
 
 impl NameLink {
@@ -69,15 +136,15 @@ impl NameLink {
         }
     }
 
-    fn is_dos_only(self) -> bool {
+    pub(crate) fn is_dos_only(self) -> bool {
         self.namespace == 2
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct ChildRange {
-    start: u32,
-    length: u32,
+pub(crate) struct ChildRange {
+    pub(crate) start: u32,
+    pub(crate) length: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -93,13 +160,13 @@ pub struct IndexStats {
 
 #[derive(Debug)]
 pub struct CompactNtfsIndex {
-    files: Vec<FileMeta>,
-    links: Vec<NameLink>,
-    name_arena: Vec<u16>,
-    record_to_file: Vec<u32>,
-    children: Vec<u32>,
-    child_ranges: Vec<ChildRange>,
-    stats: IndexStats,
+    pub(crate) files: Vec<FileMeta>,
+    pub(crate) links: Vec<NameLink>,
+    pub(crate) name_arena: Vec<u16>,
+    pub(crate) record_to_file: Vec<u32>,
+    pub(crate) children: Vec<u32>,
+    pub(crate) child_ranges: Vec<ChildRange>,
+    pub(crate) stats: IndexStats,
 }
 
 impl CompactNtfsIndex {
@@ -207,12 +274,16 @@ impl CompactNtfsIndex {
                         NeutralNodeKind::ReparseDirectory
                     } else if file.is_directory() {
                         NeutralNodeKind::Directory
+                    } else if file.is_reparse_point() {
+                        NeutralNodeKind::ReparseFile
                     } else {
                         NeutralNodeKind::File
                     };
 
                     let (logical_bytes, allocated_bytes) = match kind {
-                        NeutralNodeKind::File => charge_file(link.file_index, file, &mut charged),
+                        NeutralNodeKind::File | NeutralNodeKind::ReparseFile => {
+                            charge_file(link.file_index, file, &mut charged)
+                        }
                         NeutralNodeKind::OpaquePackage => self.charge_hidden_subtree(
                             link.file_index,
                             &mut charged,
@@ -263,7 +334,7 @@ impl CompactNtfsIndex {
         Ok(summary)
     }
 
-    fn children_of(&self, file_index: u32) -> &[u32] {
+    pub(crate) fn children_of(&self, file_index: u32) -> &[u32] {
         let Some(range) = self.child_ranges.get(file_index as usize) else {
             return &[];
         };
@@ -320,6 +391,9 @@ pub enum NeutralNodeKind {
     Directory,
     ReparseDirectory,
     OpaquePackage,
+    /// A non-directory with a reparse point (file symlink, cloud placeholder,
+    /// deduplicated file). Charged exactly like [`Self::File`].
+    ReparseFile,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -364,14 +438,14 @@ pub struct TraversalSummary {
 
 #[derive(Default)]
 pub struct IndexBuilder {
-    files: Vec<FileMeta>,
-    links: Vec<NameLink>,
-    name_arena: Vec<u16>,
-    record_to_file: Vec<u32>,
+    pub(crate) files: Vec<FileMeta>,
+    pub(crate) links: Vec<NameLink>,
+    pub(crate) name_arena: Vec<u16>,
+    pub(crate) record_to_file: Vec<u32>,
     expected_extensions: HashMap<FileReference, u32>,
     pending_extensions: HashMap<FileReference, PendingExtension>,
     pending_by_base: HashMap<FileReference, Vec<FileReference>>,
-    stats: IndexStats,
+    pub(crate) stats: IndexStats,
 }
 
 impl IndexBuilder {
@@ -528,18 +602,16 @@ impl IndexBuilder {
                 "more than u32::MAX base records",
             )
         })?;
-        let (logical_bytes, allocated_bytes) = primary_sizes(&record.data, &record.names);
-        self.files.push(FileMeta {
-            record: record.record_number,
-            logical_bytes,
-            allocated_bytes,
-            modified_ticks: record.modified_ticks.unwrap_or(0),
-            sequence: record.sequence,
-            flags: (u16::from(record.directory) * FILE_DIRECTORY)
-                | (u16::from(record.reparse_point) * FILE_REPARSE)
-                | (u16::from(record.is_cloud_reparse()) * FILE_CLOUD_REPARSE),
-            _reserved: 0,
-        });
+        self.files.push(FileMeta::from_record_parts(
+            record.record_number,
+            record.sequence,
+            record.directory,
+            record.reparse_point,
+            record.is_cloud_reparse(),
+            StandardInfo::of(&record),
+            &record.data,
+            &record.names,
+        ));
         self.record_to_file[record_slot] = file_index.saturating_add(1);
         self.append_names(file_index, &record.names)?;
         self.stats.base_records = self.stats.base_records.saturating_add(1);
@@ -615,7 +687,7 @@ impl IndexBuilder {
         if let Some(primary) = extension.data.iter().find(|data| data.lowest_vcn == 0) {
             let meta = &mut self.files[file_index as usize];
             meta.logical_bytes = primary.logical_bytes;
-            meta.allocated_bytes = primary.allocated_bytes;
+            meta.allocated_bytes = primary.on_disk_bytes();
         }
         let meta = &mut self.files[file_index as usize];
         if extension.reparse_point {
@@ -627,7 +699,7 @@ impl IndexBuilder {
         self.append_names(file_index, &extension.names)
     }
 
-    fn append_names(&mut self, file_index: u32, names: &[FileName]) -> Result<()> {
+    pub(crate) fn append_names(&mut self, file_index: u32, names: &[FileName]) -> Result<()> {
         for name in names {
             if self.links.len() >= u32::MAX as usize {
                 return Err(NtfsError::new(
@@ -687,10 +759,10 @@ struct PendingExtension {
     cloud_reparse: bool,
 }
 
-fn primary_sizes(data: &[DataAttribute], names: &[FileName]) -> (u64, u64) {
+pub(crate) fn primary_sizes(data: &[DataAttribute], names: &[FileName]) -> (u64, u64) {
     data.iter()
         .find(|attribute| attribute.lowest_vcn == 0)
-        .map(|attribute| (attribute.logical_bytes, attribute.allocated_bytes))
+        .map(|attribute| (attribute.logical_bytes, attribute.on_disk_bytes()))
         .or_else(|| {
             names
                 .iter()
@@ -700,7 +772,7 @@ fn primary_sizes(data: &[DataAttribute], names: &[FileName]) -> (u64, u64) {
         .unwrap_or_default()
 }
 
-fn namespace_raw(namespace: NameNamespace) -> u8 {
+pub(crate) fn namespace_raw(namespace: NameNamespace) -> u8 {
     match namespace {
         NameNamespace::Posix => 0,
         NameNamespace::Win32 => 1,
@@ -743,14 +815,14 @@ const _: () = {
 };
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn reference(record: u64, sequence: u16) -> FileReference {
+    pub(crate) fn reference(record: u64, sequence: u16) -> FileReference {
         FileReference { record, sequence }
     }
 
-    fn name(parent: FileReference, value: &str) -> FileName {
+    pub(crate) fn name(parent: FileReference, value: &str) -> FileName {
         FileName {
             parent,
             namespace: NameNamespace::Win32,
@@ -761,7 +833,7 @@ mod tests {
         }
     }
 
-    fn record(
+    pub(crate) fn record(
         number: u64,
         sequence: u16,
         directory: bool,
@@ -779,6 +851,8 @@ mod tests {
             reparse_tag: reparse.then_some(0xa000_0003),
             base_reference: None,
             modified_ticks: Some(number * 10),
+            created_ticks: Some(number * 7),
+            file_attributes: Some(0x20),
             names,
             data: (!directory)
                 .then_some(DataAttribute {
@@ -790,6 +864,7 @@ mod tests {
                     resident: false,
                     sparse: false,
                     compressed: false,
+                    compressed_bytes: None,
                     runs: Vec::new(),
                 })
                 .into_iter()
@@ -957,6 +1032,56 @@ mod tests {
             row.display_name == "junction" && row.kind == NeutralNodeKind::ReparseDirectory
         }));
         assert_eq!(summary.logical_bytes, 123);
+    }
+
+    #[test]
+    fn file_meta_carries_creation_time_attributes_and_reparse_file_kind() {
+        let root = reference(5, 1);
+        let mut builder = IndexBuilder::default();
+        builder
+            .push(record(5, 1, true, false, Vec::new(), 0))
+            .unwrap();
+        let mut link = record(12, 1, false, true, vec![name(root, "link.txt")], 0);
+        link.reparse_tag = Some(0xa000_000c);
+        link.file_attributes = Some(0x2 | 0x400);
+        builder.push(link).unwrap();
+        let index = builder.finish().unwrap();
+        let (_, meta) = index.file(reference(12, 1)).unwrap();
+        assert_eq!(meta.created_ticks, 84);
+        assert_eq!(meta.attributes, 0x402);
+        assert!(meta.is_hidden_attribute());
+        assert!(meta.is_reparse_file());
+
+        let mut rows = Vec::new();
+        index
+            .walk_subtree(
+                root,
+                TraversalOptions::default(),
+                || false,
+                |batch| rows.extend(batch),
+            )
+            .unwrap();
+        assert_eq!(rows[0].kind, NeutralNodeKind::ReparseFile);
+    }
+
+    #[test]
+    fn compressed_file_charges_on_disk_bytes() {
+        let root = reference(5, 1);
+        let mut builder = IndexBuilder::default();
+        builder
+            .push(record(5, 1, true, false, Vec::new(), 0))
+            .unwrap();
+        let mut compressed = record(12, 1, false, false, vec![name(root, "c.bin")], 60_000);
+        compressed.data[0].allocated_bytes = 65_536;
+        compressed.data[0].compressed = true;
+        compressed.data[0].compressed_bytes = Some(8192);
+        builder.push(compressed).unwrap();
+        let index = builder.finish().unwrap();
+        let summary = index
+            .walk_subtree(root, TraversalOptions::default(), || false, |_| {})
+            .unwrap();
+        assert_eq!(summary.logical_bytes, 60_000);
+        assert_eq!(summary.allocated_bytes, 8192);
     }
 
     #[test]

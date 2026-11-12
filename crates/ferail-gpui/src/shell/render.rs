@@ -2715,7 +2715,12 @@ impl Shell {
             },
             if is_grid { W_SIZE_STEPS } else { 0.0 },
             W_SORT,
-            W_SPLIT,
+            // The Compare Folders toggle joins the split toggle while split.
+            if self.split.is_some() {
+                W_SPLIT * 2.0
+            } else {
+                W_SPLIT
+            },
             W_NEW_REFRESH,
         ];
         let mut need = W_BASE + W_VIEW + tiers.iter().sum::<f32>();
@@ -2740,6 +2745,7 @@ impl Shell {
         ] = hide;
         // Split toggle: the axis of the open split, if any.
         let split_axis = self.split.as_ref().map(|s| s.axis);
+        let comparing = self.compare.is_some();
 
         // Below the last tier the remainder is still ~600 px, and a bar whose
         // children are all `flex_shrink_0` just pushes its own tail: the view
@@ -3309,6 +3315,27 @@ impl Shell {
                             this.on_split_button(event.modifiers().shift, window, cx);
                         }))
                 }))
+                // Compare Folders: only while split, beside the split toggle.
+                .children((!hide_split && split_axis.is_some()).then(|| {
+                    Button::new("toolbar-compare-folders")
+                        .small()
+                        .ghost()
+                        .selected(comparing)
+                        .icon(
+                            gpui_component::Icon::empty().path("icons/compare-folders.svg"),
+                        )
+                        .tooltip_with_action(
+                            tr!("Compare Folders"),
+                            &CompareFolders,
+                            Some(SHELL_CONTEXT),
+                        )
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_compare_folders(&CompareFolders, window, cx);
+                        }))
+                }))
                 // Dock menu: park the whole window against a screen edge as
                 // an auto-hiding drawer (docs/features/DOCK.md). Pressed look
                 // while docked; the active edge carries a checkmark. Wrapped
@@ -3558,7 +3585,14 @@ impl Shell {
                                                 tr!("Split Down"),
                                                 split_axis == Some(gpui::Axis::Vertical),
                                                 Box::new(SplitDown),
-                                            );
+                                            )
+                                            .when(split_axis.is_some(), |m| {
+                                                m.menu_with_check(
+                                                    tr!("Compare Folders"),
+                                                    comparing,
+                                                    Box::new(CompareFolders),
+                                                )
+                                            });
                                         folded = true;
                                     }
                                     if hide_desktop && show_desktop_available {
@@ -5137,6 +5171,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_split_right))
             .on_action(cx.listener(Self::on_split_down))
             .on_action(cx.listener(Self::on_switch_pane))
+            .on_action(cx.listener(Self::on_compare_folders))
             .on_action(cx.listener(Self::on_copy_to_other_pane))
             .on_action(cx.listener(Self::on_move_to_other_pane))
             .on_action(cx.listener(Self::on_prev_tab))

@@ -377,6 +377,7 @@ impl Shell {
     /// The file area below the tab strip: one pane, or two with a divider.
     pub(super) fn split_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         self.sync_split();
+        self.sync_compare(cx);
         let Some(split) = self.split.clone() else {
             return self.pane_column(cx);
         };
@@ -505,7 +506,7 @@ impl Shell {
         let first = panes.next();
         let second = panes.next();
 
-        div()
+        let panes = div()
             .relative()
             .flex()
             .map(|d| {
@@ -522,8 +523,22 @@ impl Shell {
             .child(measure)
             .children(first)
             .child(divider)
-            .children(second)
-            .into_any_element()
+            .children(second);
+        match self.compare_strip(cx) {
+            // Compare Folders: its legend and sync buttons sit above both
+            // panes, which they describe together.
+            Some(strip) => div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .overflow_hidden()
+                .child(strip)
+                .child(panes)
+                .into_any_element(),
+            None => panes.into_any_element(),
+        }
     }
 }
 

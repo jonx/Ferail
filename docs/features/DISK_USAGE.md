@@ -19,6 +19,9 @@ control are macOS-native rewrites.
 - [Architecture](#architecture)
 - [Verification](#verification)
 - [Iter-7 polish (shipped)](#iter-7-polish-shipped)
+- [Changes since the previous scan](#changes-since-the-previous-scan)
+- [Duplicates overlay](#duplicates-overlay)
+- [Staying responsive during a scan](#staying-responsive-during-a-scan)
 - [Still open](#still-open)
 
 <!-- /toc -->
@@ -279,7 +282,65 @@ against a temp-dir fixture, with permission and cancellation cases).
 - **DU toast surface**: Move-to-Trash failures surface through the GPUI
   notification layer instead of only stderr.
 
+## Changes since the previous scan
+
+The calendar toggle recolours the treemap by how each folder's size differs
+from the previous completed scan of the same root: grew is orange, shrank is
+blue, new is purple, unchanged and "no earlier size" are grey, with intensity
+scaled to the size of the change. A file takes its folder's colour; in a
+folder that grew, files modified since the previous scan carry the full tone.
+The header line gives the net change and the total held by folders that were
+deleted, which have no rectangle in a map of the present. The side panel lists
+the folders that carry the largest changes.
+
+- **Summary.** When a scan completes, `ferail_disk_usage::history` builds a
+  summary: every folder holding at least 0,1 % of the root, plus the direct
+  subfolders of those, capped at 10.000 rows. A folder too small to be
+  recorded compares as "no earlier size", never as new.
+- **Store.** The `du_history` table of the metadata DB keeps the latest two
+  summaries per root. It follows the folder-size rules of
+  [PRIVACY_SETTINGS.md](PRIVACY_SETTINGS.md): memory-only under Remember
+  nothing, never written for an excluded folder, purged when an exclusion is
+  added, aged out by retention, and cleared with the file and folder caches.
+- **Threads.** Loading, comparing and saving run on the background executor
+  when the scan finishes. The toggle is disabled, with the reason in its
+  tooltip, when there is no earlier summary or the scan did not finish.
+
+## Duplicates overlay
+
+The Show duplicates toggle hatches every file that has an exact copy elsewhere
+in the scanned tree and shows the reclaimable total in the header. Clicking a
+hatched file selects all of its copies; the side panel lists the duplicate
+groups, most reclaimable first, with the folder of each copy.
+
+The search starts when the toggle is turned on and runs as a cancellable
+background task. `ferail_fs_native::find_duplicates_among` takes the files the
+scan already knows, groups them by size without touching the disk, and runs
+the duplicate finder's own hashing stages, hash cache, and hard-link, APFS
+clone, package and cloud-placeholder rules on the files that share a size, so
+"reclaimable" means the same thing here as in
+[Find Duplicates](DUPLICATES.md).
+
+## Staying responsive during a scan
+
+- The drain loop ticks every 8 ms and applies scan messages for at most 4 ms
+  per tick.
+- The window repaints when the layout or the largest-files list changed, and
+  otherwise at most every 200 ms for the counters.
+- The unfiltered largest-files list is maintained as files arrive; only a
+  filtered list walks the tree, throttled.
+- A rescan reserves table space for the previous scan's node count.
+- `FERAIL_DU_PROFILE=1` prints per-tick and per-frame timings to stderr.
+
+Measured on an M-series Mac, scanning 1,8 million nodes: 11 s in the app
+against 130 s before these rules, and 1,5 s of UI-thread drawing against 35 s.
+Each frame still draws about 3.000 interactive tiles; see "Still open".
+
 ## Still open
+
+- **One canvas for the treemap.** A frame costs tens of milliseconds because
+  every tile is its own interactive element. Painting the map as a single
+  canvas with its own hit-testing is the remaining responsiveness lever.
 
 - **APFS clone-aware sizing**: apparent and allocated sizes both
   double-count blocks shared by clones. Genuine deduped on-disk

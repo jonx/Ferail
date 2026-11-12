@@ -48,6 +48,8 @@ use gpui::prelude::FluentBuilder as _;
 
 mod actions;
 mod checksum;
+mod compare;
+pub(crate) use compare::{CompareMarks, compare_row_tint};
 mod dock;
 mod dupe_panel;
 mod dupes;
@@ -963,6 +965,11 @@ pub struct Shell {
     pub(crate) split_bounds: Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
     /// The divider between the panes is being dragged.
     pub(crate) split_dragging: bool,
+    /// Compare Folders over the split's two panes, while it is on
+    /// (docs/features/COMPARE_FOLDERS.md).
+    pub(crate) compare: Option<compare::FolderCompare>,
+    /// Bumped by every comparison start; stale worker results drop.
+    pub(crate) compare_generation: u64,
     /// Focus handle for the Shell's key-context. Keybindings declared
     /// against `SHELL_CONTEXT` only fire when this handle (or one of
     /// its children) holds focus.
@@ -2384,6 +2391,8 @@ impl Shell {
             split: None,
             split_bounds: Rc::new(std::cell::Cell::new(gpui::Bounds::default())),
             split_dragging: false,
+            compare: None,
+            compare_generation: 0,
             sidebar_width: persisted
                 .sidebar_width
                 .unwrap_or(220.0)
@@ -5640,6 +5649,8 @@ impl Shell {
             });
         })
         .detach();
+        // A compared pane that reloads or navigates is compared again.
+        self.compare_after_tab_load(tab_id, cx);
         cx.notify();
     }
 

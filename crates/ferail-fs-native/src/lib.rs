@@ -25,6 +25,7 @@ mod directory_reader;
 mod disk_usage_scanner;
 mod dupes;
 pub mod ebook;
+pub mod folder_compare;
 pub mod file_ops;
 mod icons;
 pub mod image_meta;
@@ -53,9 +54,10 @@ pub use archive::{
 };
 pub use disk_usage_scanner::{recursive_size, recursive_totals, SubtreeTotals, DEFAULT_DU_BATCH};
 pub use dupes::{
-    clone_dedup, DupeFact, DupeHashCache, DupeMember, DupeMode, DupeOpts, DupePhase, DupeStats,
+    clone_dedup, file_content_hash, DupeFact, DupeHashCache, DupeMember, DupeMode, DupeOpts, DupePhase, DupeStats,
     SimilarImageIndexEntry, SimilarImageInfo, DEFAULT_DUPE_BATCH, PARTIAL_HASH_BYTES,
 };
+pub use dupes::{find_duplicates_among, KnownFile};
 pub use icons::fetch_icon_rgba;
 pub use magic::{
     detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, ElfOs, MagicInfo, MagicType,

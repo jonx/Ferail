@@ -152,6 +152,11 @@
     "Case": "Case",
     "Change Icon…": "Change Icon…",
     "Changed while reading": "Changed while reading",
+    "Changes since the previous scan: available when this scan finishes": "Changes since the previous scan: available when this scan finishes",
+    "Changes since the previous scan: scan history is not available": "Changes since the previous scan: scan history is not available",
+    "Changes since the previous scan: this is the first scan of this folder": "Changes since the previous scan: this is the first scan of this folder",
+    "Changes since the previous scan: this scan did not finish": "Changes since the previous scan: this scan did not finish",
+    "Changes since the scan from {when}": "Changes since the scan from {when}",
     "Channels": "Channels",
     "Check for Updates…": "Check for Updates…",
     "Check for updates automatically": "Check for updates automatically",
@@ -201,9 +206,13 @@
     "Combining mark": "Combining mark",
     "Comfortable": "Comfortable",
     "Comments": "Comments",
+    "Compare Folders": "Compare Folders",
+    "Compare Folders needs a split view with a folder in each pane.": "Compare Folders needs a split view with a folder in each pane.",
     "Compare all files": "Compare all files",
     "Compare inside app bundles": "Compare inside app bundles",
     "Compared with the group reference: dHash {structure}/64 (structure), pHash {detail}/64 (detail). Lower numbers mean greater similarity.": "Compared with the group reference: dHash {structure}/64 (structure), pHash {detail}/64 (detail). Lower numbers mean greater similarity.",
+    "Comparing {left} and {right}": "Comparing {left} and {right}",
+    "Comparing…": "Comparing…",
     "Completed {n} item as administrator": {
       "one": "Completed {n} item as administrator",
       "other": "Completed {n} items as administrator"
@@ -252,6 +261,7 @@
       "other": "Copied {n} items"
     },
     "Copied “{name}”": "Copied “{name}”",
+    "Copies items missing on the other side and replaces older versions of files that differ. Nothing is deleted. Folders that differ are not merged: open them in both panes.": "Copies items missing on the other side and replaces older versions of files that differ. Nothing is deleted. Folders that differ are not merged: open them in both panes.",
     "Copy": "Copy",
     "Copy File List": "Copy File List",
     "Copy Path": "Copy Path",
@@ -260,6 +270,10 @@
     "Copy View as HTML": "Copy View as HTML",
     "Copy Whole View": "Copy Whole View",
     "Copy instructions": "Copy instructions",
+    "Copy missing and newer to bottom": "Copy missing and newer to bottom",
+    "Copy missing and newer to left": "Copy missing and newer to left",
+    "Copy missing and newer to right": "Copy missing and newer to right",
+    "Copy missing and newer to top": "Copy missing and newer to top",
     "Copy report": "Copy report",
     "Copy to Other Pane": "Copy to Other Pane",
     "Copying failed: {detail}": "Copying failed: {detail}",
@@ -269,6 +283,7 @@
       "other": "Copying: preparing ({n} items)…"
     },
     "Could not calculate SHA-256: {detail}": "Could not calculate SHA-256: {detail}",
+    "Could not compare: {error}": "Could not compare: {error}",
     "Could not create checksum file: {detail}": "Could not create checksum file: {detail}",
     "Could not mount volume: {error}": "Could not mount volume: {error}",
     "Could not open item: {error}": "Could not open item: {error}",
@@ -390,6 +405,7 @@
     "Detected when conversion starts": "Detected when conversion starts",
     "Device": "Device",
     "Diagnostics": "Diagnostics",
+    "Different: {count}": "Different: {count}",
     "Dimensions": "Dimensions",
     "Disc": "Disc",
     "Discard": "Discard",
@@ -428,6 +444,7 @@
     },
     "Duplicate": "Duplicate",
     "Duplicate finder": "Duplicate finder",
+    "Duplicate groups": "Duplicate groups",
     "Duplicate scan": "Duplicate scan",
     "Duplicate scan finished: no duplicates found": "Duplicate scan finished: no duplicates found",
     "Duplicate scan finished: {n} group · {reclaimable} reclaimable": {
@@ -575,6 +592,7 @@
     "Find Similar Images…": "Find Similar Images…",
     "Find and Replace": "Find and Replace",
     "Finding duplicates in {root}": "Finding duplicates in {root}",
+    "Finding duplicates: {files} files compared": "Finding duplicates: {files} files compared",
     "Finding similar images in {root}": "Finding similar images in {root}",
     "Fit": "Fit",
     "Fit height": "Fit height",
@@ -618,6 +636,7 @@
     "Gray": "Gray",
     "Greek": "Greek",
     "Green": "Green",
+    "Grew": "Grew",
     "Group": "Group",
     "Group reference": "Group reference",
     "Grouped rows in a tab": "Grouped rows in a tab",
@@ -630,6 +649,7 @@
     "Hidden": "Hidden",
     "Hide Others": "Hide Others",
     "Hide details": "Hide details",
+    "Hide duplicates": "Hide duplicates",
     "Hide extension": "Hide extension",
     "Hide largest-files panel": "Hide largest-files panel",
     "Hide preview": "Hide preview",
@@ -649,6 +669,7 @@
     "Icon fit": "Icon fit",
     "Icon spacing": "Icon spacing",
     "Icon view": "Icon view",
+    "Identical: {count}": "Identical: {count}",
     "Ignore small files": "Ignore small files",
     "Image": "Image",
     "Import": "Import",
@@ -695,6 +716,7 @@
     "Large (130%)": "Large (130%)",
     "Larger icons": "Larger icons",
     "Largest Files Panel": "Largest Files Panel",
+    "Largest changes": "Largest changes",
     "Last opened": "Last opened",
     "Later": "Later",
     "Launch mode": "Launch mode",
@@ -716,6 +738,7 @@
     "Locations": "Locations",
     "Locked": "Locked",
     "Look-alike character": "Look-alike character",
+    "Looking for duplicates…": "Looking for duplicates…",
     "Looking for sidecar files…": "Looking for sidecar files…",
     "Loop": "Loop",
     "Lower values require a closer visual match.": "Lower values require a closer visual match.",
@@ -754,6 +777,7 @@
     "Mismatch": "Mismatch",
     "Missing": "Missing",
     "Modified": "Modified",
+    "Modified since the previous scan": "Modified since the previous scan",
     "More": "More",
     "More options from Windows…": "More options from Windows…",
     "More sidecars may be present.": "More sidecars may be present.",
@@ -802,9 +826,12 @@
       "other": "Moving: preparing ({n} items)…"
     },
     "Music": "Music",
+    "NTFS index": "NTFS index",
+    "NTFS index (administrator)": "NTFS index (administrator)",
     "Name": "Name",
     "Never record other volumes": "Never record other volumes",
     "Never record these folders": "Never record these folders",
+    "New": "New",
     "New Archive": "New Archive",
     "New Archive…": "New Archive…",
     "New Folder": "New Folder",
@@ -815,18 +842,23 @@
     "New language…": "New language…",
     "New name": "New name",
     "New password": "New password",
+    "New since the previous scan": "New since the previous scan",
     "Next Tab": "Next Tab",
     "No": "No",
     "No active tasks.": "No active tasks.",
     "No activity recorded yet.": "No activity recorded yet.",
     "No applications found": "No applications found",
     "No downloadable Ferail release was found on GitHub.": "No downloadable Ferail release was found on GitHub.",
+    "No duplicates": "No duplicates",
+    "No duplicates found": "No duplicates found",
     "No duplicates found.": "No duplicates found.",
+    "No earlier size": "No earlier size",
     "No files found in this location or its subfolders.": "No files found in this location or its subfolders.",
     "No files on the clipboard": "No files on the clipboard",
     "No files or image on the clipboard": "No files or image on the clipboard",
     "No files to view in this folder": "No files to view in this folder",
     "No folder available to add to Favorites.": "No folder available to add to Favorites.",
+    "No folder changed noticeably": "No folder changed noticeably",
     "No language packs installed.": "No language packs installed.",
     "No matching command": "No matching command",
     "No matching files yet": "No matching files yet",
@@ -843,6 +875,7 @@
     "Node.js script": "Node.js script",
     "None": "None",
     "Normal": "Normal",
+    "Not compared: {count}": "Not compared: {count}",
     "Not downloaded": "Not downloaded",
     "Not enough space on “{dest}”: needs {needed}, only {free} free": "Not enough space on “{dest}”: needs {needed}, only {free} free",
     "Not supported by {format} archives.": "Not supported by {format} archives.",
@@ -856,8 +889,12 @@
     "On": "On",
     "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default: when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.": "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default: when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.",
     "OneDrive": "OneDrive",
+    "Only bottom: {count}": "Only bottom: {count}",
     "Only folders can be added to Favorites.": "Only folders can be added to Favorites.",
+    "Only left: {count}": "Only left: {count}",
     "Only needed for an encrypted source": "Only needed for an encrypted source",
+    "Only right: {count}": "Only right: {count}",
+    "Only top: {count}": "Only top: {count}",
     "Only {n} file was checked: a lock outside that sample would not show.": {
       "one": "Only {n} file was checked: a lock outside that sample would not show.",
       "other": "Only the first {n} files were checked: a lock outside that sample would not show."
@@ -965,6 +1002,7 @@
     "Preview selected file": "Preview selected file",
     "Preview this file?": "Preview this file?",
     "Previous Tab": "Previous Tab",
+    "Previous scan {when}: {delta}": "Previous scan {when}: {delta}",
     "Privacy": "Privacy",
     "Privacy protection is off: a shared report would include the paths shown here.": "Privacy protection is off: a shared report would include the paths shown here.",
     "Privacy protection is on: paths and file names are replaced before this activity is attached to a report.": "Privacy protection is on: paths and file names are replaced before this activity is attached to a report.",
@@ -1060,6 +1098,7 @@
     "Reopen the last session": "Reopen the last session",
     "Replace": "Replace",
     "Replace extra copies with APFS clones (keeps every file)": "Replace extra copies with APFS clones (keeps every file)",
+    "Replace older files?": "Replace older files?",
     "Replace {n} extra copy with APFS clones of “{keeper}”? Every file stays; the duplicated bytes are freed.": {
       "one": "Replace {n} extra copy with APFS clones of “{keeper}”? Every file stays; the duplicated bytes are freed.",
       "other": "Replace {n} extra copies with APFS clones of “{keeper}”? Every file stays; the duplicated bytes are freed."
@@ -1201,6 +1240,7 @@
     "Show Recents": "Show Recents",
     "Show a preview and give keyboard navigation a starting point in newly opened folders.": "Show a preview and give keyboard navigation a starting point in newly opened folders.",
     "Show all": "Show all",
+    "Show duplicates": "Show duplicates",
     "Show file previews": "Show file previews",
     "Show folder": "Show folder",
     "Show hidden": "Show hidden",
@@ -1220,6 +1260,7 @@
       "other": "Showing {n} items in {app}"
     },
     "Showing “{name}” in {app}": "Showing “{name}” in {app}",
+    "Shrank": "Shrank",
     "Sidebar": "Sidebar",
     "Sidecar files": "Sidecar files",
     "Similar image scan": "Similar image scan",
@@ -1312,11 +1353,13 @@
     "Terminal application": "Terminal application",
     "Text or pattern": "Text or pattern",
     "The Linux distribution could not be started.": "The Linux distribution could not be started.",
+    "The NTFS index answers a name search on a local NTFS drive from the drive's own file table instead of reading every folder. It needs the administrator helper, which asks for permission once. Automatic uses the index only when Disk Usage has already started that helper, and the built-in walker otherwise.": "The NTFS index answers a name search on a local NTFS drive from the drive's own file table instead of reading every folder. It needs the administrator helper, which asks for permission once. Automatic uses the index only when Disk Usage has already started that helper, and the built-in walker otherwise.",
     "The Windows context menu is not available for Linux files": "The Windows context menu is not available for Linux files",
     "The app's configuration lives here: the settings file, the metadata database (tags, visit history), and your language packs.": "The app's configuration lives here: the settings file, the metadata database (tags, visit history), and your language packs.",
     "The archive has no parent folder": "The archive has no parent folder",
     "The built-in player uses the platform's native media frameworks (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually any container/codec and applies colour adjustments and a transparent-colour key to the video itself. libmpv must be installed; a change takes effect on the next viewer window.": "The built-in player uses the platform's native media frameworks (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually any container/codec and applies colour adjustments and a transparent-colour key to the video itself. libmpv must be installed; a change takes effect on the next viewer window.",
     "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable: rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.": "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable: rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.",
+    "The built-in walker reads every folder under the one you search.": "The built-in walker reads every folder under the one you search.",
     "The comparison is unavailable because calculation did not finish.": "The comparison is unavailable because calculation did not finish.",
     "The comparison will appear when calculation finishes.": "The comparison will appear when calculation finishes.",
     "The converted archive name must be a single non-empty filename.": "The converted archive name must be a single non-empty filename.",
@@ -1370,6 +1413,7 @@
     "Too many edited copies of this image already exist here.": "Too many edited copies of this image already exist here.",
     "Too many items selected for the Windows context menu": "Too many items selected for the Windows context menu",
     "Too many items selected to restore at once": "Too many items selected to restore at once",
+    "Too small last time to compare": "Too small last time to compare",
     "Track": "Track",
     "Tracker module": "Tracker module",
     "Trailing whitespace": "Trailing whitespace",
@@ -1407,6 +1451,8 @@
     "UTF-8 text": "UTF-8 text",
     "Unavailable": "Unavailable",
     "Unblock": "Unblock",
+    "Unchanged": "Unchanged",
+    "Unchanged since the previous scan": "Unchanged since the previous scan",
     "Uncompressed": "Uncompressed",
     "Undid bulk rename": "Undid bulk rename",
     "Undid rename": "Undid rename",
@@ -1582,6 +1628,7 @@
       "one": "{count} folder",
       "other": "{count} folders"
     },
+    "{delta} since the previous scan": "{delta} since the previous scan",
     "{done} of {n} item": {
       "one": "{done} of {n} item",
       "other": "{done} of {n} items"
@@ -1666,6 +1713,10 @@
       "one": "{n} hidden · {size}",
       "other": "{n} hidden · {size}"
     },
+    "{n} identical copy, click to show all": {
+      "one": "{n} identical copy, click to show all",
+      "other": "{n} identical copies, click to show all"
+    },
     "{n} image · {reclaimable} reclaimable": {
       "one": "{n} image · {reclaimable} reclaimable",
       "other": "{n} images · {reclaimable} reclaimable"
@@ -1717,6 +1768,10 @@
       "other": "{n} of {total} selected · {size}"
     },
     "{n} of {t}": "{n} of {t}",
+    "{n} older file in “{folder}” will be replaced by the newer version from the other side. This cannot be undone.": {
+      "one": "{n} older file in “{folder}” will be replaced by the newer version from the other side. This cannot be undone.",
+      "other": "{n} older files in “{folder}” will be replaced by the newer version from the other side. This cannot be undone."
+    },
     "{n} other": "{n} other",
     "{n} path copied to clipboard": {
       "one": "{n} path copied to clipboard",
@@ -1760,6 +1815,14 @@
     "{shown} of {total}": "{shown} of {total}",
     "{size} free": "{size} free",
     "{size} free on {name}": "{size} free on {name}",
+    "{size} in {n} deleted folder": {
+      "one": "{size} in {n} deleted folder",
+      "other": "{size} in {n} deleted folders"
+    },
+    "{size} reclaimable in {n} duplicate group": {
+      "one": "{size} reclaimable in {n} duplicate group",
+      "other": "{size} reclaimable in {n} duplicate groups"
+    },
     "{summary}, {n} skipped": {
       "one": "{summary}, {n} skipped",
       "other": "{summary}, {n} skipped"

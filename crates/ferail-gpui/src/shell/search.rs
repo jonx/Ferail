@@ -28,6 +28,10 @@ use super::tab::{TabId, ToolResultSurface};
 use crate::feature_settings::{SearchConfig, SearchEnginePref};
 use crate::tasks::TaskKind;
 
+/// Engine label shown while the Fast NTFS helper answers a search.
+#[cfg(windows)]
+const NTFS_INDEX_LABEL: &str = ferail_core::msgid!("NTFS index");
+
 /// Streamed search result, mirroring the directory loader's `LoadMsg`.
 pub(super) enum SearchMsg {
     /// The engine the worker actually resolved to, sent before the
@@ -37,6 +41,10 @@ pub(super) enum SearchMsg {
     /// launching a search must not block on the probe).
     Engine(&'static str),
     Batch(LoadBatch),
+    /// Drop every row delivered so far: an index engine failed after
+    /// partial results and another engine is starting over.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Reset,
     Done(Option<EnumerationError>),
 }
 
@@ -47,6 +55,8 @@ const SEARCH_UI_TICK_MS: u64 = 100;
 #[derive(Default)]
 struct SearchUiUpdate {
     engine: Option<&'static str>,
+    /// Clear the listing before applying `batch`.
+    reset: bool,
     batch: Option<LoadBatch>,
     done: Option<Option<EnumerationError>>,
 }
@@ -63,6 +73,10 @@ impl SearchUiUpdate {
                 Some(batch) => batch.append(next),
                 None => self.batch = Some(next),
             },
+            SearchMsg::Reset => {
+                self.reset = true;
+                self.batch = None;
+            }
             SearchMsg::Done(error) => self.done = Some(error),
         }
     }
@@ -238,6 +252,14 @@ pub(super) fn run_search_load(
         let _ = tx.send_blocking(SearchMsg::Engine(ferail_core::msgid!("Spotlight")));
         run_spotlight(&fs, &config, &root, &expr, &cancel, &tx)
     } else {
+        // Windows: a local NTFS volume answers from the elevated helper's
+        // MFT index when one is available. `None` means "not handled":
+        // the walker below starts from an empty listing.
+        #[cfg(windows)]
+        if let Some(done) = run_ntfs_index(&fs, &config, &root, &expr, &cancel, &tx) {
+            let _ = tx.send_blocking(SearchMsg::Done(done));
+            return;
+        }
         let _ = tx.send_blocking(SearchMsg::Engine(ferail_core::msgid!("Subtree")));
         run_walker(&fs, &config, &root, expr.clone(), &cancel, &tx)
     };
@@ -305,6 +327,107 @@ fn run_tag_search(
     _tx: &async_channel::Sender<SearchMsg>,
 ) -> Option<EnumerationError> {
     None
+}
+
+/// Answer a name search from the Fast NTFS helper's MFT index.
+///
+/// `Some(result)` when the index served the search (or it was cancelled),
+/// `None` when the caller must run the walker instead: the engine is not
+/// selected, the query has no text term, no helper is available without a
+/// UAC prompt, the helper is busy, or it failed. A failure after partial
+/// rows sends [`SearchMsg::Reset`] first, so the walker never appends to a
+/// half-delivered listing.
+///
+/// Consent: only an explicit "NTFS index" choice may start the elevated
+/// helper. Automatic reuses a helper that Disk Usage already started and
+/// never prompts.
+///
+/// Every hit is re-read through `file_entry_for_path` as this unelevated
+/// process, so rows are built exactly like the walker's, the expression's
+/// metadata terms apply to a real row, and an item this user cannot stat
+/// is dropped rather than revealed by the elevated index.
+#[cfg(windows)]
+fn run_ntfs_index(
+    fs: &NativeFs,
+    config: &SearchConfig,
+    root: &Path,
+    expr: &FilterExpr,
+    cancel: &AtomicBool,
+    tx: &async_channel::Sender<SearchMsg>,
+) -> Option<Option<EnumerationError>> {
+    use ferail_ntfs_win32::{
+        ClientError, HelperLaunch, NtfsSearchEvent, NtfsSearchRequest, SessionWait,
+        run_ntfs_search,
+    };
+    use std::os::windows::ffi::OsStringExt as _;
+    use std::sync::atomic::AtomicU64;
+
+    static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
+
+    let (launch, wait) = match config.engine {
+        SearchEnginePref::Walker => return None,
+        SearchEnginePref::Spotlight => (HelperLaunch::MayElevate, SessionWait::Wait),
+        SearchEnginePref::Auto => (HelperLaunch::ReuseOnly, SessionWait::FailIfBusy),
+    };
+    let terms = expr.text_terms();
+    if terms.is_empty() {
+        return None;
+    }
+    let request = NtfsSearchRequest {
+        root: root.to_path_buf(),
+        terms,
+        match_path: config.match_path,
+        include_hidden: config.include_hidden,
+        // Same package rule as `run_walker`.
+        descend_packages: false,
+        request_id: NEXT_REQUEST.fetch_add(1, Ordering::Relaxed),
+        launch,
+        wait,
+    };
+    let mut sent_rows = false;
+    let result = run_ntfs_search(request, cancel, |event| match event {
+        NtfsSearchEvent::Ready => {
+            let _ = tx.send_blocking(SearchMsg::Engine(NTFS_INDEX_LABEL));
+        }
+        NtfsSearchEvent::Batch(rows) => {
+            let mut entries = Vec::with_capacity(rows.len());
+            let mut paths = HashMap::with_capacity(rows.len());
+            for row in rows {
+                let path = root.join(std::ffi::OsString::from_wide(&row.relative_path));
+                let Some(entry) = fs.file_entry_for_path(&path) else {
+                    continue;
+                };
+                if !expr.metadata_matches(&entry) {
+                    continue;
+                }
+                let entry = with_location(entry, &path, root);
+                paths.insert(entry.id, path);
+                entries.push(entry);
+            }
+            if !entries.is_empty() {
+                sent_rows = true;
+                if tx
+                    .send_blocking(SearchMsg::Batch(LoadBatch { entries, paths }))
+                    .is_err()
+                {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+        NtfsSearchEvent::Progress(_) | NtfsSearchEvent::Complete(_) => {}
+    });
+    match result {
+        Ok(()) | Err(ClientError::Cancelled) => Some(None),
+        Err(_) => {
+            if cancel.load(Ordering::Relaxed) {
+                return Some(None);
+            }
+            if sent_rows {
+                let _ = tx.send_blocking(SearchMsg::Reset);
+            }
+            None
+        }
+    }
 }
 
 fn run_walker(
@@ -741,7 +864,9 @@ impl Shell {
         let config = SearchConfig::load();
         let engine_label = if tag.is_some() {
             ferail_core::msgid!("Tag")
-        } else if matches!(config.engine, SearchEnginePref::Walker) {
+        } else if matches!(config.engine, SearchEnginePref::Walker) || !cfg!(target_os = "macos") {
+            // Off macOS the walker is the default; an index engine that
+            // takes the search corrects the label from the worker.
             ferail_core::msgid!("Subtree")
         } else {
             ferail_core::msgid!("Spotlight")
@@ -818,6 +943,13 @@ impl Shell {
                         if this.tabs[idx].load_generation != generation {
                             return true;
                         }
+                        if update.reset {
+                            let table = this.tabs[idx].table.clone();
+                            table.update(cx, |state, cx| {
+                                state.delegate_mut().clear();
+                                state.refresh(cx);
+                            });
+                        }
                         if let Some(engine) = update.engine {
                             this.apply_search_msg_in_tab(
                                 idx,
@@ -865,6 +997,8 @@ impl Shell {
     ) {
         let visible = idx == self.active;
         match msg {
+            // Applied by the drain loop before it calls here.
+            SearchMsg::Reset => {}
             SearchMsg::Engine(label) => {
                 // Worker-resolved engine (it owns the mdfind probe).
                 // Corrects the optimistic label the launch path showed.

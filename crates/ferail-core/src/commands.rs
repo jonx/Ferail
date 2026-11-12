@@ -502,6 +502,14 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::View,
         shortcuts: &[Shortcut::primary_alt("P")],
     },
+    // Compare Folders (docs/features/COMPARE_FOLDERS.md): toggles a
+    // comparison of the two panes' folders.
+    CommandSpec {
+        id: CommandId("view.compare_folders"),
+        title: msgid!("Compare Folders"),
+        category: Category::View,
+        shortcuts: &[Shortcut::primary_alt("K")],
+    },
     CommandSpec {
         id: CommandId("view.cycle_focus"),
         title: msgid!("Cycle Focus"),

@@ -63,9 +63,9 @@ use ferail_core::{EnumerationError, NodeId};
 #[cfg(target_os = "windows")]
 use ferail_disk_usage::classify_extension;
 use ferail_disk_usage::{
-    DiskUsageFact, DiskUsageLayoutNode, DiskUsageStats, DiskUsageTree, FileCategory, SizeMode,
-    TreemapRect, build_filtered_layout_node_with_mode, build_layout_node_with_mode,
-    compute_treemap,
+    ChangeKind, ChangeSet, DiskUsageFact, DiskUsageLayoutNode, DiskUsageStats, DiskUsageTree,
+    FileCategory, SizeMode, TreemapRect, build_filtered_layout_node_with_mode,
+    build_layout_node_with_mode, compute_treemap,
 };
 use ferail_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
@@ -92,19 +92,25 @@ pub type DockOwner = Rc<dyn Fn(PathBuf, Entity<DiskUsageView>, &mut App)>;
 /// Treemap recursion depth used by the DU window. Matches the old
 /// app's DU_LAYOUT_DEPTH.
 const DU_LAYOUT_DEPTH: u32 = 4;
-/// Foreground drain cadence while the backlog is small.
-const DU_DRAIN_INTERVAL_IDLE: Duration = Duration::from_millis(80);
-/// When the worker gets ahead, keep draining more often, but still in
-/// bounded chunks so the UI thread gets to breathe between updates.
-const DU_DRAIN_INTERVAL_BUSY: Duration = Duration::from_millis(16);
-/// Hard cap on how many queue messages one foreground drain tick may
-/// apply. Prevents a large scan backlog from collapsing into one giant
-/// main-thread update.
-const DU_MAX_MSGS_PER_TICK: usize = 12;
-/// Top-N rebuild is O(n) in tree size + O(n log n) for the sort. At
-/// large folders it dominates each drain tick, so we throttle it to a
-/// human-scale refresh rate. The Done message always forces a final
-/// rebuild regardless.
+/// Foreground drain cadence for the whole life of a scan. The scanner
+/// produces continuously, so the drain must not fall back to a slow idle
+/// cadence merely because it emptied the queue once: that capped a real
+/// 1.8 M-node scan at ~150 batches/s, 25x slower than the walker.
+const DU_DRAIN_INTERVAL: Duration = Duration::from_millis(8);
+/// UI-thread time one drain tick may spend applying facts. The tick stops
+/// between messages once this is used up and leaves the rest queued, so
+/// one tick never blocks input or a frame for long, whatever the backlog.
+/// A message is ~500 facts, ~0.15 ms to apply.
+const DU_DRAIN_BUDGET: Duration = Duration::from_millis(4);
+/// While a scan streams, repaint for progress counters at most this
+/// often. Every repaint rebuilds thousands of treemap tiles (16-55 ms per
+/// frame on a 3,000-tile map), so repainting on every drain tick spent
+/// more UI time drawing than applying the scan.
+const DU_PROGRESS_REPAINT: Duration = Duration::from_millis(200);
+/// Filtered Top-N rebuild is O(n) in tree size. While a text or category
+/// filter is active it is throttled to a human-scale refresh rate; the
+/// unfiltered list is maintained incrementally and costs nothing to read.
+/// The Done message always forces a final rebuild regardless.
 const DU_TOPN_REBUILD_INTERVAL: Duration = Duration::from_millis(500);
 /// Treemap layout rebuild (aggregate recursion over every node in the
 /// tree) is the other per-tick cost that scales with tree size. While
@@ -114,6 +120,17 @@ const DU_TOPN_REBUILD_INTERVAL: Duration = Duration::from_millis(500);
 /// size-mode, resize) bypass this and stay immediate.
 const DU_LAYOUT_REBUILD_INTERVAL: Duration = Duration::from_millis(250);
 const DU_LARGE_TREE_NODES: usize = 100_000;
+
+/// `FERAIL_DU_PROFILE=1` logs per-drain-tick and per-render timings to
+/// stderr. Read once; zero cost when unset.
+pub(crate) fn profile_enabled() -> bool {
+    du_profile()
+}
+
+fn du_profile() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FERAIL_DU_PROFILE").is_some_and(|v| v != "0"))
+}
 const DU_HUGE_TREE_NODES: usize = 500_000;
 
 fn layout_rebuild_interval(nodes: usize) -> Duration {
@@ -136,7 +153,7 @@ fn topn_rebuild_interval(nodes: usize) -> Duration {
     }
 }
 /// Backpressure cap on the BG→FG queue. The drain applies at most
-/// `DU_MAX_MSGS_PER_TICK` per busy tick, so a warm-cache scan of a huge
+/// [`DU_DRAIN_BUDGET`] of work per tick, so a warm-cache scan of a huge
 /// volume can outrun it indefinitely, without a cap the backlog grows
 /// to hundreds of MB of fact batches. When the queue is full the
 /// scanner thread naps ([`DU_BACKPRESSURE_NAP`]) until the drain
@@ -166,6 +183,7 @@ fn next_du_id_base() -> u64 {
 /// `DiskUsageTree`; retaining one parent id per node is enough to reconstruct
 /// an absolute path when an action is invoked. Closing the DU surface drops
 /// this vector and the tree together, unlike NativeFs's process-wide path map.
+#[derive(Clone)]
 struct DiskUsagePathArena {
     root: PathBuf,
     id_base: u64,
@@ -358,7 +376,10 @@ pub struct DiskUsageView {
     root_path: PathBuf,
     root_id: NodeId,
     fs: Arc<NativeFs>,
-    path_arena: DiskUsagePathArena,
+    /// Shared with the duplicates job, which resolves paths off-thread once
+    /// the scan is complete; during a scan nothing else holds it, so
+    /// `Arc::make_mut` never copies.
+    path_arena: Arc<DiskUsagePathArena>,
 
     /// Immutable-by-default after the scan completes. Filter projections keep
     /// an `Arc` snapshot and walk it off-thread without cloning millions of
@@ -447,6 +468,12 @@ pub struct DiskUsageView {
     /// Top-N largest files in the scanned tree, recomputed when a
     /// new fact batch lands. Capped at 50 entries.
     top_files: Vec<TopFileEntry>,
+    /// Unfiltered largest files in the current size mode, maintained as
+    /// size facts arrive so the panel stays live during a scan without an
+    /// O(n) walk of the tree. At most `TOPN_CAP` `(bytes, node)` pairs.
+    live_top: Vec<(u64, NodeId)>,
+    /// Smallest size in a full `live_top`; cheaper than rescanning it.
+    live_top_floor: u64,
     /// Show the Top-N panel? Toggleable via the header chip.
     topn_visible: bool,
 
@@ -476,6 +503,76 @@ pub struct DiskUsageView {
     host_size: Option<(f32, f32)>,
 
     focus_handle: FocusHandle,
+
+    /// Comparison with the previous scan of this root, built off-thread
+    /// when a scan completes (docs/features/DISK_USAGE.md).
+    history: HistoryState,
+    history_generation: u64,
+    history_cancel: Option<Arc<AtomicBool>>,
+    /// "Changes since …": colour the treemap as a diff.
+    changes_mode: bool,
+    /// Per-tile change colouring, parallel to `rects_cache`. Filled at
+    /// layout time while `changes_mode` is on, read by render.
+    rect_changes: Vec<RectChange>,
+    /// Duplicates overlay over the files the scan already knows.
+    dupes_mode: bool,
+    dupes: DupesState,
+    dupes_generation: u64,
+    dupes_cancel: Option<Arc<AtomicBool>>,
+    dupes_task: Option<TaskId>,
+    /// Confirmed groups, largest reclaimable first once finished.
+    dupe_groups: Vec<DupeGroup>,
+    /// File node -> index into `dupe_groups`.
+    dupe_of: std::collections::HashMap<NodeId, usize>,
+    dupe_reclaimable: u64,
+    /// The group whose members are selected, with each member's folder
+    /// (relative to the scan root) resolved once, on the click.
+    active_group: Option<(usize, Vec<(NodeId, String)>)>,
+    /// Screenshot harness: switch a mode on as soon as its data is ready.
+    screenshot_changes: bool,
+    screenshot_dupes: bool,
+}
+
+/// Where the comparison with the previous scan stands.
+enum HistoryState {
+    /// The scan is still running.
+    Waiting,
+    /// Building the summary and comparing, off-thread.
+    Loading,
+    Ready(Arc<ChangeData>),
+    /// No earlier summary of this root exists.
+    FirstScan,
+    /// No metadata store is open, so history is neither read nor kept.
+    NoStore,
+    /// The scan was stopped or failed: an incomplete tree is not compared
+    /// and not stored.
+    Incomplete,
+}
+
+struct ChangeData {
+    taken_at_unix: i64,
+    set: ChangeSet,
+}
+
+#[derive(Clone, Copy)]
+struct RectChange {
+    kind: ChangeKind,
+    delta: i64,
+    color: Rgba,
+    /// A file modified after the previous scan.
+    modified: bool,
+}
+
+enum DupesState {
+    Off,
+    Running(ferail_fs_native::DupeStats),
+    Done,
+}
+
+struct DupeGroup {
+    members: Vec<NodeId>,
+    bytes_each: u64,
+    reclaimable: u64,
 }
 
 /// One entry in the Top-N largest-files panel.
@@ -703,7 +800,7 @@ impl DiskUsageView {
             root_path: canonical.clone(),
             root_id,
             fs: fs.clone(),
-            path_arena,
+            path_arena: Arc::new(path_arena),
             tree: Arc::new(DiskUsageTree::new(root_id)),
             stats: DiskUsageStats::default(),
             scan_complete: false,
@@ -744,6 +841,8 @@ impl DiskUsageView {
             descend_packages: false,
             volume,
             top_files: Vec::new(),
+            live_top: Vec::with_capacity(TOPN_CAP),
+            live_top_floor: 0,
             topn_visible: true,
             tasks,
             task_id: None,
@@ -752,6 +851,22 @@ impl DiskUsageView {
             host: ToolHostContext::Windowed,
             host_size: None,
             focus_handle: cx.focus_handle(),
+            history: HistoryState::Waiting,
+            history_generation: 0,
+            history_cancel: None,
+            changes_mode: false,
+            rect_changes: Vec::new(),
+            dupes_mode: false,
+            dupes: DupesState::Off,
+            dupes_generation: 0,
+            dupes_cancel: None,
+            dupes_task: None,
+            dupe_groups: Vec::new(),
+            dupe_of: std::collections::HashMap::new(),
+            dupe_reclaimable: 0,
+            active_group: None,
+            screenshot_changes: false,
+            screenshot_dupes: false,
         };
         view.start_scan(fs, cx);
         #[cfg(target_os = "windows")]
@@ -823,9 +938,64 @@ impl DiskUsageView {
 
     /// Recompute the Top-N largest-files list from the current tree.
     /// Single pass + partial sort, capped at `TOPN_CAP`.
+    /// A category or text filter narrows the Top-N list, so it cannot come
+    /// from the unfiltered live set.
+    fn top_files_filtered(&self) -> bool {
+        self.category_filter.is_some() || !self.text_filter_expr.is_empty()
+    }
+
+    /// Feed size facts of files into the live Top-N set.
+    fn offer_live_top(&mut self, facts: &[DiskUsageFact]) {
+        for fact in facts {
+            let node = match fact {
+                DiskUsageFact::NodeSizeAdded { node, .. }
+                | DiskUsageFact::NodeAllocatedAdded { node, .. } => *node,
+                _ => continue,
+            };
+            let Some(entry) = self.tree.nodes.get(&node) else {
+                continue;
+            };
+            if entry.kind != ferail_disk_usage::NodeKind::File {
+                continue;
+            }
+            let size = size_for_mode(entry.size_bytes, entry.allocated_bytes, self.size_mode);
+            live_top_offer(&mut self.live_top, &mut self.live_top_floor, node, size);
+        }
+    }
+
+    /// Recompute the live set from the whole tree: after a size-mode change.
+    fn reseed_live_top(&mut self) {
+        self.live_top.clear();
+        self.live_top_floor = 0;
+        for (id, node) in &self.tree.nodes {
+            if node.kind == ferail_disk_usage::NodeKind::File {
+                let size = size_for_mode(node.size_bytes, node.allocated_bytes, self.size_mode);
+                live_top_offer(&mut self.live_top, &mut self.live_top_floor, *id, size);
+            }
+        }
+    }
+
     fn rebuild_top_files(&mut self) {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
+
+        if !self.top_files_filtered() {
+            let mut live = self.live_top.clone();
+            live.sort_unstable_by(|a, b| b.cmp(a));
+            self.top_files = live
+                .into_iter()
+                .filter_map(|(size_bytes, node_id)| {
+                    let node = self.tree.nodes.get(&node_id)?;
+                    Some(TopFileEntry {
+                        node_id,
+                        category: node.file_category,
+                        name: node.display_name.clone(),
+                        size_bytes,
+                    })
+                })
+                .collect();
+            return;
+        }
 
         let node_count = self.tree.nodes.len();
         let started = Instant::now();
@@ -969,49 +1139,53 @@ impl DiskUsageView {
         cx.spawn(async move |this, cx| {
             let mut last_topn_rebuild = Instant::now() - DU_TOPN_REBUILD_INTERVAL;
             let mut last_layout_rebuild = Instant::now() - DU_LAYOUT_REBUILD_INTERVAL;
-            let mut interval = DU_DRAIN_INTERVAL_IDLE;
+            let mut last_repaint = Instant::now();
             loop {
-                cx.background_executor().timer(interval).await;
+                cx.background_executor().timer(DU_DRAIN_INTERVAL).await;
                 // A results-only worker briefly owns an immutable `Arc`
                 // snapshot. Leave incoming batches in the bounded queue until
                 // it releases that snapshot; mutating now would make
                 // `Arc::make_mut` clone the entire tree on this UI task.
                 if filter_snapshot_gate.load(Ordering::Acquire) != 0 {
-                    interval = DU_DRAIN_INTERVAL_BUSY;
                     continue;
                 }
-                let (msgs, more_pending): (Vec<ScanMsg>, bool) = match queue_for_drain.lock() {
-                    Ok(mut q) => {
-                        let take = q.len().min(DU_MAX_MSGS_PER_TICK);
-                        let mut msgs = Vec::with_capacity(take);
-                        for _ in 0..take {
-                            if let Some(msg) = q.pop_front() {
-                                msgs.push(msg);
-                            }
-                        }
-                        (msgs, !q.is_empty())
+                if queue_for_drain.lock().map_or(true, |q| q.is_empty()) {
+                    // Nobody else holds the queue: the view dropped or
+                    // replaced it and the worker has exited. Stop polling.
+                    if Arc::strong_count(&queue_for_drain) == 1 {
+                        break;
                     }
-                    Err(_) => break,
-                };
-                if msgs.is_empty() {
-                    interval = DU_DRAIN_INTERVAL_IDLE;
                     continue;
                 }
-                interval = if more_pending {
-                    DU_DRAIN_INTERVAL_BUSY
-                } else {
-                    DU_DRAIN_INTERVAL_IDLE
-                };
                 let mut done = false;
                 let mut had_batch = false;
                 let mut had_progress = false;
                 let mut stale = false;
+                let mut queue_poisoned = false;
+                let tick_started = Instant::now();
+                let mut n_msgs = 0usize;
+                let mut prof_apply = Duration::ZERO;
+                let mut prof_layout = Duration::ZERO;
+                let mut prof_topn = Duration::ZERO;
                 let update_result = this.update(cx, |v, cx| {
                     if v.scan_generation != generation {
                         stale = true;
                         return;
                     }
-                    for msg in msgs {
+                    let apply_started = Instant::now();
+                    // Time-budgeted: one message at a time, so the budget is
+                    // checked at a fine grain and the lock is never held
+                    // while applying.
+                    while apply_started.elapsed() < DU_DRAIN_BUDGET && !done {
+                        let msg = match queue_for_drain.lock() {
+                            Ok(mut q) => q.pop_front(),
+                            Err(_) => {
+                                queue_poisoned = true;
+                                break;
+                            }
+                        };
+                        let Some(msg) = msg else { break };
+                        n_msgs += 1;
                         match &msg {
                             ScanMsg::Batch(_) => had_batch = true,
                             #[cfg(target_os = "windows")]
@@ -1025,14 +1199,15 @@ impl DiskUsageView {
                         }
                         v.apply_scan_msg(msg);
                     }
+                    prof_apply = apply_started.elapsed();
+                    let mut visible_change = done;
                     if had_batch || done {
                         // Streaming layout throttle: invalidate + full-tree
                         // rebuild is the expensive half of a drain tick, so
                         // while batches are streaming it runs at most every
-                        // DU_LAYOUT_REBUILD_INTERVAL. Done always rebuilds so
-                        // the final frame is exact; ticks in between still
-                        // notify so the header counters stay live against
-                        // the last-built treemap.
+                        // layout_rebuild_interval. Done always rebuilds so
+                        // the final frame is exact.
+                        let layout_started = Instant::now();
                         let rebuild_layout = done
                             || last_layout_rebuild.elapsed()
                                 >= layout_rebuild_interval(v.tree.nodes.len());
@@ -1051,25 +1226,54 @@ impl DiskUsageView {
                                 v.rebuild_layout_if_ready();
                             }
                             last_layout_rebuild = Instant::now();
+                            visible_change = true;
                         }
+                        prof_layout = layout_started.elapsed();
+                        let topn_started = Instant::now();
+                        // The unfiltered list is maintained incrementally, so
+                        // it refreshes with every repaint; only a filtered
+                        // list needs the throttled full walk.
                         let rebuild_topn = done
-                            || last_topn_rebuild.elapsed()
-                                >= topn_rebuild_interval(v.tree.nodes.len());
+                            || rebuild_layout
+                            || (v.top_files_filtered()
+                                && last_topn_rebuild.elapsed()
+                                    >= topn_rebuild_interval(v.tree.nodes.len()));
                         if rebuild_topn && !v.projection_filter_active() {
                             v.rebuild_top_files();
                             last_topn_rebuild = Instant::now();
+                            visible_change = true;
                         }
+                        prof_topn = topn_started.elapsed();
                     }
-                    if had_batch || had_progress || done {
+                    if visible_change
+                        || ((had_batch || had_progress)
+                            && last_repaint.elapsed() >= DU_PROGRESS_REPAINT)
+                    {
+                        if !visible_change && !v.top_files_filtered() {
+                            // Keep the live largest-files list in step with
+                            // the counters at no extra cost.
+                            v.rebuild_top_files();
+                        }
+                        last_repaint = Instant::now();
                         cx.notify();
                     }
                     if done {
                         if let Some(id) = v.task_id.take() {
                             v.with_tasks(cx, |reg| reg.end(id));
                         }
+                        v.scan_finished(cx);
                     }
                 });
-                if update_result.is_err() {
+                if du_profile() {
+                    eprintln!(
+                        "du-prof tick msgs={n_msgs} apply_us={} layout_us={} topn_us={} total_us={}",
+                        prof_apply.as_micros(),
+                        prof_layout.as_micros(),
+                        prof_topn.as_micros(),
+                        tick_started.elapsed().as_micros()
+                    );
+                }
+                if update_result.is_err() || queue_poisoned {
                     break;
                 }
                 if stale || done {
@@ -1092,14 +1296,15 @@ impl DiskUsageView {
                     ScanBatch::Portable(facts) => facts,
                     ScanBatch::Fast(batch) => {
                         for (node, raw_name) in &batch.raw_names {
-                            self.path_arena.set_raw_name(*node, raw_name);
+                            Arc::make_mut(&mut self.path_arena).set_raw_name(*node, raw_name);
                         }
                         self.stats = batch.stats;
                         batch.facts
                     }
                 };
-                self.path_arena.apply_facts(&facts);
+                Arc::make_mut(&mut self.path_arena).apply_facts(&facts);
                 Arc::make_mut(&mut self.tree).apply_facts(&facts);
+                self.offer_live_top(&facts);
             }
             ScanMsg::Progress(p) => self.stats = p,
             #[cfg(target_os = "windows")]
@@ -1107,7 +1312,7 @@ impl DiskUsageView {
             #[cfg(target_os = "windows")]
             ScanMsg::ResetForFallback(reason) => {
                 let id_base = self.path_arena.id_base;
-                self.path_arena = DiskUsagePathArena::new(self.root_path.clone(), id_base);
+                self.path_arena = Arc::new(DiskUsagePathArena::new(self.root_path.clone(), id_base));
                 self.root_id = self.path_arena.root_id();
                 self.tree = Arc::new(DiskUsageTree::new(self.root_id));
                 self.stats = DiskUsageStats::default();
@@ -1121,6 +1326,8 @@ impl DiskUsageView {
                 self.selected.clear();
                 self.lead = None;
                 self.top_files.clear();
+                self.live_top.clear();
+                self.live_top_floor = 0;
             }
             #[cfg(target_os = "windows")]
             ScanMsg::FastComplete {
@@ -1196,6 +1403,7 @@ impl DiskUsageView {
         if let Some(layout) = layout {
             self.rects_cache = compute_treemap(layout, (0.0, 0.0, w, h), DU_LAYOUT_DEPTH);
         }
+        self.rebuild_rect_changes();
         let elapsed = started.elapsed();
         if node_count >= DU_LARGE_TREE_NODES {
             crate::obs::breadcrumb(format_args!(
@@ -1245,9 +1453,19 @@ impl DiskUsageView {
             self.with_tasks(cx, |reg| reg.end(id));
         }
         let id_base = next_du_id_base();
-        self.path_arena = DiskUsagePathArena::new(self.root_path.clone(), id_base);
+        // A refresh will find about as many nodes as last time. Reserving
+        // that up front spares the UI thread the hash-table doublings the
+        // first scan pays (a 1.8 M-node table rehashes in ~30 ms).
+        let (previous_nodes, previous_containers) =
+            (self.tree.nodes.len(), self.tree.containers.len());
+        let mut arena = DiskUsagePathArena::new(self.root_path.clone(), id_base);
+        arena.parents.reserve(previous_nodes);
+        self.path_arena = Arc::new(arena);
         self.root_id = self.path_arena.root_id();
-        self.tree = Arc::new(DiskUsageTree::new(self.root_id));
+        let mut tree = DiskUsageTree::new(self.root_id);
+        tree.nodes.reserve(previous_nodes);
+        tree.containers.reserve(previous_containers);
+        self.tree = Arc::new(tree);
         self.stats = DiskUsageStats::default();
         self.scan_complete = false;
         self.error = None;
@@ -1265,6 +1483,10 @@ impl DiskUsageView {
         self.selected.clear();
         self.lead = None;
         self.top_files.clear();
+        self.live_top.clear();
+        self.live_top_floor = 0;
+        self.reset_history();
+        self.reset_dupes(cx);
         self.invalidate_layout();
         self.rebuild_layout_if_ready();
         self.start_scan(self.fs.clone(), cx);
@@ -1291,6 +1513,8 @@ impl DiskUsageView {
     /// flight.
     fn cancel_scan(&mut self, cx: &mut Context<Self>) {
         self.cancel.store(true, Ordering::Relaxed);
+        // A stopped scan is partial: neither compared nor stored.
+        self.history = HistoryState::Incomplete;
         self.scan_generation = self.scan_generation.wrapping_add(1);
         self.scan_complete = true;
         if self.projection_filter_active() {
@@ -1314,6 +1538,7 @@ impl DiskUsageView {
 
     /// Plain click: this node becomes the whole selection.
     fn select_only(&mut self, target: NodeId, cx: &mut Context<Self>) {
+        self.drop_active_group_unless_member(target);
         self.selected.clear();
         self.selected.insert(target);
         self.lead = Some(target);
@@ -1322,6 +1547,7 @@ impl DiskUsageView {
 
     /// Cmd-click: toggle membership, keeping `lead` on a live member.
     fn toggle_select(&mut self, target: NodeId, cx: &mut Context<Self>) {
+        self.drop_active_group_unless_member(target);
         if self.selected.remove(&target) {
             if self.lead == Some(target) {
                 self.lead = self.selected.iter().next().copied();
@@ -1331,6 +1557,19 @@ impl DiskUsageView {
             self.lead = Some(target);
         }
         cx.notify();
+    }
+
+    /// Clicking one copy of the listed duplicate group keeps the list of
+    /// its locations open; anything else closes it.
+    fn drop_active_group_unless_member(&mut self, target: NodeId) {
+        let keep = self.active_group.as_ref().is_some_and(|(ix, _)| {
+            self.dupe_groups
+                .get(*ix)
+                .is_some_and(|g| g.members.contains(&target))
+        });
+        if !keep {
+            self.active_group = None;
+        }
     }
 
     /// Right-click target rule (Finder-style): clicking a node outside
@@ -1509,6 +1748,392 @@ impl DiskUsageView {
         .detach();
     }
 
+    /// Screenshot harness: request the changes colouring and/or the
+    /// duplicates overlay; each turns on as soon as its data is ready.
+    pub(crate) fn configure_for_screenshot(
+        &mut self,
+        changes: bool,
+        dupes: bool,
+        _cx: &mut Context<Self>,
+    ) {
+        self.screenshot_changes = changes;
+        self.screenshot_dupes = dupes;
+    }
+
+    /// The scan reached its Done message (not a user cancel): summarise it,
+    /// compare it with the previous summary of this root and store it, all
+    /// on the background executor.
+    fn scan_finished(&mut self, cx: &mut Context<Self>) {
+        if self.error.is_some() {
+            self.history = HistoryState::Incomplete;
+        } else if let Some(db) = crate::process_state::process_state(cx).db_snapshot() {
+            self.start_history_job(db, cx);
+        } else {
+            self.history = HistoryState::NoStore;
+        }
+        if self.screenshot_dupes && !self.dupes_mode {
+            self.toggle_dupes(cx);
+        } else if self.dupes_mode && matches!(self.dupes, DupesState::Off) {
+            // Still on from before a rescan: rerun over the new tree.
+            self.start_dupes_job(cx);
+        }
+    }
+
+    fn start_history_job(
+        &mut self,
+        db: Arc<Mutex<ferail_meta::MetadataDb>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_generation = self.history_generation.wrapping_add(1);
+        let generation = self.history_generation;
+        if let Some(cancel) = self.history_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.history_cancel = Some(cancel.clone());
+        self.history = HistoryState::Loading;
+        let tree = self.tree.clone();
+        let root = self.root_path.clone();
+        cx.spawn(async move |this, cx| {
+            let state = cx
+                .background_executor()
+                .spawn(async move { run_history_job(&db, &tree, root, &cancel) })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                if view.history_generation != generation {
+                    return;
+                }
+                let Some(state) = state else { return };
+                view.history = state;
+                if view.screenshot_changes && matches!(view.history, HistoryState::Ready(_)) {
+                    view.changes_mode = true;
+                }
+                view.rebuild_rect_changes();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn reset_history(&mut self) {
+        if let Some(cancel) = self.history_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.history_generation = self.history_generation.wrapping_add(1);
+        self.history = HistoryState::Waiting;
+        self.rect_changes.clear();
+    }
+
+    fn toggle_changes(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.history, HistoryState::Ready(_)) {
+            return;
+        }
+        self.changes_mode = !self.changes_mode;
+        self.rebuild_rect_changes();
+        cx.notify();
+    }
+
+    /// Colour every laid-out tile by how its folder changed since the
+    /// previous scan. Pure memory work over at most a few thousand tiles,
+    /// run when the layout or the comparison changes, never per frame.
+    fn rebuild_rect_changes(&mut self) {
+        self.rect_changes.clear();
+        let HistoryState::Ready(data) = &self.history else {
+            return;
+        };
+        if !self.changes_mode {
+            return;
+        }
+        let data = data.clone();
+        let mode = self.size_mode;
+        let tree = &self.tree;
+        let arena = &self.path_arena;
+        let noise = ferail_disk_usage::noise_floor(
+            tree.nodes
+                .get(&tree.root)
+                .map_or(0, |n| ferail_disk_usage::history::node_total(n, mode)),
+        );
+        let mut folders: std::collections::HashMap<NodeId, (ChangeKind, i64)> =
+            std::collections::HashMap::new();
+        let mut folder = |id: NodeId| -> (ChangeKind, i64) {
+            *folders.entry(id).or_insert_with(|| {
+                let current = tree
+                    .nodes
+                    .get(&id)
+                    .map_or(0, |n| ferail_disk_usage::history::node_total(n, mode));
+                let baseline = data.set.baseline_for(id, |x| arena.parent_for(x));
+                ferail_disk_usage::classify(baseline, current, mode, noise)
+            })
+        };
+        // (kind, delta, is_file, file modified after the previous scan)
+        let mut raw = Vec::with_capacity(self.rects_cache.len());
+        let mut reference = 0u64;
+        for r in &self.rects_cache {
+            if r.kind == ferail_disk_usage::NodeKind::Container {
+                let (kind, delta) = folder(r.node_id);
+                if r.depth >= 1 && matches!(kind, ChangeKind::Grew | ChangeKind::Shrank | ChangeKind::New) {
+                    reference = reference.max(delta.unsigned_abs());
+                }
+                raw.push((kind, delta, false, false));
+            } else {
+                let (kind, delta) = arena
+                    .parent_for(r.node_id)
+                    .map_or((ChangeKind::Unknown, 0), &mut folder);
+                let modified = r.mtime.is_some_and(|mtime| {
+                    mtime
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .is_ok_and(|d| d.as_secs() as i64 > data.taken_at_unix)
+                });
+                raw.push((kind, delta, true, modified));
+            }
+        }
+        let reference = reference.max(1) as f64;
+        let intensity = |delta: i64| ((delta.unsigned_abs() as f64 / reference).sqrt() as f32).clamp(0.2, 1.0);
+        self.rect_changes = raw
+            .into_iter()
+            .map(|(kind, delta, is_file, modified)| {
+                let strength = intensity(delta);
+                // A file tile carries its folder's change. Inside a folder
+                // that grew, only files modified since the previous scan get
+                // the full tone; the older ones stay faint, so the new bytes
+                // stand out.
+                let (shown, strength) = match (is_file, kind) {
+                    (true, ChangeKind::Grew) if !modified => (ChangeKind::Grew, strength * 0.3),
+                    (true, ChangeKind::Grew) => (ChangeKind::Grew, strength.max(0.6)),
+                    _ => (kind, strength),
+                };
+                let (r, g, b, a) = ferail_disk_usage::change_color_rgba(shown, strength);
+                RectChange {
+                    kind,
+                    delta,
+                    color: Rgba {
+                        r: r as f32 / 255.0,
+                        g: g as f32 / 255.0,
+                        b: b as f32 / 255.0,
+                        a: a as f32 / 255.0,
+                    },
+                    modified: is_file && modified,
+                }
+            })
+            .collect();
+    }
+
+    // ---- duplicates overlay ------------------------------------------
+
+    fn toggle_dupes(&mut self, cx: &mut Context<Self>) {
+        if !self.scan_complete {
+            return;
+        }
+        self.dupes_mode = !self.dupes_mode;
+        if self.dupes_mode && matches!(self.dupes, DupesState::Off) {
+            self.start_dupes_job(cx);
+        } else if !self.dupes_mode && matches!(self.dupes, DupesState::Running(_)) {
+            // Turning the overlay off stops the work it was doing for it.
+            self.stop_dupes(cx);
+        }
+        cx.notify();
+    }
+
+    fn stop_dupes(&mut self, cx: &mut Context<Self>) {
+        if let Some(cancel) = self.dupes_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.dupes_generation = self.dupes_generation.wrapping_add(1);
+        if let Some(id) = self.dupes_task.take() {
+            self.with_tasks(cx, |reg| reg.end(id));
+        }
+        self.dupes = DupesState::Off;
+        self.dupe_groups.clear();
+        self.dupe_of.clear();
+        self.dupe_reclaimable = 0;
+        self.active_group = None;
+    }
+
+    /// Run the duplicate finder's funnel over the files this scan found,
+    /// cache-backed like Find Duplicates, streaming groups back.
+    fn start_dupes_job(&mut self, cx: &mut Context<Self>) {
+        self.dupes_generation = self.dupes_generation.wrapping_add(1);
+        let generation = self.dupes_generation;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.dupes_cancel = Some(cancel.clone());
+        self.dupes = DupesState::Running(ferail_fs_native::DupeStats::default());
+        self.dupe_groups.clear();
+        self.dupe_of.clear();
+        self.dupe_reclaimable = 0;
+        self.active_group = None;
+        let label = tr!("Finding duplicates in {root}", root = short_path(&self.root_path)).to_string();
+        let task = self.with_tasks(cx, |reg| {
+            reg.begin_with_cancel(TaskKind::DuplicateScan, label, cancel.clone())
+        });
+        self.dupes_task = Some(task);
+        let cache = crate::process_state::process_state(cx).db_snapshot().map(|db| {
+            crate::dupe_cache::DbHashCache::new(db, ferail_core::now_unix())
+        });
+        let tree = self.tree.clone();
+        let arena = self.path_arena.clone();
+        enum DupeMsg {
+            Groups(Vec<ferail_fs_native::DupeFact>),
+            Progress(ferail_fs_native::DupeStats),
+            Done,
+        }
+        let (tx, rx) = async_channel::bounded::<DupeMsg>(64);
+        let worker_cancel = cancel.clone();
+        cx.background_executor()
+            .spawn(async move {
+                let files = known_files(&tree, &arena, &worker_cancel);
+                let progress_tx = tx.clone();
+                ferail_fs_native::find_duplicates_among(
+                    files,
+                    &ferail_fs_native::DupeOpts::default(),
+                    cache.as_ref().map(|c| c as &dyn ferail_fs_native::DupeHashCache),
+                    ferail_fs_native::DEFAULT_DUPE_BATCH,
+                    &worker_cancel,
+                    |batch| {
+                        let _ = tx.send_blocking(DupeMsg::Groups(batch));
+                    },
+                    |stats| {
+                        let _ = progress_tx.try_send(DupeMsg::Progress(stats));
+                    },
+                );
+                let _ = tx.send_blocking(DupeMsg::Done);
+            })
+            .detach();
+        cx.spawn(async move |this, cx| {
+            while let Ok(msg) = rx.recv().await {
+                let done = matches!(msg, DupeMsg::Done);
+                let alive = this.update(cx, |view, cx| {
+                    if view.dupes_generation != generation {
+                        return false;
+                    }
+                    match msg {
+                        DupeMsg::Groups(facts) => view.absorb_dupe_groups(facts),
+                        DupeMsg::Progress(stats) => {
+                            if let DupesState::Running(current) = &mut view.dupes {
+                                *current = stats;
+                            }
+                        }
+                        DupeMsg::Done => view.finish_dupes(cx),
+                    }
+                    cx.notify();
+                    true
+                });
+                if done || !matches!(alive, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn absorb_dupe_groups(&mut self, facts: Vec<ferail_fs_native::DupeFact>) {
+        for fact in facts {
+            let ferail_fs_native::DupeFact::Group {
+                bytes_each,
+                members,
+                distinct_occupants,
+                ..
+            } = fact
+            else {
+                continue;
+            };
+            let index = self.dupe_groups.len();
+            let members: Vec<NodeId> = members.iter().map(|m| m.node).collect();
+            for member in &members {
+                self.dupe_of.insert(*member, index);
+            }
+            // Hard links and clones share storage: only the other copies
+            // free space when removed.
+            let reclaimable = bytes_each.saturating_mul(distinct_occupants.saturating_sub(1) as u64);
+            self.dupe_reclaimable = self.dupe_reclaimable.saturating_add(reclaimable);
+            self.dupe_groups.push(DupeGroup {
+                members,
+                bytes_each,
+                reclaimable,
+            });
+        }
+    }
+
+    fn finish_dupes(&mut self, cx: &mut Context<Self>) {
+        // Largest reclaimable first, for the side panel.
+        let mut order: Vec<usize> = (0..self.dupe_groups.len()).collect();
+        order.sort_by(|&a, &b| {
+            self.dupe_groups[b]
+                .reclaimable
+                .cmp(&self.dupe_groups[a].reclaimable)
+                .then(self.dupe_groups[b].bytes_each.cmp(&self.dupe_groups[a].bytes_each))
+        });
+        let mut groups = std::mem::take(&mut self.dupe_groups);
+        let mut sorted = Vec::with_capacity(groups.len());
+        for &ix in &order {
+            sorted.push(std::mem::replace(
+                &mut groups[ix],
+                DupeGroup {
+                    members: Vec::new(),
+                    bytes_each: 0,
+                    reclaimable: 0,
+                },
+            ));
+        }
+        self.dupe_groups = sorted;
+        self.dupe_of.clear();
+        for (index, group) in self.dupe_groups.iter().enumerate() {
+            for member in &group.members {
+                self.dupe_of.insert(*member, index);
+            }
+        }
+        self.dupes = DupesState::Done;
+        self.dupes_cancel = None;
+        if let Some(id) = self.dupes_task.take() {
+            self.with_tasks(cx, |reg| reg.end(id));
+        }
+        if self.screenshot_dupes && !self.dupe_groups.is_empty() {
+            self.select_dupe_group(0, cx);
+        }
+    }
+
+    /// Select every member of a duplicate group and list where they are.
+    fn select_dupe_group(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(group) = self.dupe_groups.get(index) else {
+            return;
+        };
+        self.selected = group.members.iter().copied().collect();
+        self.lead = group.members.first().copied();
+        let root = self.root_path.clone();
+        let locations = group
+            .members
+            .iter()
+            .map(|id| {
+                let folder = self
+                    .path_arena
+                    .parent_for(*id)
+                    .and_then(|parent| self.path_arena.path_for(parent, &self.tree))
+                    .map(|path| {
+                        let relative = path.strip_prefix(&root).unwrap_or(&path);
+                        let shown = ferail_fs_native::paths::display_path(relative);
+                        if shown.is_empty() { ".".to_string() } else { shown }
+                    })
+                    .unwrap_or_default();
+                (*id, folder)
+            })
+            .collect();
+        self.active_group = Some((index, locations));
+        cx.notify();
+    }
+
+    /// A rescan changes every node id. The overlay keeps its on/off state
+    /// and reruns when the new scan completes.
+    fn reset_dupes(&mut self, cx: &mut Context<Self>) {
+        self.stop_dupes(cx);
+    }
+
+    /// Screenshot harness: the scan and every requested background job
+    /// have finished, so a capture shows the final state.
+    pub(crate) fn settled_for_screenshot(&self) -> bool {
+        self.scan_complete
+            && !matches!(self.history, HistoryState::Waiting | HistoryState::Loading)
+            && !(self.screenshot_dupes && !matches!(self.dupes, DupesState::Done))
+    }
+
     /// Current filter text, so a docked host can seed its own field.
     pub fn filter_text(&self) -> &str {
         &self.text_filter
@@ -1526,6 +2151,7 @@ impl DiskUsageView {
             return;
         }
         self.size_mode = mode;
+        self.reseed_live_top();
         self.invalidate_layout();
         self.rebuild_layout_if_ready();
         if self.projection_filter_active() {
@@ -1711,6 +2337,66 @@ impl DiskUsageView {
         if let Some(engine) = self.engine_summary() {
             summary.push_str(" · ");
             summary.push_str(&engine);
+        }
+        // The active overlays get their own line under the controls: on the
+        // summary row they were the first thing truncated.
+        let mut mode_line: Vec<String> = Vec::new();
+        if let (true, HistoryState::Ready(data)) = (self.changes_mode, &self.history) {
+            let mode = self.size_mode;
+            let now_total = self
+                .tree
+                .nodes
+                .get(&self.tree.root)
+                .map_or(0, |n| ferail_disk_usage::history::node_total(n, mode));
+            let delta = now_total as i128 - data.set.previous_total(mode) as i128;
+            mode_line.push(
+                tr!(
+                    "Previous scan {when}: {delta}",
+                    when = ferail_core::humanize_mtime(data.taken_at_unix, ferail_core::now_unix()),
+                    delta = signed_bytes(0x4455_4446, delta)
+                )
+                .to_string(),
+            );
+            if data.set.deleted_dirs > 0 {
+                mode_line.push(
+                    trn!(
+                        "{size} in {n} deleted folder",
+                        "{size} in {n} deleted folders",
+                        data.set.deleted_dirs as usize,
+                        size = humanize_bytes(crate::private_mode::present_bytes(
+                            0x4455_4445,
+                            data.set.deleted_bytes(mode)
+                        ))
+                    )
+                    .to_string(),
+                );
+            }
+        }
+        if self.dupes_mode {
+            let line = match &self.dupes {
+                DupesState::Running(stats) => tr!(
+                    "Finding duplicates: {files} files compared",
+                    files = format_count(stats.files_scanned)
+                )
+                .to_string(),
+                DupesState::Done if self.dupe_groups.is_empty() => {
+                    tr!("No duplicates").to_string()
+                }
+                DupesState::Done => trn!(
+                    "{size} reclaimable in {n} duplicate group",
+                    "{size} reclaimable in {n} duplicate groups",
+                    self.dupe_groups.len(),
+                    size = humanize_bytes(crate::private_mode::present_bytes(
+                        0x4455_4452,
+                        self.dupe_reclaimable
+                    ))
+                )
+                .to_string(),
+                DupesState::Off => String::new(),
+            };
+            if !line.is_empty() {
+                mode_line.push(line);
+            }
         }
         #[cfg(target_os = "windows")]
         if self.scan_complete
@@ -1915,6 +2601,56 @@ impl DiskUsageView {
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_packages(cx))),
                 )
             })
+            .child({
+                let (ready, tooltip) = match &self.history {
+                    HistoryState::Ready(data) => (
+                        true,
+                        tr!(
+                            "Changes since the scan from {when}",
+                            when = ferail_core::humanize_mtime(
+                                data.taken_at_unix,
+                                ferail_core::now_unix()
+                            )
+                        ),
+                    ),
+                    HistoryState::Waiting | HistoryState::Loading => (
+                        false,
+                        tr!("Changes since the previous scan: available when this scan finishes"),
+                    ),
+                    HistoryState::FirstScan => (
+                        false,
+                        tr!("Changes since the previous scan: this is the first scan of this folder"),
+                    ),
+                    HistoryState::NoStore => (
+                        false,
+                        tr!("Changes since the previous scan: scan history is not available"),
+                    ),
+                    HistoryState::Incomplete => (
+                        false,
+                        tr!("Changes since the previous scan: this scan did not finish"),
+                    ),
+                };
+                Button::new("du-changes")
+                    .small()
+                    .icon(Icon::empty().path("icons/calendar.svg"))
+                    .selected(self.changes_mode && ready)
+                    .disabled(!ready)
+                    .tooltip(tooltip)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_changes(cx)))
+            })
+            .child(
+                Button::new("du-dupes")
+                    .small()
+                    .icon(Icon::empty().path("icons/gallery-vertical-end.svg"))
+                    .selected(self.dupes_mode)
+                    .disabled(scanning && !self.dupes_mode)
+                    .tooltip(if self.dupes_mode {
+                        tr!("Hide duplicates")
+                    } else {
+                        tr!("Show duplicates")
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_dupes(cx))),
+            )
             .when_some(dock_button, |this, button| this.child(button))
             .child(
                 Button::new("du-up")
@@ -1951,11 +2687,28 @@ impl DiskUsageView {
             .border_b_1()
             .border_color(theme.border)
             .child(row)
+            .when(!mode_line.is_empty(), |this| {
+                this.child(
+                    div()
+                        .w_full()
+                        .pt_1()
+                        .truncate()
+                        .text_scale_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(mode_line.join(" · "))),
+                )
+            })
     }
 
     /// Right-side Top-N panel: scrollable list of the largest files
     /// in the scanned tree. Updates live as new facts arrive.
     fn top_panel(&self, cx: &mut Context<Self>) -> Div {
+        if let (true, HistoryState::Ready(data)) = (self.changes_mode, &self.history) {
+            return self.changes_panel(data.clone(), cx);
+        }
+        if self.dupes_mode {
+            return self.dupes_panel(cx);
+        }
         let theme = cx.theme();
         let rows: Vec<AnyElement> = self
             .top_files
@@ -2057,6 +2810,228 @@ impl DiskUsageView {
             )
     }
 
+    /// Side panel frame shared by the changes and duplicates lists.
+    fn side_panel(&self, caption: SharedString, rows: Vec<AnyElement>, empty: SharedString, cx: &mut Context<Self>) -> Div {
+        let theme = cx.theme();
+        v_flex()
+            .w(px(TOPN_PANEL_WIDTH))
+            .h_full()
+            .flex_shrink_0()
+            .border_l_1()
+            .border_color(theme.border)
+            .bg(theme.background)
+            .child(
+                div()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .text_scale_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
+                    .child(caption),
+            )
+            .child(
+                div()
+                    .id("du-side-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_1()
+                    .py_1()
+                    .child(if rows.is_empty() {
+                        v_flex().w_full().child(
+                            div()
+                                .px_2()
+                                .py_2()
+                                .text_scale_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(empty),
+                        )
+                    } else {
+                        v_flex().w_full().children(rows)
+                    }),
+            )
+    }
+
+    /// One clickable panel row: swatch, name, right-aligned figure.
+    #[allow(clippy::too_many_arguments)]
+    fn panel_row(
+        &self,
+        id: (&'static str, usize),
+        swatch: Rgba,
+        name: String,
+        figure: String,
+        figure_color: Option<Hsla>,
+        selected: bool,
+        on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = cx.theme();
+        h_flex()
+            .id(id)
+            .w_full()
+            .gap_2()
+            .items_center()
+            .py_1()
+            .px_2()
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .when(id.1.is_multiple_of(2), |this| this.bg(theme.muted_foreground.opacity(0.04)))
+            .when(selected, |this| this.bg(theme.accent))
+            .hover(|style| style.bg(theme.accent.opacity(0.65)))
+            .on_click(cx.listener(on_click))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .w(px(8.0))
+                    .h(px(8.0))
+                    .rounded(px(2.0))
+                    .bg(swatch),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_scale_xs()
+                    .text_color(if selected {
+                        theme.accent_foreground
+                    } else {
+                        theme.foreground
+                    })
+                    .child(SharedString::from(name)),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_scale_xs()
+                    .text_color(if selected {
+                        theme.accent_foreground.opacity(0.82)
+                    } else {
+                        figure_color.unwrap_or(theme.muted_foreground)
+                    })
+                    .child(SharedString::from(figure)),
+            )
+    }
+
+    /// "What grew?": the folders where the change concentrates.
+    fn changes_panel(&self, data: Arc<ChangeData>, cx: &mut Context<Self>) -> Div {
+        let mode = self.size_mode;
+        let mut rows = Vec::new();
+        for (ix, (node_id, delta)) in data.set.hotspots(mode).iter().enumerate() {
+            let node_id = *node_id;
+            let Some(node) = self.tree.nodes.get(&node_id) else {
+                continue;
+            };
+            let kind = if data
+                .set
+                .baseline_for(node_id, |id| self.path_arena.parent_for(id))
+                == Some(ferail_disk_usage::Baseline::New)
+            {
+                ChangeKind::New
+            } else if *delta >= 0 {
+                ChangeKind::Grew
+            } else {
+                ChangeKind::Shrank
+            };
+            let swatch = rgba_from(ferail_disk_usage::change_color_rgba(kind, 1.0));
+            let name = crate::private_mode::present_leaf_str(&node.display_name, true);
+            let figure = signed_bytes(node_id.as_raw(), *delta as i128);
+            let selected = self.selected.contains(&node_id);
+            rows.push(
+                self.panel_row(
+                    ("du-change-row", ix),
+                    swatch,
+                    name,
+                    figure,
+                    None,
+                    selected,
+                    move |this, event, _, cx| {
+                        if event.modifiers().platform {
+                            this.toggle_select(node_id, cx);
+                        } else {
+                            this.select_only(node_id, cx);
+                        }
+                    },
+                    cx,
+                )
+                .into_any_element(),
+            );
+        }
+        self.side_panel(
+            tr!("Largest changes"),
+            rows,
+            tr!("No folder changed noticeably"),
+            cx,
+        )
+    }
+
+    /// Duplicate groups, most reclaimable first; the selected group lists
+    /// where each copy lives.
+    fn dupes_panel(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut rows = Vec::new();
+        for (ix, group) in self.dupe_groups.iter().enumerate().take(TOPN_CAP) {
+            let Some(first) = group.members.first().and_then(|id| self.tree.nodes.get(id)) else {
+                continue;
+            };
+            let name = format!(
+                "{} \u{00D7}{}",
+                crate::private_mode::present_leaf_str(&first.display_name, false),
+                format_count(group.members.len() as u64)
+            );
+            let figure = humanize_bytes(crate::private_mode::present_bytes(
+                0x4455_4447 ^ ix as u64,
+                group.reclaimable,
+            ));
+            let active = self.active_group.as_ref().is_some_and(|(a, _)| *a == ix);
+            rows.push(
+                self.panel_row(
+                    ("du-dupe-row", ix),
+                    category_color(first.file_category),
+                    name,
+                    figure,
+                    None,
+                    active,
+                    move |this, _, _, cx| this.select_dupe_group(ix, cx),
+                    cx,
+                )
+                .into_any_element(),
+            );
+            if let Some((_, locations)) = self.active_group.as_ref().filter(|(a, _)| *a == ix) {
+                for (lx, (member, folder)) in locations.iter().enumerate() {
+                    let member = *member;
+                    let selected = self.selected.len() == 1 && self.selected.contains(&member);
+                    rows.push(
+                        div()
+                            .id(("du-dupe-location", lx))
+                            .w_full()
+                            .pl(px(26.0))
+                            .pr_2()
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .cursor_pointer()
+                            .truncate()
+                            .text_scale_xs()
+                            .text_color(muted)
+                            .when(selected, |this| this.bg(cx.theme().accent.opacity(0.5)))
+                            .hover(|style| style.bg(cx.theme().accent.opacity(0.35)))
+                            .on_click(cx.listener(move |this, _, _, cx| this.select_only(member, cx)))
+                            .child(SharedString::from(crate::private_mode::present_path(
+                                std::path::Path::new(folder),
+                            )))
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+        let empty = match self.dupes {
+            DupesState::Running(_) => tr!("Looking for duplicates\u{2026}"),
+            _ => tr!("No duplicates found"),
+        };
+        self.side_panel(tr!("Duplicate groups"), rows, empty, cx)
+    }
+
     /// Color legend at the bottom. Chips toggle a lightweight category
     /// filter for the Top-N list and dim non-matching treemap tiles.
     fn legend(&self, cx: &mut Context<Self>) -> Div {
@@ -2070,6 +3045,39 @@ impl DiskUsageView {
             FileCategory::Executable,
             FileCategory::Other,
         ];
+        let changes_legend = (self.changes_mode && matches!(self.history, HistoryState::Ready(_)))
+            .then(|| {
+                [
+                    (ChangeKind::Grew, tr!("Grew")),
+                    (ChangeKind::Shrank, tr!("Shrank")),
+                    (ChangeKind::New, tr!("New")),
+                    (ChangeKind::Unchanged, tr!("Unchanged")),
+                    (ChangeKind::Unknown, tr!("No earlier size")),
+                ]
+                .into_iter()
+                .map(|(kind, label)| {
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .px_2()
+                        .py_1()
+                        .child(
+                            div()
+                                .w(px(10.0))
+                                .h(px(10.0))
+                                .rounded(px(2.0))
+                                .bg(rgba_from(ferail_disk_usage::change_color_rgba(kind, 1.0))),
+                        )
+                        .child(
+                            div()
+                                .text_scale_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(label),
+                        )
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>()
+            });
         let chips = entries.iter().enumerate().map(|(ix, cat)| {
             let cat = *cat;
             let label = crate::i18n::tr_static(category_label(cat));
@@ -2163,7 +3171,10 @@ impl DiskUsageView {
             .bg(theme.background)
             .border_t_1()
             .border_color(theme.border)
-            .child(h_flex().items_center().gap_1().flex_wrap().children(chips))
+            .map(|this| match changes_legend {
+                Some(legend) => this.child(h_flex().items_center().gap_1().flex_wrap().children(legend)),
+                None => this.child(h_flex().items_center().gap_1().flex_wrap().children(chips)),
+            })
             .child(div().flex_1())
             .child(
                 div()
@@ -2305,11 +3316,30 @@ impl DiskUsageView {
                     .nearest_visible_ancestor(*id, &visible_nodes)
             })
             .collect();
+        let show_changes = self.changes_mode
+            && matches!(self.history, HistoryState::Ready(_))
+            && self.rect_changes.len() == self.rects_cache.len();
+        // Translated once per frame, not once per tile.
+        let change_words = show_changes.then(|| {
+            (
+                tr!("New since the previous scan"),
+                tr!("Unchanged since the previous scan"),
+                tr!("Too small last time to compare"),
+                tr!("Modified since the previous scan"),
+            )
+        });
+        let hatch = gpui::pattern_slash(gpui::hsla(0.0, 0.0, 1.0, 0.55), 1.5, 5.0);
         for (ix, r) in self.rects_cache.iter().enumerate() {
             if r.width < 1.0 || r.height < 1.0 {
                 continue;
             }
-            let color = category_color(r.file_category);
+            let change = show_changes.then(|| self.rect_changes[ix]);
+            let color = change.map_or_else(|| category_color(r.file_category), |c| c.color);
+            let dupe_group = if self.dupes_mode && !r.lays_out_children {
+                self.dupe_of.get(&r.node_id).copied()
+            } else {
+                None
+            };
             let node_id = r.node_id;
             let has_children = r.has_children;
             let name = self
@@ -2375,14 +3405,48 @@ impl DiskUsageView {
                 .hover(|this| this.border_color(cx.theme().selection));
             // The full name and size, for the tooltip: a truncated tile
             // label is only useful if the whole thing is one hover away.
-            let tooltip_text = SharedString::from(if show_size {
+            let mut tooltip_text = if show_size {
                 format!("{name}\n{size}")
             } else {
                 format!("{name} · {size}")
-            });
+            };
+            if let (Some(change), Some((new, unchanged, unknown, modified))) =
+                (change, change_words.as_ref())
+            {
+                let line = if r.kind == ferail_disk_usage::NodeKind::File {
+                    change.modified.then(|| modified.to_string())
+                } else {
+                    Some(match change.kind {
+                        ChangeKind::Grew | ChangeKind::Shrank => tr!(
+                            "{delta} since the previous scan",
+                            delta = signed_bytes(r.node_id.as_raw(), change.delta as i128)
+                        )
+                        .to_string(),
+                        ChangeKind::New => new.to_string(),
+                        ChangeKind::Unchanged => unchanged.to_string(),
+                        ChangeKind::Unknown => unknown.to_string(),
+                    })
+                };
+                if let Some(line) = line {
+                    tooltip_text.push('\n');
+                    tooltip_text.push_str(&line);
+                }
+            }
+            if let Some(group) = dupe_group.and_then(|g| self.dupe_groups.get(g)) {
+                tooltip_text.push('\n');
+                tooltip_text.push_str(&trn!(
+                    "{n} identical copy, click to show all",
+                    "{n} identical copies, click to show all",
+                    group.members.len()
+                ));
+            }
+            let tooltip_text = SharedString::from(tooltip_text);
             rect = rect.tooltip(move |window, cx| {
                 gpui_component::tooltip::Tooltip::new(tooltip_text.clone()).build(window, cx)
             });
+            if dupe_group.is_some() {
+                rect = rect.child(div().absolute().inset_0().bg(hatch));
+            }
             if show_label {
                 let name_label = div()
                     .w_full()
@@ -2447,6 +3511,9 @@ impl DiskUsageView {
                     this.zoom_into(node_id, cx);
                 } else if event.modifiers().platform {
                     this.toggle_select(node_id, cx);
+                } else if let Some(group) = dupe_group {
+                    // A duplicate: select every copy so its twins light up.
+                    this.select_dupe_group(group, cx);
                 } else {
                     this.select_only(node_id, cx);
                 }
@@ -2470,6 +3537,22 @@ impl DiskUsageView {
                 }),
             );
             container = container.child(rect);
+        }
+        if du_profile() {
+            // Paints after every rect: elapsed covers element build, taffy
+            // layout, prepaint and the rect paint pass of this frame.
+            let built_at = Instant::now();
+            let rects = self.rects_cache.len();
+            container = container.child(
+                canvas(|_, _, _| {}, move |_, _, _, _| {
+                    eprintln!(
+                        "du-prof frame build_to_paint_us={} rects={rects}",
+                        built_at.elapsed().as_micros()
+                    );
+                })
+                .absolute()
+                .size_0(),
+            );
         }
         container
     }
@@ -3008,7 +4091,13 @@ impl Drop for DiskUsageView {
             cancel.store(true, Ordering::Release);
         }
         self.filter_snapshot_gate.store(0, Ordering::Release);
-        if let Some(id) = self.task_id.take() {
+        for cancel in [self.history_cancel.take(), self.dupes_cancel.take()]
+            .into_iter()
+            .flatten()
+        {
+            cancel.store(true, Ordering::Release);
+        }
+        for id in [self.task_id.take(), self.dupes_task.take()].into_iter().flatten() {
             if let Ok(mut reg) = self.tasks.try_borrow_mut() {
                 reg.end(id);
             }
@@ -3018,6 +4107,7 @@ impl Drop for DiskUsageView {
 
 impl Render for DiskUsageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let render_started = du_profile().then(Instant::now);
         if self.host == ToolHostContext::Windowed {
             window.set_window_title(&tr!(
                 "Disk Usage: {path}",
@@ -3051,7 +4141,9 @@ impl Render for DiskUsageView {
         let side_width = if topn_visible { TOPN_PANEL_WIDTH } else { 0.0 };
         // One row at normal widths, with room for its deliberate wrap on a
         // compact window. This is only the treemap's layout estimate.
-        let header_height = if host_w < 900.0 { 78.0 } else { 52.0 };
+        let mode_line = (self.changes_mode && matches!(self.history, HistoryState::Ready(_)))
+            || self.dupes_mode;
+        let header_height = if host_w < 900.0 { 78.0 } else { 52.0 } + if mode_line { 20.0 } else { 0.0 };
         let footer_height = 34.0;
         let treemap_width = (host_w - side_width - 32.0).max(260.0);
         let treemap_height = (host_h - header_height - footer_height).max(220.0);
@@ -3105,6 +4197,14 @@ impl Render for DiskUsageView {
             )
             .child(legend)
             .into_any_element();
+        if let Some(started) = render_started {
+            let rects = self.rects_cache.len();
+            let nodes = self.tree.nodes.len();
+            eprintln!(
+                "du-prof render build_us={} rects={rects} nodes={nodes}",
+                started.elapsed().as_micros()
+            );
+        }
         crate::private_mode::protect(content, cx)
     }
 }
@@ -3497,6 +4597,25 @@ fn category_color(cat: FileCategory) -> Rgba {
     }
 }
 
+fn rgba_from((r, g, b, a): (u8, u8, u8, u8)) -> Rgba {
+    Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a: a as f32 / 255.0,
+    }
+}
+
+/// A size change with an explicit sign: "+1.2 GB", "-340.0 MB".
+fn signed_bytes(identity: u64, delta: i128) -> String {
+    let magnitude = crate::private_mode::present_bytes(identity, delta.unsigned_abs().min(u64::MAX as u128) as u64);
+    if delta < 0 {
+        format!("-{}", humanize_bytes(magnitude))
+    } else {
+        format!("+{}", humanize_bytes(magnitude))
+    }
+}
+
 fn humanize_bytes(b: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut s = b as f64;
@@ -3523,6 +4642,126 @@ fn humanize_duration(duration: Duration) -> String {
     let minutes = duration.as_secs() / 60;
     let seconds = duration.as_secs() % 60;
     tr!("{minutes} min {seconds} s", minutes = minutes, seconds = seconds).to_string()
+}
+
+/// Summarise a completed scan, compare it with the previous summary of the
+/// same root, and store it. Background executor only. `None` when
+/// cancelled (a newer scan superseded this one).
+fn run_history_job(
+    db: &Mutex<ferail_meta::MetadataDb>,
+    tree: &DiskUsageTree,
+    root: PathBuf,
+    cancel: &AtomicBool,
+) -> Option<HistoryState> {
+    let root = crate::shell::canonicalize_for_identity(root);
+    let key = root.to_string_lossy().into_owned();
+    let previous = match db.lock() {
+        Ok(db) => db.latest_du_snapshot(&key).unwrap_or_else(|e| {
+            crate::log_warn!(90, "disk-usage history read failed: {e}");
+            None
+        }),
+        Err(_) => return Some(HistoryState::NoStore),
+    };
+    let cancelled = || cancel.load(Ordering::Acquire);
+    let rows = ferail_disk_usage::build_snapshot(
+        tree,
+        &root,
+        ferail_disk_usage::SnapshotLimits::DEFAULT,
+        cancelled,
+    )?;
+    let state = match previous {
+        Some(previous) => {
+            let records: Vec<ferail_disk_usage::DirRecord> = previous
+                .dirs
+                .into_iter()
+                .map(|d| ferail_disk_usage::DirRecord {
+                    path: d.path,
+                    apparent: d.apparent,
+                    allocated: d.allocated,
+                    children_complete: d.children_complete,
+                })
+                .collect();
+            let set = ferail_disk_usage::compare(tree, &root, &records, cancelled)?;
+            HistoryState::Ready(Arc::new(ChangeData {
+                taken_at_unix: previous.taken_at_unix,
+                set,
+            }))
+        }
+        None => HistoryState::FirstScan,
+    };
+    let snapshot = ferail_meta::DuHistorySnapshot {
+        root: key,
+        taken_at_unix: ferail_core::now_unix(),
+        dirs: rows
+            .into_iter()
+            .map(|r| ferail_meta::DuHistoryDir {
+                path: r.path,
+                apparent: r.apparent,
+                allocated: r.allocated,
+                children_complete: r.children_complete,
+            })
+            .collect(),
+    };
+    if !cancelled() {
+        if let Ok(db) = db.lock() {
+            if let Err(e) = db.save_du_snapshot(&snapshot) {
+                crate::log_warn!(90, "disk-usage history write failed: {e}");
+            }
+        }
+    }
+    Some(state)
+}
+
+/// Every file of the scan with a size, as candidates for the duplicate
+/// funnel. Sizes are bucketed first so only files that share a size with
+/// another pay for path reconstruction. Background executor only.
+fn known_files(
+    tree: &DiskUsageTree,
+    arena: &DiskUsagePathArena,
+    cancel: &AtomicBool,
+) -> Vec<ferail_fs_native::KnownFile> {
+    let mut by_size: std::collections::HashMap<u64, Vec<NodeId>> = std::collections::HashMap::new();
+    for (id, node) in &tree.nodes {
+        if node.kind == ferail_disk_usage::NodeKind::File && node.size_bytes > 0 {
+            by_size.entry(node.size_bytes).or_default().push(*id);
+        }
+    }
+    let mut files = Vec::new();
+    for (size, ids) in by_size {
+        if ids.len() < 2 {
+            continue;
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Vec::new();
+        }
+        for node in ids {
+            if let Some(path) = arena.path_for(node, tree) {
+                files.push(ferail_fs_native::KnownFile { node, path, size });
+            }
+        }
+    }
+    files
+}
+
+/// Offer `node` at `size` to a bounded largest-first set. Re-offering a
+/// node updates it in place, so a file's later allocated-size fact never
+/// duplicates it.
+fn live_top_offer(top: &mut Vec<(u64, NodeId)>, floor: &mut u64, node: NodeId, size: u64) {
+    // Sizes only grow during a scan, so a node at or below the floor of a
+    // full set is either absent or already the floor entry: nothing to do.
+    if size == 0 || (top.len() >= TOPN_CAP && size <= *floor) {
+        return;
+    }
+    if let Some(slot) = top.iter_mut().find(|(_, id)| *id == node) {
+        slot.0 = size;
+    } else if top.len() < TOPN_CAP {
+        top.push((size, node));
+    } else if let Some(min) = top.iter_mut().min_by_key(|(s, id)| (*s, *id)) {
+        *min = (size, node);
+    }
+    if top.len() >= TOPN_CAP {
+        *floor = top.iter().map(|(s, _)| *s).min().unwrap_or(0);
+    }
 }
 
 fn size_for_mode(apparent: u64, allocated: u64, mode: SizeMode) -> u64 {
@@ -3909,6 +5148,25 @@ mod path_arena_tests {
         assert_eq!(progress.phase, ScanPhase::BuildingIndex);
         assert_eq!(progress.completed, 100);
         assert_eq!(progress.corrupt_records, 1);
+    }
+
+    #[test]
+    fn live_top_keeps_the_largest_files_without_duplicates() {
+        let id = |raw: u64| NodeId::from_raw(raw).unwrap();
+        let mut top = Vec::new();
+        let mut floor = 0;
+        for raw in 1..=(super::TOPN_CAP as u64 + 20) {
+            super::live_top_offer(&mut top, &mut floor, id(raw), raw * 10);
+        }
+        assert_eq!(top.len(), super::TOPN_CAP);
+        assert_eq!(floor, 21 * 10);
+        // A later fact for a member updates it in place.
+        super::live_top_offer(&mut top, &mut floor, id(70), 10_000);
+        assert_eq!(top.iter().filter(|(_, n)| *n == id(70)).count(), 1);
+        assert!(top.contains(&(10_000, id(70))));
+        // Below the floor of a full set: ignored.
+        super::live_top_offer(&mut top, &mut floor, id(999), 5);
+        assert!(!top.iter().any(|(_, n)| *n == id(999)));
     }
 
     #[test]

@@ -286,6 +286,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
         "view.split_right" => bind!(crate::shell::SplitRight, ctx),
         "view.split_down" => bind!(crate::shell::SplitDown, ctx),
         "view.switch_pane" => bind!(crate::shell::SwitchPane, ctx),
+        "view.compare_folders" => bind!(crate::shell::CompareFolders, ctx),
         "window.prev_tab" => bind!(PrevTab, ctx),
         "window.close_window" => bind!(CloseWindow, ctx),
 

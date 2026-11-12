@@ -87,14 +87,14 @@ bump gpui-component:
 
 - **Added in 0.7.1**: `ban` `circle-alert` `file-text` `mic` `refresh-cw`
 
-- **Arrows / chevrons**: `arrow-down` `arrow-left` `arrow-right` `chevron-up` (`chevron-down` now used by the file list's tree caret)
+- **Arrows / chevrons**: `chevron-up` (`chevron-down` is used by the file list's tree caret; `arrow-down` `arrow-left` `arrow-right` by the Compare Folders sync buttons)
 - **Stars / reactions**: `star` `star-fill` `star-off` `heart` `heart-off` `thumbs-up` `thumbs-down`
-- **Files / storage**: `file` `folder-closed` `hard-drive` `gallery-vertical-end`
+- **Files / storage**: `file` `folder-closed` `hard-drive` (`gallery-vertical-end` is used by Disk Usage's Show duplicates)
 - **Windows / panels**: `panel-left` `panel-right` `panel-bottom` `panel-bottom-open` `window-close` `window-maximize` `window-minimize` `window-restore` `frame` `resize-corner` (`panel-left-open` / `-close` and `chevrons-up-down` are *not* free: gpui-component draws them itself for the sidebar toggle and the sort header)
 - **Theme / view**: `sun` `moon` `layout-dashboard` `chart-pie` (`eye` / `eye-off` now used by the checksum report's problems-only filter and the archive workbench)
 - **Text / search controls**: `case-sensitive` `asterisk` `dash` (`a-large-small` now used by the text-size control, `check` by the checksum report header, `replace` by the text editor's Find and Replace button)
 - **System / hardware**: `memory-stick` `square-terminal` `bot` `inspector` `loader` `loader-circle` `battery` (+ `-charging` `-full` `-medium` `-low` `-warning`) (`cpu` now used by the Settings → Performance page; `network` now used for network-mount volume rows)
-- **People / misc**: `user` `circle-user` `delete` `bell` `calendar` `book-open` `building-2` `globe` `github` `map` `ellipsis-vertical` `redo-2` (`undo` now used by the image editor, `undo-2` by the toolbar's Reset-icon-size button, `menu` by the Menus settings page)
+- **People / misc**: `user` `circle-user` `delete` `bell` `book-open` `building-2` `globe` `github` `map` `ellipsis-vertical` `redo-2` (`undo` now used by the image editor, `undo-2` by the toolbar's Reset-icon-size button, `menu` by the Menus settings page)
 
 ```sh
 # Regenerate after a gpui-component bump:
@@ -243,6 +243,8 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Sort (asc/desc) | `icons/sort-ascending.svg` / `sort-descending.svg` ↑ | Lucide | render.rs:1407 |
 | Show Desktop | `icons/nav/show-desktop.svg` | In-house (corner-arrows) | render.rs:1562 |
 | New Folder | `icons/nav/folder.svg` | Lucide `folder` (1.75) | render.rs:1575 |
+| Compare Folders (split view toggle) | `icons/compare-folders.svg` | **In-house** Lucide `git-compare-arrows` (house style, stroke 1.75). The spare pool has no compare glyph. | render.rs toolbar, beside Split |
+| Compare Folders: copy missing and newer to the right / left / bottom / top pane | `icons/arrow-right.svg` / `arrow-left.svg` / `arrow-down.svg` / `arrow-up.svg` ↑ | Lucide, from the spare upstream pool. One verb, four directions. | shell/compare.rs strip |
 | Refresh | `icons/nav/refresh.svg` | Lucide `refresh-cw` | render.rs:1588 |
 | Split View (toolbar toggle) | `icons/split-right.svg` / `icons/split-down.svg` | **In-house** from Lucide `columns-2` / `rows-2` (house style, stroke 1.75): a rect cut in two, vertically or horizontally. The glyph follows the open split's axis; the side-by-side one stands for the closed state. Distinct from the spare `panel-right` / `panel-bottom`, whose off-centre rule reads as a side panel (docs/features/SPLIT_VIEW.md). | render.rs `title_bar` |
 | Dock window to a screen edge (toolbar button) | `icons/dock.svg` | **In-house** (house style, stroke 1.75): a screen rect with a grip bar on each side (edge-neutral "dockable to a side"). Drawn distinct from the sidebar toggle's `panel-left-*` so the whole-window dock isn't confused with the sidebar (docs/features/DOCK.md). | render.rs `title_bar` |
@@ -342,6 +344,8 @@ table's icon set. The one addition is the tree disclosure caret on folder rows.
 | Command | Icon path | Origin |
 | --- | --- | --- |
 | Cancel scan | `icons/close.svg` ↑ | Lucide |
+| Changes since the previous scan (toggle) | `icons/calendar.svg` ↑ | Lucide `calendar`, from the spare upstream pool. |
+| Show duplicates (toggle) | `icons/gallery-vertical-end.svg` ↑ | Lucide `gallery-vertical-end`, from the spare upstream pool: stacked copies of one sheet. |
 | Refresh / restart scan | `icons/nav/refresh.svg` | Lucide `refresh-cw` |
 | Re-run checksum verification | `icons/nav/refresh.svg` | Same refresh command language as scans; icon-only with tooltip. |
 | Filter checksum report to problems | `icons/eye-off.svg` / `icons/eye.svg` | Hide successful rows / restore every row. |

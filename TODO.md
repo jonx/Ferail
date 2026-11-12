@@ -226,10 +226,15 @@ Net-new, but each sits on plumbing that already exists.
 - Filter chips (kind / date / size), query operators, and glob or regex
   queries.
 - Saved smart folders: see **Smart Folders / Saved Searches** above.
-- Windows NTFS MFT + USN and Linux Tracker/Baloo engines behind the same
-  `SearchEngine` selection. Until one exists, Settings offers a "Spotlight"
-  engine on Windows where `resolve_spotlight` is macOS-only and can never
-  engage: hide the option off macOS or implement a real backend.
+- **Qualify the NTFS index on Windows.** The shared per-volume index, its USN
+  journal replay and the name search over it are unit-tested and type-checked
+  only. Work the checklist in
+  [WINDOWS_FAST_NTFS.md](docs/features/WINDOWS_FAST_NTFS.md#windows-qualification-of-the-shared-index),
+  and record helper memory with a cached index at 1M and 4M entries.
+- NTFS index follow-ups: a pre-lowercased name table for per-keystroke speed,
+  Flat View on the same engine, and one policy shared by the Portable and Fast
+  engines for cloud folders and folder allocation.
+- A Linux Tracker/Baloo engine behind the same search-engine selection.
 
 ## Preview, Get Info and viewer
 

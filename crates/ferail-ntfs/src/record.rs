@@ -82,7 +82,22 @@ pub struct DataAttribute {
     pub resident: bool,
     pub sparse: bool,
     pub compressed: bool,
+    /// Clusters actually allocated on disk, in bytes, for a compressed or
+    /// sparse stream (the NTFS "total allocated" header field). Present only
+    /// on the first extent (`lowest_vcn == 0`) of such a stream; `None`
+    /// everywhere else, where `allocated_bytes` is already exact.
+    pub compressed_bytes: Option<u64>,
     pub runs: Vec<DataRun>,
+}
+
+impl DataAttribute {
+    /// Bytes the stream occupies on disk. For compressed and sparse streams
+    /// the header's `allocated_bytes` counts the whole virtual allocation,
+    /// holes and compression savings included; the "total allocated" field
+    /// is what Explorer and `GetFileInformationByHandleEx` report.
+    pub fn on_disk_bytes(&self) -> u64 {
+        self.compressed_bytes.unwrap_or(self.allocated_bytes)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,6 +136,12 @@ pub struct FileRecord {
     /// Raw NTFS ticks (100 ns intervals since 1601), intentionally not
     /// converted in this parser layer.
     pub modified_ticks: Option<u64>,
+    /// `$STANDARD_INFORMATION` creation time, raw NTFS ticks.
+    pub created_ticks: Option<u64>,
+    /// `$STANDARD_INFORMATION` Win32 file attributes (`FILE_ATTRIBUTE_*`):
+    /// hidden, system, read-only and so on. This is the authoritative copy;
+    /// the `$FILE_NAME` duplicate is only refreshed lazily by NTFS.
+    pub file_attributes: Option<u32>,
     pub names: Vec<FileName>,
     pub data: Vec<DataAttribute>,
     pub attribute_lists: Vec<AttributeList>,
@@ -243,6 +264,8 @@ pub fn parse_file_record_in_place(
         reparse_tag: None,
         base_reference: (!base.is_zero()).then_some(base),
         modified_ticks: None,
+        created_ticks: None,
+        file_attributes: None,
         names: Vec::new(),
         data: Vec::new(),
         attribute_lists: Vec::new(),
@@ -381,8 +404,18 @@ fn parse_attribute(
     match (attribute_type, non_resident) {
         (ATTRIBUTE_STANDARD_INFORMATION, false) => {
             let value = resident_value(bytes, absolute_offset)?;
+            // Layout: creation (0), data modification (8), MFT change (16),
+            // access (24), file attributes (32). Every NTFS version has at
+            // least these 36 bytes; shorter values are ignored field by
+            // field rather than failing the record.
+            if value.len() >= 8 {
+                record.created_ticks = Some(u64_at(value, 0)?);
+            }
             if value.len() >= 16 {
                 record.modified_ticks = Some(u64_at(value, 8)?);
+            }
+            if value.len() >= 36 {
+                record.file_attributes = Some(u32_at(value, 32)?);
             }
         }
         (ATTRIBUTE_FILE_NAME, false) => {
@@ -412,6 +445,7 @@ fn parse_attribute(
                 resident: true,
                 sparse: false,
                 compressed: false,
+                compressed_bytes: None,
                 runs: Vec::new(),
             });
         }
@@ -525,15 +559,30 @@ fn parse_non_resident(
     } else {
         Vec::new()
     };
+    let allocated_bytes = u64_at(bytes, 40)?;
+    let compressed = flags & ATTRIBUTE_COMPRESSED != 0;
+    let sparse_flag = flags & ATTRIBUTE_SPARSE != 0;
+    // The 72-byte header variant carries "total allocated" at offset 64. It
+    // exists only on the first extent of a compressed or sparse stream, and
+    // only then do the mapping pairs start at or after 72. A value larger
+    // than the virtual allocation is corrupt and ignored, so a bad field can
+    // only ever fall back to the (over-stated but safe) header allocation.
+    let compressed_bytes = if (compressed || sparse_flag) && lowest_vcn == 0 && mapping_offset >= 72
+    {
+        Some(u64_at(bytes, 64)?).filter(|total| *total <= allocated_bytes)
+    } else {
+        None
+    };
     Ok(DataAttribute {
         lowest_vcn,
         highest_vcn,
-        allocated_bytes: u64_at(bytes, 40)?,
+        allocated_bytes,
         logical_bytes: u64_at(bytes, 48)?,
         initialized_bytes: u64_at(bytes, 56)?,
         resident: false,
-        sparse: flags & ATTRIBUTE_SPARSE != 0 || runs.iter().any(|run| run.lcn.is_none()),
-        compressed: flags & ATTRIBUTE_COMPRESSED != 0,
+        sparse: sparse_flag || runs.iter().any(|run| run.lcn.is_none()),
+        compressed,
+        compressed_bytes,
         runs,
     })
 }
@@ -745,6 +794,32 @@ mod tests {
             self.cursor += length;
         }
 
+        /// The 72-byte header used by the first extent of a compressed or
+        /// sparse stream: "total allocated" at 64, mapping pairs at 72.
+        fn non_resident_data_with_total(
+            &mut self,
+            pairs: &[u8],
+            highest_vcn: u64,
+            flags: u16,
+            total_allocated: u64,
+        ) {
+            let length = align8(72 + pairs.len());
+            put_u32(&mut self.bytes, self.cursor, ATTRIBUTE_DATA);
+            put_u32(&mut self.bytes, self.cursor + 4, length as u32);
+            self.bytes[self.cursor + 8] = 1;
+            put_u16(&mut self.bytes, self.cursor + 12, flags);
+            put_u64(&mut self.bytes, self.cursor + 16, 0);
+            put_u64(&mut self.bytes, self.cursor + 24, highest_vcn);
+            put_u16(&mut self.bytes, self.cursor + 32, 72);
+            self.bytes[self.cursor + 34] = 4;
+            put_u64(&mut self.bytes, self.cursor + 40, 65_536);
+            put_u64(&mut self.bytes, self.cursor + 48, 60_000);
+            put_u64(&mut self.bytes, self.cursor + 56, 60_000);
+            put_u64(&mut self.bytes, self.cursor + 64, total_allocated);
+            self.bytes[self.cursor + 72..self.cursor + 72 + pairs.len()].copy_from_slice(pairs);
+            self.cursor += length;
+        }
+
         fn finish(mut self) -> Vec<u8> {
             put_u32(&mut self.bytes, self.cursor, ATTRIBUTE_END);
             self.cursor += 8;
@@ -791,6 +866,82 @@ mod tests {
         assert_eq!(record.modified_ticks, Some(123_456));
         assert_eq!(record.names[0].name, raw_name);
         assert_eq!(record.data[0].logical_bytes, 16);
+    }
+
+    #[test]
+    fn standard_information_yields_creation_time_and_attributes() {
+        let mut fixture = RecordFixture::new(43, RECORD_IN_USE);
+        let mut standard = vec![0u8; 72];
+        put_u64(&mut standard, 0, 111);
+        put_u64(&mut standard, 8, 222);
+        put_u32(&mut standard, 32, 0x2 | 0x4 | 0x1);
+        fixture.resident(ATTRIBUTE_STANDARD_INFORMATION, &standard, 1);
+        let record =
+            parse_file_record(&fixture.finish(), RecordParseOptions::new(SECTOR_SIZE)).unwrap();
+        assert_eq!(record.created_ticks, Some(111));
+        assert_eq!(record.modified_ticks, Some(222));
+        assert_eq!(record.file_attributes, Some(0x7));
+    }
+
+    #[test]
+    fn short_standard_information_keeps_the_fields_it_has() {
+        let mut fixture = RecordFixture::new(44, RECORD_IN_USE);
+        let mut standard = vec![0u8; 16];
+        put_u64(&mut standard, 0, 5);
+        put_u64(&mut standard, 8, 6);
+        fixture.resident(ATTRIBUTE_STANDARD_INFORMATION, &standard, 1);
+        let record =
+            parse_file_record(&fixture.finish(), RecordParseOptions::new(SECTOR_SIZE)).unwrap();
+        assert_eq!(record.created_ticks, Some(5));
+        assert_eq!(record.modified_ticks, Some(6));
+        assert_eq!(record.file_attributes, None);
+    }
+
+    #[test]
+    fn compressed_stream_reports_total_allocated_as_on_disk_size() {
+        let mut fixture = RecordFixture::new(45, RECORD_IN_USE);
+        // One 16-cluster run; 8 KiB actually allocated out of 64 KiB.
+        fixture.non_resident_data_with_total(&[0x11, 16, 100, 0], 15, ATTRIBUTE_COMPRESSED, 8192);
+        let record = parse_file_record(
+            &fixture.finish(),
+            RecordParseOptions {
+                bytes_per_sector: SECTOR_SIZE,
+                expected_record_number: None,
+                include_data_runs: false,
+            },
+        )
+        .unwrap();
+        let data = &record.data[0];
+        assert!(data.compressed);
+        assert_eq!(data.allocated_bytes, 65_536);
+        assert_eq!(data.compressed_bytes, Some(8192));
+        assert_eq!(data.on_disk_bytes(), 8192);
+    }
+
+    #[test]
+    fn sparse_stream_total_allocated_is_parsed_but_never_exceeds_allocation() {
+        let mut fixture = RecordFixture::new(46, RECORD_IN_USE);
+        fixture.non_resident_data_with_total(&[0x11, 16, 100, 0], 15, ATTRIBUTE_SPARSE, 4096);
+        let record =
+            parse_file_record(&fixture.finish(), RecordParseOptions::new(SECTOR_SIZE)).unwrap();
+        assert_eq!(record.data[0].on_disk_bytes(), 4096);
+
+        let mut corrupt = RecordFixture::new(47, RECORD_IN_USE);
+        corrupt.non_resident_data_with_total(&[0x11, 16, 100, 0], 15, ATTRIBUTE_SPARSE, 1 << 40);
+        let record =
+            parse_file_record(&corrupt.finish(), RecordParseOptions::new(SECTOR_SIZE)).unwrap();
+        assert_eq!(record.data[0].compressed_bytes, None);
+        assert_eq!(record.data[0].on_disk_bytes(), 65_536);
+    }
+
+    #[test]
+    fn plain_nonresident_stream_has_no_total_allocated_field() {
+        let mut fixture = RecordFixture::new(9, RECORD_IN_USE);
+        fixture.non_resident_data(&[0x11, 3, 100, 0x01, 2, 0x11, 1, 4, 0], 5, 0);
+        let record =
+            parse_file_record(&fixture.finish(), RecordParseOptions::new(SECTOR_SIZE)).unwrap();
+        assert_eq!(record.data[0].compressed_bytes, None);
+        assert_eq!(record.data[0].on_disk_bytes(), 24_576);
     }
 
     #[test]

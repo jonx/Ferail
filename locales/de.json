@@ -152,6 +152,11 @@
     "Case": "Schreibweise",
     "Change Icon…": "Symbol ändern …",
     "Changed while reading": "Während des Lesens geändert",
+    "Changes since the previous scan: available when this scan finishes": "Änderungen seit dem letzten Scan: verfügbar, sobald dieser Scan abgeschlossen ist",
+    "Changes since the previous scan: scan history is not available": "Änderungen seit dem letzten Scan: Der Scanverlauf ist nicht verfügbar",
+    "Changes since the previous scan: this is the first scan of this folder": "Änderungen seit dem letzten Scan: Dies ist der erste Scan dieses Ordners",
+    "Changes since the previous scan: this scan did not finish": "Änderungen seit dem letzten Scan: Dieser Scan wurde nicht abgeschlossen",
+    "Changes since the scan from {when}": "Änderungen seit dem Scan von {when}",
     "Channels": "Kanäle",
     "Check for Updates…": "Nach Updates suchen …",
     "Check for updates automatically": "Automatisch nach Updates suchen",
@@ -201,9 +206,13 @@
     "Combining mark": "Kombinierendes Zeichen",
     "Comfortable": "Bequem",
     "Comments": "Kommentare",
+    "Compare Folders": "Ordner vergleichen",
+    "Compare Folders needs a split view with a folder in each pane.": "„Ordner vergleichen“ benötigt eine geteilte Ansicht mit einem Ordner in jedem Bereich.",
     "Compare all files": "Alle Dateien vergleichen",
     "Compare inside app bundles": "Innerhalb von App-Bundles vergleichen",
     "Compared with the group reference: dHash {structure}/64 (structure), pHash {detail}/64 (detail). Lower numbers mean greater similarity.": "Verglichen mit dem Gruppenreferenzbild: dHash {structure}/64 (Struktur), pHash {detail}/64 (Detail). Niedrigere Werte bedeuten größere Ähnlichkeit.",
+    "Comparing {left} and {right}": "{left} und {right} werden verglichen",
+    "Comparing…": "Vergleichen …",
     "Completed {n} item as administrator": {
       "one": "{n} Objekt als Administrator abgeschlossen",
       "other": "{n} Objekte als Administrator abgeschlossen"
@@ -252,6 +261,7 @@
       "other": "{n} Objekte kopiert"
     },
     "Copied “{name}”": "„{name}“ kopiert",
+    "Copies items missing on the other side and replaces older versions of files that differ. Nothing is deleted. Folders that differ are not merged: open them in both panes.": "Kopiert Elemente, die auf der anderen Seite fehlen, und ersetzt ältere Versionen abweichender Dateien. Es wird nichts gelöscht. Abweichende Ordner werden nicht zusammengeführt: Öffne sie in beiden Bereichen.",
     "Copy": "Kopieren",
     "Copy File List": "Dateiliste kopieren",
     "Copy Path": "Pfad kopieren",
@@ -260,6 +270,10 @@
     "Copy View as HTML": "Ansicht als HTML kopieren",
     "Copy Whole View": "Gesamte Ansicht kopieren",
     "Copy instructions": "Anleitung kopieren",
+    "Copy missing and newer to bottom": "Fehlendes und Neueres nach unten kopieren",
+    "Copy missing and newer to left": "Fehlendes und Neueres nach links kopieren",
+    "Copy missing and newer to right": "Fehlendes und Neueres nach rechts kopieren",
+    "Copy missing and newer to top": "Fehlendes und Neueres nach oben kopieren",
     "Copy report": "Bericht kopieren",
     "Copy to Other Pane": "In anderen Bereich kopieren",
     "Copying failed: {detail}": "Kopieren fehlgeschlagen: {detail}",
@@ -269,6 +283,7 @@
       "other": "Kopieren, wird vorbereitet ({n} Objekte) …"
     },
     "Could not calculate SHA-256: {detail}": "SHA-256 konnte nicht berechnet werden: {detail}",
+    "Could not compare: {error}": "Vergleich nicht möglich: {error}",
     "Could not create checksum file: {detail}": "Prüfsummendatei konnte nicht erstellt werden: {detail}",
     "Could not mount volume: {error}": "Datenträger konnte nicht eingehängt werden: {error}",
     "Could not open item: {error}": "Objekt konnte nicht geöffnet werden: {error}",
@@ -390,6 +405,7 @@
     "Detected when conversion starts": "Wird beim Start der Konvertierung erkannt",
     "Device": "Gerät",
     "Diagnostics": "Diagnose",
+    "Different: {count}": "Unterschiedlich: {count}",
     "Dimensions": "Abmessungen",
     "Disc": "Disc",
     "Discard": "Verwerfen",
@@ -428,6 +444,7 @@
     },
     "Duplicate": "Duplizieren",
     "Duplicate finder": "Duplikatsuche",
+    "Duplicate groups": "Duplikatgruppen",
     "Duplicate scan": "Duplikat-Scan",
     "Duplicate scan finished: no duplicates found": "Duplikat-Scan abgeschlossen: keine Duplikate gefunden",
     "Duplicate scan finished: {n} group · {reclaimable} reclaimable": {
@@ -575,6 +592,7 @@
     "Find Similar Images…": "Ähnliche Bilder suchen …",
     "Find and Replace": "Suchen und Ersetzen",
     "Finding duplicates in {root}": "Duplikate werden in {root} gesucht",
+    "Finding duplicates: {files} files compared": "Duplikate werden gesucht: {files} Dateien verglichen",
     "Finding similar images in {root}": "Ähnliche Bilder werden in {root} gesucht",
     "Fit": "Einpassen",
     "Fit height": "Höhe einpassen",
@@ -618,6 +636,7 @@
     "Gray": "Grau",
     "Greek": "Griechisch",
     "Green": "Grün",
+    "Grew": "Gewachsen",
     "Group": "Gruppe",
     "Group reference": "Referenzbild der Gruppe",
     "Grouped rows in a tab": "Gruppierte Zeilen in einem Tab",
@@ -630,6 +649,7 @@
     "Hidden": "Versteckte",
     "Hide Others": "Andere ausblenden",
     "Hide details": "Details ausblenden",
+    "Hide duplicates": "Duplikate ausblenden",
     "Hide extension": "Suffix ausblenden",
     "Hide largest-files panel": "Panel „Größte Dateien“ ausblenden",
     "Hide preview": "Vorschau ausblenden",
@@ -649,6 +669,7 @@
     "Icon fit": "Symbolfüllung",
     "Icon spacing": "Symbolabstand",
     "Icon view": "Symbolansicht",
+    "Identical: {count}": "Identisch: {count}",
     "Ignore small files": "Kleine Dateien ignorieren",
     "Image": "Bild",
     "Import": "Importieren",
@@ -695,6 +716,7 @@
     "Large (130%)": "Groß (130 %)",
     "Larger icons": "Größere Symbole",
     "Largest Files Panel": "Panel „Größte Dateien“",
+    "Largest changes": "Größte Änderungen",
     "Last opened": "Zuletzt geöffnet",
     "Later": "Später",
     "Launch mode": "Startmodus",
@@ -716,6 +738,7 @@
     "Locations": "Orte",
     "Locked": "Geschützt",
     "Look-alike character": "Verwechselbares Zeichen",
+    "Looking for duplicates…": "Duplikate werden gesucht …",
     "Looking for sidecar files…": "Begleitdateien werden gesucht…",
     "Loop": "Schleife",
     "Lower values require a closer visual match.": "Niedrigere Werte erfordern eine stärkere visuelle Übereinstimmung.",
@@ -754,6 +777,7 @@
     "Mismatch": "Abweichung",
     "Missing": "Fehlt",
     "Modified": "Geändert",
+    "Modified since the previous scan": "Seit dem letzten Scan geändert",
     "More": "Mehr",
     "More options from Windows…": "Weitere Optionen von Windows…",
     "More sidecars may be present.": "Weitere Begleitdateien können vorhanden sein.",
@@ -802,9 +826,12 @@
       "other": "Bewegen, wird vorbereitet ({n} Objekte) …"
     },
     "Music": "Musik",
+    "NTFS index": "NTFS-Index",
+    "NTFS index (administrator)": "NTFS-Index (Administrator)",
     "Name": "Name",
     "Never record other volumes": "Andere Volumes nie aufzeichnen",
     "Never record these folders": "Diese Ordner nie aufzeichnen",
+    "New": "Neu",
     "New Archive": "Neues Archiv",
     "New Archive…": "Neues Archiv …",
     "New Folder": "Neuer Ordner",
@@ -815,18 +842,23 @@
     "New language…": "Neue Sprache …",
     "New name": "Neuer Name",
     "New password": "Neues Passwort",
+    "New since the previous scan": "Neu seit dem letzten Scan",
     "Next Tab": "Nächster Tab",
     "No": "Nein",
     "No active tasks.": "Keine aktiven Aufgaben.",
     "No activity recorded yet.": "Noch keine Aktivität aufgezeichnet.",
     "No applications found": "Keine Programme gefunden",
     "No downloadable Ferail release was found on GitHub.": "Auf GitHub wurde keine herunterladbare Ferail-Version gefunden.",
+    "No duplicates": "Keine Duplikate",
+    "No duplicates found": "Keine Duplikate gefunden",
     "No duplicates found.": "Keine Duplikate gefunden.",
+    "No earlier size": "Keine frühere Größe",
     "No files found in this location or its subfolders.": "An diesem Ort oder in seinen Unterordnern wurden keine Dateien gefunden.",
     "No files on the clipboard": "Keine Dateien in der Zwischenablage",
     "No files or image on the clipboard": "Keine Dateien und kein Bild in der Zwischenablage",
     "No files to view in this folder": "Keine anzeigbaren Dateien in diesem Ordner",
     "No folder available to add to Favorites.": "Kein Ordner vorhanden, der zu Favoriten hinzugefügt werden kann.",
+    "No folder changed noticeably": "Kein Ordner hat sich merklich verändert",
     "No language packs installed.": "Keine Sprachpakete installiert.",
     "No matching command": "Kein passender Befehl",
     "No matching files yet": "Noch keine passenden Dateien",
@@ -843,6 +875,7 @@
     "Node.js script": "Node.js-Skript",
     "None": "Keiner",
     "Normal": "Normal",
+    "Not compared: {count}": "Nicht verglichen: {count}",
     "Not downloaded": "Nicht heruntergeladen",
     "Not enough space on “{dest}”: needs {needed}, only {free} free": "Nicht genug Platz auf „{dest}“: benötigt {needed}, nur {free} frei",
     "Not supported by {format} archives.": "Von {format}-Archiven nicht unterstützt.",
@@ -856,8 +889,12 @@
     "On": "Ein",
     "Once a day, ask GitHub whether a newer Ferail release exists, and show a notification when one does. Off by default: when off, Ferail makes no network requests on its own. Nothing is ever downloaded or installed without you choosing to; use Ferail → Check for Updates… to check by hand at any time.": "Einmal täglich bei GitHub nachfragen, ob eine neuere Ferail-Version existiert, und bei Bedarf eine Mitteilung anzeigen. Standardmäßig aus: dann stellt Ferail von sich aus keine Netzwerkanfragen. Es wird nie etwas ohne deine Zustimmung geladen oder installiert; mit Ferail → Nach Updates suchen … kannst du jederzeit manuell prüfen.",
     "OneDrive": "OneDrive",
+    "Only bottom: {count}": "Nur unten: {count}",
     "Only folders can be added to Favorites.": "Nur Ordner können zu Favoriten hinzugefügt werden.",
+    "Only left: {count}": "Nur links: {count}",
     "Only needed for an encrypted source": "Nur für eine verschlüsselte Quelle erforderlich",
+    "Only right: {count}": "Nur rechts: {count}",
+    "Only top: {count}": "Nur oben: {count}",
     "Only {n} file was checked: a lock outside that sample would not show.": {
       "one": "Nur {n} Datei wurde geprüft, eine Sperre außerhalb dieser Stichprobe würde nicht angezeigt.",
       "other": "Nur die ersten {n} Dateien wurden geprüft, eine Sperre außerhalb dieser Stichprobe würde nicht angezeigt."
@@ -965,6 +1002,7 @@
     "Preview selected file": "Ausgewählte Datei in der Vorschau anzeigen",
     "Preview this file?": "Diese Datei in der Vorschau anzeigen?",
     "Previous Tab": "Vorheriger Tab",
+    "Previous scan {when}: {delta}": "Letzter Scan {when}: {delta}",
     "Privacy": "Datenschutz",
     "Privacy protection is off: a shared report would include the paths shown here.": "Der Datenschutz ist aus: Ein geteilter Bericht würde die hier angezeigten Pfade enthalten.",
     "Privacy protection is on: paths and file names are replaced before this activity is attached to a report.": "Der Datenschutz ist aktiv: Pfade und Dateinamen werden ersetzt, bevor diese Aktivität einem Bericht beigefügt wird.",
@@ -1060,6 +1098,7 @@
     "Reopen the last session": "Letzte Sitzung wieder öffnen",
     "Replace": "Ersetzen",
     "Replace extra copies with APFS clones (keeps every file)": "Überzählige Kopien durch APFS-Klone ersetzen (alle Dateien bleiben erhalten)",
+    "Replace older files?": "Ältere Dateien ersetzen?",
     "Replace {n} extra copy with APFS clones of “{keeper}”? Every file stays; the duplicated bytes are freed.": {
       "one": "{n} überzählige Kopie durch einen APFS-Klon von „{keeper}“ ersetzen? Jede Datei bleibt; die doppelten Bytes werden freigegeben.",
       "other": "{n} überzählige Kopien durch APFS-Klone von „{keeper}“ ersetzen? Jede Datei bleibt; die doppelten Bytes werden freigegeben."
@@ -1201,6 +1240,7 @@
     "Show Recents": "„Zuletzt benutzt“ anzeigen",
     "Show a preview and give keyboard navigation a starting point in newly opened folders.": "In neu geöffneten Ordnern eine Vorschau anzeigen und einen Ausgangspunkt für die Tastaturnavigation bieten.",
     "Show all": "Alle anzeigen",
+    "Show duplicates": "Duplikate anzeigen",
     "Show file previews": "Dateivorschauen anzeigen",
     "Show folder": "Ordner anzeigen",
     "Show hidden": "Versteckte anzeigen",
@@ -1220,6 +1260,7 @@
       "other": "{n} Objekte werden im {app} angezeigt"
     },
     "Showing “{name}” in {app}": "„{name}“ wird im {app} angezeigt",
+    "Shrank": "Geschrumpft",
     "Sidebar": "Seitenleiste",
     "Sidecar files": "Begleitdateien",
     "Similar image scan": "Suche nach ähnlichen Bildern",
@@ -1312,11 +1353,13 @@
     "Terminal application": "Terminal-Programm",
     "Text or pattern": "Text oder Muster",
     "The Linux distribution could not be started.": "Die Linux-Distribution konnte nicht gestartet werden.",
+    "The NTFS index answers a name search on a local NTFS drive from the drive's own file table instead of reading every folder. It needs the administrator helper, which asks for permission once. Automatic uses the index only when Disk Usage has already started that helper, and the built-in walker otherwise.": "Der NTFS-Index beantwortet eine Namenssuche auf einem lokalen NTFS-Laufwerk aus der Dateitabelle des Laufwerks, statt jeden Ordner zu lesen. Er benötigt das Administrator-Hilfsprogramm, das einmal um Erlaubnis fragt. „Automatisch“ nutzt den Index nur, wenn die Speicherbelegung dieses Hilfsprogramm bereits gestartet hat, und sonst die integrierte Suche.",
     "The Windows context menu is not available for Linux files": "Das Windows-Kontextmenü ist für Linux-Dateien nicht verfügbar",
     "The app's configuration lives here: the settings file, the metadata database (tags, visit history), and your language packs.": "Die Konfiguration der App liegt hier: die Einstellungsdatei, die Metadaten-Datenbank (Tags, Besuchsverlauf) und deine Sprachpakete.",
     "The archive has no parent folder": "Das Archiv hat keinen übergeordneten Ordner",
     "The built-in player uses the platform's native media frameworks (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually any container/codec and applies colour adjustments and a transparent-colour key to the video itself. libmpv must be installed; a change takes effect on the next viewer window.": "Der integrierte Player nutzt die nativen Medien-Frameworks der Plattform (AVFoundation unter macOS, Media Foundation unter Windows). mpv spielt praktisch jeden Container/Codec und wendet Farbanpassungen und eine Transparenzfarbe direkt auf das Video an. libmpv muss installiert sein; eine Änderung gilt ab dem nächsten Viewer-Fenster.",
     "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable: rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.": "Der integrierte Player nutzt die nativen Medien-Frameworks der Plattform. mpv spielt praktisch jeden Container/Codec, aber dieser Build wurde ohne das Feature `mpv` kompiliert, daher ist mpv nicht verfügbar: baue mit `cargo run --bin ferail-gpui --features mpv` neu (mit installiertem libmpv), um es zu aktivieren.",
+    "The built-in walker reads every folder under the one you search.": "Die integrierte Suche liest jeden Ordner unterhalb des durchsuchten Ordners.",
     "The comparison is unavailable because calculation did not finish.": "Der Vergleich ist nicht verfügbar, da die Berechnung nicht abgeschlossen wurde.",
     "The comparison will appear when calculation finishes.": "Der Vergleich erscheint, sobald die Berechnung abgeschlossen ist.",
     "The converted archive name must be a single non-empty filename.": "Der Name des konvertierten Archivs muss ein einzelner, nicht leerer Dateiname sein.",
@@ -1370,6 +1413,7 @@
     "Too many edited copies of this image already exist here.": "Es existieren bereits zu viele bearbeitete Kopien dieses Bildes.",
     "Too many items selected for the Windows context menu": "Zu viele Objekte für das Windows-Kontextmenü ausgewählt",
     "Too many items selected to restore at once": "Zu viele Objekte für eine Wiederherstellung auf einmal ausgewählt",
+    "Too small last time to compare": "Beim letzten Mal zu klein für einen Vergleich",
     "Track": "Titelnummer",
     "Tracker module": "Tracker-Modul",
     "Trailing whitespace": "Abschließender Leerraum",
@@ -1407,6 +1451,8 @@
     "UTF-8 text": "UTF-8-Text",
     "Unavailable": "Nicht verfügbar",
     "Unblock": "Zulassen",
+    "Unchanged": "Unverändert",
+    "Unchanged since the previous scan": "Unverändert seit dem letzten Scan",
     "Uncompressed": "Unkomprimiert",
     "Undid bulk rename": "Massenumbenennung widerrufen",
     "Undid rename": "Umbenennen widerrufen",
@@ -1582,6 +1628,7 @@
       "one": "{count} Ordner",
       "other": "{count} Ordner"
     },
+    "{delta} since the previous scan": "{delta} seit dem letzten Scan",
     "{done} of {n} item": {
       "one": "{done} von {n} Objekt",
       "other": "{done} von {n} Objekten"
@@ -1666,6 +1713,10 @@
       "one": "{n} versteckt · {size}",
       "other": "{n} versteckt · {size}"
     },
+    "{n} identical copy, click to show all": {
+      "one": "{n} identische Kopie, klicken, um alle zu zeigen",
+      "other": "{n} identische Kopien, klicken, um alle zu zeigen"
+    },
     "{n} image · {reclaimable} reclaimable": {
       "one": "{n} Bild · {reclaimable} freigebbar",
       "other": "{n} Bilder · {reclaimable} freigebbar"
@@ -1717,6 +1768,10 @@
       "other": "{n} von {total} ausgewählt · {size}"
     },
     "{n} of {t}": "{n} von {t}",
+    "{n} older file in “{folder}” will be replaced by the newer version from the other side. This cannot be undone.": {
+      "one": "{n} ältere Datei in „{folder}“ wird durch die neuere Version der anderen Seite ersetzt. Dies kann nicht rückgängig gemacht werden.",
+      "other": "{n} ältere Dateien in „{folder}“ werden durch die neuere Version der anderen Seite ersetzt. Dies kann nicht rückgängig gemacht werden."
+    },
     "{n} other": "{n} weitere",
     "{n} path copied to clipboard": {
       "one": "{n} Pfad in die Zwischenablage kopiert",
@@ -1760,6 +1815,14 @@
     "{shown} of {total}": "{shown} von {total}",
     "{size} free": "{size} frei",
     "{size} free on {name}": "{size} frei auf {name}",
+    "{size} in {n} deleted folder": {
+      "one": "{size} in {n} gelöschtem Ordner",
+      "other": "{size} in {n} gelöschten Ordnern"
+    },
+    "{size} reclaimable in {n} duplicate group": {
+      "one": "{size} freigebbar in {n} Duplikatgruppe",
+      "other": "{size} freigebbar in {n} Duplikatgruppen"
+    },
     "{summary}, {n} skipped": {
       "one": "{summary}, {n} übersprungen",
       "other": "{summary}, {n} übersprungen"

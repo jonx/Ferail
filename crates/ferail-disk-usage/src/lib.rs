@@ -11,6 +11,7 @@
 pub mod aggregate;
 pub mod facts;
 pub mod file_category;
+pub mod history;
 pub mod html_export;
 pub mod layout;
 pub mod model;
@@ -20,6 +21,10 @@ pub use aggregate::{
 };
 pub use facts::DiskUsageFact;
 pub use file_category::{classify_extension, classify_path, FileCategory};
+pub use history::{
+    build_snapshot, change_color_rgba, classify, compare, noise_floor, Baseline, ChangeKind, ChangeSet,
+    DirRecord, SnapshotLimits,
+};
 pub use html_export::{
     category_color_rgba, category_label, treemap_html_document, treemap_html_fragment,
 };

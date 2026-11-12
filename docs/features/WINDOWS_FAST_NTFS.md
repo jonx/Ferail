@@ -1,10 +1,11 @@
 # Windows Fast NTFS Disk Usage
 
 Implementation specification for the optional elevated NTFS backend used by
-Disk Usage. This is deliberately narrower than a general filesystem indexer:
-v1 produces ephemeral Disk Usage snapshots and releases every byte of per-scan
-raw-volume state. The narrow elevated process may serve more than one request
-during a Ferail session so repeated scans do not repeatedly prompt for UAC.
+Disk Usage and Search. The elevated helper reads the Master File Table, keeps
+a compact per-volume index in memory between requests, brings it up to date
+from the USN change journal, and answers two questions from it: the tree under
+a folder with its sizes, and the names under a folder that match a query.
+Nothing is written to disk, and the index is released after five idle minutes.
 
 ← Back to [feature notes](README.md) · [Disk Usage](DISK_USAGE.md) ·
 [Windows handover](../testing/WINDOWS_HANDOVER.md)
@@ -19,6 +20,7 @@ during a Ferail session so repeated scans do not repeatedly prompt for UAC.
 - [Private protocol](#private-protocol)
 - [Raw reader and parser](#raw-reader-and-parser)
 - [Compact tree and exact semantics](#compact-tree-and-exact-semantics)
+- [Shared index: cache, journal replay and search](#shared-index-cache-journal-replay-and-search)
 - [Failure and fallback rules](#failure-and-fallback-rules)
 - [Isolated implementation sequence](#isolated-implementation-sequence)
 - [Test and release gates](#test-and-release-gates)
@@ -49,12 +51,14 @@ directory. An interim salted-digest check now stands in its place: see
 [Interim helper attestation](#interim-helper-attestation) for what it does and
 does not cover.
 
-The 0.7.1 integration is for Disk Usage only. Flat View and Search still use
-their portable recursive walker; sharing the fast transport with them requires
-a separate adapter that preserves their `FileEntry`, filtering and fallback
-semantics. Duplicate finding, ordinary listings and background indexing are
-also outside v1. Do not persist an MFT index or requested paths. USN-journal
-incremental refresh is a later feature, not part of v1.
+Disk Usage and name search share the helper and its index
+([Shared index](#shared-index-cache-journal-replay-and-search)). Flat View,
+duplicate finding, folder sizes and ordinary listings use the portable
+walker. The index and requested paths are never persisted. The cache, the
+journal replay and the search path are unit-tested in the neutral crate and
+type-checked for Windows; they have not run on a Windows machine, and the
+[Windows qualification checklist](#windows-qualification-of-the-shared-index)
+is open.
 
 ## User contract
 
@@ -73,9 +77,19 @@ incremental refresh is a later feature, not part of v1.
   media or a helper failure leaves the GUI usable and visibly starts Portable.
 - The result states which engine produced it and whether concurrent volume
   changes made it a best-effort snapshot.
-- Closing, cancelling or refreshing Disk Usage drops that request's raw
-  reader, compact index, queued batches and GUI result arena. The idle helper
-  remains connected for later requests and exits when Ferail disconnects.
+- Closing, cancelling or refreshing Disk Usage drops that request's queued
+  batches and GUI result arena. The helper keeps the volume's index for later
+  requests, releases it after five idle minutes, and exits when Ferail
+  disconnects. Cancelling a request does not end the helper, so the next one
+  needs no new UAC prompt.
+- Search uses the index only on consent. Choosing **NTFS index
+  (administrator)** as the search engine may show UAC; **Automatic** uses the
+  index only when a helper is already running and free, and the walker
+  otherwise. Search never prompts on its own.
+- The elevated helper can read names in folders the signed-in user cannot
+  open. Search re-reads every hit as the unelevated app and drops what it
+  cannot stat, so results never list an item the user could not have reached
+  by browsing.
 
 ## Interim helper attestation
 
@@ -204,8 +218,16 @@ frames, trailing bytes, embedded NULs and payloads above 16 MiB. UTF-16 fields
 are opaque code-unit sequences: preserve even unpaired surrogates rather than
 silently replacing a legal NTFS name. Batch payloads are independently bounded
 so the pipe can never force unbounded allocation.
-The parent-to-helper frames are `Start` and `Cancel`; helper-to-parent frames
-are `Hello`, `Ready`, `Batch`, `Progress`, `Complete` and `Failed`.
+The parent-to-helper frames are `Start`, `Search`, `Release` and `Cancel`;
+helper-to-parent frames are `Hello`, `Ready`, `Batch`, `SearchBatch`,
+`Progress`, `Complete`, `SearchComplete` and `Failed`. Protocol version 2
+adds the search and release frames; Disk Usage frames keep their version 1
+bytes. `Search` carries the root identity, the lowercased text terms, the
+match-path flag, the hidden flag and the package policy. A `SearchBatch` row
+carries a path relative to the root; a row whose path contains `..`, `.`, an
+empty component or `/` is rejected on both sides. `Progress` is sent during
+the MFT read, the index build and a journal replay, and repeated every five
+seconds, so a long build never trips the inactivity deadline.
 
 `Start` carries the volume GUID, requested root as length-prefixed UTF-16, the
 expected root file identity, sizing mode and package policy. `Ready` is sent
@@ -305,9 +327,66 @@ Memory gates are structural rather than a misleading fixed file-count cap:
 - at most two encoded result batches pending in the helper and the existing
   bounded GUI queue;
 - helper private bytes, GUI private bytes and handle counts recorded at 1M and
-  4M entries; per-request helper memory disappears when a scan ends, the idle
-  helper disappears when Ferail exits, and GUI result memory becomes reusable
-  after the DU surface closes.
+  4M entries; the cached index disappears after the idle release or a
+  `Release` frame, the idle helper disappears when Ferail exits, and GUI
+  result memory becomes reusable after the DU surface closes. A journal
+  replay briefly holds two copies of the index.
+
+## Shared index: cache, journal replay and search
+
+The helper holds at most two volume indexes (`MAX_CACHED_VOLUMES`), keyed by
+volume GUID and USN journal id, each with the journal position it was built
+at. `Start` and `Search` go through one get-or-build step
+(`index_cache.rs`).
+
+**A cache changes latency, never the answer.** A cached index is reused only
+after the journal has been replayed from the build position: every change
+record becomes a create, delete, rename, attribute change or "re-read this
+record" applied by `ferail_ntfs::overlay`, and records whose sizes may have
+changed are re-read from the MFT. The helper rebuilds from the MFT instead
+when the volume has no journal, the journal id changed, entries were purged,
+a read failed, more than 100.000 records were touched, or the overlay cannot
+prove a change safe. Because a raw MFT read can miss a change that is not on
+disk yet, records changed in the last 60 seconds are re-read on every request.
+A volume whose journal exceeds 256 MiB is served without caching.
+
+**Search** (`ferail_ntfs::search`, `CompactNtfsIndex::search_subtree`) walks
+the subtree under the requested root and applies the walker's rules: hidden
+folders are neither matched nor entered unless hidden items are shown,
+packages are not entered, names are lowercased and must contain every term,
+and each hard link is listed under its own name. Junctions and mount points
+are listed and not entered. The GUI worker (`run_ntfs_index` in
+`shell/search.rs`) rebuilds each hit through `NativeFs::file_entry_for_path`,
+applies the expression's metadata terms to that row, and falls back to the
+walker when the helper is unavailable, busy or fails; a failure after partial
+rows clears the listing first.
+
+Two differences from the walker are deliberate. Folders backed by a cloud
+provider that have real children in the MFT are entered, where the walker
+treats every reparse point as a leaf. Hidden flags and times come from
+`$STANDARD_INFORMATION`, where the walker reads the directory's copy, which
+NTFS updates lazily.
+
+### Windows qualification of the shared index
+
+1. Run the existing gates and the Win32 unit tests.
+2. `ferail-ntfs-client-diag <dir> 3`: the first run builds, the next two
+   reuse. Change a file between runs and confirm the totals follow.
+3. Delete and recreate the journal (`fsutil usn deletejournal`, then
+   `createjournal`): the next request rebuilds.
+4. Create, rename, move, hard-link, delete, hide, compress and sparse-fill
+   files, then search at once: results match a freshly started helper.
+5. Compare search results with the walker on the VHDX fixture: hidden files,
+   `.git`, a package folder, a junction, an unpaired-surrogate name, match
+   path, several terms.
+6. Compare Allocated for compressed and sparse files with Explorer's "Size on
+   disk".
+7. Cancel during build, replay and walk, then search again: no UAC prompt and
+   the same helper process.
+8. A cold build longer than 30 seconds: no inactivity timeout.
+9. After five idle minutes helper memory drops.
+10. Search while Disk Usage scans: Automatic falls back to the walker.
+    Automatic with no helper running shows no UAC.
 
 ## Failure and fallback rules
 
@@ -339,9 +418,7 @@ Each step is a separately reviewable/revertible commit:
    fallback and existing-fact adaptation.
 6. Add the explicit Disk Usage engine UI, translations, progress/coverage
    wording, Settings preference and screenshot state.
-7. Qualify on Windows. Only then publish Fast NTFS in a release build. Evaluate a
-   separate read-only adapter for Flat/Search afterward; do not share the
-   elevated helper's lifetime or index implicitly.
+7. Qualify on Windows. Only then publish Fast NTFS in a release build.
 
 ## Test and release gates
 

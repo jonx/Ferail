@@ -121,6 +121,9 @@ actions!(
         CopyToOtherPane,
         /// Move the selection into the folder shown in the other pane.
         MoveToOtherPane,
+        /// Compare the two panes' folders, or stop comparing
+        /// (docs/features/COMPARE_FOLDERS.md).
+        CompareFolders,
         QuickLook,
         /// Cmd+Y: open the viewer window on the current folder's
         /// files (docs/features/VIEWER.md). Space stays Quick Look.

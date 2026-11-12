@@ -854,6 +854,10 @@ pub(crate) fn install_app_menus(cx: &mut App) {
         title("view.switch_pane", "Switch Pane"),
         crate::shell::SwitchPane,
     ));
+    view_items.push(MenuItem::action(
+        title("view.compare_folders", "Compare Folders"),
+        crate::shell::CompareFolders,
+    ));
     view_items.push(MenuItem::separator());
     view_items.push(MenuItem::action(title("file.refresh", "Refresh"), Refresh));
 

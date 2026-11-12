@@ -34,6 +34,7 @@ use gpui_component::{
 use smallvec::{SmallVec, smallvec};
 
 use crate::icons::{IconCache, file_type_icon, tint_color};
+use crate::shell::CompareMarks;
 use crate::multi_table::{Column, ColumnSort, TableDelegate, TableEvent, TableState};
 use crate::tasks::{TaskKind, TaskRegistry};
 use crate::thumbnails::{THUMB_PX, ThumbnailCache, is_thumbnailable, show_thumbnails};
@@ -568,6 +569,12 @@ pub struct FileListDelegate {
     /// (no tint); 1.0 = the most-visited folder. Renderer maps to
     /// a low-opacity accent background.
     pub heats: Vec<f32>,
+    /// Compare Folders verdicts by entry name, shared with the shell's
+    /// running comparison (docs/features/COMPARE_FOLDERS.md). `Some` only
+    /// while this table is one of the two compared panes; `render_tr` tints
+    /// a row from it with one map lookup and no I/O. Keyed by name rather
+    /// than row, so sorting, filtering and reloads cannot desync it.
+    pub compare_marks: Option<CompareMarks>,
     /// Finder colour tags per row, parallel to `entries`. Populated
     /// lazily by `load()` (synchronous bulk read via
     /// `crate::platform_shell::read_canonical_tags`, capped at the first
@@ -1335,6 +1342,7 @@ impl FileListDelegate {
             tasks,
             cut_marker,
             heats: Vec::new(),
+            compare_marks: None,
             tags: Vec::new(),
             is_favorited: Vec::new(),
             selected_set: HashSet::new(),
@@ -2786,6 +2794,15 @@ impl TableDelegate for FileListDelegate {
             // whose alpha would compound in dark mode). Suppressed when
             // the Ant Trail is disabled. See `crate::ant_trail`.
             row = row.bg(crate::ant_trail::tint(crate::ant_trail::base(cx), heat));
+        }
+        if let Some(marks) = &self.compare_marks {
+            let state = self
+                .entries
+                .get(row_ix)
+                .and_then(|entry| marks.borrow().get(&entry.name).copied());
+            if let Some(state) = state {
+                row = crate::shell::compare_row_tint(row, state, cx);
+            }
         }
         // Spec §2 multi-select fill. Painted for every set member
         // EXCEPT the lead: the Table primitive draws its own

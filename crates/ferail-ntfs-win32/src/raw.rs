@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use ferail_ntfs::{
-    parse_boot_sector, ByteReader, FileIdentity, NtfsError, NtfsGeometry, Result as NtfsResult,
+    parse_boot_sector, parse_usn_read_output, ByteReader, FileIdentity, JournalState, NtfsError,
+    NtfsGeometry, Result as NtfsResult, UsnReadPage,
 };
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, ERROR_JOURNAL_ENTRY_DELETED, GENERIC_READ, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FileIdInfo, GetDriveTypeW, GetFileInformationByHandleEx, GetVolumeInformationW,
     GetVolumeNameForVolumeMountPointW, GetVolumePathNameW, ReadFile, SetFilePointerEx, FILE_BEGIN,
@@ -16,8 +17,8 @@ use windows::Win32::Storage::FileSystem::{
     FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::Ioctl::{
-    FSCTL_GET_NTFS_VOLUME_DATA, FSCTL_QUERY_USN_JOURNAL, NTFS_VOLUME_DATA_BUFFER,
-    USN_JOURNAL_DATA_V0,
+    FSCTL_GET_NTFS_VOLUME_DATA, FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL,
+    NTFS_VOLUME_DATA_BUFFER, READ_USN_JOURNAL_DATA_V0, USN_JOURNAL_DATA_V0,
 };
 use windows::Win32::System::WindowsProgramming::DRIVE_FIXED;
 use windows::Win32::System::IO::DeviceIoControl;
@@ -222,6 +223,12 @@ impl RawVolumeReader {
     /// Returns journal identity/cursor when the volume has a USN journal.
     /// Absence is a supported state and is represented as `None`.
     pub fn journal_position(&self) -> Option<(u64, i64)> {
+        self.journal_state()
+            .map(|state| (state.journal_id, state.next_usn))
+    }
+
+    /// Full journal identity and readable range, `None` without a journal.
+    pub fn journal_state(&self) -> Option<JournalState> {
         let mut data = USN_JOURNAL_DATA_V0::default();
         let mut returned = 0u32;
         unsafe {
@@ -237,8 +244,134 @@ impl RawVolumeReader {
             )
         }
         .ok()?;
-        (returned >= std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32)
-            .then_some((data.UsnJournalID, data.NextUsn))
+        (returned >= std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32).then_some(JournalState {
+            journal_id: data.UsnJournalID,
+            first_usn: data.FirstUsn,
+            next_usn: data.NextUsn,
+            lowest_valid_usn: data.LowestValidUsn,
+        })
+    }
+
+    /// Reads one page of change-journal records starting at `start_usn`
+    /// (`READ_USN_JOURNAL_DATA_V0`, so `USN_RECORD_V2` records), without
+    /// waiting for new entries. Names inside the records are never retained.
+    pub fn read_journal_page(
+        &self,
+        journal_id: u64,
+        start_usn: i64,
+        buffer: &mut [u8],
+    ) -> std::result::Result<UsnReadPage, JournalReadError> {
+        let input = READ_USN_JOURNAL_DATA_V0 {
+            StartUsn: start_usn,
+            ReasonMask: u32::MAX,
+            ReturnOnlyOnClose: 0,
+            Timeout: 0,
+            BytesToWaitFor: 0,
+            UsnJournalID: journal_id,
+        };
+        let capacity = u32::try_from(buffer.len()).map_err(|_| JournalReadError::Unavailable)?;
+        let mut returned = 0u32;
+        unsafe {
+            DeviceIoControl(
+                self.handle.0,
+                FSCTL_READ_USN_JOURNAL,
+                Some((&input as *const READ_USN_JOURNAL_DATA_V0).cast()),
+                std::mem::size_of::<READ_USN_JOURNAL_DATA_V0>() as u32,
+                Some(buffer.as_mut_ptr().cast()),
+                capacity,
+                Some(&mut returned),
+                None,
+            )
+        }
+        .map_err(|error| {
+            if error.code() == ERROR_JOURNAL_ENTRY_DELETED.to_hresult() {
+                JournalReadError::EntriesPurged
+            } else {
+                JournalReadError::Unavailable
+            }
+        })?;
+        let returned = (returned as usize).min(buffer.len());
+        parse_usn_read_output(&buffer[..returned]).map_err(|_| JournalReadError::Malformed)
+    }
+
+    /// Reads `destination.len()` bytes at `offset` with one sector-aligned
+    /// read that bypasses (and leaves intact) the sequential read cache.
+    /// Used for scattered MFT record re-reads, where refilling the 8 MiB
+    /// window per record would multiply the I/O by thousands.
+    fn read_direct_at(&self, offset: u64, destination: &mut [u8]) -> NtfsResult<()> {
+        let end = offset
+            .checked_add(destination.len() as u64)
+            .ok_or_else(|| NtfsError::source(offset, "direct read range overflow"))?;
+        if end > self.volume_bytes {
+            return Err(NtfsError::source(offset, "direct read outside volume"));
+        }
+        let sector = self.sector_size as u64;
+        let start = offset / sector * sector;
+        let aligned_end = end
+            .checked_add(sector - 1)
+            .ok_or_else(|| NtfsError::source(offset, "direct read alignment overflow"))?
+            / sector
+            * sector;
+        let length = usize::try_from(aligned_end.min(self.volume_bytes) - start)
+            .map_err(|_| NtfsError::source(offset, "direct read length overflow"))?;
+        let mut scratch = vec![0u8; length];
+        // The cache lock also serializes the shared file pointer.
+        let _guard = self
+            .cache
+            .lock()
+            .map_err(|_| NtfsError::source(offset, "raw read cache poisoned"))?;
+        let seek = i64::try_from(start)
+            .map_err(|_| NtfsError::source(start, "volume offset exceeds signed seek"))?;
+        unsafe { SetFilePointerEx(self.handle.0, seek, None, FILE_BEGIN) }
+            .map_err(|_| NtfsError::source(start, "raw volume seek failed"))?;
+        let mut read_total = 0usize;
+        while read_total < length {
+            let mut read = 0u32;
+            unsafe {
+                ReadFile(
+                    self.handle.0,
+                    Some(&mut scratch[read_total..]),
+                    Some(&mut read),
+                    None,
+                )
+            }
+            .map_err(|_| NtfsError::source(start + read_total as u64, "raw volume read failed"))?;
+            if read == 0 {
+                return Err(NtfsError::source(
+                    start + read_total as u64,
+                    "unexpected raw volume EOF",
+                ));
+            }
+            read_total += read as usize;
+        }
+        let within = (offset - start) as usize;
+        destination.copy_from_slice(&scratch[within..within + destination.len()]);
+        Ok(())
+    }
+}
+
+/// Why a change-journal read could not be used. Every case means the cached
+/// index must be rebuilt from the MFT.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JournalReadError {
+    /// The requested range was overwritten (journal wrap).
+    EntriesPurged,
+    /// The journal is inactive, being deleted, or the call failed.
+    Unavailable,
+    /// The output buffer did not parse.
+    Malformed,
+}
+
+/// A [`ByteReader`] over the volume whose reads are direct and uncached.
+pub struct DirectVolumeReader<'a>(pub &'a RawVolumeReader);
+
+impl ByteReader for DirectVolumeReader<'_> {
+    fn len(&self) -> u64 {
+        self.0.volume_bytes
+    }
+
+    fn read_exact_at(&self, offset: u64, destination: &mut [u8]) -> NtfsResult<()> {
+        self.0.read_direct_at(offset, destination)
     }
 }
 
