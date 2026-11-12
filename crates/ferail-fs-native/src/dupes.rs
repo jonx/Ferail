@@ -1352,7 +1352,9 @@ mod tests {
         nodes.sort();
         assert_eq!(nodes, vec![id(1), id(2), id(5)]);
         // The hard link shares storage: two occupants, one reclaimable copy.
-        assert_eq!(*distinct_occupants, 2);
+        // Off unix `file_id` yields no identity, so a hard link counts as its
+        // own occupant there (same rule as `hard_links_collapse_to_one_occupant`).
+        assert_eq!(*distinct_occupants, if cfg!(unix) { 2 } else { 3 });
 
         cancel.store(true, Ordering::Relaxed);
         let mut cancelled = Vec::new();

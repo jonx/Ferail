@@ -409,6 +409,10 @@ Net-new, but each sits on plumbing that already exists.
   ([COMPARE_FOLDERS.md](docs/features/COMPARE_FOLDERS.md)): tint the icon
   grid; a harness gesture that clicks the sync buttons; merging two folders
   that differ without replacing either as a whole.
+- **Windows: duplicate finding does not recognise hard links.** `file_id` in
+  `dupes.rs` returns no identity off unix, so each hard link counts as its own
+  copy and "reclaimable" overstates there, in Find Duplicates and in the Disk
+  Usage overlay. Read the volume serial and file index on a worker.
 - **Disk Usage: a selected duplicate can miss its selection border.** In the
   duplicates overlay one of three selected copies drew no border while the
   footer counted three.
