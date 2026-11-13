@@ -8,6 +8,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The pointer gets out of the way in the viewer.** On macOS the mouse
+  pointer hides after resting five seconds over a viewer window and comes
+  back as soon as you move it. Windows and Linux keep the pointer visible.
+
 - **Git status in the file list.** In a folder that belongs to a Git
   repository, a Git column marks each file: M modified, S staged, R renamed,
   D deleted, C in conflict, ? untracked, I ignored. A folder carries a dot for

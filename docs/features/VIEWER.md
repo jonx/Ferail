@@ -212,6 +212,12 @@ another entry keeps `{mode, center}` verbatim:
   (TODO) lands.
 - Footer/charcoal status strip: index, dimensions, zoom %, file size,
   all from cached entry + frame data.
+- **Idle pointer**: the mouse pointer hides after resting five seconds over
+  a viewer window (`POINTER_HIDE_AFTER`) and returns on the first movement.
+  One countdown task per window re-reads the time of the last move; it hides
+  only while the window is frontmost, the pointer is inside it and no drag is
+  in flight. **[mac only: `platform_shell::hide_cursor_until_mouse_moves` is
+  a no-op elsewhere]**
 - **Fullscreen**: `window.toggle_fullscreen()`; binding `Cmd+Ctrl+F`
   **[mac convention; win-parity F11]**. In fullscreen the toolbar hides;
   hovering the top ~48 px strip shows it (pure hover state, no timers).

@@ -150,6 +150,11 @@ pub fn set_about_options(_app_name: &str, _tagline: &str, _version: &str, _copyr
 /// Show the About panel. No-op until an in-window about surface exists.
 pub fn show_about_panel() {}
 
+/// Hide the mouse pointer until it next moves. Used by the viewer once the
+/// pointer has rested over it. Not implemented on this platform: the
+/// pointer stays visible.
+pub fn hide_cursor_until_mouse_moves() {}
+
 /// Whether a "Show Desktop" affordance is available. Linux has no portable
 /// minimize-all primitive across compositors: `false` hides the menu item.
 pub fn show_desktop_available() -> bool {

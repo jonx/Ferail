@@ -107,6 +107,9 @@ const CHROME_REVEAL_STRIP: f32 = 56.0;
 /// long after the pointer was last near them, unless the pointer is
 /// hovering the bar itself (or a seek drag is live).
 const CHROME_AUTOHIDE: Duration = Duration::from_millis(2500);
+/// The mouse pointer hides once it has rested over the viewer this long.
+/// It comes back on the first movement.
+const POINTER_HIDE_AFTER: Duration = Duration::from_secs(5);
 /// Keep enough of a translucent viewer visible that its controls can still be
 /// found and the window can be returned to full opacity.
 const WINDOW_OPACITY_MIN: f32 = 0.20;
@@ -729,6 +732,11 @@ pub struct ViewerWindow {
     /// timer's idiom: a newer countdown bumps this, making older ticks
     /// inert.
     autohide_epoch: u64,
+    /// When the pointer last moved over this window.
+    pointer_last_move: std::time::Instant,
+    /// Whether the pointer-hide countdown task is running. One task serves
+    /// any number of moves: it re-reads `pointer_last_move` when it wakes.
+    pointer_hide_armed: bool,
     /// Title last pushed to the platform window, so render-time title
     /// sync only crosses into AppKit when the text actually changed.
     last_title: String,
@@ -999,6 +1007,8 @@ impl ViewerWindow {
             near_top_prev: false,
             near_bottom_prev: false,
             autohide_epoch: 0,
+            pointer_last_move: std::time::Instant::now(),
+            pointer_hide_armed: false,
             last_title: String::new(),
             video_overlay: None,
             video_epoch: 0,
@@ -1243,6 +1253,53 @@ impl ViewerWindow {
 
     /// Track a whole-window opacity scrub even after the pointer leaves the
     /// compact toolbar track.
+    /// Any pointer movement over the viewer: restart the hide countdown.
+    fn on_pointer_activity(
+        &mut self,
+        _: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pointer_last_move = std::time::Instant::now();
+        if self.pointer_hide_armed {
+            return;
+        }
+        self.pointer_hide_armed = true;
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                let Ok(rested) = this.update(cx, |this, _| this.pointer_last_move.elapsed()) else {
+                    return;
+                };
+                if rested < POINTER_HIDE_AFTER {
+                    cx.background_executor()
+                        .timer(POINTER_HIDE_AFTER - rested)
+                        .await;
+                    continue;
+                }
+                let _ = this.update_in(cx, |this, window, _| {
+                    this.pointer_hide_armed = false;
+                    // Only while this window is frontmost with the pointer
+                    // inside it and no drag in flight: the hide is
+                    // system-wide until the next movement.
+                    let at = window.mouse_position();
+                    let size = window.viewport_size();
+                    let inside = at.x >= px(0.0)
+                        && at.y >= px(0.0)
+                        && at.x <= size.width
+                        && at.y <= size.height;
+                    let dragging = this.drag_last.is_some()
+                        || this.seek_drag.is_some()
+                        || this.window_opacity_dragging;
+                    if inside && !dragging && window.is_window_active() {
+                        crate::platform_shell::hide_cursor_until_mouse_moves();
+                    }
+                });
+                return;
+            }
+        })
+        .detach();
+    }
+
     fn on_window_opacity_move(
         &mut self,
         e: &MouseMoveEvent,
@@ -4298,6 +4355,7 @@ impl Render for ViewerWindow {
         let root = v_flex()
             .key_context(VIEWER_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_mouse_move(cx.listener(Self::on_pointer_activity))
             .on_mouse_move(cx.listener(Self::on_window_opacity_move))
             .on_mouse_up(
                 MouseButton::Left,

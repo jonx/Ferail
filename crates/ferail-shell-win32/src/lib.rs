@@ -2189,6 +2189,11 @@ pub fn system_is_dark() -> bool {
 /// `platform_shell::set_app_appearance` resolves cross-platform.
 pub fn set_app_appearance(_dark: bool) {}
 
+/// Hide the mouse pointer until it next moves. Used by the viewer once the
+/// pointer has rested over it. Not implemented on this platform: the
+/// pointer stays visible.
+pub fn hide_cursor_until_mouse_moves() {}
+
 /// Whether a "Show Desktop" affordance should appear. macOS resolves a
 /// private CoreDock symbol for this; Windows has the Win+D shell verb but
 /// the sidebar button is a macOS concept, so it's hidden here.

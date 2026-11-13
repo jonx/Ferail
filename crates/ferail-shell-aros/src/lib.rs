@@ -144,6 +144,11 @@ pub fn set_about_options(_app_name: &str, _tagline: &str, _version: &str, _copyr
 /// No system About panel: the app opens its own dialog instead.
 pub fn show_about_panel() {}
 
+/// Hide the mouse pointer until it next moves. Used by the viewer once the
+/// pointer has rested over it. Not implemented on this platform: the
+/// pointer stays visible.
+pub fn hide_cursor_until_mouse_moves() {}
+
 /// Wanderer has no "show desktop" gesture: `false` hides the menu item.
 pub fn show_desktop_available() -> bool {
     false

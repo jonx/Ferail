@@ -282,7 +282,9 @@ Net-new, but each sits on plumbing that already exists.
   frame → `32bppPBGRA` converter → `IWICBitmapScaler`, on the pool. Requires
   the `Win32_Graphics_Imaging` feature; ShellBat's `Entry.GetImage` is the
   reference shape.
-- Viewer follow-ups ([VIEWER.md](docs/features/VIEWER.md)): swap the `qlmanage`
+- Viewer follow-ups ([VIEWER.md](docs/features/VIEWER.md)): hide the idle
+  pointer on Windows and Linux (`hide_cursor_until_mouse_moves` is a no-op
+  there; macOS uses AppKit's hidden-until-moved state); swap the `qlmanage`
   shell-out for `QLThumbnailGenerator`; pinch to zoom; live playlist sync via
   the watcher, skipping deleted entries; a watchdog for eligible-but-unplayable
   videos stalling auto-advance; slideshow transitions once the animation-budget

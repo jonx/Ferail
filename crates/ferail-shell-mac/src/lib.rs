@@ -991,6 +991,24 @@ mod show_desktop_impl {
     }
 }
 
+/// Hide the mouse pointer until it next moves. Used by the viewer once the
+/// pointer has rested over it. AppKit's own "hidden until mouse moves"
+/// state: nothing to restore, and the system shows the pointer again on the
+/// first movement, wherever it is. Main thread only (callers are UI
+/// handlers); a plain message send, no I/O.
+#[cfg(target_os = "macos")]
+pub fn hide_cursor_until_mouse_moves() {
+    use objc2::{class, msg_send};
+    // SAFETY: `+[NSCursor setHiddenUntilMouseMoves:]` is a class method that
+    // takes a BOOL and returns nothing.
+    unsafe {
+        let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves: true];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn hide_cursor_until_mouse_moves() {}
+
 /// `true` when the private Show Desktop path resolved on a supported
 /// macOS. See [`show_desktop`]. Cheap after the first call (cached).
 #[cfg(target_os = "macos")]
