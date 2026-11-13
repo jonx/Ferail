@@ -604,6 +604,9 @@ pub(crate) fn install_extras(cx: &mut App) {
             ViewerToggleFullscreen,
             Some(VIEWER_CONTEXT),
         ),
+        // Bare F as well: the viewer has no text input, and it is the key
+        // media players use.
+        KeyBinding::new("f", ViewerToggleFullscreen, Some(VIEWER_CONTEXT)),
         // View-only per-item rotation (docs/features/VIEWER.md): R turns
         // clockwise, Shift-R counter-clockwise.
         KeyBinding::new("r", ViewerRotateCw, Some(VIEWER_CONTEXT)),

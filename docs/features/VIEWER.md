@@ -218,7 +218,7 @@ another entry keeps `{mode, center}` verbatim:
   only while the window is frontmost, the pointer is inside it and no drag is
   in flight. **[mac only: `platform_shell::hide_cursor_until_mouse_moves` is
   a no-op elsewhere]**
-- **Fullscreen**: `window.toggle_fullscreen()`; binding `Cmd+Ctrl+F`
+- **Fullscreen**: `window.toggle_fullscreen()`; bindings `F` and `Cmd+Ctrl+F`
   **[mac convention; win-parity F11]**. In fullscreen the toolbar hides;
   hovering the top ~48 px strip shows it (pure hover state, no timers).
 - **Context menu** (right-click on the stage): Show in Ferail, Copy, Copy
