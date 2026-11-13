@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **N and P step through files in the viewer.** N opens the next file, P or
+  Shift+N the previous one, alongside the up and down arrows. On a video the
+  left and right arrows step frame by frame, and Ctrl+Left and Ctrl+Right,
+  which were meant to change file, never reached Ferail on macOS because
+  Mission Control uses them to switch desktops.
+
 - **The pointer gets out of the way in the viewer.** On macOS the mouse
   pointer hides after resting five seconds over a viewer window and comes
   back as soon as you move it. Windows and Linux keep the pointer visible.

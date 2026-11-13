@@ -227,6 +227,8 @@ another entry keeps `{mode, center}` verbatim:
 - **Input map** (context `"Viewer"`, registered in `keymap.rs
   install_extras`, so Shell shortcuts can't fire here):
   - `Up/Down`: previous/next entry (always)
+  - `N` / `P` (or `Shift+N`): next/previous entry (always). `Ctrl+Left/Right`
+    do the same off macOS, where Mission Control does not claim them.
   - `Left/Right`: previous/next entry on a still; **step one frame
     back/forward** on a video (pausing it). `Up/Down` stay entry
     navigation so a video is still reachable from the keyboard.

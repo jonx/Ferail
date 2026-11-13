@@ -488,12 +488,18 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("right", ViewerRight, Some(VIEWER_CONTEXT)),
         KeyBinding::new("up", ViewerPrev, Some(VIEWER_CONTEXT)),
         KeyBinding::new("down", ViewerNext, Some(VIEWER_CONTEXT)),
-        // Ctrl+Left/Right always navigate entries: the horizontal twin of
-        // Up/Down, so on a video (where plain Left/Right frame-step) you can
-        // still flip to the previous/next clip without reaching for the
-        // arrows' vertical pair. (On macOS these may be claimed by Mission
-        // Control's "move a space" shortcut; Up/Down remain as a fallback.)
+        // N / P (and Shift+N) always navigate entries: the letter twin of
+        // Up/Down, so on a video (where plain Left/Right frame-step) the
+        // next or previous clip is one key away. Letters, because on macOS
+        // Ctrl+Left/Right belong to Mission Control ("move a space") and
+        // never reach the app.
+        KeyBinding::new("n", ViewerNext, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("shift-n", ViewerPrev, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("p", ViewerPrev, Some(VIEWER_CONTEXT)),
+        // Ctrl+Left/Right do the same where the system leaves them alone.
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-left", ViewerPrev, Some(VIEWER_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-right", ViewerNext, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", ViewerDismiss, Some(VIEWER_CONTEXT)),
         KeyBinding::new("secondary-w", ViewerClose, Some(VIEWER_CONTEXT)),
