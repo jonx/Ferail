@@ -278,7 +278,7 @@ pub fn open_dialog(sources: Vec<PathBuf>, window: &mut Window, cx: &mut Context<
                     Ok(Some(plan)) => plan,
                     Ok(None) => return false,
                     Err(error) => {
-                        window.push_notice(gpui_component::notification::Notification::error(error), cx);
+                        window.push_notice(crate::overlay::Notification::error(error), cx);
                         return false;
                     }
                 };
@@ -300,7 +300,7 @@ pub fn open_dialog(sources: Vec<PathBuf>, window: &mut Window, cx: &mut Context<
                                 shell.create_archive_from(sources, output, format, level, password, window, cx);
                             }
                             Err(error) => {
-                                window.push_notice(gpui_component::notification::Notification::error(error), cx);
+                                window.push_notice(crate::overlay::Notification::error(error), cx);
                             }
                         });
                     })

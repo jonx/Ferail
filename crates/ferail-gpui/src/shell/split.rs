@@ -299,7 +299,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use crate::overlay::OverlayWindowExt as _;
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
 
         self.sync_split();
         let Some(other) = self.other_pane_index() else {

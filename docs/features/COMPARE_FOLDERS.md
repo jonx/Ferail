@@ -25,6 +25,9 @@ split, the toolbar shows it as a toggle beside the Split View button.
   bottom in a stacked split). Hovering the Compare button shows a card with
   the legend, the count of each state, *Comparing…* while verdicts are still
   arriving, and what the sync buttons do. Nothing is added above the panes.
+- **When it cannot start.** The notice names the missing condition: no split
+  view, or a pane whose listing is not a folder's direct contents (Include
+  Subfolders, search results, an archive, a tool result).
 - **Following the panes.** A pane that navigates, reloads or shows another tab
   is compared again. Closing the split, or a pane showing search results, an
   archive or another listing that is not a folder, ends the comparison.

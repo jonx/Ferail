@@ -8,6 +8,15 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Every notification has a Copy button.** A small copy icon on each
+  notification puts its text on the clipboard, title included, so an error
+  message can be pasted into a search or a bug report.
+
+- **Compare Folders says what is missing.** When it cannot start, the message
+  now tells apart a window that is not split from a pane showing something
+  other than a folder's own contents, such as Include Subfolders or search
+  results.
+
 - **N and P step through files in the viewer.** N opens the next file, P or
   Shift+N the previous one, alongside the up and down arrows. On a video the
   left and right arrows step frame by frame, and Ctrl+Left and Ctrl+Right,

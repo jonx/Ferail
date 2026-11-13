@@ -13,6 +13,7 @@
 //! overlay-click / focus-trap come for free (same primitive as the About
 //! box). Editing is layered on top in a later pass; today the panel reads.
 
+use crate::overlay::Notification;
 use crate::overlay::OverlayWindowExt as _;
 use crate::text::{TextScale as _, TruncateMiddle as _, elide_label};
 use std::path::{Path, PathBuf};
@@ -38,7 +39,6 @@ use gpui_component::{
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputState},
-    notification::Notification,
     tooltip::Tooltip,
     v_flex,
 };

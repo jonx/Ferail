@@ -1798,7 +1798,6 @@
     "Changes since the previous scan: this scan did not finish": "Modifiche dalla scansione precedente: questa scansione non è stata completata",
     "Changes since the scan from {when}": "Modifiche dalla scansione di {when}",
     "Compare Folders": "Confronta cartelle",
-    "Compare Folders needs a split view with a folder in each pane.": "Confronta cartelle richiede una vista divisa con una cartella in ogni pannello.",
     "Comparing {left} and {right}": "Confronto tra {left} e {right}",
     "Comparing…": "Confronto…",
     "Copies items missing on the other side and replaces older versions of files that differ. Nothing is deleted. Folders that differ are not merged: open them in both panes.": "Copia gli elementi mancanti dall’altro lato e sostituisce le versioni più vecchie dei file diversi. Non viene eliminato nulla. Le cartelle diverse non vengono unite: aprile in entrambi i pannelli.",
@@ -1905,6 +1904,9 @@
     "{n} commit behind {upstream}": {
       "one": "{n} commit indietro rispetto a {upstream}",
       "other": "{n} commit indietro rispetto a {upstream}"
-    }
+    },
+    "Copy message": "Copia messaggio",
+    "Compare Folders works in Split View. Split the window, open a folder in each pane, then compare.": "Confronta cartelle funziona nella vista divisa. Dividi la finestra, apri una cartella in ogni pannello, poi confronta.",
+    "Compare Folders compares the direct contents of two folders. One pane shows something else: Include Subfolders, search results, an archive or a tool result. Return it to a plain folder, then compare.": "Confronta cartelle confronta il contenuto diretto di due cartelle. Un pannello mostra altro: Includi sottocartelle, risultati di ricerca, un archivio o il risultato di uno strumento. Riportalo a una cartella normale, poi confronta."
   }
 }

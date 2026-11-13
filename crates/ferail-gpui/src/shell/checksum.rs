@@ -5,6 +5,7 @@
 //! persisted. The expected digest is copied into dialog-local state, so
 //! clearing it never mutates the system clipboard.
 
+use crate::overlay::Notification;
 use crate::overlay::OverlayWindowExt as _;
 use std::fs::File;
 use std::io::{self, Read};
@@ -24,7 +25,6 @@ use gpui_component::{
     dialog::{DialogClose, DialogFooter},
     h_flex,
     input::{Input, InputEvent, InputState},
-    notification::Notification,
     progress::Progress,
     v_flex,
 };

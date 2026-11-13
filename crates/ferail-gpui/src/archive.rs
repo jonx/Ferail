@@ -1141,7 +1141,7 @@ impl ArchiveView {
     fn show_edit_rejection(&self, window: &mut Window, cx: &mut App) {
         if let Some(reason) = self.edit_rejection() {
             window.push_notice(
-                gpui_component::notification::Notification::warning(reason),
+                crate::overlay::Notification::warning(reason),
                 cx,
             );
         }
@@ -1192,7 +1192,7 @@ impl ArchiveView {
                     });
                     if let Some(entry) = collision {
                         window.push_notice(
-                            gpui_component::notification::Notification::warning(tr!(
+                            crate::overlay::Notification::warning(tr!(
                                 "Can't add “{name}” because an entry with that name already exists.",
                                 name = entry.path
                             )),
@@ -1205,7 +1205,7 @@ impl ArchiveView {
                     this.refresh_edit_projection(cx);
                 }
                 Err(message) => window.push_notice(
-                    gpui_component::notification::Notification::error(tr!(
+                    crate::overlay::Notification::error(tr!(
                         "Couldn't prepare these items for the archive: {message}",
                         message = message
                     )),
@@ -1441,7 +1441,7 @@ impl ArchiveView {
                         || name.chars().any(|ch| matches!(ch, '/' | '\\' | '\0'))
                     {
                         window.push_notice(
-                            gpui_component::notification::Notification::warning(tr!(
+                            crate::overlay::Notification::warning(tr!(
                                 "Archive entry names can't contain slashes or be “.” or “..”."
                             )),
                             cx,
@@ -1465,7 +1465,7 @@ impl ArchiveView {
                         .unwrap_or(false);
                     if !staged {
                         window.push_notice(
-                            gpui_component::notification::Notification::warning(tr!(
+                            crate::overlay::Notification::warning(tr!(
                                 "An archive entry with that name already exists."
                             )),
                             cx,
@@ -1534,7 +1534,7 @@ impl ArchiveView {
         }
         if let Some(reason) = self.edit_rejection() {
             window.push_notice(
-                gpui_component::notification::Notification::warning(reason),
+                crate::overlay::Notification::warning(reason),
                 cx,
             );
             return;

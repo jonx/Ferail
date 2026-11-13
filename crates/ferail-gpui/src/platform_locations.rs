@@ -16,7 +16,7 @@ use ferail_core::platform_locations::{
     PlatformRootId, PlatformRootsStore,
 };
 use gpui::{App, Context, Window};
-use gpui_component::notification::Notification;
+use crate::overlay::Notification;
 
 use crate::shell::Shell;
 

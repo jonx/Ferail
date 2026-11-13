@@ -2429,7 +2429,7 @@ impl ViewerWindow {
     /// file, exactly as Copy in a Ferail list, so it pastes into Finder, a
     /// mail or a chat.
     fn on_copy(&mut self, _: &ViewerCopy, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let Some(entry) = self.current().cloned() else {
             return;
         };
@@ -2485,7 +2485,7 @@ impl ViewerWindow {
 
     /// Cmd+Shift+C / context menu: the current file's full path as text.
     fn on_copy_path(&mut self, _: &ViewerCopyPath, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let Some(path) = self.current().map(|e| e.path.clone()) else {
             return;
         };
@@ -2504,7 +2504,7 @@ impl ViewerWindow {
     /// permanent delete, though this window has no Cmd+Z stack, so
     /// restoring means the OS Trash.
     fn on_delete(&mut self, _: &ViewerDelete, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let Some(entry) = self.current().cloned() else {
             return;
         };

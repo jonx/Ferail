@@ -1,5 +1,6 @@
 //! "Create Checksum File…" dialog and background generation orchestration.
 
+use crate::overlay::Notification;
 use crate::overlay::OverlayWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,7 +17,6 @@ use gpui_component::{
     dialog::{DialogAction, DialogClose, DialogFooter},
     h_flex,
     input::{Input, InputState},
-    notification::Notification,
     v_flex,
 };
 

@@ -792,7 +792,7 @@ impl Shell {
                     let message =
                         super::enumeration_error_message(&tr!("Include Subfolders"), &error);
                     let _ = window.update(cx, |_, window, cx| {
-                        use gpui_component::notification::Notification;
+                        use crate::overlay::Notification;
                         window.push_notice(Notification::error(message), cx);
                     });
                 }
@@ -1034,7 +1034,7 @@ impl Shell {
                     if let Some(error) = error {
                         let message = super::enumeration_error_message(&tr!("Search"), &error);
                         let _ = window.update(cx, |_, window, cx| {
-                            use gpui_component::notification::Notification;
+                            use crate::overlay::Notification;
                             window.push_notice(Notification::error(message), cx);
                         });
                     } else if surfaced {
@@ -1045,7 +1045,7 @@ impl Shell {
                             needle = needle
                         );
                         let _ = window.update(cx, |_, window, cx| {
-                            use gpui_component::notification::Notification;
+                            use crate::overlay::Notification;
                             window.push_notice(Notification::success(message), cx);
                         });
                     }

@@ -279,6 +279,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Open | `icons/external-link.svg` ↑ | Lucide |
 | Reveal in Finder | `icons/folder-open.svg` ↑ | Lucide |
 | Copy Path | `icons/copy.svg` ↑ | Lucide |
+| Copy message (every notification) | `icons/copy.svg` ↑ | Lucide. The same copy verb as Copy Path, applied to the notice's text. |
 
 The preview pane also draws a plain-div **resize grip** (rounded pill) under
 the thumbnail: pure chrome, not an icon asset.

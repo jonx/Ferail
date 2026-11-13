@@ -1150,7 +1150,7 @@ fn clear_setting(
                             .small()
                             .on_click(move |_, window, cx| {
                                 use crate::overlay::OverlayWindowExt as _;
-                                use gpui_component::notification::Notification;
+                                use crate::overlay::Notification;
                                 crate::privacy::clear(target, cx);
                                 window.push_notice(
                                     Notification::info(tr!(
@@ -2293,7 +2293,7 @@ fn full_disk_access_setting() -> SettingItem {
                             .outline()
                             .small()
                             .on_click(|_, window, cx| {
-                                use gpui_component::notification::Notification;
+                                use crate::overlay::Notification;
                                 if let Some(path) = crate::platform_shell::app_bundle_path() {
                                     cx.write_to_clipboard(ClipboardItem::new_string(path));
                                     window.push_notice(

@@ -1804,7 +1804,6 @@
     "Changes since the previous scan: this scan did not finish": "Zmiany od poprzedniego skanowania: to skanowanie nie zostało ukończone",
     "Changes since the scan from {when}": "Zmiany od skanowania: {when}",
     "Compare Folders": "Porównaj foldery",
-    "Compare Folders needs a split view with a folder in each pane.": "Porównywanie folderów wymaga widoku podzielonego z folderem w każdym panelu.",
     "Comparing {left} and {right}": "Porównywanie {left} i {right}",
     "Comparing…": "Porównywanie…",
     "Copies items missing on the other side and replaces older versions of files that differ. Nothing is deleted. Folders that differ are not merged: open them in both panes.": "Kopiuje elementy, których brakuje po drugiej stronie, i zastępuje starsze wersje różniących się plików. Nic nie jest usuwane. Różniące się foldery nie są scalane: otwórz je w obu panelach.",
@@ -1923,6 +1922,9 @@
       "few": "{n} commity za {upstream}",
       "many": "{n} commitów za {upstream}",
       "other": "{n} commitów za {upstream}"
-    }
+    },
+    "Copy message": "Kopiuj komunikat",
+    "Compare Folders works in Split View. Split the window, open a folder in each pane, then compare.": "Porównywanie folderów działa w widoku podzielonym. Podziel okno, otwórz folder w każdym panelu, a następnie porównaj.",
+    "Compare Folders compares the direct contents of two folders. One pane shows something else: Include Subfolders, search results, an archive or a tool result. Return it to a plain folder, then compare.": "Porównywanie folderów porównuje bezpośrednią zawartość dwóch folderów. Jeden panel pokazuje coś innego: Uwzględnij podfoldery, wyniki wyszukiwania, archiwum lub wynik narzędzia. Przywróć w nim zwykły folder, a następnie porównaj."
   }
 }

@@ -156,7 +156,7 @@ impl Shell {
                         Err(error) => {
                             use crate::overlay::OverlayWindowExt;
                             window.push_notice(
-                                gpui_component::notification::Notification::error(tr!(
+                                crate::overlay::Notification::error(tr!(
                                     "Could not mount volume: {error}",
                                     error = error
                                 )),

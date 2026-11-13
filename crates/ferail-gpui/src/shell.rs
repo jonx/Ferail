@@ -420,7 +420,7 @@ fn remove_file_or_tree(path: &Path) -> Result<(), String> {
 fn file_op_error_notification(
     operation: &str,
     err: &str,
-) -> gpui_component::notification::Notification {
+) -> crate::overlay::Notification {
     let advice = crate::i18n::tr_static(classify_error_text(err).advice());
     error_notification(
         tr!(
@@ -567,10 +567,10 @@ pub(crate) fn file_op_failure_report(
 /// **Copy** button always puts the *whole* message on the clipboard, handy for
 /// pasting into a bug report. Both controls also keep the toast from
 /// auto-hiding, so the user has time to read, expand, and copy.
-pub(crate) fn error_notification(message: String) -> gpui_component::notification::Notification {
+pub(crate) fn error_notification(message: String) -> crate::overlay::Notification {
     use gpui_component::Sizable as _;
     use gpui_component::button::{Button, ButtonVariants as _};
-    use gpui_component::notification::Notification;
+    use crate::overlay::Notification;
 
     let (summary, has_more) = collapse_error_summary(&message);
     // Expand state shared between renders: the content builder runs on every
@@ -673,10 +673,10 @@ pub(crate) struct TransferRetry {
 pub(crate) fn transfer_failure_notification(
     summary: String,
     retry: TransferRetry,
-) -> gpui_component::notification::Notification {
+) -> crate::overlay::Notification {
     use gpui_component::Sizable as _;
     use gpui_component::button::{Button, ButtonVariants as _};
-    use gpui_component::notification::Notification;
+    use crate::overlay::Notification;
 
     let offer_admin = retry.elevation_recoverable && crate::platform_shell::elevation_available();
     let offer_lock =
@@ -804,10 +804,10 @@ pub(crate) fn trash_failure_notification(
     headline: String,
     copy_detail: String,
     retry: TrashRetry,
-) -> gpui_component::notification::Notification {
+) -> crate::overlay::Notification {
     use gpui_component::Sizable as _;
     use gpui_component::button::{Button, ButtonVariants as _};
-    use gpui_component::notification::Notification;
+    use crate::overlay::Notification;
 
     let offer_admin = !retry.sources.is_empty() && crate::platform_shell::elevation_available();
     if !offer_admin {
@@ -1327,7 +1327,7 @@ impl Shell {
         let (provider, initial) = crate::platform_shell::WindowsNamespaceProvider::new(root);
         if let Err(kind) = self.open_platform_namespace(provider, initial, cx) {
             window.push_notice(
-                gpui_component::notification::Notification::error(match kind {
+                crate::overlay::Notification::error(match kind {
                     PlatformLocationErrorKind::Unavailable => tr!("Windows location unavailable"),
                     _ => tr!("Could not open the Windows location"),
                 }),
@@ -1459,7 +1459,7 @@ impl Shell {
         {
             let _ = window.update(cx, |_, window, cx| {
                 window.push_notice(
-                    gpui_component::notification::Notification::error(if restoring {
+                    crate::overlay::Notification::error(if restoring {
                         tr!("Too many items selected to restore at once")
                     } else {
                         tr!("Too many items selected for the Windows context menu")
@@ -1494,7 +1494,7 @@ impl Shell {
                 Err(_) => {
                     let _ = window.update(cx, |_, window, cx| {
                         window.push_notice(
-                            gpui_component::notification::Notification::error(if restoring {
+                            crate::overlay::Notification::error(if restoring {
                                 tr!("Could not restore the selected items")
                             } else {
                                 tr!("Windows context menu unavailable for this item")
@@ -3382,7 +3382,7 @@ impl Shell {
             return false;
         }
         window.push_notice(
-            gpui_component::notification::Notification::info(tr!(
+            crate::overlay::Notification::info(tr!(
                 "This command is not available for Windows virtual items. Use More… for supported Windows actions."
             )),
             cx,
@@ -3461,7 +3461,7 @@ impl Shell {
                         if failures > 0 {
                             let _ = win.update(cx, |_, window, cx| {
                                 window.push_notice(
-                                    gpui_component::notification::Notification::error(trn!(
+                                    crate::overlay::Notification::error(trn!(
                                         "Could not open {n} item",
                                         "Could not open {n} items",
                                         failures
@@ -3648,7 +3648,7 @@ impl Shell {
                 // poorly (Space bookkeeping); refuse instead of glitching.
                 if crate::platform_shell::window_is_fullscreen(ns_view) {
                     window.push_notice(
-                        gpui_component::notification::Notification::info(tr!(
+                        crate::overlay::Notification::info(tr!(
                             "Exit full screen before docking the window."
                         )),
                         cx,
@@ -4900,7 +4900,7 @@ impl Shell {
             }
         }
         if playlist.is_empty() {
-            use gpui_component::notification::Notification;
+            use crate::overlay::Notification;
             window.push_notice(
                 Notification::info(tr!("No files to view in this folder")),
                 cx,
@@ -4946,7 +4946,7 @@ impl Shell {
             }
         }
         if playlist.is_empty() {
-            use gpui_component::notification::Notification;
+            use crate::overlay::Notification;
             window.push_notice(
                 Notification::info(tr!("No files to view in this folder")),
                 cx,
@@ -6877,7 +6877,7 @@ impl Shell {
                     if let FileOpSuccessToast::IfSurfaced(message) = success_toast {
                         if surfaced {
                             let _ = win.update(cx, |_, window, cx| {
-                                use gpui_component::notification::Notification;
+                                use crate::overlay::Notification;
                                 window.push_notice(Notification::success(message), cx);
                             });
                         }
@@ -6910,7 +6910,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         crate::trail::command("Undo");
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let Some(op) = self.process.undo_stack.borrow_mut().pop_back() else {
             window.push_notice(Notification::info(tr!("Nothing to undo")), cx);
             return;
@@ -7010,7 +7010,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let target = self.resolve_favorite_target(cx);
         let Some((path, kind)) = target else {
             window.push_notice(
@@ -7054,7 +7054,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let already = self.process.favorites().read(cx).contains_path(&canonical);
         let favs = self.process.favorites().clone();
         if already {
@@ -7397,7 +7397,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::dialog::DialogFooter;
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let shell = cx.entity();
         let (title, body) = match state {
             FavoriteState::Unmounted => (
@@ -7555,7 +7555,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let Some(id) = self.focused_favorite else {
             return;
         };
@@ -8006,7 +8006,7 @@ impl Shell {
             {
                 let _ = window.update(cx, |_, window, cx| {
                     window.push_notice(
-                        gpui_component::notification::Notification::error(tr!(
+                        crate::overlay::Notification::error(tr!(
                             "Could not open item: {error}",
                             error = error
                         )),
@@ -8138,7 +8138,7 @@ impl Shell {
                     };
                     let _ = window.update(cx, |_, window, cx| {
                         window.push_notice(
-                            gpui_component::notification::Notification::error(message),
+                            crate::overlay::Notification::error(message),
                             cx,
                         );
                     });

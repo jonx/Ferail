@@ -1073,7 +1073,7 @@ impl Shell {
     /// `on_move_to_trash`'s off-thread worker + undo, but owns the prune
     /// because a dupe tab's watcher reload is suppressed.
     fn dupe_trash_marked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
 
         let tab_id = self.active_tab().id;
         let marked = self.active_tab().selection.clone();
@@ -1159,7 +1159,7 @@ impl Shell {
     /// an explicit confirm. Keeps every file; frees the duplicated bytes.
     #[cfg(target_os = "macos")]
     fn dupe_dedup_group(&mut self, group_no: usize, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
 
         let tab_id = self.active_tab().id;
         let (keeper_path, victims): (PathBuf, Vec<(NodeId, PathBuf)>) = {

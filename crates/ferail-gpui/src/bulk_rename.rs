@@ -974,7 +974,7 @@ pub fn open(
                 let pairs = match pairs {
                     Ok(pairs) => pairs,
                     Err(error) => {
-                        window.push_notice(gpui_component::notification::Notification::error(error), cx);
+                        window.push_notice(crate::overlay::Notification::error(error), cx);
                         return false;
                     }
                 };
@@ -1050,7 +1050,7 @@ fn apply(
         }
         let renamed_count = renamed.len();
         let _ = win.update(cx, |_, window, cx| {
-            use gpui_component::notification::Notification;
+            use crate::overlay::Notification;
             if failed == 0 {
                 window.push_notice(
                     Notification::success(trn!(

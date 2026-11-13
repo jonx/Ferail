@@ -375,12 +375,20 @@ impl Shell {
         }
         match self.comparable_pair() {
             Some((panes, dirs, axis)) => self.start_compare(panes, dirs, axis, cx),
-            None => window.push_notice(
-                gpui_component::notification::Notification::info(tr!(
-                    "Compare Folders needs a split view with a folder in each pane."
-                )),
-                cx,
-            ),
+            None => {
+                // Say which condition is missing: no split at all, or a pane
+                // whose listing is not a folder's own contents.
+                let message = if self.split.is_none() {
+                    tr!(
+                        "Compare Folders works in Split View. Split the window, open a folder in each pane, then compare."
+                    )
+                } else {
+                    tr!(
+                        "Compare Folders compares the direct contents of two folders. One pane shows something else: Include Subfolders, search results, an archive or a tool result. Return it to a plain folder, then compare."
+                    )
+                };
+                window.push_notice(crate::overlay::Notification::info(message), cx)
+            }
         }
     }
 

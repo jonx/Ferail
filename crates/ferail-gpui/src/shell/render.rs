@@ -1034,7 +1034,7 @@ impl Shell {
                         .underline()
                         .child(label)
                         .on_click(move |_: &ClickEvent, window, cx| {
-                            use gpui_component::notification::Notification;
+                            use crate::overlay::Notification;
                             // Put Ferail's own path on the clipboard so
                             // the user can paste it into the Full Disk
                             // Access "+" sheet via Go to Folder.
@@ -5346,7 +5346,7 @@ impl Render for Shell {
             // keyboard remove, so Cmd+Z restores at the prior index.
             .on_drop(cx.listener(
                 |this, payload: &crate::favorites_section::FavoriteDragPayload, window, cx| {
-                    use gpui_component::notification::Notification;
+                    use crate::overlay::Notification;
                     let id = payload.id;
                     let label = this
                         .process

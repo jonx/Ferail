@@ -483,7 +483,7 @@ pub enum Outcome {
 /// revealed on demand and can be copied, same shape as the shell's error
 /// toasts.
 pub fn notify(outcome: Outcome, window: &mut Window, cx: &mut App) {
-    use gpui_component::notification::Notification;
+    use crate::overlay::Notification;
     let note = match outcome {
         Outcome::Ok {
             headline,
@@ -506,9 +506,9 @@ pub fn notify(outcome: Outcome, window: &mut Window, cx: &mut App) {
 }
 
 fn with_details(
-    note: gpui_component::notification::Notification,
+    note: crate::overlay::Notification,
     details: String,
-) -> gpui_component::notification::Notification {
+) -> crate::overlay::Notification {
     use crate::text::TextScale as _;
     use gpui::prelude::*;
     use gpui::{div, px};

@@ -1,7 +1,7 @@
 use crate::overlay::OverlayWindowExt as _;
 use ferail_core::EntryKind;
 use gpui::{AppContext as _, Context, Window};
-use gpui_component::notification::Notification;
+use crate::overlay::Notification;
 
 use super::{CreateChecksumFile, Shell, VerifyChecksums, VerifyIntegrity, tab::ToolResultSurface};
 

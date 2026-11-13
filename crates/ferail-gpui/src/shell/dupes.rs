@@ -482,7 +482,7 @@ impl Shell {
                         };
                         let message = super::enumeration_error_message(&title, &error);
                         let _ = window.update(cx, |_, window, cx| {
-                            use gpui_component::notification::Notification;
+                            use crate::overlay::Notification;
                             window.push_notice(Notification::error(message), cx);
                         });
                     } else if surfaced {
@@ -506,7 +506,7 @@ impl Shell {
                             )
                         };
                         let _ = window.update(cx, |_, window, cx| {
-                            use gpui_component::notification::Notification;
+                            use crate::overlay::Notification;
                             window.push_notice(Notification::success(message), cx);
                         });
                     }

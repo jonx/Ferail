@@ -2487,7 +2487,7 @@ impl DiskUsageView {
                             .icon(Icon::empty().path("icons/lock.svg"))
                             .tooltip(tr!("Include folders protected by macOS in future scans"))
                             .on_click(cx.listener(|_, _, window, cx| {
-                                use gpui_component::notification::Notification;
+                                use crate::overlay::Notification;
                                 if let Some(path) = crate::platform_shell::app_bundle_path() {
                                     cx.write_to_clipboard(ClipboardItem::new_string(path));
                                     window.push_notice(
@@ -3658,7 +3658,7 @@ impl DiskUsageView {
     }
 
     fn on_du_get_info(&mut self, _: &DuGetInfo, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let Some(shell) = self.shell.clone() else {
             return;
         };
@@ -3695,7 +3695,7 @@ impl DiskUsageView {
     }
 
     fn on_du_copy_files(&mut self, _: &DuCopyFiles, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let items = self.selected_paths();
         if items.is_empty() {
             return;
@@ -3775,7 +3775,7 @@ impl DiskUsageView {
     }
 
     fn on_du_copy_paths(&mut self, _: &DuCopyPaths, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let items = self.selected_paths();
         if items.is_empty() {
             return;
@@ -3791,7 +3791,7 @@ impl DiskUsageView {
     }
 
     fn on_du_trash(&mut self, _: &DuTrash, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let items = self.selected_paths();
         if items.is_empty() {
             return;
@@ -3961,7 +3961,7 @@ impl DiskUsageView {
     }
 
     fn copy_html_for(&mut self, target: NodeId, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         // Fragment on the clipboard: pasteable straight into an
         // existing document/page (a full <!DOCTYPE> is for files).
         let html = self.export_html(target, false);
@@ -3988,7 +3988,7 @@ impl DiskUsageView {
     }
 
     fn save_html_for(&mut self, target: NodeId, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let html = self.export_html(target, true);
         let name = self
             .tree

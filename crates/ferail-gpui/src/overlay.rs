@@ -25,7 +25,174 @@ use gpui::{
 };
 use gpui_component::WindowExt as _;
 use gpui_component::dialog::{Cancel, Dialog};
-use gpui_component::notification::Notification;
+use gpui::{ClipboardItem, Context, SharedString};
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::notification::Notification as ToastNotification;
+use gpui_component::{IconName, Sizable as _};
+
+/// A notification on its way to [`OverlayWindowExt::push_notice`].
+///
+/// It wraps gpui-component's notification and keeps the text it was built
+/// with, which the widget does not expose, so every notice can carry a
+/// **Copy message** button. The builder methods mirror the widget's.
+pub struct Notification {
+    inner: ToastNotification,
+    title: Option<SharedString>,
+    message: SharedString,
+    has_action: bool,
+    has_content: bool,
+    /// An explicit `autohide` choice, kept because adding the copy button
+    /// to the action slot would otherwise pin the notice open.
+    autohide: Option<bool>,
+}
+
+impl Notification {
+    fn wrap(inner: ToastNotification, message: SharedString) -> Self {
+        Self {
+            inner,
+            title: None,
+            message,
+            has_action: false,
+            has_content: false,
+            autohide: None,
+        }
+    }
+
+    pub fn info(message: impl Into<SharedString>) -> Self {
+        let message = message.into();
+        Self::wrap(ToastNotification::info(message.clone()), message)
+    }
+
+    pub fn success(message: impl Into<SharedString>) -> Self {
+        let message = message.into();
+        Self::wrap(ToastNotification::success(message.clone()), message)
+    }
+
+    pub fn warning(message: impl Into<SharedString>) -> Self {
+        let message = message.into();
+        Self::wrap(ToastNotification::warning(message.clone()), message)
+    }
+
+    pub fn error(message: impl Into<SharedString>) -> Self {
+        let message = message.into();
+        Self::wrap(ToastNotification::error(message.clone()), message)
+    }
+
+    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
+        let title = title.into();
+        self.inner = self.inner.title(title.clone());
+        self.title = Some(title);
+        self
+    }
+
+    pub fn id<T: Sized + 'static>(mut self) -> Self {
+        self.inner = self.inner.id::<T>();
+        self
+    }
+
+    pub fn id1<T: Sized + 'static>(mut self, key: impl Into<gpui::ElementId>) -> Self {
+        self.inner = self.inner.id1::<T>(key);
+        self
+    }
+
+    pub fn autohide(mut self, autohide: bool) -> Self {
+        self.inner = self.inner.autohide(autohide);
+        self.autohide = Some(autohide);
+        self
+    }
+
+    /// The notice's own action button. It keeps the notice open, as in the
+    /// widget; the copy button then moves under the message.
+    pub fn action<F>(mut self, action: F) -> Self
+    where
+        F: Fn(&mut ToastNotification, &mut Window, &mut Context<ToastNotification>) -> Button
+            + 'static,
+    {
+        self.inner = self.inner.action(action);
+        self.has_action = true;
+        self
+    }
+
+    pub fn content(
+        mut self,
+        content: impl Fn(&mut ToastNotification, &mut Window, &mut Context<ToastNotification>) -> gpui::AnyElement
+            + 'static,
+    ) -> Self {
+        self.inner = self.inner.content(content);
+        self.has_content = true;
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.inner = self.inner.on_click(on_click);
+        self
+    }
+
+    pub fn on_close(mut self, on_close: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.inner = self.inner.on_close(on_close);
+        self
+    }
+
+    /// The widget notification, with the copy button in the first free slot:
+    /// the action slot, else under the message, else none.
+    fn into_toast(self) -> ToastNotification {
+        let text: SharedString = match &self.title {
+            Some(title) => format!("{title}\n{}", self.message).into(),
+            None => self.message.clone(),
+        };
+        if text.is_empty() {
+            return self.inner;
+        }
+        let copy_button = move || {
+            let text = text.clone();
+            Button::new("notice-copy")
+                .icon(IconName::Copy)
+                .ghost()
+                .xsmall()
+                .tooltip(tr!("Copy message"))
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+                })
+        };
+        if !self.has_action {
+            // The action slot pins a notice open; restore what the caller
+            // asked for, or the widget's default.
+            self.inner
+                .action(move |_, _, _| copy_button())
+                .autohide(self.autohide.unwrap_or(true))
+        } else if !self.has_content {
+            self.inner.content(move |_, _, _| {
+                use gpui::IntoElement as _;
+                div().flex().pt_1().child(copy_button()).into_any_element()
+            })
+        } else {
+            self.inner
+        }
+    }
+}
+
+impl From<String> for Notification {
+    fn from(message: String) -> Self {
+        let message: SharedString = message.into();
+        Self::wrap(ToastNotification::new().message(message.clone()), message)
+    }
+}
+
+impl From<SharedString> for Notification {
+    fn from(message: SharedString) -> Self {
+        Self::wrap(ToastNotification::new().message(message.clone()), message)
+    }
+}
+
+impl From<&str> for Notification {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_string())
+    }
+}
 
 /// A notification or dialog that arrived while Private Mode was on.
 enum HeldOverlay {
@@ -75,7 +242,7 @@ impl OverlayWindowExt for Window {
             return;
         }
         #[allow(clippy::disallowed_methods)]
-        self.push_notification(note, cx);
+        self.push_notification(note.into_toast(), cx);
     }
 
     fn open_modal<F>(&mut self, cx: &mut App, build: F)

@@ -16,6 +16,7 @@
 //! quality. Strokes are stored in full-image coordinates and scale
 //! losslessly between the preview and the save.
 
+use crate::overlay::Notification;
 use crate::overlay::OverlayWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,7 +28,6 @@ use gpui_component::{
     ActiveTheme, Disableable as _, Root, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    notification::Notification,
     v_flex,
 };
 use image::{Frame, RgbaImage};

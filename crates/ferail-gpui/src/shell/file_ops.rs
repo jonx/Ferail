@@ -116,7 +116,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let job = match crate::platform_shell::reserve_file_clipboard() {
             Ok(job) => job,
             Err(error) => {
@@ -184,7 +184,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let job = match crate::platform_shell::reserve_file_clipboard() {
             Ok(job) => job,
             Err(error) => {
@@ -262,7 +262,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         const MAX_SYSTEM_CLIPBOARD_FILES: usize = 20_000;
         if self.action_target_count(cx) > MAX_SYSTEM_CLIPBOARD_FILES {
             window.push_notice(
@@ -334,7 +334,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         const MAX_SYSTEM_CLIPBOARD_FILES: usize = 20_000;
         if self.action_target_count(cx) > MAX_SYSTEM_CLIPBOARD_FILES {
             window.push_notice(
@@ -415,7 +415,7 @@ impl Shell {
         }
         #[cfg(not(any(target_os = "aros", target_os = "linux")))]
         {
-            use gpui_component::notification::Notification;
+            use crate::overlay::Notification;
             let (sources, clipboard_operation) =
                 crate::platform_shell::clipboard_read_file_urls_with_operation();
             if sources.is_empty() {
@@ -520,7 +520,7 @@ impl Shell {
         }
         #[cfg(not(any(target_os = "aros", target_os = "linux")))]
         {
-            use gpui_component::notification::Notification;
+            use crate::overlay::Notification;
             // Pasteboard read is a semantic event (action handler), same
             // boundary as Quick Look, never from render.
             let sources = crate::platform_shell::clipboard_read_file_urls();
@@ -692,7 +692,7 @@ impl Shell {
     ) {
         use ferail_fs_native::file_ops::{self as engine, CollisionPolicy};
         use gpui_component::button::ButtonVariants as _;
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
 
         let cancel = Arc::new(AtomicBool::new(false));
         // "Verify copies" (docs/features/INTEGRITY.md): a cached settings
@@ -1357,7 +1357,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
 
         let is_move = matches!(mode, TransferMode::Move);
         let op = crate::elevation::ElevatedOp {
@@ -1446,7 +1446,7 @@ impl Shell {
     ) {
         use gpui_component::Sizable as _;
         use gpui_component::button::Button;
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
 
         let locked = retry.locked.clone();
         let win = window.window_handle();
@@ -1573,7 +1573,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -1613,7 +1613,7 @@ impl Shell {
             if self.action_target_count(cx) > MAX_SYSTEM_CONTEXT_MENU_FILES {
                 self.context_row = None;
                 window.push_notice(
-                    gpui_component::notification::Notification::error(tr!(
+                    crate::overlay::Notification::error(tr!(
                         "Too many items selected for the Windows context menu"
                     )),
                     cx,
@@ -1633,7 +1633,7 @@ impl Shell {
                 .any(|path| crate::platform_shell::is_wsl_path(path))
             {
                 window.push_notice(
-                    gpui_component::notification::Notification::error(tr!(
+                    crate::overlay::Notification::error(tr!(
                         "The Windows context menu is not available for Linux files"
                     )),
                     cx,
@@ -1706,7 +1706,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         if self.reject_platform_filesystem_command(window, cx) {
             return;
         }
@@ -1847,7 +1847,7 @@ impl Shell {
             window,
             cx,
             move |_this, window, cx| {
-                use gpui_component::notification::Notification;
+                use crate::overlay::Notification;
                 let msg = if paths.len() == 1 {
                     let name = paths[0]
                         .file_name()
@@ -2306,7 +2306,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use ferail_core::BusyApp;
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
 
         /// One failed eject, carried structured from the worker so the
         /// UI side can render the blocking apps as clickable chips.
@@ -2727,7 +2727,7 @@ impl Shell {
             if let Err(error) = result {
                 let _ = window.update(cx, |_, window, cx| {
                     window.push_notice(
-                        gpui_component::notification::Notification::error(tr!(
+                        crate::overlay::Notification::error(tr!(
                             "Could not open text editor: {error}",
                             error = error
                         )),
@@ -2871,7 +2871,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         crate::trail::command("Move to Trash");
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -3047,7 +3047,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let trash_dir = ferail_fs_native::home_trash_dir();
         let op = crate::elevation::ElevatedTrashOp {
             delete,
@@ -3142,7 +3142,7 @@ impl Shell {
     ) {
         crate::trail::command("Delete Immediately");
         use gpui_component::button::ButtonVariants as _;
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
 
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
@@ -3327,7 +3327,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         crate::trail::command("Restore from Trash");
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
@@ -3494,7 +3494,7 @@ impl Shell {
     ) {
         crate::trail::command("Empty Trash");
         use gpui_component::button::ButtonVariants as _;
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         let process = self.process.clone();
         // Nothing emptied can be put back, so the records go with it. A
         // stale one would eventually make a reused trash path resolve to
@@ -3826,7 +3826,7 @@ impl Shell {
                     Ok(name) => name,
                     Err(error) => {
                         window.push_notice(
-                            gpui_component::notification::Notification::error(error),
+                            crate::overlay::Notification::error(error),
                             cx,
                         );
                         return;
@@ -3837,7 +3837,7 @@ impl Shell {
                     Ok(path) => path,
                     Err(error) => {
                         window.push_notice(
-                            gpui_component::notification::Notification::error(error.to_string()),
+                            crate::overlay::Notification::error(error.to_string()),
                             cx,
                         );
                         return;
@@ -3937,7 +3937,7 @@ impl Shell {
                     if validate_as_filename {
                         if let Err(msg) = ferail_fs_native::paths::display_to_os(&new_name) {
                             window.push_notice(
-                                gpui_component::notification::Notification::error(msg),
+                                crate::overlay::Notification::error(msg),
                                 cx,
                             );
                             return false;
@@ -5112,7 +5112,7 @@ impl Shell {
                                 .filter(|(_, names)| !names.is_empty());
                             let shell_for_click = weak.clone();
                             let _ = win.update(cx, |_, window, cx| {
-                                use gpui_component::notification::Notification;
+                                use crate::overlay::Notification;
                                 let mut note = Notification::success(message);
                                 if let Some((dir, names)) = reveal {
                                     note = note.on_click(move |_, window, cx| {
@@ -5407,7 +5407,7 @@ impl Shell {
                 cx.defer(move |cx| {
                     let _ = settle_window.update(cx, |_, window, cx| {
                         window.push_notice(
-                            gpui_component::notification::Notification::warning(
+                            crate::overlay::Notification::warning(
                                 message.to_string(),
                             ),
                             cx,
@@ -5798,7 +5798,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
+        use crate::overlay::Notification;
         if cleared > 0 && failures.is_empty() && !cancelled {
             for tab in &self.tabs {
                 tab.table.update(cx, |state, cx| {

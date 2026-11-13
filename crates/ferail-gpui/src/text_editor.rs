@@ -19,6 +19,7 @@
 //! fails midway, the sibling is left behind and the error toast names it as
 //! the recovery copy.
 
+use crate::overlay::Notification;
 use crate::overlay::OverlayWindowExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -31,7 +32,6 @@ use gpui_component::{
     h_flex,
     input::{Editor, EditorState, InputEvent, Position, RopeExt as _},
     menu::DropdownMenu as _,
-    notification::Notification,
     v_flex,
 };
 
