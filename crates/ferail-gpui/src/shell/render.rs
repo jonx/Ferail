@@ -2746,6 +2746,7 @@ impl Shell {
         // Split toggle: the axis of the open split, if any.
         let split_axis = self.split.as_ref().map(|s| s.axis);
         let comparing = self.compare.is_some();
+        let compare_toolbar = self.compare_toolbar(cx);
 
         // Below the last tier the remainder is still ~600 px, and a bar whose
         // children are all `flex_shrink_0` just pushes its own tail: the view
@@ -3317,25 +3318,72 @@ impl Shell {
                 }))
                 // Compare Folders: only while split, beside the split toggle.
                 .children((!hide_split && split_axis.is_some()).then(|| {
-                    Button::new("toolbar-compare-folders")
+                    let button = Button::new("toolbar-compare-folders")
                         .small()
                         .ghost()
                         .selected(comparing)
                         .icon(
                             gpui_component::Icon::empty().path("icons/compare-folders.svg"),
                         )
-                        .tooltip_with_action(
-                            tr!("Compare Folders"),
-                            &CompareFolders,
-                            Some(SHELL_CONTEXT),
-                        )
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_compare_folders(&CompareFolders, window, cx);
-                        }))
+                        }));
+                    // While comparing, a hover card carries the legend and
+                    // its counts; otherwise the plain command tooltip. The
+                    // card hangs on a wrapper because the button only takes
+                    // a text tooltip.
+                    match compare_toolbar.as_ref() {
+                        Some(toolbar) => {
+                            let card = std::rc::Rc::new(toolbar.hover_card());
+                            div()
+                                .id("toolbar-compare-folders-card")
+                                .child(button)
+                                .tooltip(move |window, cx| {
+                                    let card = card.clone();
+                                    gpui_component::tooltip::Tooltip::element(
+                                        move |window, cx| card(window, cx),
+                                    )
+                                    .action(&CompareFolders, Some(SHELL_CONTEXT))
+                                    .build(window, cx)
+                                })
+                                .into_any_element()
+                        }
+                        None => button
+                            .tooltip_with_action(
+                                tr!("Compare Folders"),
+                                &CompareFolders,
+                                Some(SHELL_CONTEXT),
+                            )
+                            .into_any_element(),
+                    }
                 }))
+                // The two sync buttons, only while a comparison is shown.
+                .children(
+                    compare_toolbar
+                        .as_ref()
+                        .filter(|_| !hide_split && split_axis.is_some())
+                        .into_iter()
+                        .flat_map(|toolbar| toolbar.sync.iter())
+                        .map(|sync| {
+                            let from = sync.from;
+                            Button::new(sync.id)
+                                .small()
+                                .ghost()
+                                .icon(gpui_component::Icon::empty().path(sync.icon))
+                                .tooltip(sync.label.clone())
+                                .disabled(!sync.enabled)
+                                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.on_compare_sync(from, window, cx);
+                                }))
+                        })
+                        .collect::<Vec<_>>(),
+                )
                 // Dock menu: park the whole window against a screen edge as
                 // an auto-hiding drawer (docs/features/DOCK.md). Pressed look
                 // while docked; the active edge carries a checkmark. Wrapped

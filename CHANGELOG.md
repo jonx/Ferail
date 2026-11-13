@@ -34,8 +34,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   (Cmd+Option+K, also in the toolbar and the View menu) tints every row in
   both panes: blue exists on one side only, amber differs, green is identical.
   Files are compared by content, not by date, and folders of the same name are
-  compared all the way down. A strip above the panes counts each kind and
-  offers two buttons, **Copy missing and newer** to one side or the other.
+  compared all the way down. Two arrow buttons appear in the toolbar to
+  **Copy missing and newer** to one side or the other, and hovering the
+  Compare button shows how many items fall in each kind.
   Syncing never deletes anything, and asks first when it is about to replace
   older files, because that cannot be undone. Two folders that differ are not
   merged: open them in both panes to sync their contents.

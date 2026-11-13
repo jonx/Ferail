@@ -524,21 +524,7 @@ impl Shell {
             .children(first)
             .child(divider)
             .children(second);
-        match self.compare_strip(cx) {
-            // Compare Folders: its legend and sync buttons sit above both
-            // panes, which they describe together.
-            Some(strip) => div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .overflow_hidden()
-                .child(strip)
-                .child(panes)
-                .into_any_element(),
-            None => panes.into_any_element(),
-        }
+        panes.into_any_element()
     }
 }
 

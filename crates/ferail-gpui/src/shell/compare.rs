@@ -23,11 +23,11 @@ use ferail_fs_native::file_ops::CollisionPolicy;
 use ferail_fs_native::folder_compare::{self, ComparePair, CompareState};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    App, Axis, Context, Hsla, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    App, Axis, Context, Hsla, IntoElement as _, ParentElement as _,
     Styled, Window, div, px,
 };
-use gpui_component::button::Button;
-use gpui_component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex};
+use gpui::SharedString;
+use gpui_component::{ActiveTheme as _, h_flex};
 
 use super::tab::TabId;
 use super::{CompareFolders, Shell, TransferMode};
@@ -81,7 +81,7 @@ impl CompareRow {
     }
 }
 
-/// Tallies for the summary strip.
+/// Tallies for the Compare button's hover card.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CompareCounts {
     /// Names only in the first, and only in the second, pane.
@@ -157,6 +157,65 @@ pub(crate) fn sync_plan(rows: &[CompareRow], from: usize) -> SyncPlan {
         }
     }
     plan
+}
+
+/// One "copy missing and newer" button of the toolbar.
+pub(super) struct CompareSyncButton {
+    pub id: &'static str,
+    /// Slot the items are copied from.
+    pub from: usize,
+    pub label: SharedString,
+    pub icon: &'static str,
+    pub enabled: bool,
+}
+
+/// Toolbar snapshot of the running comparison, see `Shell::compare_toolbar`.
+pub(super) struct CompareToolbar {
+    /// Swatch colour (`None` draws an outline) and text of each legend line.
+    pub lines: Vec<(Option<Hsla>, SharedString)>,
+    pub error: Option<SharedString>,
+    pub comparing: bool,
+    pub sync: [CompareSyncButton; 2],
+}
+
+impl CompareToolbar {
+    /// The hover card of the Compare button: the legend with its counts,
+    /// then what the sync buttons do.
+    pub(super) fn hover_card(&self) -> impl Fn(&mut Window, &mut App) -> gpui::AnyElement + 'static {
+        let lines = self.lines.clone();
+        let error = self.error.clone();
+        let comparing = self.comparing;
+        move |_window, cx| {
+            let theme = cx.theme();
+            let muted = theme.muted_foreground;
+            let danger = theme.danger;
+            gpui_component::v_flex()
+                .gap_1()
+                .max_w(gpui::rems(22.0))
+                .text_scale_xs()
+                .child(div().font_weight(gpui::FontWeight::MEDIUM).child(tr!("Compare Folders")))
+                .when_some(error.clone(), |card, error| {
+                    card.child(div().text_color(danger).child(error))
+                })
+                .children(lines.iter().map(|(color, label)| {
+                    h_flex()
+                        .gap_1p5()
+                        .items_center()
+                        .child(div().flex_none().size(px(10.0)).rounded(px(2.0)).map(|d| match color {
+                            Some(c) => d.bg(c.opacity(0.75)),
+                            None => d.border_1().border_color(muted),
+                        }))
+                        .child(label.clone())
+                }))
+                .when(comparing, |card| {
+                    card.child(div().text_color(muted).child(tr!("Comparing\u{2026}")))
+                })
+                .child(div().pt_1().text_color(muted).child(tr!(
+                    "Copies items missing on the other side and replaces older versions of files that differ. Nothing is deleted. Folders that differ are not merged: open them in both panes."
+                )))
+                .into_any_element()
+        }
+    }
 }
 
 /// The comparison a window is showing.
@@ -602,78 +661,44 @@ impl Shell {
         );
     }
 
-    /// The legend and sync strip shown above the panes while comparing.
-    pub(super) fn compare_strip(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    /// What the toolbar shows while comparing: the legend lines for the
+    /// Compare button's hover card and the two sync buttons. A snapshot of
+    /// cached counts; nothing here touches the disk.
+    pub(super) fn compare_toolbar(&self, cx: &App) -> Option<CompareToolbar> {
         let compare = self.compare.as_ref()?;
         let theme = cx.theme();
-        let muted = theme.muted_foreground;
-        let swatch = |color: Option<Hsla>| {
-            div()
-                .flex_none()
-                .size(px(10.0))
-                .rounded(px(2.0))
-                .map(|d| match color {
-                    Some(c) => d.bg(c.opacity(0.75)),
-                    None => d.border_1().border_color(muted),
-                })
-        };
-        let chip = |color: Option<Hsla>, label: gpui::SharedString| {
-            h_flex()
-                .flex_none()
-                .gap_1()
-                .items_center()
-                .child(swatch(color))
-                .child(label)
-        };
         let c = compare.counts;
         let n = |v: usize| format_count(v as u64);
         let horizontal = compare.axis == Axis::Horizontal;
-        let (only_first, only_second) = if horizontal {
-            (
-                tr!("Only left: {count}", count = n(c.only[0])),
-                tr!("Only right: {count}", count = n(c.only[1])),
-            )
+        let mut lines: Vec<(Option<Hsla>, SharedString)> = Vec::new();
+        let mut error = None;
+        if let Some(e) = &compare.error {
+            error = Some(tr!("Could not compare: {error}", error = e.as_str()));
         } else {
-            (
-                tr!("Only top: {count}", count = n(c.only[0])),
-                tr!("Only bottom: {count}", count = n(c.only[1])),
-            )
-        };
-        let info = theme.info;
-        let warning = theme.warning;
-        let success = theme.success;
-        let mut legend = h_flex().flex_1().min_w_0().gap_3().items_center().flex_wrap();
-        if let Some(error) = &compare.error {
-            legend = legend.child(
-                div()
-                    .text_color(theme.danger)
-                    .child(tr!("Could not compare: {error}", error = error.as_str())),
-            );
-        } else {
-            legend = legend
-                .child(chip(Some(info), only_first))
-                .child(chip(Some(info), only_second))
-                .child(chip(
-                    Some(warning),
-                    tr!("Different: {count}", count = n(c.different)),
-                ))
-                .child(chip(
-                    Some(success),
-                    tr!("Identical: {count}", count = n(c.identical)),
-                ))
-                .when(c.unknown > 0, |l| {
-                    l.child(chip(
-                        None,
-                        tr!("Not compared: {count}", count = n(c.unknown)),
-                    ))
-                })
-                .when(!compare.done, |l| {
-                    l.child(
-                        div()
-                            .text_color(muted)
-                            .child(tr!("Comparing\u{2026}")),
-                    )
-                });
+            let (only_first, only_second) = if horizontal {
+                (
+                    tr!("Only left: {count}", count = n(c.only[0])),
+                    tr!("Only right: {count}", count = n(c.only[1])),
+                )
+            } else {
+                (
+                    tr!("Only top: {count}", count = n(c.only[0])),
+                    tr!("Only bottom: {count}", count = n(c.only[1])),
+                )
+            };
+            lines.push((Some(theme.info), only_first));
+            lines.push((Some(theme.info), only_second));
+            lines.push((
+                Some(theme.warning),
+                tr!("Different: {count}", count = n(c.different)),
+            ));
+            lines.push((
+                Some(theme.success),
+                tr!("Identical: {count}", count = n(c.identical)),
+            ));
+            if c.unknown > 0 {
+                lines.push((None, tr!("Not compared: {count}", count = n(c.unknown))));
+            }
         }
         let (to_second, to_first, icon_second, icon_first) = if horizontal {
             (
@@ -690,58 +715,32 @@ impl Shell {
                 "icons/arrow-up.svg",
             )
         };
-        let tooltip = tr!(
-            "Copies items missing on the other side and replaces older versions of files that differ. Nothing is deleted. Folders that differ are not merged: open them in both panes."
-        );
-        let sync_button = |id: &'static str,
-                           from: usize,
-                           label: gpui::SharedString,
-                           icon: &'static str,
-                           enabled: bool| {
-            Button::new(id)
-                .xsmall()
-                .outline()
-                .icon(gpui_component::Icon::empty().path(icon))
-                .label(label)
-                .tooltip(tooltip.clone())
-                .disabled(!enabled)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.run_compare_sync(from, window, cx);
-                }))
-        };
-        let strip = h_flex()
-            .id("compare-strip")
-            .flex_none()
-            .w_full()
-            .gap_3()
-            .px_2()
-            .py_1()
-            .items_center()
-            .border_b_1()
-            .border_color(theme.border)
-            .bg(theme.secondary)
-            .text_scale_xs()
-            .child(legend)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap_2()
-                    .child(sync_button(
-                        "compare-sync-to-first",
-                        1,
-                        to_first,
-                        icon_first,
-                        compare.can_sync[1],
-                    ))
-                    .child(sync_button(
-                        "compare-sync-to-second",
-                        0,
-                        to_second,
-                        icon_second,
-                        compare.can_sync[0],
-                    )),
-            );
-        Some(strip.into_any_element())
+        Some(CompareToolbar {
+            lines,
+            error,
+            comparing: !compare.done,
+            sync: [
+                CompareSyncButton {
+                    id: "toolbar-compare-sync-to-first",
+                    from: 1,
+                    label: to_first,
+                    icon: icon_first,
+                    enabled: compare.can_sync[1],
+                },
+                CompareSyncButton {
+                    id: "toolbar-compare-sync-to-second",
+                    from: 0,
+                    label: to_second,
+                    icon: icon_second,
+                    enabled: compare.can_sync[0],
+                },
+            ],
+        })
+    }
+
+    /// Toolbar click on a sync button.
+    pub(super) fn on_compare_sync(&mut self, from: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_compare_sync(from, window, cx);
     }
 }
 

@@ -20,9 +20,11 @@ split, the toolbar shows it as a toggle beside the Split View button.
   blue for a name on one side only, amber for different content, green for
   identical content. A row stays untinted until its verdict lands, and stays
   so when its content could not be checked.
-- **Strip.** Above the panes, a legend counts each state, shows *Comparing…*
-  while verdicts are still arriving, and carries two buttons: copy missing and
-  newer to the right, and to the left (top and bottom in a stacked split).
+- **Toolbar.** While comparing, two arrow buttons sit beside the Compare
+  button: copy missing and newer to the left, and to the right (top and
+  bottom in a stacked split). Hovering the Compare button shows a card with
+  the legend, the count of each state, *Comparing…* while verdicts are still
+  arriving, and what the sync buttons do. Nothing is added above the panes.
 - **Following the panes.** A pane that navigates, reloads or shows another tab
   is compared again. Closing the split, or a pane showing search results, an
   archive or another listing that is not a folder, ends the comparison.
