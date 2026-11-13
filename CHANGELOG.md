@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.8.0 - 2026-11-13
+
 - **Every notification has a Copy button.** A small copy icon on each
   notification puts its text on the clipboard, title included, so an error
   message can be pasted into a search or a bug report.
@@ -16,6 +18,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   now tells apart a window that is not split from a pane showing something
   other than a folder's own contents, such as Include Subfolders or search
   results.
+
+- **F toggles full screen in the viewer**, alongside Cmd+Ctrl+F.
 
 - **N and P step through files in the viewer.** N opens the next file, P or
   Shift+N the previous one, alongside the up and down arrows. On a video the
