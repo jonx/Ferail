@@ -512,6 +512,13 @@ pub struct FileListDelegate {
     /// retained here (with identity + width) so re-showing restores them
     /// and they persist across launches. See [`split_persisted_columns`].
     pub hidden_columns: Vec<Column>,
+    /// The Git column while the listing is outside a work tree, with the
+    /// index it returns to. It is neither shown nor hidden by the user: the
+    /// header menu still ticks it and it persists as visible. See
+    /// [`Self::set_git_available`].
+    git_parked: Option<(usize, Column)>,
+    /// Whether the listing is inside a Git work tree with Git status on.
+    git_available: bool,
     pub fs: Arc<NativeFs>,
     /// Unique owner inside the process asset coordinator. Unlike TabId this
     /// also exists for archive/tool tables, and prevents one surface's local
@@ -1311,8 +1318,14 @@ impl FileListDelegate {
         // (drag-reorder, drag-resize, and header show/hide all write
         // through the shell's table-event bridge). app_state::load() is
         // the in-memory cache, no I/O.
-        let (columns, hidden_columns) =
+        let (mut columns, hidden_columns) =
             split_persisted_columns(crate::app_state::load().list_columns.as_deref());
+        // A new table knows no repository yet: the Git column waits until
+        // the shell reports a work tree.
+        let git_parked = columns
+            .iter()
+            .position(|c| c.key.as_ref() == "git")
+            .map(|pos| (pos, columns.remove(pos)));
         Self {
             entries: Vec::new(),
             live_widths: LiveWidths::default(),
@@ -1331,6 +1344,8 @@ impl FileListDelegate {
             // true in our pinned version).
             columns,
             hidden_columns,
+            git_parked,
+            git_available: false,
             fs,
             asset_scope: None,
             paths: HashMap::new(),
@@ -1382,6 +1397,15 @@ impl FileListDelegate {
     /// hidden, nor can the last remaining visible column. Returns whether
     /// the set changed: the caller then `refresh`es and persists.
     pub fn toggle_column(&mut self, key: &str) -> bool {
+        if key == "git" && !self.git_available {
+            // Outside a work tree the choice is recorded without a column
+            // appearing: ticked parks it, unticked hides it.
+            return toggle_parked_git(
+                self.columns.len(),
+                &mut self.hidden_columns,
+                &mut self.git_parked,
+            );
+        }
         if let Some(pos) = self.columns.iter().position(|c| c.key.as_ref() == key) {
             if key == "name" || self.columns.len() <= 1 {
                 return false;
@@ -1407,9 +1431,38 @@ impl FileListDelegate {
     pub fn reset_columns(&mut self) {
         self.columns = default_columns();
         self.hidden_columns.clear();
+        self.git_parked = None;
         if self.flat_paths.is_some() {
             self.columns.push(flat_path_column());
         }
+        let available = self.git_available;
+        self.set_git_available(available);
+    }
+
+    /// Whether the user wants column `key`: shown, or the Git column
+    /// waiting for a work tree. Drives the header menu's tick.
+    pub fn is_column_wanted(&self, key: &str) -> bool {
+        self.is_column_visible(key) || (key == "git" && self.git_parked.is_some())
+    }
+
+    /// Tell the table whether its listing is inside a Git work tree (with
+    /// Git status on). The Git column is shown only then; elsewhere it is
+    /// parked, keeping its width and place. A column the user hid stays
+    /// hidden. Returns whether the visible set changed: the caller then
+    /// `refresh`es.
+    pub fn set_git_available(&mut self, available: bool) -> bool {
+        self.git_available = available;
+        park_git_column(&mut self.columns, &mut self.git_parked, available)
+    }
+
+    /// The visible set as it persists: the parked Git column counts as
+    /// visible, at its place.
+    pub fn persisted_columns(&self) -> Vec<Column> {
+        let mut columns = self.columns.clone();
+        if let Some((pos, col)) = &self.git_parked {
+            columns.insert((*pos).min(columns.len()), col.clone());
+        }
+        columns
     }
 
     /// Drop the cached selection drag payload. Call on every
@@ -3683,7 +3736,12 @@ impl TableDelegate for FileListDelegate {
                 continue;
             }
             let key = col.key.to_string();
-            let visible = self.is_column_visible(&key);
+            // With Git status off in Settings there is no Git column to
+            // offer.
+            if key == "git" && !crate::git_status::enabled(cx) {
+                continue;
+            }
+            let visible = self.is_column_wanted(&key);
             // A leading check marks the shown columns (Finder-style).
             let title = crate::i18n::tr_static(column_title(&key));
             let label = if visible {
@@ -4643,10 +4701,9 @@ fn default_columns() -> Vec<Column> {
             .width(360.0)
             .sortable(),
         // Git state (docs/features/GIT_STATUS.md), beside the name it
-        // qualifies. Always offered in the header's show/hide menu like any
-        // column and simply empty outside a work tree: showing and hiding
-        // it per repository would fight the user's own choice in that menu.
-        // Narrow, since a cell holds one letter or a dot.
+        // qualifies. Shown only inside a work tree
+        // (`FileListDelegate::set_git_available`). Narrow, since a cell
+        // holds one letter or a dot.
         Column::new("git", column_title("git")).width(COLUMN_WIDTH_MIN),
         Column::new("size", column_title("size"))
             .width(100.0)
@@ -4668,6 +4725,45 @@ fn default_columns() -> Vec<Column> {
         // confusing. Revisit if users ask.
         Column::new("description", column_title("description")).width(320.0),
     ]
+}
+
+/// Show the Git column (`available`) or park it, keeping its width and
+/// place. Returns whether `columns` changed.
+fn park_git_column(
+    columns: &mut Vec<Column>,
+    parked: &mut Option<(usize, Column)>,
+    available: bool,
+) -> bool {
+    if available {
+        let Some((pos, col)) = parked.take() else {
+            return false;
+        };
+        columns.insert(pos.min(columns.len()), col);
+        true
+    } else if let Some(pos) = columns.iter().position(|c| c.key.as_ref() == "git") {
+        *parked = Some((pos, columns.remove(pos)));
+        true
+    } else {
+        false
+    }
+}
+
+/// The header menu's Git toggle outside a work tree: ticked parks the
+/// column, unticked hides it. Returns whether anything moved.
+fn toggle_parked_git(
+    visible_len: usize,
+    hidden: &mut Vec<Column>,
+    parked: &mut Option<(usize, Column)>,
+) -> bool {
+    if let Some((_, col)) = parked.take() {
+        hidden.push(col);
+        true
+    } else if let Some(pos) = hidden.iter().position(|c| c.key.as_ref() == "git") {
+        *parked = Some((visible_len, hidden.remove(pos)));
+        true
+    } else {
+        false
+    }
 }
 
 fn flat_path_column() -> Column {
@@ -4943,6 +5039,57 @@ pub fn apply_sort<C: gpui::AppContext>(
 #[allow(dead_code)]
 fn _font_weight_check() -> FontWeight {
     FontWeight::MEDIUM
+}
+
+#[cfg(test)]
+mod git_column_tests {
+    use super::{Column, default_columns, park_git_column, toggle_parked_git};
+
+    fn keys(columns: &[Column]) -> Vec<&str> {
+        columns.iter().map(|c| c.key.as_ref()).collect()
+    }
+
+    #[test]
+    fn parks_outside_a_work_tree_and_returns_to_its_place() {
+        let mut columns = default_columns();
+        let mut parked = None;
+        assert!(park_git_column(&mut columns, &mut parked, false));
+        assert!(!keys(&columns).contains(&"git"));
+        assert!(!park_git_column(&mut columns, &mut parked, false));
+        assert!(park_git_column(&mut columns, &mut parked, true));
+        assert_eq!(keys(&columns)[1], "git");
+        assert!(!park_git_column(&mut columns, &mut parked, true));
+    }
+
+    #[test]
+    fn a_hidden_git_column_stays_hidden_in_a_work_tree() {
+        let mut columns = default_columns();
+        let mut hidden = Vec::new();
+        let mut parked = None;
+        park_git_column(&mut columns, &mut parked, false);
+        // Unticked outside a work tree: hidden, and a work tree does not
+        // bring it back.
+        assert!(toggle_parked_git(columns.len(), &mut hidden, &mut parked));
+        assert_eq!(keys(&hidden), ["git"]);
+        assert!(!park_git_column(&mut columns, &mut parked, true));
+        assert!(!keys(&columns).contains(&"git"));
+        // Ticked again outside a work tree: wanted, still not drawn.
+        assert!(toggle_parked_git(columns.len(), &mut hidden, &mut parked));
+        assert!(hidden.is_empty());
+        assert!(!keys(&columns).contains(&"git"));
+        assert!(park_git_column(&mut columns, &mut parked, true));
+        assert!(keys(&columns).contains(&"git"));
+    }
+
+    #[test]
+    fn parked_place_survives_a_shorter_column_set() {
+        let mut columns = default_columns();
+        let mut parked = None;
+        park_git_column(&mut columns, &mut parked, false);
+        columns.truncate(1);
+        assert!(park_git_column(&mut columns, &mut parked, true));
+        assert_eq!(keys(&columns), ["name", "git"]);
+    }
 }
 
 #[cfg(test)]

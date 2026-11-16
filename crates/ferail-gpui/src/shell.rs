@@ -2034,6 +2034,9 @@ impl Shell {
         cx.set_global(crate::thumbnails::ShowThumbnails(
             persisted.show_thumbnails.unwrap_or(true) && !safe_mode,
         ));
+        cx.set_global(crate::git_status::GitStatusEnabled(
+            persisted.git_status.unwrap_or(true),
+        ));
         // Seed the live grid icon size from persisted settings.
         cx.set_global(crate::grid::IconSize(crate::grid::clamp_icon_size(
             persisted
@@ -2551,6 +2554,15 @@ impl Shell {
             });
         shell._subscriptions.push(thumb_subscription);
 
+        // Live Git toggle (Settings → Files): on reads every open tab's
+        // repository, off drops the column, marks and branch labels.
+        let git_subscription =
+            cx.observe_global::<crate::git_status::GitStatusEnabled>(|this, cx| {
+                this.refresh_git_in_tabs(cx);
+                cx.notify();
+            });
+        shell._subscriptions.push(git_subscription);
+
         // Live folder-sizing toggle (Settings → Performance). Turning it
         // on computes sizes for every open tab's current listing without a
         // relaunch; turning it off stops any in-flight walks so the change
@@ -2910,7 +2922,7 @@ impl Shell {
                                 col.width = *w;
                             }
                             crate::file_list::columns_spec(
-                                &delegate.columns,
+                                &delegate.persisted_columns(),
                                 &delegate.hidden_columns,
                                 None,
                             )

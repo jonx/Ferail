@@ -133,6 +133,9 @@ pub struct AppState {
     /// "Verify copies": read every copied file back and compare it with the
     /// source (docs/features/INTEGRITY.md). `None` == never set (off).
     pub verify_copies: Option<bool>,
+    /// Git awareness: the file list's Git column and the status bar's
+    /// branch label (docs/features/GIT_STATUS.md). `None` == never set (on).
+    pub git_status: Option<bool>,
     /// Whether the file list paints real Quick Look thumbnails instead
     /// of generic type icons. `None` == never set (defaults to `true`,
     /// thumbnails on).
@@ -486,6 +489,9 @@ fn parse(text: &str) -> AppState {
             "verify_copies" => {
                 out.verify_copies = parse_bool(val);
             }
+            "git_status" => {
+                out.git_status = parse_bool(val);
+            }
             "show_thumbnails" => {
                 out.show_thumbnails = parse_bool(val);
             }
@@ -761,6 +767,9 @@ fn serialize(state: &AppState) -> String {
     if let Some(b) = state.verify_copies {
         s.push_str(&format!("verify_copies={b}\n"));
     }
+    if let Some(b) = state.git_status {
+        s.push_str(&format!("git_status={b}\n"));
+    }
     if let Some(b) = state.show_thumbnails {
         s.push_str(&format!("show_thumbnails={b}\n"));
     }
@@ -999,6 +1008,17 @@ mod tests {
         assert_eq!(back.retention_days, Some(7));
         assert_eq!(back.report_retention_days, Some(30));
         assert_eq!(back.system_thumbnails, Some(false));
+    }
+
+    #[test]
+    fn git_status_round_trips() {
+        assert_eq!(AppState::default().git_status, None);
+        let state = AppState {
+            git_status: Some(false),
+            ..AppState::default()
+        };
+        assert_eq!(serialize(&state), "git_status=false\n");
+        assert_eq!(parse(&serialize(&state)).git_status, Some(false));
     }
 
     #[test]

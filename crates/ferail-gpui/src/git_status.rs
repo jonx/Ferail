@@ -40,6 +40,19 @@ const ACTIVATION_MIN_AGE: Duration = Duration::from_secs(2);
 /// Upper bound on remembered folder → repository answers.
 const DIR_MEMO_CAP: usize = 4096;
 
+/// The live "Git status" setting (Settings → Files). Seeded at startup from
+/// the persisted value and replaced by the Settings window; every shell
+/// observes it and re-applies Git state to its tabs.
+#[derive(Clone, Copy)]
+pub struct GitStatusEnabled(pub bool);
+
+impl gpui::Global for GitStatusEnabled {}
+
+/// The setting's value, on until seeded otherwise.
+pub fn enabled(cx: &App) -> bool {
+    cx.try_global::<GitStatusEnabled>().is_none_or(|g| g.0)
+}
+
 /// One repository's parsed state.
 pub struct RepoSnapshot {
     pub branch: GitBranch,
@@ -397,9 +410,10 @@ pub(crate) fn invalidate(process: &ProcessState, paths: &[PathBuf], explicit: bo
 
 impl Shell {
     /// Whether tab `idx` shows a plain directory listing Git can describe.
-    fn git_dir_for_tab(&self, idx: usize) -> Option<PathBuf> {
+    fn git_dir_for_tab(&self, idx: usize, cx: &App) -> Option<PathBuf> {
         let tab = self.tabs.get(idx)?;
-        if crate::safe_mode::enabled()
+        if !enabled(cx)
+            || crate::safe_mode::enabled()
             || tab.tool_result.is_some()
             || tab.platform_namespace.is_some()
         {
@@ -412,7 +426,7 @@ impl Shell {
     /// once, and ask `git` only when the answer is missing or stale.
     pub(crate) fn refresh_git_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
         self.apply_git_to_tab(idx, cx);
-        let Some(dir) = self.git_dir_for_tab(idx) else {
+        let Some(dir) = self.git_dir_for_tab(idx, cx) else {
             return;
         };
         let lookup = self.process.git.borrow().lookup(&dir);
@@ -429,7 +443,7 @@ impl Shell {
     /// window shows, unless they were read moments ago.
     pub(crate) fn refresh_git_on_activation(&mut self, cx: &mut Context<Self>) {
         let roots: HashSet<PathBuf> = (0..self.tabs.len())
-            .filter_map(|idx| self.git_dir_for_tab(idx))
+            .filter_map(|idx| self.git_dir_for_tab(idx, cx))
             .filter_map(|dir| match self.process.git.borrow().lookup(&dir) {
                 Lookup::Root(root) => Some(root),
                 _ => None,
@@ -454,6 +468,14 @@ impl Shell {
         }
     }
 
+    /// The "Git status" setting flipped: on asks `git` about every open
+    /// tab, off clears the marks, the branch labels and the column.
+    pub(crate) fn refresh_git_in_tabs(&mut self, cx: &mut Context<Self>) {
+        for idx in 0..self.tabs.len() {
+            self.refresh_git_in_tab(idx, cx);
+        }
+    }
+
     pub(crate) fn apply_git_to_tabs(&mut self, cx: &mut Context<Self>) {
         for idx in 0..self.tabs.len() {
             self.apply_git_to_tab(idx, cx);
@@ -464,9 +486,13 @@ impl Shell {
     /// O(rows) with one hash probe per row; runs once per result or load,
     /// never per frame.
     pub(crate) fn apply_git_to_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
-        let found = self
-            .git_dir_for_tab(idx)
-            .and_then(|dir| self.process.git.borrow().snapshot_for(&dir));
+        let dir = self.git_dir_for_tab(idx, cx);
+        // The Git column exists only inside a work tree, known as soon as
+        // the root is, before its first status result.
+        let in_work_tree = dir
+            .as_ref()
+            .is_some_and(|dir| matches!(self.process.git.borrow().lookup(dir), Lookup::Root(_)));
+        let found = dir.and_then(|dir| self.process.git.borrow().snapshot_for(&dir));
         let branch = found
             .as_ref()
             .and_then(|(snapshot, _)| BranchLabel::from_branch(&snapshot.branch));
@@ -499,8 +525,12 @@ impl Shell {
             } else {
                 marks
             };
-            if delegate.git_marks != marks {
+            let column_changed = delegate.set_git_available(in_work_tree);
+            let marks_changed = delegate.git_marks != marks;
+            if marks_changed {
                 delegate.git_marks = marks;
+            }
+            if column_changed || marks_changed {
                 state.refresh(cx);
             }
         });

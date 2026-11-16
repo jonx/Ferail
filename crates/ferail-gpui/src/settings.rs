@@ -218,6 +218,14 @@ fn persist_verify_copies(value: bool) {
     });
 }
 
+fn persist_git_status(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        git_status: Some(value),
+        ..existing
+    });
+}
+
 fn persist_show_thumbnails(value: bool) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -2375,6 +2383,21 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
                 ),
                 |_cx: &App| app_state::load().verify_copies.unwrap_or(false),
                 |val: bool, _cx: &mut App| persist_verify_copies(val),
+            )),
+    );
+    let page = page.group(
+        SettingGroup::new()
+            .title(tr!("Git"))
+            .item(switch_setting(
+                tr!("Show Git status"),
+                tr!(
+                    "In a folder that belongs to a Git repository, add a Git column to the file list and show the current branch in the status bar. Off never runs git."
+                ),
+                |cx: &App| crate::git_status::enabled(cx),
+                |val: bool, cx: &mut App| {
+                    persist_git_status(val);
+                    cx.set_global(crate::git_status::GitStatusEnabled(val));
+                },
             )),
     );
     // Sidebar special-folder root, only meaningful where OneDrive's

@@ -9,8 +9,11 @@ stages, commits, checks out or writes anything.
 
 ## What the user sees
 
-- **Git column.** Offered in the header's show/hide menu like any column,
-  placed beside Name by default, and empty outside a work tree. A path's own
+- **Setting.** *Settings → Files → Git → Show Git status*, on by default.
+  Off removes the column and the branch label and runs no `git` command.
+- **Git column.** Shown only while the folder is inside a work tree, beside
+  Name by default. The header's show/hide menu offers it everywhere: its
+  tick is the user's choice, kept while the column is absent. A path's own
   state is one letter: `M` modified (not staged), `S` staged, `R` renamed,
   `D` deleted, `C` conflicted, `?` untracked, `I` ignored. A folder whose
   contents changed shows a dot in the colour of the loudest state inside it:
@@ -77,5 +80,9 @@ When a result lands, `Shell::apply_git_to_tab` folds it into each tab's
 `git_marks`, one hash probe per row by on-disk name, and stores the branch
 label on the tab. Sorting carries the marks with their rows. A clean folder
 or one outside a work tree keeps the vector empty. Paint reads the vector
-and nothing else. Safe Mode, search and other tool results, and platform
-namespaces show no Git state.
+and nothing else. The same apply calls
+`FileListDelegate::set_git_available`, which shows the column once the work
+tree root is known and parks it elsewhere with its width and place; a parked
+column persists as visible. Safe Mode, search and other tool results,
+platform namespaces and the setting turned off (`GitStatusEnabled`, observed
+by every window) show no Git state.

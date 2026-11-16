@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The Git column appears only inside a Git repository.** It used to take
+  its place in every folder and stay empty outside a repository. A new
+  switch, Settings → Files → Git → Show Git status, turns the column and the
+  status bar's branch off entirely; it is on by default, and off never runs
+  git.
+
 ## 0.8.0 - 2026-11-13
 
 - **Every notification has a Copy button.** A small copy icon on each

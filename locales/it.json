@@ -1907,6 +1907,8 @@
     },
     "Copy message": "Copia messaggio",
     "Compare Folders works in Split View. Split the window, open a folder in each pane, then compare.": "Confronta cartelle funziona nella vista divisa. Dividi la finestra, apri una cartella in ogni pannello, poi confronta.",
-    "Compare Folders compares the direct contents of two folders. One pane shows something else: Include Subfolders, search results, an archive or a tool result. Return it to a plain folder, then compare.": "Confronta cartelle confronta il contenuto diretto di due cartelle. Un pannello mostra altro: Includi sottocartelle, risultati di ricerca, un archivio o il risultato di uno strumento. Riportalo a una cartella normale, poi confronta."
+    "Compare Folders compares the direct contents of two folders. One pane shows something else: Include Subfolders, search results, an archive or a tool result. Return it to a plain folder, then compare.": "Confronta cartelle confronta il contenuto diretto di due cartelle. Un pannello mostra altro: Includi sottocartelle, risultati di ricerca, un archivio o il risultato di uno strumento. Riportalo a una cartella normale, poi confronta.",
+    "Show Git status": "Mostra lo stato Git",
+    "In a folder that belongs to a Git repository, add a Git column to the file list and show the current branch in the status bar. Off never runs git.": "In una cartella che appartiene a un repository Git, aggiunge una colonna Git all'elenco dei file e mostra il ramo corrente nella barra di stato. Se disattivato, git non viene mai eseguito."
   }
 }
