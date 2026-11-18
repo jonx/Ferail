@@ -369,6 +369,12 @@ pub(crate) fn install_extras(cx: &mut App) {
         // Look is a macOS-specific affordance; the binding lives
         // here alongside other shell-context extras.
         KeyBinding::new("space", QuickLook, Some(shell::SHELL_CONTEXT)),
+        // Leave Space to text input while an inline editor has focus.
+        KeyBinding::new(
+            "space",
+            gpui::NoAction,
+            Some(crate::inline_edit::INLINE_EDITOR_CONTEXT),
+        ),
         // Finder's Empty Trash chord [mac]. Backspace = the Mac
         // Delete key in gpui's DSL.
         KeyBinding::new(
