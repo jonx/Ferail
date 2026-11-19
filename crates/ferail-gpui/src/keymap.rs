@@ -40,6 +40,9 @@ use crate::viewer::window::{
     ViewerZoomOut, ViewerZoomReset,
 };
 
+/// Key context of every gpui-component text field (`Input`, `Editor`).
+const TEXT_INPUT_CONTEXT: &str = "Input";
+
 /// Install keybindings for every command in `ferail_core::commands`
 /// whose action has a Rust handler in this crate. Run once at app
 /// startup, before the first window opens. Idempotent, calling it
@@ -370,12 +373,15 @@ pub(crate) fn install_extras(cx: &mut App) {
         // Look is a macOS-specific affordance; the binding lives
         // here alongside other shell-context extras.
         KeyBinding::new("space", QuickLook, Some(shell::SHELL_CONTEXT)),
-        // Leave Space to text input while an inline editor has focus.
-        KeyBinding::new(
-            "space",
-            gpui::NoAction,
-            Some(crate::inline_edit::INLINE_EDITOR_CONTEXT),
-        ),
+        // Every text field is a descendant of SHELL_CONTEXT, and GPUI
+        // tries key bindings before inserting text, so the Quick Look
+        // binding above would swallow every typed space (filter box,
+        // inline rename, Get Info, dialogs). gpui-component's text
+        // fields carry the "Input" context; unbinding Space there hands
+        // the key back to text input. Any other printable key bound in
+        // the shell needs the same treatment, which
+        // `tests::no_bare_printable_catalogue_shortcuts` enforces.
+        KeyBinding::new("space", gpui::NoAction, Some(TEXT_INPUT_CONTEXT)),
         // Finder's Empty Trash chord [mac]. Backspace = the Mac
         // Delete key in gpui's DSL.
         KeyBinding::new(
@@ -676,5 +682,28 @@ mod tests {
             }
         });
         assert!(unresolved.is_empty(), "unresolved bindings: {unresolved:?}");
+    }
+
+    /// A catalogue shortcut is bound in SHELL_CONTEXT, which is an ancestor
+    /// of every text field, and GPUI tries bindings before inserting text.
+    /// A shortcut that types a character (a bare letter, digit, symbol or
+    /// Space, also with Shift, or with Option on macOS where Option
+    /// composes characters) would swallow it in the filter box and in
+    /// rename. Such a key needs a primary modifier, or an explicit
+    /// `NoAction` in TEXT_INPUT_CONTEXT like Space has.
+    #[test]
+    fn no_bare_printable_catalogue_shortcuts() {
+        let offenders: Vec<_> = all_commands()
+            .iter()
+            .flat_map(|spec| spec.shortcuts.iter().map(move |s| (spec.id.0, s)))
+            .filter(|(_, s)| {
+                !s.primary && (s.key.chars().count() == 1 || s.key.eq_ignore_ascii_case("space"))
+            })
+            .map(|(id, s)| (id, s.key))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "shortcuts that eat typed text: {offenders:?}"
+        );
     }
 }
