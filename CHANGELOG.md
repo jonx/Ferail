@@ -8,6 +8,17 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Error messages are laid out to read at a glance.** The problem comes
+  first with its plain reason (*Copying failed: no longer exists*), then the
+  file it concerns in italics with its folder, then what to do, then the
+  system's own error text, small and set apart. The redundant Copy button is
+  gone: the copy icon in the corner copies everything. Notifications are a
+  little wider so a path fits.
+
+- **Some errors were explained with the wrong reason.** A file that already
+  existed or was busy could be reported as a permission problem, because
+  error codes 16 and 17 were read as code 1.
+
 - **Paste from History (Cmd+Shift+V).** Ferail remembers your last ten
   copies and cuts and lets you paste any of them into the current folder,
   not just the latest. Each entry shows what was copied, from where, and

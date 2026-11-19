@@ -347,7 +347,6 @@
     "Description": "Opis",
     "Desktop": "Pulpit",
     "Detail ≤ {value}": "Detale ≤ {value}",
-    "Details": "Szczegóły",
     "Detect file types and tags": "Wykrywaj typy plików i etykiety",
     "Detected when conversion starts": "Wykrywane po rozpoczęciu konwersji",
     "Device": "Urządzenie",
@@ -571,7 +570,6 @@
     "Help": "Pomoc",
     "Hidden": "Ukryte",
     "Hide Others": "Ukryj pozostałe",
-    "Hide details": "Ukryj szczegóły",
     "Hide extension": "Ukryj rozszerzenie",
     "Hide largest-files panel": "Ukryj panel największych plików",
     "Hide preview": "Ukryj podgląd",
@@ -1557,8 +1555,8 @@
     "{old} → {new}: an item with that name already exists": "{old} → {new}: element o tej nazwie już istnieje",
     "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.": "Operacja {operation} nie powiodła się: Nie znaleziono. Folder mógł zostać przeniesiony, usunięty lub odmontowany. Odśwież lokalizację nadrzędną i spróbuj ponownie.",
     "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.": "Operacja {operation} nie powiodła się: Odmowa dostępu. Przyznaj programowi Ferail dostęp do tej lokalizacji lub uruchom go z odpowiednimi uprawnieniami, a następnie spróbuj ponownie.",
+    "{operation} failed: {detail}": "Operacja {operation} nie powiodła się: {detail}",
     "{operation} failed: {detail} (EnumerationError::Other). Refresh and try again; if it repeats, inspect the folder permissions or filesystem state.": "Operacja {operation} nie powiodła się: {detail} (EnumerationError::Other). Odśwież i spróbuj ponownie; jeśli błąd się powtórzy, sprawdź uprawnienia folderu lub stan systemu plików.",
-    "{operation} failed: {detail}. {advice}": "Operacja {operation} nie powiodła się: {detail}. {advice}",
     "{operation}: {done} of {total} done · {n} failed": {
       "one": "{operation}: ukończono {done} z {total} · {n} nie powiodło się",
       "other": "{operation}: ukończono {done} z {total} · {n} nie powiodło się"

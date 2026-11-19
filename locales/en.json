@@ -418,7 +418,6 @@
     "Desktop": "Desktop",
     "Detached at {commit}": "Detached at {commit}",
     "Detail ≤ {value}": "Detail ≤ {value}",
-    "Details": "Details",
     "Detect file types and tags": "Detect file types and tags",
     "Detected file types, checksums, download origins and folder sizes. They are rebuilt as you browse.": "Detected file types, checksums, download origins and folder sizes. They are rebuilt as you browse.",
     "Detected when conversion starts": "Detected when conversion starts",
@@ -669,7 +668,6 @@
     "Help": "Help",
     "Hidden": "Hidden",
     "Hide Others": "Hide Others",
-    "Hide details": "Hide details",
     "Hide duplicates": "Hide duplicates",
     "Hide extension": "Hide extension",
     "Hide largest-files panel": "Hide largest-files panel",
@@ -1865,8 +1863,8 @@
     "{old} → {new}: an item with that name already exists": "{old} → {new}: an item with that name already exists",
     "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.": "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.",
     "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.": "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.",
+    "{operation} failed: {detail}": "{operation} failed: {detail}",
     "{operation} failed: {detail} (EnumerationError::Other). Refresh and try again; if it repeats, inspect the folder permissions or filesystem state.": "{operation} failed: {detail} (EnumerationError::Other). Refresh and try again; if it repeats, inspect the folder permissions or filesystem state.",
-    "{operation} failed: {detail}. {advice}": "{operation} failed: {detail}. {advice}",
     "{operation}: {done} of {total} done · {n} failed": {
       "one": "{operation}: {done} of {total} done · {n} failed",
       "other": "{operation}: {done} of {total} done · {n} failed"

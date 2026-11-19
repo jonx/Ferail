@@ -419,7 +419,6 @@
     "Desktop": "Bureau",
     "Detached at {commit}": "Détaché sur {commit}",
     "Detail ≤ {value}": "Détail ≤ {value}",
-    "Details": "Détails",
     "Detect file types and tags": "Détecter les types de fichiers et les balises",
     "Detected file types, checksums, download origins and folder sizes. They are rebuilt as you browse.": "Types de fichiers détectés, sommes de contrôle, origines de téléchargement et tailles de dossiers. Ils sont reconstruits au fil de la navigation.",
     "Detected when conversion starts": "Détecté au démarrage de la conversion",
@@ -670,7 +669,6 @@
     "Help": "Aide",
     "Hidden": "Masqués",
     "Hide Others": "Masquer les autres",
-    "Hide details": "Masquer les détails",
     "Hide duplicates": "Masquer les doublons",
     "Hide extension": "Masquer l'extension",
     "Hide largest-files panel": "Masquer le panneau des fichiers les plus volumineux",
@@ -1866,8 +1864,8 @@
     "{old} → {new}: an item with that name already exists": "{old} → {new} : un élément portant ce nom existe déjà",
     "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.": "Échec de {operation} : NotFound. Le dossier a peut-être été déplacé, supprimé ou démonté. Actualisez l'emplacement parent et réessayez.",
     "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.": "Échec de {operation} : autorisation refusée. Accordez à Ferail l'accès à cet emplacement ou exécutez-le avec les autorisations suffisantes, puis réessayez.",
+    "{operation} failed: {detail}": "Échec de {operation} : {detail}",
     "{operation} failed: {detail} (EnumerationError::Other). Refresh and try again; if it repeats, inspect the folder permissions or filesystem state.": "Échec de {operation} : {detail} (EnumerationError : Autre). Actualisez et réessayez ; si cela se répète, inspectez les autorisations du dossier ou l’état du système de fichiers.",
-    "{operation} failed: {detail}. {advice}": "Échec de {operation} : {detail}. {advice}",
     "{operation}: {done} of {total} done · {n} failed": {
       "one": "{operation} : {done} sur {total} terminé(s) · {n} échec",
       "other": "{operation} : {done} sur {total} terminé(s) · {n} échecs"

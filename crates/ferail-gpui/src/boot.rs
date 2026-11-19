@@ -182,6 +182,8 @@ pub fn run_gui(args: screenshot::Args) {
         // accessible focus-coloured border, but drop the component library's
         // outer ring so it cannot appear as a cut-off shadow.
         gpui_component::Theme::global_mut(cx).focus_ring = false;
+        // Wide enough for a path and an OS error on one line each.
+        gpui_component::Theme::global_mut(cx).notification.width = gpui::px(460.);
         crate::text::install_platform_font_families(cx);
         // gpui boots with a NullHttpClient (every request errors); give
         // `cx.http_client()` a real TLS-capable client so the update

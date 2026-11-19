@@ -299,6 +299,21 @@ Do not hide technical details. Ferail users are expected to be comfortable
 with OS/tool errors; the app adds context and advice instead of replacing the
 real cause with vague friendly copy.
 
+The toast lays the parts out on separate lines so each reads at a glance
+(`overlay::Notification::report`, which `shell::error_notification` uses):
+
+1. **The problem**, with the plain reason when the OS error is a known one:
+   *Copying failed: no longer exists*.
+2. **What it applies to**: the item's name in italics and its folder, or one
+   line per failed item.
+3. **What to do**, in muted text.
+4. **The technical detail**, the raw OS text, small, in a scrolling well.
+
+`overlay::split_error` finds these parts in the flat messages the call sites
+build: a path after `": "` in the first line, `• ` item lines, advice lines,
+and detail after a blank line. The copy icon in the corner puts all of it on
+the clipboard; toasts are 460 px wide so a path and an OS error fit.
+
 ### Resilient failures - per-item reporting + coping (2026-06-23)
 
 A copy/move no longer aborts the whole batch on the first item's failure, and
@@ -313,7 +328,8 @@ going**. So a 10-item paste that trips on item 3 still attempts 4–10.
 failed"* with the first few items and their plain-language reasons: that
 always appears (even sub-150 ms ops) and carries actions to **cope**:
 
-- **Copy**: the raw detail to the clipboard for a bug report.
+- The notice's copy icon: the full report, raw detail included, to the
+  clipboard for a bug report.
 - **Retry**: re-run just the failed top-level items in-process.
 - **Retry as administrator…**: shown when a failure is a bare permission
   denial and the platform can elevate. It re-runs the failed items elevated by
@@ -343,7 +359,7 @@ always appears (even sub-150 ms ops) and carries actions to **cope**:
   Access) is reported as unreadable rather than as a failure, so the
   elevated retry is never offered on the Trash directory itself.
 - **Clear Quarantine**: was a count-only warning; per-item failures now
-  surface through the shared expandable/copyable error toast.
+  surface through the shared structured error toast.
 - **Tag toggle** (context-menu tags): was log-only; failures now toast as
   "Tag: N of M done · why". Successes stay silent (quiet-on-success policy).
 
@@ -374,8 +390,7 @@ dead end: it pops an OS auth prompt instead, like Finder.
   no longer bails on the first item: it trashes what it can and collects the
   rest with their kind.
 - On a permission denial, the failure toast (`trash_failure_notification`)
-  offers **Move to Trash as administrator…** (plus **Copy** of the full
-  detail). It re-runs *just the permission-denied items* via a new
+  offers **Move to Trash as administrator…** under the report. It re-runs *just the permission-denied items* via a new
   `ElevatedTrashOp` (`--elevated-trash` worker). Because the worker runs as
   **root**, whose own `trashItemAtURL` would target *root's* Trash, it instead
   **moves each item into the user's `~/.Trash`** (`ferail_fs_native::home_trash_dir`)

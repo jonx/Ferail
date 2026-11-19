@@ -421,13 +421,13 @@ fn file_op_error_notification(
     operation: &str,
     err: &str,
 ) -> crate::overlay::Notification {
-    let advice = crate::i18n::tr_static(classify_error_text(err).advice());
+    // `Notification::report` splits off the path, names the reason and
+    // adds the advice for a classified error.
     error_notification(
         tr!(
-            "{operation} failed: {detail}. {advice}",
+            "{operation} failed: {detail}",
             operation = operation,
-            detail = err,
-            advice = advice
+            detail = err
         )
         .to_string(),
     )
@@ -437,13 +437,15 @@ fn file_op_error_notification(
 /// surfaces that still return `Result<_, String>`: duplicate, compress,
 /// alias, rename) into a [`FileOpErrorKind`], so every surface shares the one
 /// advice table the structured engine path uses.
-fn classify_error_text(err: &str) -> ferail_fs_native::file_ops::FileOpErrorKind {
+pub(crate) fn classify_error_text(err: &str) -> ferail_fs_native::file_ops::FileOpErrorKind {
     use ferail_fs_native::file_ops::FileOpErrorKind as K;
     let lower = err.to_ascii_lowercase();
     if lower.contains("permission denied")
         || lower.contains("operation not permitted")
-        || lower.contains("os error 1")
-        || lower.contains("os error 13")
+        // With the closing parenthesis: "os error 1" alone also matches
+        // 16 (busy) and 17 (exists).
+        || lower.contains("(os error 1)")
+        || lower.contains("(os error 13)")
         || lower.contains("access is denied")
     {
         K::PermissionDenied
@@ -456,14 +458,14 @@ fn classify_error_text(err: &str) -> ferail_fs_native::file_ops::FileOpErrorKind
         K::Locked
     } else if lower.contains("no such file or directory")
         || lower.contains("not found")
-        || lower.contains("os error 2")
+        || lower.contains("(os error 2)")
     {
         K::NotFound
     } else if lower.contains("file exists") || lower.contains("already exists") {
         K::AlreadyExists
     } else if lower.contains("no space left")
         || lower.contains("not enough space")
-        || lower.contains("os error 28")
+        || lower.contains("(os error 28)")
     {
         K::NoSpace
     } else if lower.contains("read-only file system") || lower.contains("read only") {
@@ -561,89 +563,12 @@ pub(crate) fn file_op_failure_report(
     msg
 }
 
-/// An error notification that shows a one-line headline by default and can be
-/// expanded to reveal the full message, so a long failure (a native error with
-/// a path and a sentence of detail) is legible, not clipped to "it failed". A
-/// **Copy** button always puts the *whole* message on the clipboard, handy for
-/// pasting into a bug report. Both controls also keep the toast from
-/// auto-hiding, so the user has time to read, expand, and copy.
+/// An error notification laid out for reading at a glance: the problem, what
+/// it applies to, what to do, and the technical detail on separate lines (see
+/// [`crate::overlay::Notification::report`]). The notice's copy icon puts the
+/// whole message on the clipboard for a bug report. It stays up until closed.
 pub(crate) fn error_notification(message: String) -> crate::overlay::Notification {
-    use gpui_component::Sizable as _;
-    use gpui_component::button::{Button, ButtonVariants as _};
-    use crate::overlay::Notification;
-
-    let (summary, has_more) = collapse_error_summary(&message);
-    // Expand state shared between renders: the content builder runs on every
-    // render and reads it; the toggle's click flips it and re-renders.
-    let expanded = Rc::new(std::cell::Cell::new(false));
-
-    Notification::error(summary)
-        // No action button, so disable autohide explicitly (an action would
-        // have done it implicitly).
-        .autohide(false)
-        .content(move |_note, _window, cx| {
-            let is_expanded = expanded.get();
-            let mut col = v_flex().gap_1().pt_1();
-
-            // The full, untruncated message, only once the user expands it.
-            if has_more && is_expanded {
-                col = col.child(
-                    div()
-                        .id("error-detail")
-                        .max_h(px(240.))
-                        .overflow_y_scroll()
-                        .text_scale_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(SharedString::from(message.clone())),
-                );
-            }
-
-            let mut row = h_flex().gap_2();
-            if has_more {
-                let toggle = expanded.clone();
-                row = row.child(
-                    Button::new("toggle-error-details")
-                        .label(if is_expanded {
-                            tr!("Hide details")
-                        } else {
-                            tr!("Details")
-                        })
-                        .ghost()
-                        .small()
-                        .on_click(cx.listener(move |_note, _ev, _window, cx| {
-                            toggle.set(!toggle.get());
-                            cx.notify();
-                        })),
-                );
-            }
-            let for_copy = message.clone();
-            row = row.child(
-                Button::new("copy-error-message")
-                    .label(tr!("Copy"))
-                    .ghost()
-                    .small()
-                    .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&for_copy)),
-            );
-
-            col.child(row).into_any_element()
-        })
-}
-
-/// Headline for an error toast: the first line, capped so a long path or
-/// sentence doesn't blow the toast up before the user chooses to expand it.
-/// Returns the summary and whether anything was hidden, i.e. whether to offer
-/// a **Details** toggle at all (short, single-line errors need none).
-fn collapse_error_summary(message: &str) -> (String, bool) {
-    const MAX: usize = 140;
-    let first_line = message.lines().next().unwrap_or("");
-    let multiline = message.lines().nth(1).is_some();
-    if !multiline && first_line.chars().count() <= MAX {
-        (message.to_string(), false)
-    } else {
-        let mut summary: String = first_line.chars().take(MAX).collect();
-        summary.push('\u{2026}');
-        (summary, true)
-    }
+    crate::overlay::Notification::report(&message).autohide(false)
 }
 
 /// What a failure toast's Retry buttons need to re-run the failed items. The
@@ -685,7 +610,7 @@ pub(crate) fn transfer_failure_notification(
     // Primary action button (disables autohide): elevate when that can help,
     // otherwise a plain retry.
     let primary = retry.clone();
-    let note = Notification::error(summary.clone()).action(move |_, _, cx| {
+    let note = Notification::report(&summary).action(move |_, _, cx| {
         let r = primary.clone();
         // Either button kicks off a fresh op that posts its own result toast,
         // so this failure toast dismisses itself once acted on rather than
@@ -819,12 +744,16 @@ pub(crate) fn trash_failure_notification(
     } else {
         tr!("Move to Trash as administrator\u{2026}")
     };
-    // The elevated retry sits under the message next to Copy, not in the
-    // toast's trailing action slot: that slot does not shrink, and a label
-    // this long (French runs past 50 characters) squeezed the message column
-    // to nothing, leaving a tall, empty error toast.
-    Notification::error(headline).content(move |_, _, cx| {
-        let copy_detail = copy_detail.clone();
+    // The elevated retry sits under the message, not in the toast's
+    // trailing action slot: that slot does not shrink, and a label this
+    // long (French runs past 50 characters) squeezed the message column to
+    // nothing, leaving a tall, empty error toast.
+    let note = if copy_detail.starts_with(&headline) {
+        Notification::report(&copy_detail)
+    } else {
+        Notification::report(&headline).detail(copy_detail)
+    };
+    note.autohide(false).content(move |_, _, cx| {
         let r = retry.clone();
         h_flex()
             .flex_wrap()
@@ -844,15 +773,6 @@ pub(crate) fn trash_failure_notification(
                         // leaving this one up would stack a stale dialog.
                         note.dismiss(window, cx);
                     })),
-            )
-            .child(
-                Button::new("copy-trash-failure")
-                    .label(tr!("Copy"))
-                    .ghost()
-                    .small()
-                    .on_click(move |_, _, _| {
-                        crate::platform_shell::copy_to_clipboard(&copy_detail)
-                    }),
             )
             .into_any_element()
     })
@@ -8767,7 +8687,7 @@ pub(crate) fn persist_preview_visible(visible: bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        UndoOp, collapse_error_summary, copy_back_moved_item, file_op_failure_report,
+        UndoOp, copy_back_moved_item, file_op_failure_report,
         history_child_to_select, window_title_for,
     };
     use std::path::{Path, PathBuf};
@@ -8926,39 +8846,6 @@ mod tests {
             "{s}"
         );
         assert!(s.contains("\u{2026}and 2 more"), "{s}");
-    }
-
-    #[test]
-    fn short_single_line_error_is_shown_whole_with_no_details_toggle() {
-        let (summary, has_more) = collapse_error_summary("Move to Trash failed: nope");
-        assert_eq!(summary, "Move to Trash failed: nope");
-        assert!(
-            !has_more,
-            "a short, single-line error needs no Details toggle"
-        );
-    }
-
-    #[test]
-    fn long_error_is_truncated_and_offers_details() {
-        let long = format!("Move to Trash failed: {}", "x".repeat(300));
-        let (summary, has_more) = collapse_error_summary(&long);
-        assert!(has_more, "a long error hides detail behind Details");
-        assert!(
-            summary.ends_with('\u{2026}'),
-            "truncation is marked with an ellipsis"
-        );
-        assert!(
-            summary.chars().count() <= 141,
-            "headline stays one line: 140 chars + the ellipsis, got {}",
-            summary.chars().count()
-        );
-    }
-
-    #[test]
-    fn multiline_error_collapses_to_its_first_line() {
-        let (summary, has_more) = collapse_error_summary("Copy failed\n3 of 5 done\nretry?");
-        assert_eq!(summary, "Copy failed\u{2026}");
-        assert!(has_more, "later lines are hidden until expanded");
     }
 
     #[test]

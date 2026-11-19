@@ -372,7 +372,6 @@
     "Description": "Descrizione",
     "Desktop": "Scrivania",
     "Detail ≤ {value}": "Dettaglio ≤ {value}",
-    "Details": "Dettagli",
     "Detect file types and tags": "Rileva tipi di file ed etichette",
     "Detected when conversion starts": "Rilevato all'avvio della conversione",
     "Device": "Dispositivo",
@@ -611,7 +610,6 @@
     "Help": "Aiuto",
     "Hidden": "Nascosto",
     "Hide Others": "Nascondi altre",
-    "Hide details": "Nascondi dettagli",
     "Hide extension": "Nascondi estensione",
     "Hide largest-files panel": "Nascondi pannello dei file più grandi",
     "Hide preview": "Nascondi anteprima",
@@ -1694,8 +1692,8 @@
     "{old} → {new}: an item with that name already exists": "{old} → {new}: esiste già un elemento con questo nome",
     "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.": "{operation} non riuscita: NotFound. La cartella potrebbe essere stata spostata, eliminata o smontata. Aggiorna la posizione superiore e riprova.",
     "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.": "{operation} non riuscita: PermissionDenied. Concedi a Ferail l'accesso a questa posizione o eseguilo con permessi sufficienti, poi riprova.",
+    "{operation} failed: {detail}": "{operation} non riuscita: {detail}",
     "{operation} failed: {detail} (EnumerationError::Other). Refresh and try again; if it repeats, inspect the folder permissions or filesystem state.": "{operation} non riuscita: {detail} (EnumerationError::Other). Aggiorna e riprova; se il problema persiste, controlla i permessi della cartella o lo stato del filesystem.",
-    "{operation} failed: {detail}. {advice}": "{operation} non riuscita: {detail}. {advice}",
     "{operation}: {done} of {total} done · {n} failed": {
       "one": "{operation}: {done} completati su {total} · {n} non riuscito",
       "other": "{operation}: {done} completati su {total} · {n} non riusciti"

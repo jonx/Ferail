@@ -18,6 +18,7 @@
 //!   This is the pattern gpui-component's `DialogClose` uses for its button.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use gpui::{
     AnyWindowHandle, App, FocusHandle, InteractiveElement as _, ParentElement as _, Styled as _,
@@ -40,10 +41,130 @@ pub struct Notification {
     title: Option<SharedString>,
     message: SharedString,
     has_action: bool,
-    has_content: bool,
+    /// The caller's own content (buttons under the message), drawn below
+    /// the structured parts.
+    content: Option<Rc<ContentBuilder>>,
     /// An explicit `autohide` choice, kept because adding the copy button
     /// to the action slot would otherwise pin the notice open.
     autohide: Option<bool>,
+    /// What the message is about, how to cope, and the raw detail, each
+    /// on its own line under the message ([`Self::report`]).
+    parts: Parts,
+}
+
+type ContentBuilder = dyn Fn(&mut ToastNotification, &mut Window, &mut Context<ToastNotification>) -> gpui::AnyElement;
+
+/// The structured lines of a notice, under its one-line message.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Parts {
+    /// What it applies to: an item, a path. May carry
+    /// [`crate::emphasis`] markers around a name.
+    pub subjects: Vec<String>,
+    /// The practical next step.
+    pub advice: Option<String>,
+    /// The raw technical detail (OS error text), small and muted.
+    pub detail: Option<String>,
+}
+
+impl Parts {
+    fn is_empty(&self) -> bool {
+        self.subjects.is_empty() && self.advice.is_none() && self.detail.is_none()
+    }
+}
+
+/// Split a flat error message into the problem and its [`Parts`]:
+///
+/// - the first line is the problem; a path inside it (`Copying failed:
+///   /a/b.pdf: No such file`) becomes the subject, and what follows the
+///   path becomes the detail;
+/// - `• ` lines are subjects, other lines are advice;
+/// - anything after a blank line is detail.
+pub fn split_error(message: &str) -> (String, Parts) {
+    let (head, tail) = match message.split_once("\n\n") {
+        Some((head, tail)) => (head, Some(tail.trim())),
+        None => (message, None),
+    };
+    let mut lines = head.lines();
+    let mut problem = lines.next().unwrap_or("").trim().to_string();
+    let mut parts = Parts::default();
+    let mut advice: Vec<&str> = Vec::new();
+    for line in lines {
+        let line = line.trim();
+        if let Some(item) = line.strip_prefix("\u{2022} ") {
+            // "name: reason" (French "name : reason"): the name in italics.
+            // The last colon, since a name may hold one and a reason does not.
+            let subject = match item.rsplit_once(':') {
+                Some((name, reason)) if !name.trim().is_empty() && reason.starts_with(' ') => {
+                    format!(
+                        "{}{}:{reason}",
+                        crate::emphasis::name(name.trim_end()),
+                        &name[name.trim_end().len()..]
+                    )
+                }
+                _ => item.to_string(),
+            };
+            parts.subjects.push(subject);
+        } else if !line.is_empty() {
+            advice.push(line);
+        }
+    }
+    let mut detail: Vec<String> = Vec::new();
+    if let Some((before, path, rest)) = split_path(&problem) {
+        let path = std::path::Path::new(&path);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let subject = match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            Some(parent) => format!(
+                "{} \u{00b7} {}",
+                crate::emphasis::name(name),
+                parent.display()
+            ),
+            None => crate::emphasis::name(name),
+        };
+        parts.subjects.insert(0, subject);
+        if let Some(rest) = rest {
+            detail.push(rest);
+        }
+        problem = before;
+    }
+    if let Some(tail) = tail.filter(|t| !t.is_empty()) {
+        detail.push(tail.to_string());
+    }
+    parts.advice = (!advice.is_empty()).then(|| advice.join(" "));
+    parts.detail = (!detail.is_empty()).then(|| detail.join("\n"));
+    (problem, parts)
+}
+
+/// `"<problem>: <path>[: <rest>]"` → its three pieces. A path starts with
+/// `/`, `~/`, a drive letter or `\\`, right after a `": "`.
+fn split_path(line: &str) -> Option<(String, String, Option<String>)> {
+    let looks_like_path = |s: &str| {
+        let b = s.as_bytes();
+        s.starts_with('/')
+            || s.starts_with("~/")
+            || s.starts_with("\\\\")
+            || (b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
+    };
+    let mut search = 0;
+    while let Some(found) = line[search..].find(": ") {
+        let at = search + found;
+        let after = &line[at + 2..];
+        if looks_like_path(after) {
+            let before = line[..at].trim_end().to_string();
+            return Some(match after.find(": ") {
+                Some(end) => (
+                    before,
+                    after[..end].to_string(),
+                    Some(after[end + 2..].trim().to_string()).filter(|r| !r.is_empty()),
+                ),
+                None => (before, after.trim_end_matches('.').to_string(), None),
+            });
+        }
+        search = at + 2;
+    }
+    None
 }
 
 impl Notification {
@@ -53,9 +174,47 @@ impl Notification {
             title: None,
             message,
             has_action: false,
-            has_content: false,
+            content: None,
             autohide: None,
+            parts: Parts::default(),
         }
+    }
+
+    /// An error laid out for reading at a glance: the problem on the first
+    /// line, then what it applies to, what to do, and the technical detail,
+    /// each on its own line ([`split_error`] finds them in a flat message).
+    /// When the detail names a known failure (a missing file, a permission
+    /// denial) and the message offers no advice, the plain reason joins the
+    /// problem and its advice is added.
+    pub fn report(message: &str) -> Self {
+        let (mut problem, mut parts) = split_error(message);
+        if parts.advice.is_none()
+            && let Some(detail) = &parts.detail
+        {
+            let kind = crate::shell::classify_error_text(detail);
+            if kind != ferail_fs_native::file_ops::FileOpErrorKind::Other {
+                problem = tr!(
+                    "{label}: {detail}",
+                    label = problem,
+                    detail = crate::i18n::tr_static(kind.summary())
+                )
+                .to_string();
+                parts.advice = Some(crate::i18n::tr_static(kind.advice()).to_string());
+            }
+        }
+        let mut note = Self::error(problem);
+        note.parts = parts;
+        note
+    }
+
+    /// Add the raw technical detail under the message.
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        self.parts.detail = Some(match self.parts.detail.take() {
+            Some(existing) => format!("{existing}\n{detail}"),
+            None => detail,
+        });
+        self
     }
 
     pub fn info(message: impl Into<SharedString>) -> Self {
@@ -118,8 +277,7 @@ impl Notification {
         content: impl Fn(&mut ToastNotification, &mut Window, &mut Context<ToastNotification>) -> gpui::AnyElement
             + 'static,
     ) -> Self {
-        self.inner = self.inner.content(content);
-        self.has_content = true;
+        self.content = Some(Rc::new(content));
         self
     }
 
@@ -136,43 +294,126 @@ impl Notification {
         self
     }
 
-    /// The widget notification, with the copy button in the first free slot:
-    /// the action slot, else under the message, else none.
+    /// The widget notification: the structured parts and the caller's
+    /// content under the message, and the copy button in the action slot,
+    /// or at the end of the content when the caller took that slot.
     fn into_toast(self) -> ToastNotification {
-        let text: SharedString = match &self.title {
-            Some(title) => format!("{title}\n{}", self.message).into(),
-            None => self.message.clone(),
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(title) = &self.title {
+            lines.push(title.to_string());
+        }
+        lines.push(self.message.to_string());
+        for subject in &self.parts.subjects {
+            lines.push(crate::emphasis::plain(subject));
+        }
+        lines.extend(self.parts.advice.clone());
+        lines.extend(self.parts.detail.clone());
+        let text: SharedString = lines
+            .into_iter()
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into();
+        let parts = self.parts.clone();
+        let content = self.content.clone();
+        let has_action = self.has_action;
+        let inner = if parts.is_empty() && content.is_none() {
+            self.inner
+        } else {
+            let text = text.clone();
+            self.inner.content(move |note, window, cx| {
+                use gpui::IntoElement as _;
+                let mut col = gpui_component::v_flex().gap_1p5().pt_1().min_w_0();
+                col = col.children(render_parts(&parts, cx));
+                if let Some(content) = &content {
+                    col = col.child(content(note, window, cx));
+                }
+                if has_action && !text.is_empty() {
+                    col = col.child(div().flex().child(copy_button(text.clone())));
+                }
+                col.into_any_element()
+            })
         };
         if text.is_empty() {
-            return self.inner;
+            return inner;
         }
-        let copy_button = move || {
-            let text = text.clone();
-            Button::new("notice-copy")
-                .icon(IconName::Copy)
-                .ghost()
-                .xsmall()
-                .tooltip(tr!("Copy message"))
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
-                })
-        };
-        if !self.has_action {
+        if !has_action {
             // The action slot pins a notice open; restore what the caller
             // asked for, or the widget's default.
-            self.inner
-                .action(move |_, _, _| copy_button())
+            inner
+                .action(move |_, _, _| copy_button(text.clone()))
                 .autohide(self.autohide.unwrap_or(true))
-        } else if !self.has_content {
-            self.inner.content(move |_, _, _| {
+        } else if self.parts.is_empty() && self.content.is_none() {
+            inner.content(move |_, _, _| {
                 use gpui::IntoElement as _;
-                div().flex().pt_1().child(copy_button()).into_any_element()
+                div().flex().pt_1().child(copy_button(text.clone())).into_any_element()
             })
         } else {
-            self.inner
+            inner
         }
     }
+}
+
+/// The icon that puts the whole notice on the clipboard.
+fn copy_button(text: SharedString) -> Button {
+    Button::new("notice-copy")
+        .icon(IconName::Copy)
+        .ghost()
+        .xsmall()
+        .tooltip(tr!("Copy message"))
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        })
+}
+
+/// Subjects, advice, then the detail in a small scrolling well.
+fn render_parts(parts: &Parts, cx: &App) -> Vec<gpui::AnyElement> {
+    use crate::text::TextScale as _;
+    use gpui::{IntoElement as _, StatefulInteractiveElement as _, px};
+    use gpui_component::ActiveTheme as _;
+    let muted = cx.theme().muted_foreground;
+    let mut out = Vec::new();
+    if !parts.subjects.is_empty() {
+        out.push(
+            gpui_component::v_flex()
+                .gap_0p5()
+                .min_w_0()
+                .children(parts.subjects.iter().map(|subject| {
+                    div()
+                        .min_w_0()
+                        .text_scale_sm()
+                        .child(crate::emphasis::styled(subject))
+                }))
+                .into_any_element(),
+        );
+    }
+    if let Some(advice) = &parts.advice {
+        out.push(
+            div()
+                .text_scale_sm()
+                .text_color(muted)
+                .child(SharedString::from(advice.clone()))
+                .into_any_element(),
+        );
+    }
+    if let Some(detail) = &parts.detail {
+        out.push(
+            div()
+                .id("notice-detail")
+                .max_h(px(96.))
+                .overflow_y_scroll()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .bg(cx.theme().muted)
+                .text_scale_xs()
+                .text_color(muted)
+                .child(SharedString::from(detail.clone()))
+                .into_any_element(),
+        );
+    }
+    out
 }
 
 impl From<String> for Notification {
@@ -317,4 +558,48 @@ fn cancel_newest_dialog(window: &mut Window, cx: &mut App) -> bool {
     };
     anchor.dispatch_action(&Cancel, window, cx);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Parts, split_error};
+
+    #[test]
+    fn a_path_in_the_problem_becomes_subject_and_detail() {
+        let (problem, parts) = split_error(
+            "Échec de la copie : /Users/demo/Documents/Rapport annuel.pdf: No such file or directory (os error 2)",
+        );
+        assert_eq!(problem, "Échec de la copie");
+        assert_eq!(
+            crate::emphasis::plain(&parts.subjects[0]),
+            "Rapport annuel.pdf \u{00b7} /Users/demo/Documents"
+        );
+        assert_eq!(parts.detail.as_deref(), Some("No such file or directory (os error 2)"));
+        assert_eq!(parts.advice, None);
+    }
+
+    #[test]
+    fn bullets_advice_and_detail_after_a_blank_line() {
+        let (problem, parts) = split_error(
+            "Move: 1 of 3 done \u{00b7} 2 failed\n\u{2022} a.txt: permission denied\n\u{2022} b.txt: in use\nRetry as administrator.\n\n/x/a.txt: EACCES",
+        );
+        assert_eq!(problem, "Move: 1 of 3 done \u{00b7} 2 failed");
+        let plain: Vec<String> = parts.subjects.iter().map(|s| crate::emphasis::plain(s)).collect();
+        assert_eq!(plain, vec!["a.txt: permission denied", "b.txt: in use"]);
+        assert_eq!(parts.subjects[0], format!("{}: permission denied", crate::emphasis::name("a.txt")));
+        assert_eq!(parts.advice.as_deref(), Some("Retry as administrator."));
+        assert_eq!(parts.detail.as_deref(), Some("/x/a.txt: EACCES"));
+    }
+
+    #[test]
+    fn plain_messages_stay_whole() {
+        let (problem, parts) = split_error("Could not compare: the folders are the same");
+        assert_eq!(problem, "Could not compare: the folders are the same");
+        assert_eq!(parts, Parts::default());
+        // A Windows path is recognised everywhere; it splits into name and
+        // folder where `Path` knows backslashes.
+        let (problem, parts) = split_error("Open failed: C:\\Users\\a.txt");
+        assert_eq!(problem, "Open failed");
+        assert_eq!(parts.subjects.len(), 1);
+    }
 }

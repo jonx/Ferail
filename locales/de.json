@@ -419,7 +419,6 @@
     "Desktop": "Schreibtisch",
     "Detached at {commit}": "Losgelöst bei {commit}",
     "Detail ≤ {value}": "Detail ≤ {value}",
-    "Details": "Details",
     "Detect file types and tags": "Dateitypen und Tags erkennen",
     "Detected file types, checksums, download origins and folder sizes. They are rebuilt as you browse.": "Erkannte Dateitypen, Prüfsummen, Download-Quellen und Ordnergrößen. Sie werden beim Durchsuchen neu aufgebaut.",
     "Detected when conversion starts": "Wird beim Start der Konvertierung erkannt",
@@ -670,7 +669,6 @@
     "Help": "Hilfe",
     "Hidden": "Versteckte",
     "Hide Others": "Andere ausblenden",
-    "Hide details": "Details ausblenden",
     "Hide duplicates": "Duplikate ausblenden",
     "Hide extension": "Suffix ausblenden",
     "Hide largest-files panel": "Panel „Größte Dateien“ ausblenden",
@@ -1866,8 +1864,8 @@
     "{old} → {new}: an item with that name already exists": "{old} → {new}: ein Objekt mit diesem Namen existiert bereits",
     "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.": "{operation} fehlgeschlagen: NotFound. Der Ordner wurde möglicherweise bewegt, gelöscht oder ausgeworfen. Aktualisiere den übergeordneten Ort und versuche es erneut.",
     "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.": "{operation} fehlgeschlagen: PermissionDenied. Erlaube Ferail den Zugriff auf diesen Ort oder starte es mit ausreichenden Rechten und versuche es erneut.",
+    "{operation} failed: {detail}": "{operation} fehlgeschlagen: {detail}",
     "{operation} failed: {detail} (EnumerationError::Other). Refresh and try again; if it repeats, inspect the folder permissions or filesystem state.": "{operation} fehlgeschlagen: {detail} (EnumerationError::Other). Aktualisiere und versuche es erneut; wiederholt es sich, prüfe die Ordnerrechte oder den Zustand des Dateisystems.",
-    "{operation} failed: {detail}. {advice}": "{operation} fehlgeschlagen: {detail}. {advice}",
     "{operation}: {done} of {total} done · {n} failed": {
       "one": "{operation}: {done} von {total} erledigt · {n} fehlgeschlagen",
       "other": "{operation}: {done} von {total} erledigt · {n} fehlgeschlagen"

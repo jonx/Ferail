@@ -700,6 +700,8 @@ pub fn run(args: Args) -> Result<()> {
         // Match the live app: focused controls use the compact tinted border,
         // not an outer ring that clipped settings rows can turn into a shadow.
         gpui_component::Theme::global_mut(cx).focus_ring = false;
+        // Wide enough for a path and an OS error on one line each.
+        gpui_component::Theme::global_mut(cx).notification.width = gpui::px(460.);
         // Same language bootstrap as the live app, so screenshots can be
         // taken in any installed language.
         crate::i18n::init(cx);
