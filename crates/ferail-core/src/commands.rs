@@ -348,6 +348,15 @@ const CATALOGUE: &[CommandSpec] = &[
         // directly (the Shortcut DSL has no Delete key yet).
         shortcuts: &[],
     },
+    // Put an item from the Trash back where it came from. No shortcut of
+    // its own: as in Finder, Move to Trash's Cmd+Backspace does this while
+    // the selection is in the Trash.
+    CommandSpec {
+        id: CommandId("file.restore_from_trash"),
+        title: msgid!("Put Back"),
+        category: Category::File,
+        shortcuts: &[],
+    },
     // Clipboard file verbs (docs/features/FILE_OPS.md). Copy + Paste +
     // Move-Paste, plus Cut (Cmd+X): a cut marks its items so the next
     // plain Paste moves them (and clears the mark).

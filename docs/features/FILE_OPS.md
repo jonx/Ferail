@@ -197,6 +197,12 @@ restores what it can and reports the rest separately, because "I do not know
 where this came from" is not the same failure as "I could not move it", and the
 user can do nothing about the first.
 
+Put Back is a catalogued command (`file.restore_from_trash`), so the command
+palette and the menu bar offer it too. It has no shortcut of its own: as in
+Finder, Move to Trash's Cmd+Backspace puts the selection back when every
+selected item is already in a trash. Invoked on items outside a trash, it says
+it only works there.
+
 The menu entry is always offered rather than enabled per row: knowing whether a
 record exists means a database query, and a context menu may not do I/O while
 it is being built. Recording is best effort in the other direction too, a
@@ -379,8 +385,9 @@ dead end: it pops an OS auth prompt instead, like Finder.
 - **Delete Immediately** (new command: `DeleteImmediately`, Option+Cmd+Delete
   [mac] / Shift+Delete [win/linux], also in the File menu and file-list context
   menu) permanently deletes the selection with no Trash and no undo, after a
-  counted confirmation. Same elevated recourse on a permission denial, via
-  `ElevatedTrashOp { delete: true }`.
+  counted confirmation. A partial failure reports through the shared
+  `file_op_failure_report`, like Empty Trash. Same elevated recourse on a
+  permission denial, via `ElevatedTrashOp { delete: true }`.
 - **Empty Trash** likewise collects the items it couldn't remove (root-owned
   trash, e.g. something elevated *into* the Trash earlier) and offers **Empty
   Trash as administrator…** over just those.

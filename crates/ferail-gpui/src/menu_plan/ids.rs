@@ -101,7 +101,7 @@ pub(crate) const EMPTY_TRASH: CommandId = CommandId("file.empty_trash");
 
 /// Every id above that is deliberately not a catalogue command.
 #[cfg(test)]
-const MENU_ONLY: [CommandId; 10] = [
+const MENU_ONLY: [CommandId; 9] = [
     EDIT_IN_SYSTEM_EDITOR,
     SLIDESHOW_FROM_HERE,
     SHOW_LOCK_HOLDERS,
@@ -111,7 +111,6 @@ const MENU_ONLY: [CommandId; 10] = [
     TOGGLE_FAVORITE,
     WINDOWS_CONTEXT_MENU,
     SELECT_ALL,
-    RESTORE_FROM_TRASH,
 ];
 
 /// Every id this module declares, for the checks below.

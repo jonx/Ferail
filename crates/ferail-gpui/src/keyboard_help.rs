@@ -75,6 +75,7 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "file.move_to_other_pane" => Box::new(crate::shell::MoveToOtherPane),
         "file.delete_immediately" => Box::new(DeleteImmediately),
         "file.empty_trash" => Box::new(EmptyTrash),
+        "file.restore_from_trash" => Box::new(RestoreFromTrash),
         "file.reopen_closed_tab" => Box::new(ReopenClosedTab),
         "window.close_window" => Box::new(CloseWindow),
         "app.settings" => Box::new(OpenSettings),

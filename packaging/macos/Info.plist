@@ -24,6 +24,8 @@
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>11.0</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Ferail asks Terminal to open an administrator shell in the folder you chose.</string>
 	<key>NSDesktopFolderUsageDescription</key>
 	<string>Ferail needs access to your Desktop to browse and manage the files there.</string>
 	<key>NSDocumentsFolderUsageDescription</key>

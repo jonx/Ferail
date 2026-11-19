@@ -397,10 +397,6 @@
       "one": "Élément {n} supprimé en tant qu'administrateur",
       "other": "Éléments {n} supprimés en tant qu'administrateur"
     },
-    "Deleted {n} item with errors: {detail}": {
-      "one": "Élément {n} supprimé avec des erreurs : {detail}",
-      "other": "Éléments {n} supprimés avec des erreurs : {detail}"
-    },
     "Deleting {name}": "Suppression de {name}",
     "Deleting {n} item": {
       "one": "Suppression de l'élément {n}",
@@ -1038,6 +1034,7 @@
     "Problems only": "Problèmes uniquement",
     "Purple": "Violet",
     "Put Back": "Remettre",
+    "Put Back works on items in the Trash.": "« Remettre » s’applique aux éléments de la Corbeille.",
     "Put {n} item back": {
       "one": "{n} élément remis en place",
       "other": "{n} éléments remis en place"
@@ -1787,10 +1784,6 @@
       "one": "{n} élément est masqué ou filtré.",
       "other": "Les {n} éléments sont masqués ou filtrés."
     },
-    "{n} item needs administrator rights to delete.": {
-      "one": "L'élément {n} nécessite des droits d'administrateur pour être supprimé.",
-      "other": "Les éléments {n} nécessitent des droits d'administrateur pour être supprimés."
-    },
     "{n} item was already in the archive and was left alone: {names}": {
       "one": "{n} élément était déjà dans l'archive et n'a pas été modifié : {names}",
       "other": "{n} éléments étaient déjà dans l'archive et n'ont pas été modifiés : {names}"
@@ -1909,6 +1902,7 @@
     },
     "…and {overflow} more": "…et {overflow} plus",
     "−1f": "−1f",
-    "⚠ {warning}": "⚠ {warning}"
+    "⚠ {warning}": "⚠ {warning}",
+    "✓ Saved": "✓ Enregistré"
   }
 }

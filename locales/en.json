@@ -396,10 +396,6 @@
       "one": "Deleted {n} item as administrator",
       "other": "Deleted {n} items as administrator"
     },
-    "Deleted {n} item with errors: {detail}": {
-      "one": "Deleted {n} item with errors: {detail}",
-      "other": "Deleted {n} items with errors: {detail}"
-    },
     "Deleting {name}": "Deleting {name}",
     "Deleting {n} item": {
       "one": "Deleting {n} item",
@@ -1037,6 +1033,7 @@
     "Problems only": "Problems only",
     "Purple": "Purple",
     "Put Back": "Put Back",
+    "Put Back works on items in the Trash.": "Put Back works on items in the Trash.",
     "Put {n} item back": {
       "one": "Put {n} item back",
       "other": "Put {n} items back"
@@ -1786,10 +1783,6 @@
       "one": "{n} item is hidden or filtered out.",
       "other": "All {n} items are hidden or filtered out."
     },
-    "{n} item needs administrator rights to delete.": {
-      "one": "{n} item needs administrator rights to delete.",
-      "other": "{n} items need administrator rights to delete."
-    },
     "{n} item was already in the archive and was left alone: {names}": {
       "one": "{n} item was already in the archive and was left alone: {names}",
       "other": "{n} items were already in the archive and were left alone: {names}"
@@ -1909,6 +1902,7 @@
     },
     "…and {overflow} more": "…and {overflow} more",
     "−1f": "−1f",
-    "⚠ {warning}": "⚠ {warning}"
+    "⚠ {warning}": "⚠ {warning}",
+    "✓ Saved": "✓ Saved"
   }
 }

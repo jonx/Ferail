@@ -8,6 +8,33 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Cmd+Backspace in the Trash puts items back.** As in Finder, the Move to
+  Trash shortcut restores the selection to where it came from when you are
+  in the Trash. Put Back is also in the command palette and the File menu.
+
+- **`ferail ~/Downloads` opens a window there.** A folder (or a file, which
+  opens its folder) given on the command line used to be rejected as an
+  unknown command. Desktop launchers that pass a `file://` address work too.
+
+- **Delete Immediately explains partial failures item by item.** When some
+  items could not be deleted, the message now lists each one with the reason,
+  with a Copy button and an administrator retry, like Empty Trash. It used to
+  show a single raw system error.
+
+- **The administrator terminal works in signed builds.** macOS silently
+  blocked Ferail from asking Terminal to open the root shell, because the
+  signed app did not declare that it sends Apple Events. macOS now asks for
+  permission once.
+
+- **F2, F5 and Option+Enter no longer act on the file list while you type.**
+  F2 in the filter box started renaming the selected file, and F5 during a
+  rename reloaded the list under it. In a text field these keys now do
+  nothing; in the list they work as before.
+
+- **Settings confirm that a change was saved.** A small "Saved" badge
+  appears for a moment after each change. Settings have always been saved
+  immediately, with nothing on screen to say so.
+
 - **Space types a space in every text field again.** In the filter box,
   inline rename and other fields inside the window, Space opened Quick Look
   instead of typing, because the file list's Space shortcut ran before text

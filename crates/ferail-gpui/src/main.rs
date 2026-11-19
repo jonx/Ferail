@@ -200,7 +200,18 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
         // Anything else that looks like a subcommand attempt: a bare word
         // or unknown flag: surfaces the help text and exits with code 2
         // rather than silently launching the GUI with confusing args.
+        // A bare path opens the GUI there (`screenshot::parse_args` picks it
+        // up). A word that names nothing on disk is a mistyped subcommand,
+        // unless it is spelled like a path.
         other if !other.starts_with('-') => {
+            let path = ferail_gpui::screenshot::launch_path(other);
+            if path.exists() {
+                return Ok(None);
+            }
+            if other.contains(['/', '\\']) || other.starts_with('.') || other.starts_with("file:") {
+                eprintln!("ferail: no such file or folder: {}", path.display());
+                return Ok(Some(2));
+            }
             eprintln!("ferail: unknown subcommand: {other:?}\n");
             print_cli_help();
             Ok(Some(2))
@@ -252,7 +263,7 @@ fn run_doctor_cli() -> i32 {
 
 fn print_cli_help() {
     println!(
-        "Ferail\n\nUsage:\n  ferail                 Open the GPUI file manager\n  ferail magic [path]...  Print magic-byte format (defaults to current directory; directories are listed shallow)\n  ferail formats [--recursive] [path]  Audit the file-list format policy as TSV\n  ferail du [options] <path>  Print disk-usage summary\n  ferail thumb <path> [--out <png>] [--size N] [--preview]  Extract a file's thumbnail/preview to a PNG\n  ferail doctor          Print a health check (config / storage / deps) and exit\n\nFormat audit options:\n  --recursive      Include every file below the supplied directories\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories\n\nThumb options:\n  --out <path>     Output PNG path (default: thumb.png)\n  --size <px>      Max edge in pixels (default: 512)\n  --preview        Fetch what the preview pane would show instead of the grid thumbnail\n                   (on Windows this allows the brokered preview-handler capture)"
+        "Ferail\n\nUsage:\n  ferail                 Open the GPUI file manager\n  ferail <folder>        Open the file manager in <folder> (a file opens its folder)\n  ferail magic [path]...  Print magic-byte format (defaults to current directory; directories are listed shallow)\n  ferail formats [--recursive] [path]  Audit the file-list format policy as TSV\n  ferail du [options] <path>  Print disk-usage summary\n  ferail thumb <path> [--out <png>] [--size N] [--preview]  Extract a file's thumbnail/preview to a PNG\n  ferail doctor          Print a health check (config / storage / deps) and exit\n\nFormat audit options:\n  --recursive      Include every file below the supplied directories\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories\n\nThumb options:\n  --out <path>     Output PNG path (default: thumb.png)\n  --size <px>      Max edge in pixels (default: 512)\n  --preview        Fetch what the preview pane would show instead of the grid thumbnail\n                   (on Windows this allows the brokered preview-handler capture)"
     );
 }
 

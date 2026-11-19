@@ -113,8 +113,35 @@ pub fn install(cx: &mut App) {
                 continue;
             };
             install_binding(cx, spec.id, &kb_str);
+            // A text field is a descendant of SHELL_CONTEXT, so F2 in the
+            // filter box would rename the selected row and F5 in a rename
+            // would reload the list under it. Commands that a text field
+            // does not claim for itself stay silent while one has focus.
+            if leaks_into_text_fields(shortcut) {
+                cx.bind_keys([KeyBinding::new(
+                    &kb_str,
+                    gpui::NoAction,
+                    Some(TEXT_INPUT_CONTEXT),
+                )]);
+            }
         }
     }
+}
+
+/// A catalogue shortcut that reaches the shell from inside a text field:
+/// no primary modifier, and a key the text field does not bind itself.
+/// Only function keys and Option+Enter qualify: the field's own bindings
+/// (arrows, Home/End, Backspace, Delete, Enter, Escape, Tab) already win,
+/// and unbinding them here would break editing.
+fn leaks_into_text_fields(shortcut: &Shortcut) -> bool {
+    if shortcut.primary {
+        return false;
+    }
+    let key = shortcut.key.to_ascii_lowercase();
+    let function_key = key.len() >= 2
+        && key.starts_with('f')
+        && key[1..].chars().all(|c| c.is_ascii_digit());
+    function_key || (shortcut.alt && key == "enter")
 }
 
 /// Translate a `ferail_core::commands::Shortcut` to gpui's
@@ -192,6 +219,8 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) -> bool {
         // No catalogue shortcut (the Shortcut DSL lacks Delete);
         // install_extras binds Finder's cmd-shift-backspace chord.
         "file.empty_trash" => true,
+        // No catalogue shortcut; Move to Trash's chord puts back in the Trash.
+        "file.restore_from_trash" => true,
         "file.copy_path" => bind!(CopyPath, ctx),
         "file.copy" => bind!(CopyFiles, ctx),
         "file.cut" => bind!(CutFiles, ctx),
@@ -691,6 +720,28 @@ mod tests {
     /// composes characters) would swallow it in the filter box and in
     /// rename. Such a key needs a primary modifier, or an explicit
     /// `NoAction` in TEXT_INPUT_CONTEXT like Space has.
+    #[test]
+    fn function_keys_and_option_enter_stay_out_of_text_fields() {
+        let silenced: Vec<&str> = all_commands()
+            .iter()
+            .flat_map(|spec| spec.shortcuts.iter())
+            .filter(|s| leaks_into_text_fields(s))
+            .map(|s| s.key)
+            .collect();
+        for key in ["F2", "F5", "Enter"] {
+            assert!(silenced.contains(&key), "{key} not silenced: {silenced:?}");
+        }
+        for s in all_commands().iter().flat_map(|spec| spec.shortcuts.iter()) {
+            if ["Backspace", "Delete", "Up", "Down", "Left", "Right", "Home", "End", "Escape"]
+                .contains(&s.key)
+            {
+                assert!(!leaks_into_text_fields(s), "{} would break editing", s.key);
+            }
+        }
+        // Plain Enter is the field's own binding; only Option+Enter leaks.
+        assert!(!leaks_into_text_fields(&Shortcut::bare("Enter")));
+    }
+
     #[test]
     fn no_bare_printable_catalogue_shortcuts() {
         let offenders: Vec<_> = all_commands()

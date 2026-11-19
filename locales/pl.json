@@ -330,10 +330,6 @@
       "one": "Usunięto {n} element jako administrator",
       "other": "Usunięto {n} elementów jako administrator"
     },
-    "Deleted {n} item with errors: {detail}": {
-      "one": "Usunięto {n} element z błędami: {detail}",
-      "other": "Usunięto {n} elementów z błędami: {detail}"
-    },
     "Deleting {name}": "Usuwanie {name}",
     "Deleting {n} item": {
       "one": "Usuwanie {n} elementu",
@@ -863,6 +859,7 @@
     "Problems only": "Tylko problemy",
     "Purple": "Fioletowy",
     "Put Back": "Odłóż",
+    "Put Back works on items in the Trash.": "„Odłóż” działa na elementach w Koszu.",
     "Put {n} item back": {
       "one": "Odłożono {n} element",
       "other": "Odłożono {n} elementów"
@@ -1491,10 +1488,6 @@
       "one": "odfiltrowano {n} element.",
       "other": "odfiltrowano {n} elementów."
     },
-    "{n} item needs administrator rights to delete.": {
-      "one": "{n} element wymaga praw administratora do usunięcia.",
-      "other": "{n} elementów wymaga praw administratora do usunięcia."
-    },
     "{n} item was already in the archive and was left alone: {names}": {
       "one": "{n} element znajdował się już w archiwum i został pominięty: {names}",
       "other": "{n} elementów znajdowało się już w archiwum i zostały pominięte: {names}"
@@ -1594,6 +1587,7 @@
     "…and {overflow} more": "…i {overflow} więcej",
     "−1f": "−1f",
     "⚠ {warning}": "⚠ {warning}",
+    "✓ Saved": "✓ Zapisano",
     "{name} (not responding)": "{name} (nie odpowiada)",
     "Show Contents": "Pokaż zawartość",
     "No files or image on the clipboard": "Brak plików i obrazu w schowku",

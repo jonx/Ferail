@@ -191,13 +191,6 @@ Net-new, but each sits on plumbing that already exists.
   Finder on a scratch APFS volume carries only `com.apple.provenance`, and
   `.Trashes/<uid>` holds no sidecar. Any fix needs a supported API that does
   not exist today, so this may stay session-scoped by design.
-- **Reach Restore from the keyboard and the toolbar.** `file.restore_from_trash`
-  exists in the menu inventory but not in `ferail-core`'s command catalogue, so
-  it has no shortcut and no palette row. Add it to the catalogue and bind it.
-- Permanent delete reports failures as raw `format!("{}: {e}")` strings instead
-  of the structured `FileOpError` / `file_op_failure_report` path that
-  `on_move_to_trash` and `on_empty_trash` use. Align it so permanent-delete
-  failures get the same per-item classified report and coping actions.
 - Windows pasteboard **volume-identity parity** for CF_HDROP.
 - Recents follow-ups: recently-opened **files** (needs a file-open signal; only
   folder visits are logged today), and optionally a recents store decoupled
@@ -457,7 +450,6 @@ Net-new, but each sits on plumbing that already exists.
   gpui_windows patch and is omitted gracefully otherwise. (c) Move
   `run_checks()` off the UI thread if a slow or network config dir makes the
   one-time probe in `SettingsView::new` noticeable.
-- Settings "Saved" feedback pill or toast: changes persist silently today.
 - **Themes and colour customization** ([THEMES.md](docs/features/THEMES.md)):
   bundled themes plus a theme picker (Phase 1), a drop-in user themes folder
   with hot reload via `ThemeRegistry::watch_dir` (Phase 2), and a generalized
@@ -481,20 +473,15 @@ Net-new, but each sits on plumbing that already exists.
   the Disk Usage window's largest-file model.
 - Add non-GUI commands for automation: metadata reset, duplicate finding, cache
   inspection, command-catalogue listing.
-- Accept a bare directory argument so `Exec=ferail %U` and
-  `MimeType=inode/directory;` work in the desktop entry. A bare path exits as
-  an unknown subcommand today.
 - Add a plugin or scripting story only after the command and permission model
   is explicit.
 
 ## Packaging and polish
 
-- **Signed builds cannot send Apple Events.** `Ferail.entitlements` lacks
-  `com.apple.security.automation.apple-events` and Info.plist has no
-  `NSAppleEventsUsageDescription`, so under the hardened runtime macOS refuses
-  every AppleScript Ferail sends to another app, without a prompt. The
-  administrator terminal (`open_terminal_with`, `tell application "Terminal"`)
-  is affected. Add both, then check the consent prompt in a notarized build.
+- **Check the Apple Events consent prompt in a notarized build.** The
+  entitlement and usage description are in place for the administrator
+  terminal; only a signed, notarized build shows whether macOS asks once and
+  then lets `tell application "Terminal"` through.
 
 - Rework the app icon to macOS conventions and generate the iconset. The bundle
   script already builds `.icns` from a PNG source; the icon *art* is the gap.

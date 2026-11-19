@@ -354,10 +354,6 @@
       "one": "Eliminato {n} elemento come amministratore",
       "other": "Eliminati {n} elementi come amministratore"
     },
-    "Deleted {n} item with errors: {detail}": {
-      "one": "Eliminato {n} elemento con errori: {detail}",
-      "other": "Eliminati {n} elementi con errori: {detail}"
-    },
     "Deleting {name}": "Eliminazione di {name}",
     "Deleting {n} item": {
       "one": "Eliminazione di {n} elemento",
@@ -946,6 +942,7 @@
     "Problems only": "Solo problemi",
     "Purple": "Viola",
     "Put Back": "Ripristina",
+    "Put Back works on items in the Trash.": "“Ripristina” funziona sugli elementi nel Cestino.",
     "Put {n} item back": {
       "one": "Ripristina {n} elemento",
       "other": "Ripristina {n} elementi"
@@ -1626,10 +1623,6 @@
       "one": "{n} elemento nascosto o escluso dal filtro.",
       "other": "Tutti i {n} elementi nascosti o esclusi dal filtro."
     },
-    "{n} item needs administrator rights to delete.": {
-      "one": "L'eliminazione di {n} elemento richiede i privilegi di amministratore.",
-      "other": "L'eliminazione di {n} elementi richiede i privilegi di amministratore."
-    },
     "{n} item was already in the archive and was left alone: {names}": {
       "one": "{n} elemento era già nell'archivio ed è stato lasciato invariato: {names}",
       "other": "{n} elementi erano già nell'archivio e sono stati lasciati invariati: {names}"
@@ -1731,6 +1724,7 @@
     "…and {overflow} more": "…e altri {overflow}",
     "−1f": "−1f",
     "⚠ {warning}": "⚠ {warning}",
+    "✓ Saved": "✓ Salvato",
     "1 year": "1 anno",
     "30 days": "30 giorni",
     "7 days": "7 giorni",

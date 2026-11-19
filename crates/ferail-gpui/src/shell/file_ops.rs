@@ -2871,8 +2871,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        crate::trail::command("Move to Trash");
-        use crate::overlay::Notification;
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -2881,6 +2879,15 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
+        // Finder's rule: Cmd+Backspace on items already in the Trash puts
+        // them back. Moving them to the Trash again would mean nothing.
+        // `is_in_trash` is lexical, so this costs no I/O.
+        if paths.iter().all(|p| ferail_fs_native::is_in_trash(p)) {
+            self.on_restore_from_trash(&RestoreFromTrash, window, cx);
+            return;
+        }
+        crate::trail::command("Move to Trash");
+        use crate::overlay::Notification;
         // Windows Recycle Bin semantics are not defined for WSL UNC items.
         // Never let `FOFX_RECYCLEONDELETE` degrade into an operation the UI
         // still calls recoverable. Permanent deletion remains a separate,
@@ -3242,8 +3249,7 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let mut deleted = 0usize;
-                    let mut first_err: Option<String> = None;
-                    let mut failed_perm: Vec<PathBuf> = Vec::new();
+                    let mut failures: Vec<ferail_fs_native::file_ops::FileOpError> = Vec::new();
                     for p in &to_delete {
                         let removed = match std::fs::symlink_metadata(p) {
                             Ok(m) if m.is_dir() && !m.is_symlink() => std::fs::remove_dir_all(p),
@@ -3254,64 +3260,63 @@ impl Shell {
                         let removed = removed.and_then(|()| ferail_fs_native::linux_trash::forget(p));
                         match removed {
                             Ok(()) => deleted += 1,
-                            Err(e) => {
-                                if e.kind() == std::io::ErrorKind::PermissionDenied {
-                                    failed_perm.push(p.clone());
-                                }
-                                if first_err.is_none() {
-                                    first_err = Some(format!("{}: {e}", p.display()));
-                                }
-                            }
+                            Err(e) => failures
+                                .push(ferail_fs_native::file_ops::FileOpError::from_io(&e, p)),
                         }
                     }
-                    (deleted, first_err, failed_perm)
+                    (deleted, failures)
                 })
                 .await;
-            let (deleted, first_err, failed_perm) = result;
-            match &first_err {
-                Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
+            let (deleted, failures) = result;
+            match failures.first() {
+                Some(f) => process.tasks.borrow_mut().end_failed(task_id, f.to_string()),
                 None => process.tasks.borrow_mut().end(task_id),
             }
             Shell::broadcast_reload_for_process(&process, vec![cur], cx);
             let _ = win.update(cx, move |_, window, cx| {
-                match first_err {
-                    None => window.push_notice(
+                if failures.is_empty() {
+                    window.push_notice(
                         Notification::success(trn!(
                             "Deleted {n} item",
                             "Deleted {n} items",
                             deleted
                         )),
                         cx,
-                    ),
-                    Some(e) => {
-                        let detail = trn!(
-                            "Deleted {n} item with errors: {detail}",
-                            "Deleted {n} items with errors: {detail}",
-                            deleted,
-                            detail = e
-                        )
-                        .to_string();
-                        let headline = if failed_perm.is_empty() {
-                            detail.clone()
-                        } else {
-                            trn!(
-                                "{n} item needs administrator rights to delete.",
-                                "{n} items need administrator rights to delete.",
-                                failed_perm.len()
-                            )
-                            .to_string()
-                        };
-                        let retry = crate::shell::TrashRetry {
-                            shell: this,
-                            sources: failed_perm,
-                            delete: true,
-                        };
-                        window.push_notice(
-                            crate::shell::trash_failure_notification(headline, detail, retry),
-                            cx,
-                        )
-                    }
+                    );
+                    return;
                 }
+                // The structured per-item report every partly-failed
+                // mutation shares, with the raw OS detail behind Copy and
+                // an administrator retry for what elevation can finish.
+                let summary = crate::shell::file_op_failure_report(
+                    &tr!("Delete Immediately"),
+                    deleted,
+                    0,
+                    &failures,
+                );
+                let detail = failures
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let failed_perm: Vec<PathBuf> = failures
+                    .iter()
+                    .filter(|f| f.kind.is_elevation_recoverable())
+                    .map(|f| f.path.clone())
+                    .collect();
+                let retry = crate::shell::TrashRetry {
+                    shell: this,
+                    sources: failed_perm,
+                    delete: true,
+                };
+                window.push_notice(
+                    crate::shell::trash_failure_notification(
+                        summary.clone(),
+                        format!("{summary}\n\n{detail}"),
+                        retry,
+                    ),
+                    cx,
+                );
             });
         })
         .detach();
@@ -3330,12 +3335,19 @@ impl Shell {
     ) {
         use crate::overlay::Notification;
         crate::trail::command("Restore from Trash");
+        // Reachable from the menu bar and the palette anywhere; only items
+        // inside a Trash have somewhere to go back to.
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
             .map(|(_, _, path)| path)
+            .filter(|path| ferail_fs_native::is_in_trash(path))
             .collect();
         if paths.is_empty() {
+            window.push_notice(
+                Notification::info(tr!("Put Back works on items in the Trash.")),
+                cx,
+            );
             return;
         }
         #[cfg(not(target_os = "linux"))]

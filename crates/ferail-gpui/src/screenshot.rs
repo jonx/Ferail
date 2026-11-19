@@ -62,6 +62,8 @@ pub struct Args {
     /// Whitespace-separated keystrokes (gpui DSL, e.g. "down down
     /// enter") dispatched through the real window key path after the
     /// other flags apply. Verifies focus/keybinding routing headlessly.
+    /// With `--settings`: show the "Saved" confirmation.
+    pub settings_saved: bool,
     pub keys: Option<String>,
     /// Paths copied into the current dir via the real transfer worker
     /// (`spawn_transfer_op`, `TransferMode::Copy`) after navigation:
@@ -458,6 +460,7 @@ pub fn parse_args() -> Args {
             "--settings" => {
                 args.settings = Some(iter.next().unwrap_or_default());
             }
+            "--settings-saved" => args.settings_saved = true,
             "--viewer" => args.viewer = iter.next().map(PathBuf::from),
             "--text-editor" => args.text_editor = iter.next().map(PathBuf::from),
             "--image-editor" => args.image_editor = iter.next().map(PathBuf::from),
@@ -472,6 +475,17 @@ pub fn parse_args() -> Args {
             "--icon-picker" => args.icon_picker = true,
             "--safe-mode" => args.safe_mode = true,
             "--drag-ghost" => args.drag_ghost = iter.next().and_then(|s| s.parse().ok()),
+            // `ferail ~/Downloads`: a bare path opens the window there, the
+            // same as `--navigate`. A file opens its folder.
+            other if !other.starts_with('-') => {
+                let path = launch_path(other);
+                let folder = if path.is_file() {
+                    path.parent().map(PathBuf::from).unwrap_or(path)
+                } else {
+                    path
+                };
+                args.navigate.push(folder);
+            }
             "--help" | "-h" => {
                 print_help();
                 #[cfg(target_os = "aros")]
@@ -484,6 +498,35 @@ pub fn parse_args() -> Args {
         }
     }
     args
+}
+
+/// A command-line location as a path: a plain path, or a `file://` URL as
+/// desktop launchers pass it (`file:///home/a/My%20Files`).
+pub fn launch_path(arg: &str) -> PathBuf {
+    let Some(rest) = arg.strip_prefix("file://") else {
+        return PathBuf::from(arg);
+    };
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    PathBuf::from(percent_decode(rest))
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(hex) = s.get(i + 1..i + 3)
+            && let Ok(byte) = u8::from_str_radix(hex, 16)
+        {
+            out.push(byte);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn print_help() {
@@ -623,6 +666,7 @@ pub fn run(args: Args) -> Result<()> {
     let height = args.height.unwrap_or(760) as f32;
     let theme_mode = args.theme;
     let settings_page = args.settings.clone();
+    let settings_saved = args.settings_saved;
     let disk_usage_root = args.disk_usage.clone();
     let disk_usage_filter = args.filter.clone();
     let du_results_only = args.du_results_only;
@@ -891,6 +935,9 @@ pub fn run(args: Args) -> Result<()> {
                         let cat =
                             category_from_arg(if page.is_empty() { None } else { Some(page) });
                         let view = cx.new(|cx| SettingsView::new(cat, window, cx));
+                        if settings_saved {
+                            view.update(cx, |view, _| view.pin_saved_confirmation());
+                        }
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else {
                         let process = crate::process_state::process_state(cx);
@@ -2149,4 +2196,26 @@ fn placeholder_icon(color: u32) -> std::sync::Arc<RenderImage> {
         rgba.extend_from_slice(&[r, g, b, 255]);
     }
     std::sync::Arc::new(crate::icons::build_render_image(rgba, W, H))
+}
+
+#[cfg(test)]
+mod launch_path_tests {
+    use super::launch_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn plain_paths_and_file_urls() {
+        assert_eq!(launch_path("/tmp/a b"), PathBuf::from("/tmp/a b"));
+        assert_eq!(launch_path("."), PathBuf::from("."));
+        assert_eq!(
+            launch_path("file:///home/a/My%20Files"),
+            PathBuf::from("/home/a/My Files")
+        );
+        assert_eq!(
+            launch_path("file://localhost/home/%C3%A9t%C3%A9"),
+            PathBuf::from("/home/été")
+        );
+        // A stray percent sign survives untouched.
+        assert_eq!(launch_path("file:///a%2"), PathBuf::from("/a%2"));
+    }
 }

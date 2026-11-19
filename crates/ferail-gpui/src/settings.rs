@@ -420,7 +420,14 @@ pub struct SettingsView {
     /// Settings re-runs them. `Rc` so the per-frame page-render closures
     /// can share the report cheaply.
     diagnostics: Option<std::rc::Rc<crate::diagnostics::Report>>,
+    /// When the "Saved" confirmation appeared; `None` while hidden. A
+    /// change persists the moment it is made, and this is the only sign
+    /// of it.
+    saved_shown_at: Option<std::time::Instant>,
 }
+
+/// How long the "Saved" confirmation stays up after the last save.
+const SAVED_PILL_FOR: std::time::Duration = std::time::Duration::from_millis(1800);
 
 impl SettingsView {
     pub fn new(initial: SettingsCategory, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -486,13 +493,58 @@ impl SettingsView {
         })
         .detach();
 
+        // Watch the save counter while this window lives. The pages'
+        // controls persist through plain setters that never reach this
+        // view, so a cheap poll of one atomic is what notices them. Only a
+        // save made while Settings is the active window counts: the main
+        // window also saves (the last folder, the view mode) and must not
+        // flash "Saved" here.
+        cx.spawn_in(window, async move |this, cx| {
+            let mut seen = app_state::save_generation();
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(250))
+                    .await;
+                let current = app_state::save_generation();
+                let alive = this.update_in(cx, |this: &mut Self, window, cx| {
+                    let now = std::time::Instant::now();
+                    if current != seen && window.is_window_active() {
+                        this.saved_shown_at = Some(now);
+                        cx.notify();
+                    } else if this
+                        .saved_shown_at
+                        .is_some_and(|at| now.duration_since(at) >= SAVED_PILL_FOR)
+                    {
+                        this.saved_shown_at = None;
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+                seen = current;
+            }
+        })
+        .detach();
+
         Self {
             category: initial,
             home_hidden_count: None,
             selection_picker,
             ant_trail_picker,
             diagnostics: None,
+            saved_shown_at: None,
         }
+    }
+}
+
+impl SettingsView {
+    /// Pin the "Saved" confirmation up for the screenshot harness: dated
+    /// an hour ahead, so the poll's age check never reaches
+    /// [`SAVED_PILL_FOR`] before the capture.
+    pub fn pin_saved_confirmation(&mut self) {
+        self.saved_shown_at =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
     }
 }
 
@@ -569,6 +621,28 @@ impl Render for SettingsView {
                 page_ix: self.category.page_index(),
                 group_ix: None,
             })
+            .into_any_element();
+        let saved = self.saved_shown_at.is_some().then(|| {
+            gpui_component::h_flex()
+                .absolute()
+                .bottom_3()
+                .right_3()
+                .gap_1()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .bg(cx.theme().secondary)
+                .border_1()
+                .border_color(cx.theme().border)
+                .text_scale_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(tr!("\u{2713} Saved"))
+        });
+        let content = div()
+            .size_full()
+            .relative()
+            .child(content)
+            .children(saved)
             .into_any_element();
         crate::private_mode::protect(content, cx)
     }

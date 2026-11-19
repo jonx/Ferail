@@ -734,9 +734,20 @@ fn parse(text: &str) -> AppState {
     out
 }
 
+/// Bumped by every [`save`], so a surface can tell that something was
+/// saved without being told which setting it was.
+static SAVE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many saves have happened in this process. A plain atomic read, so
+/// render paths may call it.
+pub fn save_generation() -> u64 {
+    SAVE_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Update the cache immediately and queue an atomic disk write on
 /// the coalescing writer thread (see the module docs).
 pub fn save(state: &AppState) {
+    SAVE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut guard) = cache().lock() {
         *guard = Some(state.clone());
     }
