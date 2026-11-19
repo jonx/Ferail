@@ -19,6 +19,8 @@ use gpui_component::{
     tooltip::Tooltip,
 };
 
+pub(crate) const INLINE_EDITOR_CONTEXT: &str = "InlineEditor";
+
 /// Semantic identity for the first concrete inline field Ferail ships.
 /// Keeping the tab in the key prevents a stale editor from appearing over a
 /// coincidentally equal `NodeId` after a tab switch.
@@ -213,6 +215,7 @@ impl RenderOnce for InlineEditor {
 
         div()
             .id(self.id)
+            .key_context(INLINE_EDITOR_CONTEXT)
             .flex()
             .items_center()
             .min_w_0()
