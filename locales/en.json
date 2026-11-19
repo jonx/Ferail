@@ -289,7 +289,7 @@
     "Copy to Other Pane": "Copy to Other Pane",
     "Copying": "Copying",
     "Copying failed: {detail}": "Copying failed: {detail}",
-    "Copying {what} to “{dest}”…": "Copying {what} to “{dest}”…",
+    "Copying {what} to {dest}…": "Copying {what} to {dest}…",
     "Copying: preparing ({n} item)…": {
       "one": "Copying: preparing ({n} item)…",
       "other": "Copying: preparing ({n} items)…"
@@ -840,7 +840,7 @@
       "one": "Moving {n} item to Trash",
       "other": "Moving {n} items to Trash"
     },
-    "Moving {what} to “{dest}”…": "Moving {what} to “{dest}”…",
+    "Moving {what} to {dest}…": "Moving {what} to {dest}…",
     "Moving: preparing ({n} item)…": {
       "one": "Moving: preparing ({n} item)…",
       "other": "Moving: preparing ({n} items)…"
@@ -1450,7 +1450,7 @@
     "Tracker module": "Tracker module",
     "Trailing whitespace": "Trailing whitespace",
     "Transferring failed: {detail}": "Transferring failed: {detail}",
-    "Transferring {what} to “{dest}”…": "Transferring {what} to “{dest}”…",
+    "Transferring {what} to {dest}…": "Transferring {what} to {dest}…",
     "Transferring: preparing ({n} item)…": {
       "one": "Transferring: preparing ({n} item)…",
       "other": "Transferring: preparing ({n} items)…"

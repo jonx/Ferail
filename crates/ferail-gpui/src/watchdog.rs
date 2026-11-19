@@ -206,7 +206,7 @@ fn publish_task_snapshot(cx: &mut App) {
             "{:?} · running {:.1}s · {}",
             t.kind,
             t.started_at.elapsed().as_secs_f32(),
-            crate::redact::scrub_text(&t.label),
+            crate::redact::scrub_text(&crate::emphasis::plain(&t.label)),
         ));
     }
     // Never make the UI heartbeat wait for the reporting thread. A missed

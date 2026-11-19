@@ -229,7 +229,7 @@
     "Copy report": "Kopiuj raport",
     "Copy to Other Pane": "Kopiuj do drugiego panelu",
     "Copying failed: {detail}": "Kopiowanie nie powiodło się: {detail}",
-    "Copying {what} to “{dest}”…": "Kopiowanie {what} do „{dest}”...",
+    "Copying {what} to {dest}…": "Kopiowanie {what} do {dest}...",
     "Copying: preparing ({n} item)…": {
       "one": "Kopiowanie: przygotowywanie ({n} element)…",
       "other": "Kopiowanie: przygotowywanie ({n} elementów)…"
@@ -703,7 +703,7 @@
       "one": "Przenoszenie {n} elementu do Kosza",
       "other": "Przenoszenie {n} elementów do Kosza"
     },
-    "Moving {what} to “{dest}”…": "Przenoszenie {what} do „{dest}”...",
+    "Moving {what} to {dest}…": "Przenoszenie {what} do {dest}...",
     "Moving: preparing ({n} item)…": {
       "one": "Przenoszenie: przygotowywanie ({n} element)…",
       "other": "Przenoszenie: przygotowywanie ({n} elementów)…"
@@ -1227,7 +1227,7 @@
     "Track": "Utwór",
     "Trailing whitespace": "Puste znaki na końcu",
     "Transferring failed: {detail}": "Przesyłanie nie powiodło się: {detail}",
-    "Transferring {what} to “{dest}”…": "Przesyłanie {what} do „{dest}”...",
+    "Transferring {what} to {dest}…": "Przesyłanie {what} do {dest}...",
     "Transferring: preparing ({n} item)…": {
       "one": "Przesyłanie: przygotowywanie ({n} element)…",
       "other": "Przesyłanie: przygotowywanie ({n} elementów)…"

@@ -251,7 +251,7 @@
     "Copy report": "Copia resoconto",
     "Copy to Other Pane": "Copia nell’altro pannello",
     "Copying failed: {detail}": "Copia non riuscita: {detail}",
-    "Copying {what} to “{dest}”…": "Copia di {what} in “{dest}”…",
+    "Copying {what} to {dest}…": "Copia di {what} in {dest}…",
     "Copying: preparing ({n} item)…": {
       "one": "Copia: preparazione ({n} elemento)…",
       "other": "Copia: preparazione ({n} elementi)…"
@@ -771,7 +771,7 @@
       "one": "Spostamento di {n} elemento nel cestino",
       "other": "Spostamento di {n} elementi nel cestino"
     },
-    "Moving {what} to “{dest}”…": "Spostamento di {what} in “{dest}”…",
+    "Moving {what} to {dest}…": "Spostamento di {what} in {dest}…",
     "Moving: preparing ({n} item)…": {
       "one": "Spostamento: preparazione ({n} elemento)…",
       "other": "Spostamento: preparazione ({n} elementi)…"
@@ -1333,7 +1333,7 @@
     "Tracker module": "Modulo tracker",
     "Trailing whitespace": "Spazi finali",
     "Transferring failed: {detail}": "Trasferimento non riuscito: {detail}",
-    "Transferring {what} to “{dest}”…": "Trasferimento di {what} in “{dest}”…",
+    "Transferring {what} to {dest}…": "Trasferimento di {what} in {dest}…",
     "Transferring: preparing ({n} item)…": {
       "one": "Trasferimento: preparazione ({n} elemento)…",
       "other": "Trasferimento: preparazione ({n} elementi)…"

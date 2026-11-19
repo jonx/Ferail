@@ -289,7 +289,7 @@
     "Copy to Other Pane": "Copier vers l’autre volet",
     "Copying": "Copie",
     "Copying failed: {detail}": "Échec de la copie : {detail}",
-    "Copying {what} to “{dest}”…": "Copie de {what} dans « {dest} »…",
+    "Copying {what} to {dest}…": "Copie de {what} dans {dest}…",
     "Copying: preparing ({n} item)…": {
       "one": "Copie, préparation (élément {n})…",
       "other": "Copie, préparation (éléments {n})…"
@@ -840,7 +840,7 @@
       "one": "Déplacement de l'élément {n} vers la corbeille",
       "other": "Déplacement des éléments {n} vers la corbeille"
     },
-    "Moving {what} to “{dest}”…": "Déplacement de {what} vers « {dest} »…",
+    "Moving {what} to {dest}…": "Déplacement de {what} vers {dest}…",
     "Moving: preparing ({n} item)…": {
       "one": "Déplacement, préparation ({n} élément)…",
       "other": "Déplacement, préparation ({n} éléments)…"
@@ -1450,7 +1450,7 @@
     "Tracker module": "Module tracker",
     "Trailing whitespace": "Espaces de fin",
     "Transferring failed: {detail}": "Échec du transfert : {detail}",
-    "Transferring {what} to “{dest}”…": "Transfert de {what} vers « {dest} »…",
+    "Transferring {what} to {dest}…": "Transfert de {what} vers {dest}…",
     "Transferring: preparing ({n} item)…": {
       "one": "Transfert, préparation (élément {n})…",
       "other": "Transfert, préparation (éléments {n})…"

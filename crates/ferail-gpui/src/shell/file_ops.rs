@@ -711,19 +711,20 @@ impl Shell {
             TransferMode::Move => "Moving",
             TransferMode::Auto => "Transferring",
         };
-        let noun = match sources.as_slice() {
-            [single] => tr!(
-                "\u{201c}{name}\u{201d}",
-                name = single.file_name().unwrap_or_default().to_string_lossy()
-            ),
+        let noun: SharedString = match sources.as_slice() {
+            [single] => crate::emphasis::name(
+                single.file_name().unwrap_or_default().to_string_lossy(),
+            )
+            .into(),
             many => trn!("{n} item", "{n} items", many.len()),
         };
-        // "Moving “D4Mac” to “Backup”…": the destination is part of the
+        // "Moving *D4Mac* to *Backup*…": the destination is part of the
         // label so the task panel answers *where to* without a hover.
-        let dest_name = dest
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| dest.display().to_string());
+        let dest_name = crate::emphasis::name(
+            dest.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| dest.display().to_string()),
+        );
         let base_label = transfer_running_label(mode, &noun, &dest_name).to_string();
         let task_id = self.process.tasks.borrow_mut().begin_with_cancel(
             crate::tasks::TaskKind::FileOp,
@@ -4386,7 +4387,7 @@ impl Shell {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("item");
-            tr!("Duplicating {name}", name = name)
+            tr!("Duplicating {name}", name = crate::emphasis::name(name))
         } else {
             trn!("Duplicating {n} item", "Duplicating {n} items", count)
         };
@@ -4779,7 +4780,7 @@ impl Shell {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("item");
-            tr!("Compressing {name}", name = name)
+            tr!("Compressing {name}", name = crate::emphasis::name(name))
         } else {
             trn!("Compressing {n} item", "Compressing {n} items", count)
         };
@@ -5164,7 +5165,7 @@ impl Shell {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("archive");
-            tr!("Extracting {name}", name = name)
+            tr!("Extracting {name}", name = crate::emphasis::name(name))
         } else {
             trn!("Extracting {n} archive", "Extracting {n} archives", count)
         };
@@ -5872,24 +5873,24 @@ impl Shell {
     }
 }
 
-/// The running-phase task label for a transfer, "Moving “D4Mac” to
-/// “Backup”…", as a whole translated sentence per mode, so word order is
-/// the translator's call. `what` is the already-built noun (a quoted name
-/// or "{n} items").
+/// The running-phase task label for a transfer, "Moving *D4Mac* to
+/// *Backup*…", as a whole translated sentence per mode, so word order is
+/// the translator's call. `what` is the already-built noun (a name marked
+/// with [`crate::emphasis::name`] or "{n} items"); `dest` is marked too.
 fn transfer_running_label(mode: TransferMode, what: &str, dest: &str) -> SharedString {
     match mode {
         TransferMode::Copy => tr!(
-            "Copying {what} to \u{201c}{dest}\u{201d}\u{2026}",
+            "Copying {what} to {dest}\u{2026}",
             what = what,
             dest = dest
         ),
         TransferMode::Move => tr!(
-            "Moving {what} to \u{201c}{dest}\u{201d}\u{2026}",
+            "Moving {what} to {dest}\u{2026}",
             what = what,
             dest = dest
         ),
         TransferMode::Auto => tr!(
-            "Transferring {what} to \u{201c}{dest}\u{201d}\u{2026}",
+            "Transferring {what} to {dest}\u{2026}",
             what = what,
             dest = dest
         ),

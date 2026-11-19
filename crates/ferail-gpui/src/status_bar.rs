@@ -805,7 +805,7 @@ pub fn render(
                     .gap(rems(gap / crate::text::BASE_REM_PX))
                     .when_some(shown_task_label, |row, label| {
                         row.child(make_clickable(
-                            div().min_w_0().truncate().child(label),
+                            div().min_w_0().truncate().child(crate::emphasis::styled(&label)),
                             "status-bar-task-label",
                         ))
                     })

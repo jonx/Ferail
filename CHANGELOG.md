@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Task names are in italics instead of quotes.** The background tasks
+  panel and the status bar showed a copy as *Copie de "file" dans « Desktop »*,
+  mixing two quote styles in one line. File and folder names in copy, move,
+  duplicate, compress and extract tasks are now set in italics, with no quotes
+  in any language.
+
 - **The Git column appears only inside a Git repository.** It used to take
   its place in every folder and stay empty outside a repository. A new
   switch, Settings → Files → Git → Show Git status, turns the column and the

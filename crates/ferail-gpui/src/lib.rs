@@ -33,6 +33,7 @@ pub mod disk_usage;
 pub mod dupe_cache;
 pub mod integrity_view;
 pub mod elevation;
+pub mod emphasis;
 pub mod entry_info;
 pub mod favorite_icon_picker;
 pub mod favorites;

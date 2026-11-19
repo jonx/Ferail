@@ -1986,7 +1986,11 @@ impl ShellArgs {
                 let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let transfer = reg.begin_with_cancel(
                     crate::tasks::TaskKind::FileOp,
-                    "Moving \u{201c}D4Mac\u{201d} to \u{201c}Backup\u{201d}\u{2026}",
+                    format!(
+                        "Moving {} to {}\u{2026}",
+                        crate::emphasis::name("D4Mac"),
+                        crate::emphasis::name("Backup")
+                    ),
                     flag,
                 );
                 reg.update(transfer, 0.05);
@@ -2018,7 +2022,7 @@ impl ShellArgs {
                 let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
                 let cancelled = reg.begin_with_cancel(
                     crate::tasks::TaskKind::Search,
-                    "Searched \u{201C}invoice\u{201D}",
+                    format!("Searched {}", crate::emphasis::name("invoice")),
                     flag,
                 );
                 reg.end(cancelled);

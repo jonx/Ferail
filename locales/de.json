@@ -289,7 +289,7 @@
     "Copy to Other Pane": "In anderen Bereich kopieren",
     "Copying": "Kopieren",
     "Copying failed: {detail}": "Kopieren fehlgeschlagen: {detail}",
-    "Copying {what} to “{dest}”…": "{what} wird nach „{dest}“ kopiert …",
+    "Copying {what} to {dest}…": "{what} wird nach {dest} kopiert …",
     "Copying: preparing ({n} item)…": {
       "one": "Kopieren, wird vorbereitet ({n} Objekt) …",
       "other": "Kopieren, wird vorbereitet ({n} Objekte) …"
@@ -840,7 +840,7 @@
       "one": "{n} Objekt wird in den Papierkorb gelegt",
       "other": "{n} Objekte werden in den Papierkorb gelegt"
     },
-    "Moving {what} to “{dest}”…": "{what} wird nach „{dest}“ bewegt …",
+    "Moving {what} to {dest}…": "{what} wird nach {dest} bewegt …",
     "Moving: preparing ({n} item)…": {
       "one": "Bewegen, wird vorbereitet ({n} Objekt) …",
       "other": "Bewegen, wird vorbereitet ({n} Objekte) …"
@@ -1450,7 +1450,7 @@
     "Tracker module": "Tracker-Modul",
     "Trailing whitespace": "Abschließender Leerraum",
     "Transferring failed: {detail}": "Übertragen fehlgeschlagen: {detail}",
-    "Transferring {what} to “{dest}”…": "{what} wird nach „{dest}“ übertragen …",
+    "Transferring {what} to {dest}…": "{what} wird nach {dest} übertragen …",
     "Transferring: preparing ({n} item)…": {
       "one": "Übertragen, wird vorbereitet ({n} Objekt) …",
       "other": "Übertragen, wird vorbereitet ({n} Objekte) …"

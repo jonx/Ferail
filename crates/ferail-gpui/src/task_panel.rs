@@ -81,7 +81,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
         let rows = surfaced
             .iter()
             .map(|t| {
-                let label = SharedString::from(t.label.clone());
+                let label = crate::emphasis::styled(&t.label);
                 let progress_text = match t.progress {
                     TaskProgress::Indeterminate => tr!("Running\u{2026}").to_string(),
                     TaskProgress::Determinate(p) => format!("{:.0}%", p * 100.0),
@@ -220,7 +220,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                             .truncate()
                             .text_scale_xs()
                             .text_color(theme_muted)
-                            .child(SharedString::from(label)),
+                            .child(crate::emphasis::styled(&label)),
                     )
                     .child(
                         div()
