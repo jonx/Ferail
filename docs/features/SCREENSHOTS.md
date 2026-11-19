@@ -88,6 +88,9 @@ look more interesting.
   ends the run with "window closed by --keys" instead of a capture), `--context-menu-row N` (synthesises a real mouse-move +
   right-click over row N, so the row context menu builds exactly as it does for
   a user: it lives in a mouse-event listener, so no action can open it),
+  `--menu-keys <list>` (keystrokes dispatched once that menu is open, such
+  as `"down down right"` to walk into a submenu), `--settings-saved` (with
+  `--settings`, pins the "Saved" confirmation for the capture),
   `--context-menu-background` (same synthesis aimed at the file-list body's
   midpoint, capturing the empty-space folder menu; point it at an empty
   folder, or one whose rows stop above the midpoint), `--menu-hidden <spec>`

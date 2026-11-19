@@ -4140,10 +4140,10 @@ impl TableDelegate for FileListDelegate {
         // Build submenu Entities via `PopupMenu::build`, which only
         // needs `&mut App` (which we have via Context<TableState>'s
         // deref). The plan carries pre-built submenu entities.
-        // SingleOnly: "Open With" resolves one warmed path; on a
-        // multi-selection the slot indices wouldn't map to a single app,
-        // so the submenu is hidden rather than acting on just the anchor.
-        if show_single_only && target_path.is_some() {
+        // The applications offered are the clicked row's; picking one
+        // opens the whole selection with it (`Shell::open_with_slot`
+        // resolves the full set), as Finder does for a multi-selection.
+        if target_path.is_some() {
             match &warmed_candidates {
                 Some(candidates) => {
                     let candidates = candidates.clone();
@@ -4447,7 +4447,7 @@ fn build_open_with_submenu(
     candidates: &[crate::platform_shell::OpenWithCandidate],
 ) -> PopupMenu {
     if candidates.is_empty() {
-        return menu.item(PopupMenuItem::new(tr!("No applications found")).disabled(true));
+        menu = menu.item(PopupMenuItem::new(tr!("No applications found")).disabled(true));
     }
 
     for (slot, candidate) in candidates.iter().take(12).enumerate() {
@@ -4458,7 +4458,10 @@ fn build_open_with_submenu(
         };
         menu = menu.menu(label, open_with_action(slot));
     }
-    menu
+    // Always offered, and most needed when the system knows no
+    // application for the type at all.
+    menu.separator()
+        .menu(tr!("Other\u{2026}"), Box::new(crate::shell::OpenWithOther))
 }
 
 fn open_with_action(slot: usize) -> Box<dyn gpui::Action> {

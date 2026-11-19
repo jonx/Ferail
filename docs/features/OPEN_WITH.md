@@ -17,10 +17,9 @@ Two questions were asked of this note:
    registers and §3 shows what we already call.
 2. Can the user add their own tools? Not today. §5 designs it.
 
-**Short answer.** The system half is done; the gap is everything around
-it, no way to pick an app that isn't in the list, no user-defined
-commands, no "always open with", and the submenu hides itself on a
-multi-selection even though the dispatch already handles many files. The
+**Short answer.** The system half is done, including **Other…** and
+multi-selection; the gaps are user-defined commands and "always open
+with". The
 custom-tool half should be a sibling of the shipped
 [`ferail_core::terminal::TerminalSpec`](../../crates/ferail-core/src/terminal.rs)
 the same "program + pre-split argv tokens + `{placeholder}` substituted per
@@ -93,6 +92,19 @@ The GPUI side is Prime-Directive-clean already:
   `open_with_app_many` on the background executor.
 - The list view and the icon grid share one `context_menu` delegate
   method, so both already carry it.
+- **Multi-selection.** The submenu lists the clicked row's applications and
+  opens the whole selection with the one picked. Dispatch accepts the warm
+  cache when its path is any selected path, since the clicked row need not
+  be the first.
+- **Other…** closes every submenu, after a separator, and is the way out
+  when the system lists no application at all ("No applications found").
+  It opens the system file chooser through `cx.prompt_for_paths`, which is
+  asynchronous: a macOS application is a bundle the chooser offers as a
+  file, and anything else is refused with a notice; on Linux and Windows
+  the pick is an executable or a `.desktop` entry, which
+  `open_with_app_many` already launches.
+- A launch that fails says so in an error notification with the system's
+  reason, instead of only reaching the log.
 
 ## 3. Measurements
 
@@ -116,20 +128,19 @@ Two findings:
   bundles on slow volumes, are unbounded), but richer uses, enumerating
   for several types, precomputing a per-extension default map: are
   effectively free once LS is warm.
-- **An unknown extension yields zero candidates and no default**, and the
-  current code omits the submenu entirely for an empty set. So the file
+- **An unknown extension yields zero candidates and no default.** The file
   type where the user is *most* likely to want a specific tool is exactly
-  the one that offers nothing. That alone justifies this feature.
+  the one the system offers nothing for, which is why **Other…** is always
+  in the submenu and why custom tools are worth building.
 
 ## 4. The gaps, precisely
 
 | Gap | Detail |
 |---|---|
-| No **"Other…"** | The user cannot pick an app the OS didn't offer. Note `gpui::PathPromptOptions` has only `files` / `directories` / `multiple` / `prompt`: **no type filter**, and a macOS `.app` is a *directory*, so a portable chooser needs a platform entry point (`NSOpenPanel` with `allowedContentTypes` + `treatsFilePackagesAsDirectories`), not just the gpui prompt. |
+| **Other… has no type filter** | `gpui::PathPromptOptions` has only `files` / `directories` / `multiple` / `prompt`, so the chooser shows every file and the choice is validated afterwards. A filtered chooser (`NSOpenPanel` with `allowedContentTypes`) needs a platform entry point. The chosen app is not remembered in the list. |
 | No **custom tools** | The whole subject of §5. |
 | No **"Always Open With"** | Nothing calls `LSSetDefaultRoleHandlerForContentType` / `xdg-mime default`; there is no per-extension override of our own either. |
-| **Hidden on multi-selection** | The submenu is `SingleOnly`, yet `open_with_slot` already resolves the full selection and calls `open_with_app_many`. The restriction is the *menu*, not the machinery. |
-| **Empty set ⇒ no submenu** | See the `.zzqq` row above. |
+| **One application list per selection** | A mixed selection offers the clicked row's applications, not the ones common to every selected type. |
 | **12-slot ceiling** | `OpenWithSlot0..11` are twelve unit actions; the menu `take(12)`s. Custom tools would double the pressure on that scheme: see §5.6. |
 | Only in the file pane | The disk-usage treemap menu has Open/Reveal/Quick Look but no Open With. |
 
@@ -305,10 +316,8 @@ threat model, so the rules are non-negotiable:
 
 ## 7. Phasing
 
-1. **Close the cheap gaps first**: they are small and independently
-   useful: allow the submenu on multi-selection (the dispatch already
-   handles it), add **Other…** (needs the platform app-chooser entry
-   point), and stop hiding the submenu when the candidate set is empty.
+1. **The cheap gaps** (multi-selection, **Other…**, an empty candidate
+   set): shipped, see §2.
 2. **Custom tools, v1**: `ToolSpec` + `tools.json` + matching + the
    Settings editor with argv preview + closure-backed menu items.
    `Detached` and `InTerminal` run modes.

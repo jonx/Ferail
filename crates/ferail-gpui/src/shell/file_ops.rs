@@ -2623,47 +2623,145 @@ impl Shell {
         self.toggle_tag_on_target(ferail_core::commands::TagColor::Gray, window, cx);
     }
 
-    fn open_with_slot(&mut self, slot: usize, cx: &mut Context<Self>) {
+    fn open_with_slot(&mut self, slot: usize, window: &mut Window, cx: &mut Context<Self>) {
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
             .map(|(_, _, path)| path)
             .collect();
-        let Some(first) = paths.first() else { return };
+        if paths.is_empty() {
+            return;
+        }
         // Resolve the slot against the SAME warm cache the menu was
         // built from. Re-fetching here used to be both a sync
         // LaunchServices stall on action dispatch and a correctness
         // hazard: a fresh fetch can order candidates differently than
         // the list the user just looked at, silently opening the
-        // wrong app for slot N. Cache mismatch (possible only if the
-        // lead changed between menu open and click) is a no-op.
+        // wrong app for slot N. The menu warms the clicked row, which on
+        // a multi-selection need not be the first one, so any selected
+        // path matches. A mismatch (the selection changed between menu
+        // open and click) is a no-op.
         let app_path: Option<PathBuf> = {
             let delegate = self.active_tab().table.read(cx).delegate();
             match &delegate.open_with_warm {
-                Some((warm_path, cands)) if warm_path == first => {
+                Some((warm_path, cands)) if paths.contains(warm_path) => {
                     cands.get(slot).map(|c| c.path.clone())
                 }
                 _ => {
                     crate::log_warn!(
                         90,
                         "open_with_slot {slot}: warm cache miss for {}; ignoring",
-                        first.display()
+                        paths[0].display()
                     );
                     None
                 }
             }
         };
         if let Some(app) = app_path {
-            // `open -a` waits for the app to check in (seconds on a
-            // cold launch), one batched invocation on the background
-            // executor instead of N sequential waits on the UI thread.
-            cx.background_spawn(async move {
-                if let Err(e) = crate::platform_shell::open_with_app_many(&paths, &app) {
-                    crate::log_warn!(90, "open with {}: {e}", app.display());
-                }
-            })
-            .detach();
+            self.open_paths_with_app(paths, app, window, cx);
         }
+    }
+
+    /// Open With ▸ Other…: let the user pick any application with the
+    /// system chooser, then open the selection with it. The chooser is
+    /// asynchronous, so nothing here waits on the UI thread.
+    pub(super) fn on_open_with_other(
+        &mut self,
+        _: &OpenWithOther,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::overlay::Notification;
+        // Snapshot the targets now: the selection may change while the
+        // chooser is up.
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
+            // A macOS application is a bundle, which the chooser offers as
+            // a file; elsewhere it is an executable or a .desktop entry.
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(tr!("Open")),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(app) = picked
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten()
+                .and_then(|mut picked| picked.pop())
+            else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                if cfg!(target_os = "macos")
+                    && !app
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+                {
+                    window.push_notice(
+                        Notification::info(tr!(
+                            "Choose an application to open the selection with."
+                        )),
+                        cx,
+                    );
+                    return;
+                }
+                this.open_paths_with_app(paths, app, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Open `paths` with the application at `app` off the UI thread, and
+    /// say so when it fails instead of only logging it.
+    fn open_paths_with_app(
+        &mut self,
+        paths: Vec<PathBuf>,
+        app: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Open With");
+        let win = window.window_handle();
+        // `open -a` waits for the app to check in (seconds on a cold
+        // launch): one batched invocation on the background executor
+        // instead of N sequential waits on the UI thread.
+        cx.spawn(async move |_this, cx| {
+            let app_for_open = app.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::platform_shell::open_with_app_many(&paths, &app_for_open) })
+                .await;
+            if let Err(error) = result {
+                crate::log_warn!(90, "open with {}: {error}", app.display());
+                let name = app
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| app.display().to_string());
+                let _ = win.update(cx, |_, window, cx| {
+                    window.push_notice(
+                        crate::shell::error_notification(
+                            tr!(
+                                "Couldn\u{2019}t open with {app}: {error}",
+                                app = name,
+                                error = error
+                            )
+                            .to_string(),
+                        ),
+                        cx,
+                    );
+                });
+            }
+        })
+        .detach();
     }
 
     /// Open the single targeted file in the built-in text editor
@@ -2760,109 +2858,109 @@ impl Shell {
     pub(super) fn on_open_with_slot_0(
         &mut self,
         _: &OpenWithSlot0,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(0, cx);
+        self.open_with_slot(0, window, cx);
     }
 
     pub(super) fn on_open_with_slot_1(
         &mut self,
         _: &OpenWithSlot1,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(1, cx);
+        self.open_with_slot(1, window, cx);
     }
 
     pub(super) fn on_open_with_slot_2(
         &mut self,
         _: &OpenWithSlot2,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(2, cx);
+        self.open_with_slot(2, window, cx);
     }
 
     pub(super) fn on_open_with_slot_3(
         &mut self,
         _: &OpenWithSlot3,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(3, cx);
+        self.open_with_slot(3, window, cx);
     }
 
     pub(super) fn on_open_with_slot_4(
         &mut self,
         _: &OpenWithSlot4,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(4, cx);
+        self.open_with_slot(4, window, cx);
     }
 
     pub(super) fn on_open_with_slot_5(
         &mut self,
         _: &OpenWithSlot5,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(5, cx);
+        self.open_with_slot(5, window, cx);
     }
 
     pub(super) fn on_open_with_slot_6(
         &mut self,
         _: &OpenWithSlot6,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(6, cx);
+        self.open_with_slot(6, window, cx);
     }
 
     pub(super) fn on_open_with_slot_7(
         &mut self,
         _: &OpenWithSlot7,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(7, cx);
+        self.open_with_slot(7, window, cx);
     }
 
     pub(super) fn on_open_with_slot_8(
         &mut self,
         _: &OpenWithSlot8,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(8, cx);
+        self.open_with_slot(8, window, cx);
     }
 
     pub(super) fn on_open_with_slot_9(
         &mut self,
         _: &OpenWithSlot9,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(9, cx);
+        self.open_with_slot(9, window, cx);
     }
 
     pub(super) fn on_open_with_slot_10(
         &mut self,
         _: &OpenWithSlot10,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(10, cx);
+        self.open_with_slot(10, window, cx);
     }
 
     pub(super) fn on_open_with_slot_11(
         &mut self,
         _: &OpenWithSlot11,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_with_slot(11, cx);
+        self.open_with_slot(11, window, cx);
     }
 
     pub(super) fn on_move_to_trash(

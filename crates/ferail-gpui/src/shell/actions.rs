@@ -329,6 +329,9 @@ actions!(
         OpenWithSlot9,
         OpenWithSlot10,
         OpenWithSlot11,
+        /// Open With ▸ Other…: pick any application with the system file
+        /// chooser and open the selection with it.
+        OpenWithOther,
         /// Cmd+Z: pop the most recent reversible action off
         /// Shell::undo_stack and replay its inverse. Currently handles
         /// Rename (rename back) and NewFolder (delete the created

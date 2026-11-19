@@ -5316,6 +5316,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_with_slot_9))
             .on_action(cx.listener(Self::on_open_with_slot_10))
             .on_action(cx.listener(Self::on_open_with_slot_11))
+            .on_action(cx.listener(Self::on_open_with_other))
             .on_action(cx.listener(Self::on_edit_file))
             .on_action(cx.listener(Self::on_edit_image))
             .on_action(cx.listener(Self::on_edit_text_file))

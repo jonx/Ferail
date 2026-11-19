@@ -103,20 +103,16 @@ Net-new, but each sits on plumbing that already exists.
   feed frequency × recency × relevance into result ordering. Shares the
   file-open signal that recently-opened files needs, and pairs with the Ant
   Trail decay item under Metadata & Intelligence.
-- **Open With: custom tools, "Other…", and multi-selection**
-  ([OPEN_WITH.md](docs/features/OPEN_WITH.md)). The gaps: the submenu is
-  `SingleOnly` even though `open_with_slot` already resolves the whole
-  selection and calls `open_with_app_many`; an empty candidate set hides the
-  submenu entirely, exactly when an unknown extension most wants a specific
-  tool; there is no "Other…" chooser (`gpui::PathPromptOptions` has no type
-  filter and a macOS `.app` is a directory, so this needs a platform
-  `NSOpenPanel` entry point); and no user-defined tools. The tool model should
+- **Open With: custom tools** ([OPEN_WITH.md](docs/features/OPEN_WITH.md)).
+  Multi-selection and **Other…** ship; what is left is user-defined tools, a
+  filtered application chooser (`NSOpenPanel` with `allowedContentTypes`,
+  since `gpui::PathPromptOptions` has no type filter), and remembering an
+  application picked through Other…. The tool model should
   be a sibling of `ferail_core::terminal::TerminalSpec`: program plus
   pre-split argv tokens plus per-token placeholder substitution, argv never a
   shell string, persisted as a shareable `tools.json` rather than in the
   recreate-on-version-mismatch metadata DB, matched only against cached
-  `FileEntry` fields, and dispatched through closure-backed menu items. Phase 1
-  is the three cheap gaps; custom tools follow.
+  `FileEntry` fields, and dispatched through closure-backed menu items.
 - **Target panel ("Pick as Target") and batched transfers.** A pinned, frozen
   second listing on the right: right-click a folder anywhere, pick it as the
   target, and it stays put as a source or destination until replaced or

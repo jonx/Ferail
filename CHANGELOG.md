@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Open With works on several files, and offers Other….** With more than
+  one file selected, Open With lists the clicked file's applications and
+  opens the whole selection with the one you pick; it used to disappear.
+  **Other…** at the bottom of the submenu lets you choose any application,
+  including for a file type the system knows no application for. A launch
+  that fails now says why instead of doing nothing.
+
 - **Cmd+Backspace in the Trash puts items back.** As in Finder, the Move to
   Trash shortcut restores the selection to where it came from when you are
   in the Trash. Put Back is also in the command palette and the File menu.

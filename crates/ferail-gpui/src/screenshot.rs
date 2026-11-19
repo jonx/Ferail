@@ -239,6 +239,9 @@ pub struct Args {
     /// Nothing else opens it: the menu lives in a mouse-event listener,
     /// not behind an action.
     pub context_menu_row: Option<usize>,
+    /// Keystrokes dispatched after `--context-menu-row` /
+    /// `--context-menu-background` opened the menu, to walk into a submenu.
+    pub menu_keys: Option<String>,
     /// Adopt a context-menu customization spec for this run, in the
     /// `surface:id,id;surface:id` form `AppState::menu_hidden` stores. The
     /// preference otherwise comes from the user's own settings file, which a
@@ -363,6 +366,7 @@ pub fn parse_args() -> Args {
                 args.context_menu_row = iter.next().and_then(|s| s.parse().ok())
             }
             "--context-menu-background" => args.context_menu_background = true,
+            "--menu-keys" => args.menu_keys = iter.next(),
             "--menu-hidden" => args.menu_hidden = iter.next(),
             "--menu-layout" => args.menu_layout = iter.next(),
             "--scroll-wheel" => {
@@ -1272,6 +1276,7 @@ struct ShellArgs {
     platform_namespace: bool,
     scroll_wheel: Option<Vec<i32>>,
     context_menu_row: Option<usize>,
+    menu_keys: Option<String>,
     click_rows: Vec<ClickGesture>,
     context_menu_background: bool,
     view: Option<crate::grid::ViewMode>,
@@ -1328,6 +1333,7 @@ impl From<&Args> for ShellArgs {
             platform_namespace: a.platform_namespace,
             scroll_wheel: a.scroll_wheel.clone(),
             context_menu_row: a.context_menu_row,
+            menu_keys: a.menu_keys.clone(),
             click_rows: a.click_rows.clone(),
             context_menu_background: a.context_menu_background,
             view: a.view,
@@ -1836,6 +1842,11 @@ impl ShellArgs {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(700))
                 .await;
+            // Row geometry is recorded during paint, and the off-screen
+            // window paints only when asked: draw once so it exists.
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+            });
             let point = shell.read_with(cx, |s, cx| s.active_tab().table.read(cx).row_center(row));
             match point {
                 Some(position) => {
@@ -1884,6 +1895,9 @@ impl ShellArgs {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(700))
                 .await;
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+            });
             let point = shell.read_with(cx, |s, cx| s.active_tab().table.read(cx).body_center());
             match point {
                 Some(position) => {
@@ -1914,6 +1928,27 @@ impl ShellArgs {
                     });
                 }
                 None => crate::log_warn!(90, "--context-menu-background: table not laid out"),
+            }
+        }
+        if let Some(keys) = self.menu_keys.clone() {
+            // The menu mounts on the frame after the click; give it (and a
+            // warmed Open With submenu) time before walking it.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
+            for k in keys.split_whitespace() {
+                let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                    match gpui::Keystroke::parse(k) {
+                        Ok(ks) => {
+                            window.dispatch_keystroke(ks, cx);
+                            window.draw(cx).clear(cx);
+                        }
+                        Err(e) => crate::log_warn!(90, "--menu-keys: bad keystroke {k:?}: {e}"),
+                    }
+                });
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(150))
+                    .await;
             }
         }
         if self.new_folder {
