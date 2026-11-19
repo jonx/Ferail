@@ -256,7 +256,10 @@ fn run_worker(
                     Some(description.clone())
                 },
                 partial_hash: cached.as_ref().and_then(|r| r.partial_hash.clone()),
-                full_hash: cached.as_ref().and_then(|r| r.full_hash.clone()),
+                // Never written back from here: the stored hash keeps the
+                // key it was computed under (`hash_size` / `hash_mtime_*`),
+                // and passing it in would re-key it to this row's state.
+                full_hash: None,
                 mime: cached.as_ref().and_then(|r| r.mime.clone()),
                 quarantined: Some(quarantined),
                 quarantine_agent: agent.clone(),

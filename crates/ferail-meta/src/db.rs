@@ -37,7 +37,15 @@ use rusqlite::{params, Connection};
 /// The migration also clears any pre-existing rows once, since a v4
 /// row has no counts and would otherwise render "0 files" until its
 /// mtime/TTL forced a recompute: pure cache data, safe to drop.
-pub const DB_VERSION: u32 = 5;
+///
+/// `6` gives `files.full_hash` its own key: `hash_size`,
+/// `hash_mtime_unix` and `hash_mtime_nanos`, the file state the hash was
+/// computed from. The row's own size and mtime follow whatever last
+/// touched the file (the type prefetch), so an edit no longer erases the
+/// hash: Verify Integrity can report the file as modified instead of
+/// recording a new baseline. Additive `ALTER TABLE ... ADD COLUMN`; the
+/// migration keys every existing hash to its row's size and mtime.
+pub const DB_VERSION: u32 = 6;
 
 #[derive(Debug)]
 pub enum MetadataError {
@@ -135,6 +143,16 @@ impl ResetScope {
 }
 
 /// One row from the `folder_usage` table: Ant Trail heat snapshot.
+/// A content hash with the file state it was computed from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredHash {
+    pub size: u64,
+    pub mtime_unix: i64,
+    pub mtime_nanos: Option<u32>,
+    /// BLAKE3 hex.
+    pub hash: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct AntTrailEntry {
     pub folder_path: String,
@@ -296,7 +314,10 @@ const EPHEMERAL_SCHEMA: &str = r#"
         quarantine_agent TEXT,
         quarantine_iso TEXT,
         quarantine_where_from TEXT,
-        indexed_at_unix INTEGER NOT NULL
+        indexed_at_unix INTEGER NOT NULL,
+        hash_size INTEGER,
+        hash_mtime_unix INTEGER,
+        hash_mtime_nanos INTEGER
     );
     CREATE TABLE IF NOT EXISTS temp.folder_sizes (
         path TEXT PRIMARY KEY,
@@ -553,7 +574,10 @@ impl MetadataDb {
                 quarantine_agent TEXT,
                 quarantine_iso TEXT,
                 quarantine_where_from TEXT,
-                indexed_at_unix INTEGER NOT NULL
+                indexed_at_unix INTEGER NOT NULL,
+                hash_size INTEGER,
+                hash_mtime_unix INTEGER,
+                hash_mtime_nanos INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_files_full_hash ON files(full_hash);
             CREATE INDEX IF NOT EXISTS idx_files_partial_hash ON files(partial_hash);
@@ -694,6 +718,24 @@ impl MetadataDb {
                 [],
             );
             let _ = self.conn.execute("DELETE FROM folder_sizes", []);
+        }
+        // v5 → v6: the hash's own key. Probe, add, and key every existing
+        // hash to its row, which is what it was valid against until now.
+        let has_hash_key = self
+            .conn
+            .prepare("SELECT hash_size FROM files LIMIT 0")
+            .is_ok();
+        if !has_hash_key {
+            for column in ["hash_size", "hash_mtime_unix", "hash_mtime_nanos"] {
+                let _ = self
+                    .conn
+                    .execute(&format!("ALTER TABLE files ADD COLUMN {column} INTEGER"), []);
+            }
+            let _ = self.conn.execute(
+                "UPDATE files SET hash_size = size, hash_mtime_unix = mtime_unix \
+                 WHERE full_hash IS NOT NULL",
+                [],
+            );
         }
         Ok(())
     }
@@ -925,6 +967,45 @@ impl MetadataDb {
         }
     }
 
+    /// The stored content hash of `path` and the file state it was
+    /// computed from. The row's own size and mtime may be newer; compare
+    /// against these.
+    pub fn get_full_hash(&self, path: &str) -> Result<Option<StoredHash>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT hash_size, hash_mtime_unix, hash_mtime_nanos, full_hash \
+             FROM files WHERE path = ?1 AND full_hash IS NOT NULL \
+               AND hash_size IS NOT NULL AND hash_mtime_unix IS NOT NULL",
+        )?;
+        match stmt.query_row(params![path], |row| {
+            Ok(StoredHash {
+                size: row.get::<_, i64>(0)? as u64,
+                mtime_unix: row.get(1)?,
+                mtime_nanos: row.get::<_, Option<i64>>(2)?.and_then(|n| u32::try_from(n).ok()),
+                hash: row.get(3)?,
+            })
+        }) {
+            Ok(r) => Ok(Some(r)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Record a content hash for `path` keyed to the file state it was
+    /// computed from, down to the nanosecond when the filesystem keeps it.
+    pub fn put_full_hash(
+        &self,
+        rec: &FileMetaRecord,
+        mtime_nanos: Option<u32>,
+    ) -> Result<()> {
+        debug_assert!(rec.full_hash.is_some());
+        self.upsert_file(rec)?;
+        self.conn.execute(
+            "UPDATE files SET hash_mtime_nanos = ?2 WHERE path = ?1",
+            params![rec.path, mtime_nanos.map(i64::from)],
+        )?;
+        Ok(())
+    }
+
     /// Upsert a file row. Existing rows whose `mtime_unix` differs
     /// have their derived columns reset (the caller passes whatever
     /// fields it has; the rest stay NULL until next probe).
@@ -939,12 +1020,25 @@ impl MetadataDb {
         // INSERT shape cost three autocommit statements per row
         // (~6 fsyncs pre-WAL) and wasn't atomic (a crash between
         // DELETE and INSERT dropped the row).
+        // `full_hash` is the exception: it carries its own key
+        // (`hash_size`, `hash_mtime_*`), set whenever a hash arrives and
+        // kept when a hashless write moves the row's mtime, so an edited
+        // file still has the hash of its previous content to compare.
         self.conn.execute(
             "INSERT INTO files (path, mtime_unix, size, magic_label, description, partial_hash, \
                                 full_hash, mime, quarantined, quarantine_agent, \
-                                quarantine_iso, quarantine_where_from, indexed_at_unix) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+                                quarantine_iso, quarantine_where_from, indexed_at_unix, \
+                                hash_size, hash_mtime_unix) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
+                     CASE WHEN ?7 IS NULL THEN NULL ELSE ?3 END, \
+                     CASE WHEN ?7 IS NULL THEN NULL ELSE ?2 END) \
              ON CONFLICT(path) DO UPDATE SET \
+               hash_size = CASE WHEN excluded.full_hash IS NULL \
+                 THEN files.hash_size ELSE excluded.size END, \
+               hash_mtime_unix = CASE WHEN excluded.full_hash IS NULL \
+                 THEN files.hash_mtime_unix ELSE excluded.mtime_unix END, \
+               hash_mtime_nanos = CASE WHEN excluded.full_hash IS NULL \
+                 THEN files.hash_mtime_nanos ELSE NULL END, \
                size = excluded.size, \
                magic_label = CASE WHEN files.mtime_unix = excluded.mtime_unix \
                  THEN COALESCE(excluded.magic_label, files.magic_label) ELSE excluded.magic_label END, \
@@ -952,8 +1046,7 @@ impl MetadataDb {
                  THEN COALESCE(excluded.description, files.description) ELSE excluded.description END, \
                partial_hash = CASE WHEN files.mtime_unix = excluded.mtime_unix \
                  THEN COALESCE(excluded.partial_hash, files.partial_hash) ELSE excluded.partial_hash END, \
-               full_hash = CASE WHEN files.mtime_unix = excluded.mtime_unix \
-                 THEN COALESCE(excluded.full_hash, files.full_hash) ELSE excluded.full_hash END, \
+               full_hash = COALESCE(excluded.full_hash, files.full_hash), \
                mime = CASE WHEN files.mtime_unix = excluded.mtime_unix \
                  THEN COALESCE(excluded.mime, files.mime) ELSE excluded.mime END, \
                quarantined = CASE WHEN files.mtime_unix = excluded.mtime_unix \
@@ -1873,9 +1966,27 @@ mod tests {
         assert_eq!(r.mtime_unix, 999);
         assert_eq!(r.size, 20);
         assert!(r.partial_hash.is_none());
-        assert!(r.full_hash.is_none());
         assert!(r.magic_label.is_none());
         assert!(r.mime.is_none());
+        // The content hash survives the edit, still keyed to the state it
+        // was computed from, so Verify Integrity can say "modified".
+        assert_eq!(
+            db.get_full_hash("/x.txt").unwrap(),
+            Some(StoredHash { size: 10, mtime_unix: 100, mtime_nanos: None, hash: "def".into() })
+        );
+        // A new hash re-keys it, and the nanoseconds ride along.
+        db.put_full_hash(
+            &FileMetaRecord {
+                full_hash: Some("fed".into()),
+                ..r.clone()
+            },
+            Some(123),
+        )
+        .unwrap();
+        assert_eq!(
+            db.get_full_hash("/x.txt").unwrap(),
+            Some(StoredHash { size: 20, mtime_unix: 999, mtime_nanos: Some(123), hash: "fed".into() })
+        );
     }
 
     #[test]

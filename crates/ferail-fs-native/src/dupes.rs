@@ -216,6 +216,20 @@ pub trait DupeHashCache {
     fn records(&self, _path: &Path) -> bool {
         true
     }
+    /// [`Self::put_full`] keyed down to the nanosecond of the mtime, for
+    /// Verify Integrity's same-second rewrite check. Caches that keep
+    /// seconds only store it as `put_full` would.
+    fn put_full_keyed(
+        &self,
+        path: &Path,
+        size: u64,
+        mtime_unix: i64,
+        mtime_nanos: Option<u32>,
+        hash: &str,
+    ) {
+        let _ = mtime_nanos;
+        self.put_full(path, size, mtime_unix, hash);
+    }
 }
 
 /// A stored content hash with the key it was recorded under.
@@ -223,6 +237,8 @@ pub trait DupeHashCache {
 pub struct CachedHash {
     pub size: u64,
     pub mtime_unix: i64,
+    /// The sub-second part of the mtime, when it was recorded.
+    pub mtime_nanos: Option<u32>,
     /// BLAKE3 hex.
     pub hash: String,
 }
@@ -890,6 +906,15 @@ fn full_hash(path: &Path) -> Option<String> {
         }
     }
     Some(hasher.finalize().to_hex().to_string())
+}
+
+/// The sub-second part of `meta`'s mtime. A filesystem that keeps whole
+/// seconds reports 0, which compares equal and changes nothing.
+pub(crate) fn mtime_nanos(meta: &fs::Metadata) -> Option<u32> {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.subsec_nanos())
 }
 
 pub(crate) fn mtime_unix(meta: &fs::Metadata) -> i64 {

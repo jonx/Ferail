@@ -72,9 +72,13 @@ What it cannot do:
 - It only knows files hashed before: by a verified copy, Find Duplicates,
   Compare Folders, or an earlier Verify Integrity. The first run over a folder
   mostly records baselines.
-- Modification times are compared to the second. A program that rewrites a
-  file to the same size within the second its hash was recorded looks like
-  corruption.
+- A hash keeps the size and modification time it was computed from, down to
+  the nanosecond when the filesystem records them, apart from the row's own
+  values: browsing an edited folder updates the row's file details but never
+  erases or re-keys the hash, so the next run reports the file as modified.
+  A hash recorded by Find Duplicates or Compare Folders keeps whole seconds,
+  and against it a program that rewrites a file to the same size within the
+  same second still looks like corruption.
 - Records age out under the Privacy retention setting. A run refreshes the
   records of files that verify.
 - Files under an excluded folder are counted as not checked. Undownloaded

@@ -40,19 +40,26 @@ impl DupeHashCache for DbHashCache {
     fn get_full(&self, path: &Path, size: u64, mtime_unix: i64) -> Option<String> {
         let path_str = path.to_str()?;
         let guard = self.db.lock().ok()?;
-        let rec = guard.get_file(path_str).ok().flatten()?;
-        // Only trust the stored hash when size *and* mtime still match:
-        // a renamed-in-place or rewritten file at the same path must be
-        // re-hashed. (upsert_file also guards mtime, this is belt-and-
-        // suspenders against partial rows.)
-        if rec.size == size && rec.mtime_unix == mtime_unix {
-            rec.full_hash
-        } else {
-            None
-        }
+        // Only trust the stored hash when the file is still in the state it
+        // was computed from: a rewritten file at the same path must be
+        // re-hashed. The key is the hash's own (`hash_size`,
+        // `hash_mtime_unix`), not the row's, which may be newer.
+        let stored = guard.get_full_hash(path_str).ok().flatten()?;
+        (stored.size == size && stored.mtime_unix == mtime_unix).then_some(stored.hash)
     }
 
     fn put_full(&self, path: &Path, size: u64, mtime_unix: i64, hash: &str) {
+        self.put_full_keyed(path, size, mtime_unix, None, hash);
+    }
+
+    fn put_full_keyed(
+        &self,
+        path: &Path,
+        size: u64,
+        mtime_unix: i64,
+        mtime_nanos: Option<u32>,
+        hash: &str,
+    ) {
         let Some(path_str) = path.to_str() else {
             return;
         };
@@ -73,17 +80,18 @@ impl DupeHashCache for DbHashCache {
             indexed_at_unix: self.indexed_at_unix,
         };
         // Write-through; a failed upsert just means the next scan re-hashes.
-        let _ = guard.upsert_file(&rec);
+        let _ = guard.put_full_hash(&rec, mtime_nanos);
     }
 
     fn get_record(&self, path: &Path) -> Option<ferail_fs_native::CachedHash> {
         let path_str = path.to_str()?;
         let guard = self.db.lock().ok()?;
-        let rec = guard.get_file(path_str).ok().flatten()?;
+        let stored = guard.get_full_hash(path_str).ok().flatten()?;
         Some(ferail_fs_native::CachedHash {
-            size: rec.size,
-            mtime_unix: rec.mtime_unix,
-            hash: rec.full_hash?,
+            size: stored.size,
+            mtime_unix: stored.mtime_unix,
+            mtime_nanos: stored.mtime_nanos,
+            hash: stored.hash,
         })
     }
 
@@ -121,8 +129,6 @@ mod tests {
         let p = Path::new("/tmp/y.bin");
         cache.put_full(p, 10, 5, "AAA");
         assert!(cache.get_full(p, 11, 5).is_none(), "size changed → miss");
-        // mtime change wipes the row via upsert's stale-clear, but the
-        // lookup guard also rejects it.
         assert!(cache.get_full(p, 10, 6).is_none(), "mtime changed → miss");
     }
 
@@ -135,5 +141,45 @@ mod tests {
         let rec = cache.get_record(p).unwrap();
         assert_eq!((rec.size, rec.mtime_unix, rec.hash.as_str()), (10, 5, "ABC"));
         assert!(cache.records(p));
+    }
+
+    /// The bug this guards: an edited file was seen by the type prefetch
+    /// (which rewrites the row with the new mtime and no hash) before
+    /// Verify Integrity ran, and the hash was gone, so the edit was
+    /// recorded as a new baseline instead of reported as modified.
+    #[test]
+    fn an_edit_seen_by_the_prefetch_keeps_the_old_hash_and_its_key() {
+        let db = db();
+        let cache = DbHashCache::new(db.clone(), 100);
+        let p = Path::new("/tmp/edited.txt");
+        cache.put_full_keyed(p, 10, 5, Some(7), "OLD");
+        db.lock()
+            .unwrap()
+            .upsert_file(&FileMetaRecord {
+                path: p.to_str().unwrap().into(),
+                mtime_unix: 9,
+                size: 12,
+                magic_label: Some("Plain text".into()),
+                description: None,
+                partial_hash: None,
+                full_hash: None,
+                mime: None,
+                quarantined: Some(false),
+                quarantine_agent: None,
+                quarantine_iso: None,
+                quarantine_where_from: None,
+                indexed_at_unix: 200,
+            })
+            .unwrap();
+        let rec = cache.get_record(p).unwrap();
+        assert_eq!(
+            (rec.size, rec.mtime_unix, rec.mtime_nanos, rec.hash.as_str()),
+            (10, 5, Some(7), "OLD")
+        );
+        assert_eq!(
+            ferail_fs_native::integrity::classify(Some(&rec), 12, 9, Some(0), "NEW"),
+            ferail_fs_native::integrity::IntegrityVerdict::Modified
+        );
+        assert!(cache.get_full(p, 12, 9).is_none(), "no hash for the new content");
     }
 }

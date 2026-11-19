@@ -8,6 +8,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Verify Integrity reports an edited file as modified.** Browsing a folder
+  after editing a file erased the file's recorded checksum, so the next
+  check silently recorded the new content as a fresh baseline instead of
+  saying the file had changed. The checksum is now kept with the state it was
+  taken from. Times are also compared to the nanosecond where the disk keeps
+  them, so a file rewritten within the same second is no longer mistaken for
+  corruption. The metadata database upgrades in place on first launch.
+
 - **Folder sizes stay right after an operation that fails partway.** When
   making aliases, undoing several moves, or another multi-item operation
   stopped on an error, the folders it had already changed were neither

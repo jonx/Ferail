@@ -13,7 +13,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::dupes::{is_dataless, mtime_unix, CachedHash, DupeHashCache};
+use crate::dupes::{is_dataless, mtime_nanos, mtime_unix, CachedHash, DupeHashCache};
 
 const HASH_CHUNK: usize = 1024 * 1024;
 
@@ -36,11 +36,20 @@ pub fn classify(
     record: Option<&CachedHash>,
     size: u64,
     mtime_unix: i64,
+    mtime_nanos: Option<u32>,
     fresh_hex: &str,
 ) -> IntegrityVerdict {
+    // Sub-second times are compared when both sides have them: a rewrite
+    // to the same size within one second is then an edit, not corruption.
+    let nanos_differ = matches!(
+        (record.and_then(|r| r.mtime_nanos), mtime_nanos),
+        (Some(a), Some(b)) if a != b
+    );
     match record {
         None => IntegrityVerdict::Baseline,
-        Some(r) if r.size != size || r.mtime_unix != mtime_unix => IntegrityVerdict::Modified,
+        Some(r) if r.size != size || r.mtime_unix != mtime_unix || nanos_differ => {
+            IntegrityVerdict::Modified
+        }
         Some(r) if r.hash.eq_ignore_ascii_case(fresh_hex) => IntegrityVerdict::Verified,
         Some(_) => IntegrityVerdict::Corrupted,
     }
@@ -182,6 +191,7 @@ fn check_file(
     }
     let size = meta.len();
     let mtime = mtime_unix(meta);
+    let nanos = mtime_nanos(meta);
     let record = cache.get_record(path);
     let fresh = match hash_file(path, buf, progress, cancel) {
         Ok(Some(hash)) => hash,
@@ -196,13 +206,15 @@ fn check_file(
     // A file written while it was being read is an edit in progress, not
     // corruption, and its hash describes no stable state worth recording.
     let stable = fs::symlink_metadata(path)
-        .map(|after| after.len() == size && mtime_unix(&after) == mtime)
+        .map(|after| {
+            after.len() == size && mtime_unix(&after) == mtime && mtime_nanos(&after) == nanos
+        })
         .unwrap_or(false);
     if !stable {
         IntegrityProgress::bump(&progress.modified);
         return;
     }
-    match classify(record.as_ref(), size, mtime, &fresh) {
+    match classify(record.as_ref(), size, mtime, nanos, &fresh) {
         IntegrityVerdict::Corrupted => {
             IntegrityProgress::bump(&progress.corrupted);
             on_corrupt(CorruptFile {
@@ -218,7 +230,7 @@ fn check_file(
                 IntegrityVerdict::Modified => &progress.modified,
                 _ => &progress.baseline,
             });
-            cache.put_full(path, size, mtime, &fresh);
+            cache.put_full_keyed(path, size, mtime, nanos, &fresh);
         }
     }
 }
@@ -275,9 +287,23 @@ mod tests {
                 CachedHash {
                     size,
                     mtime_unix,
+                    mtime_nanos: None,
                     hash: hash.to_string(),
                 },
             );
+        }
+        fn put_full_keyed(
+            &self,
+            path: &Path,
+            size: u64,
+            mtime_unix: i64,
+            mtime_nanos: Option<u32>,
+            hash: &str,
+        ) {
+            self.put_full(path, size, mtime_unix, hash);
+            if let Some(row) = self.rows.borrow_mut().get_mut(path) {
+                row.mtime_nanos = mtime_nanos;
+            }
         }
         fn get_record(&self, path: &Path) -> Option<CachedHash> {
             self.rows.borrow().get(path).cloned()
@@ -291,22 +317,37 @@ mod tests {
         CachedHash {
             size,
             mtime_unix: mtime,
+            mtime_nanos: None,
             hash: hash.into(),
         }
     }
 
     #[test]
     fn classify_covers_every_case() {
-        assert_eq!(classify(None, 3, 10, "aa"), IntegrityVerdict::Baseline);
+        assert_eq!(classify(None, 3, 10, None, "aa"), IntegrityVerdict::Baseline);
         let r = rec(3, 10, "aa");
-        assert_eq!(classify(Some(&r), 3, 10, "aa"), IntegrityVerdict::Verified);
-        assert_eq!(classify(Some(&r), 3, 10, "AA"), IntegrityVerdict::Verified);
-        assert_eq!(classify(Some(&r), 3, 10, "bb"), IntegrityVerdict::Corrupted);
-        assert_eq!(classify(Some(&r), 4, 10, "bb"), IntegrityVerdict::Modified);
-        assert_eq!(classify(Some(&r), 3, 11, "bb"), IntegrityVerdict::Modified);
+        assert_eq!(classify(Some(&r), 3, 10, None, "aa"), IntegrityVerdict::Verified);
+        assert_eq!(classify(Some(&r), 3, 10, None, "AA"), IntegrityVerdict::Verified);
+        assert_eq!(classify(Some(&r), 3, 10, None, "bb"), IntegrityVerdict::Corrupted);
+        assert_eq!(classify(Some(&r), 4, 10, None, "bb"), IntegrityVerdict::Modified);
+        assert_eq!(classify(Some(&r), 3, 11, None, "bb"), IntegrityVerdict::Modified);
         // A legitimate edit that happens to restore the old bytes is still
         // an edit: the key changed.
-        assert_eq!(classify(Some(&r), 3, 11, "aa"), IntegrityVerdict::Modified);
+        assert_eq!(classify(Some(&r), 3, 11, None, "aa"), IntegrityVerdict::Modified);
+    }
+
+    #[test]
+    fn a_same_second_rewrite_is_an_edit_when_nanoseconds_are_known() {
+        let r = CachedHash {
+            mtime_nanos: Some(100),
+            ..rec(3, 10, "aa")
+        };
+        assert_eq!(classify(Some(&r), 3, 10, Some(900), "bb"), IntegrityVerdict::Modified);
+        assert_eq!(classify(Some(&r), 3, 10, Some(100), "bb"), IntegrityVerdict::Corrupted);
+        assert_eq!(classify(Some(&r), 3, 10, Some(100), "aa"), IntegrityVerdict::Verified);
+        // A record without them falls back to whole seconds.
+        let old = rec(3, 10, "aa");
+        assert_eq!(classify(Some(&old), 3, 10, Some(900), "bb"), IntegrityVerdict::Corrupted);
     }
 
     fn scratch(name: &str) -> PathBuf {

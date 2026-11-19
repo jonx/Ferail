@@ -901,7 +901,13 @@ fn copy_leaf_verified(
         let hex = expected.to_hex();
         if let Ok(meta) = fs::symlink_metadata(dst) {
             if meta.len() == copied_len {
-                cache.put_full(dst, meta.len(), mtime_unix(&meta), hex.as_str());
+                cache.put_full_keyed(
+                    dst,
+                    meta.len(),
+                    mtime_unix(&meta),
+                    crate::dupes::mtime_nanos(&meta),
+                    hex.as_str(),
+                );
             }
         }
         // The source's hash is only worth keeping when the source did not
@@ -912,8 +918,15 @@ fn copy_leaf_verified(
                 if after.len() == before.len()
                     && after.len() == copied_len
                     && mtime_unix(&after) == mtime_unix(&before)
+                    && crate::dupes::mtime_nanos(&after) == crate::dupes::mtime_nanos(&before)
                 {
-                    cache.put_full(src, after.len(), mtime_unix(&after), hex.as_str());
+                    cache.put_full_keyed(
+                        src,
+                        after.len(),
+                        mtime_unix(&after),
+                        crate::dupes::mtime_nanos(&after),
+                        hex.as_str(),
+                    );
                 }
             }
         }
@@ -2088,6 +2101,7 @@ mod verify_tests {
                 CachedHash {
                     size,
                     mtime_unix,
+                    mtime_nanos: None,
                     hash: hash.to_string(),
                 },
             );

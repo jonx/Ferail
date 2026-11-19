@@ -17,7 +17,7 @@ pub mod db;
 
 pub use db::{
     AntTrailEntry, DuHistoryDir, DuHistorySnapshot, FileMetaRecord, FolderSizeRecord, LayoutState,
-    MetadataDb, MetadataError, ResetScope, Result, TabState, WindowState,
+    MetadataDb, MetadataError, ResetScope, Result, StoredHash, TabState, WindowState,
 };
 pub use ferail_core::favorites::{
     Favorite, FavoriteIcon, FavoriteId, FavoriteKind, FavoriteSort, FavoriteState, FavoriteTarget,
