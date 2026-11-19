@@ -340,11 +340,9 @@ Net-new, but each sits on plumbing that already exists.
   or rename through a stale `path_for`. Either refcount ids per holding
   surface, or give each surface an arena namespace that drops with it and keep
   the global map for navigation identity only.
-- **Cache freshness follow-ups** ([FRESHNESS.md](docs/features/FRESHNESS.md)):
-  invalidate **both** parents' ancestor chains on a cross-directory move
-  (`spawn_file_op` reloads a single `reload_path` today), and reuse the same
-  model for the next recursive aggregates (item counts, clone-aware sizing)
-  rather than building a parallel one.
+- **Cache freshness follow-up** ([FRESHNESS.md](docs/features/FRESHNESS.md)):
+  reuse the same model for the next recursive aggregates (clone-aware
+  sizing) rather than building a parallel one.
 - **Qualify the cancellation and backpressure baseline.** Every recursive lane
   cancels cooperatively or retires by generation, and the streaming channels
   are finite. What is missing is proof: hostile slow-provider, network and

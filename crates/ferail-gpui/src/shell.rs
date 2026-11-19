@@ -563,6 +563,19 @@ pub(crate) fn file_op_failure_report(
     msg
 }
 
+/// The folders a single-call file op must reload (and whose cached sizes,
+/// with all their ancestors, it must drop): the folder it was aimed at, then
+/// the parent of every path it produced, without duplicates.
+fn file_op_reload_targets(reload_path: PathBuf, created: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = vec![reload_path];
+    for parent in created.iter().filter_map(|p| p.parent()) {
+        if !out.iter().any(|known| known == parent) {
+            out.push(parent.to_path_buf());
+        }
+    }
+    out
+}
+
 /// An error notification laid out for reading at a glance: the problem, what
 /// it applies to, what to do, and the technical detail on separate lines (see
 /// [`crate::overlay::Notification::report`]). The notice's copy icon puts the
@@ -6803,9 +6816,16 @@ impl Shell {
             } else {
                 false
             };
+            // Every folder the op touched: the one it was aimed at and the
+            // parent of each result, which may lie elsewhere (an alias
+            // dropped into a subfolder). A failure reloads too, since a
+            // multi-item op may have done part of its work before it
+            // stopped; reloading a folder that did not change costs a
+            // re-list, never a wrong size.
+            let reload = file_op_reload_targets(reload_path, &created);
+            Shell::broadcast_reload_for_process(&process, reload, cx);
             match result {
                 Ok(_) => {
-                    Shell::broadcast_reload_for_process(&process, vec![reload_path], cx);
                     if let FileOpSuccessToast::IfSurfaced(message) = success_toast {
                         if surfaced {
                             let _ = win.update(cx, |_, window, cx| {
@@ -6891,9 +6911,11 @@ impl Shell {
                             Err(e) => tasks.end_failed(task_id, e.clone()),
                         }
                     });
+                    // Both sides of every pair, on failure too: an undo of
+                    // several moves can stop after undoing some of them.
+                    Shell::broadcast_reload_for_process(&process, reload, cx);
                     match result {
                         Ok(()) => {
-                            Shell::broadcast_reload_for_process(&process, reload, cx);
                             let _ = win.update(cx, |_, window, cx| {
                                 window.push_notice(Notification::success(label.clone()), cx);
                             });
@@ -6901,7 +6923,9 @@ impl Shell {
                         Err(e) => {
                             let _ = win.update(cx, |_, window, cx| {
                                 window.push_notice(
-                                    Notification::error(tr!("Undo failed: {detail}", detail = e)),
+                                    error_notification(
+                                        tr!("Undo failed: {detail}", detail = e).to_string(),
+                                    ),
                                     cx,
                                 );
                             });
@@ -8846,6 +8870,23 @@ mod tests {
             "{s}"
         );
         assert!(s.contains("\u{2026}and 2 more"), "{s}");
+    }
+
+    #[test]
+    fn file_op_reloads_every_folder_it_touched() {
+        let targets = super::file_op_reload_targets(
+            PathBuf::from("/a"),
+            &[
+                PathBuf::from("/a/x"),
+                PathBuf::from("/b/sub/alias"),
+                PathBuf::from("/b/sub/alias 2"),
+            ],
+        );
+        assert_eq!(targets, vec![PathBuf::from("/a"), PathBuf::from("/b/sub")]);
+        assert_eq!(
+            super::file_op_reload_targets(PathBuf::from("/a"), &[]),
+            vec![PathBuf::from("/a")]
+        );
     }
 
     #[test]

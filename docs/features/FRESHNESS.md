@@ -67,6 +67,14 @@ through one choke point:
 `Shell::invalidate_folder_size_ancestors`, which deletes the cached size for the
 changed path **and every ancestor up to the root** (`delete_folder_size`).
 
+Every folder a mutation touched is passed, so a change spanning two places
+invalidates both chains: a move or transfer passes the destination and each
+source's parent, an undo passes both sides of every pair
+(`UndoOp::affected_parents`), and a single-call file op passes the folder it
+was aimed at plus the parent of every path it produced
+(`file_op_reload_targets`). A failure reloads the same set, because a
+multi-item operation may have done part of its work before it stopped.
+
 Why the whole ancestor chain: a change at `P` alters the recursive size of `P`
 and of every directory that contains it, yet only `P`'s own `mtime` moves. The
 ancestors are exactly the rows the mtime fast-path can't catch, so they are
@@ -163,9 +171,6 @@ disagree.
 
 ## Known gaps / future work
 
-- **Multi-parent mutations.** A cross-directory move touches two parents, but
-  `spawn_file_op` reloads (and so invalidates) a single `reload_path`. Both
-  endpoints' ancestor chains should be invalidated.
 - **Upgrade path to live deep updates.** If liveness ever outweighs the cost,
   the ancestor-invalidation service is the seam a recursive watcher would plug
   into: it would feed the same `invalidate_folder_size_ancestors`, and nothing

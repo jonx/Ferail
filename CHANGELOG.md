@@ -8,6 +8,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Folder sizes stay right after an operation that fails partway.** When
+  making aliases, undoing several moves, or another multi-item operation
+  stopped on an error, the folders it had already changed were neither
+  refreshed nor re-measured, so their listing and size stayed stale until
+  the next refresh. Every folder an operation touched is now refreshed, on
+  failure too, including results that landed outside the folder on screen.
+
 - **Error messages are laid out to read at a glance.** The problem comes
   first with its plain reason (*Copying failed: no longer exists*), then the
   file it concerns in italics with its folder, then what to do, then the
