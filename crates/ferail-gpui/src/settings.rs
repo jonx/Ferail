@@ -1070,6 +1070,32 @@ fn privacy_page() -> SettingPage {
         )
         .group(
             SettingGroup::new()
+                .title(tr!("Clipboard"))
+                .item(dropdown_setting_with(
+                    tr!("Keep Paste from History for"),
+                    tr!(
+                        "How long the files you copy or cut stay in Paste from History. Only \
+                         their paths are kept, in memory, and never written to disk."
+                    ),
+                    &[
+                        ("off", msgid!("Off")),
+                        ("5", msgid!("5 minutes")),
+                        ("30", msgid!("30 minutes")),
+                        ("120", msgid!("2 hours")),
+                        ("480", msgid!("8 hours")),
+                        ("quit", msgid!("Until Ferail quits")),
+                    ],
+                    &[],
+                    || crate::clipboard_history::Retention::current().to_setting(),
+                    |value: &str, cx: &mut App| {
+                        let value = crate::clipboard_history::Retention::parse(value)
+                            .map(crate::clipboard_history::Retention::to_setting);
+                        persist_privacy(|state| state.clipboard_history_retention = value, cx);
+                    },
+                )),
+        )
+        .group(
+            SettingGroup::new()
                 .title(tr!("Excluded locations"))
                 .item(excluded_folders_setting())
                 .item(switch_setting(

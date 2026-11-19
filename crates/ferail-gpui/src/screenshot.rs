@@ -1944,7 +1944,7 @@ impl ShellArgs {
                     history.record(
                         vec![docs.join("Budget 2027.xlsx")],
                         false,
-                        now - 3 * 3600,
+                        now - 12 * 60,
                     );
                     history.record(
                         (1..=4).map(|i| docs.join(format!("photo-{i}.jpg"))).collect(),

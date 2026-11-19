@@ -4,7 +4,8 @@
 //! themselves stay where they are, so the history costs a few paths per
 //! entry and pasting an old entry is an ordinary copy or move from those
 //! paths. It lives in memory only, is shared by every window of the
-//! process, and records nothing while Private Mode is on. See
+//! process, keeps entries only as long as the Privacy setting allows
+//! (30 minutes by default), and records nothing while Private Mode is on. See
 //! docs/features/FILE_OPS.md#paste-from-history.
 
 use std::collections::VecDeque;
@@ -12,6 +13,50 @@ use std::path::PathBuf;
 
 /// How many copies and cuts the history keeps.
 pub const CAPACITY: usize = 10;
+
+/// How long an entry stays (Settings ▸ Privacy ▸ Clipboard).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Retention {
+    /// Nothing is recorded.
+    Off,
+    Minutes(u32),
+    /// Kept until Ferail quits (the history is never on disk).
+    UntilQuit,
+}
+
+pub const DEFAULT_RETENTION: Retention = Retention::Minutes(30);
+
+impl Retention {
+    /// The stored setting: `off`, `quit`, or a number of minutes.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "quit" => Some(Self::UntilQuit),
+            minutes => minutes
+                .parse::<u32>()
+                .ok()
+                .filter(|m| *m > 0)
+                .map(Self::Minutes),
+        }
+    }
+
+    pub fn to_setting(self) -> String {
+        match self {
+            Self::Off => "off".to_string(),
+            Self::UntilQuit => "quit".to_string(),
+            Self::Minutes(m) => m.to_string(),
+        }
+    }
+
+    /// The user's choice, from the cached settings (no I/O).
+    pub fn current() -> Self {
+        crate::app_state::load()
+            .clipboard_history_retention
+            .as_deref()
+            .and_then(Self::parse)
+            .unwrap_or(DEFAULT_RETENTION)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ClipEntry {
@@ -61,6 +106,18 @@ impl ClipboardHistory {
         self.entries.get(index)
     }
 
+    /// Drop what `retention` no longer allows at `now` (Unix seconds).
+    pub fn prune(&mut self, retention: Retention, now: i64) {
+        match retention {
+            Retention::Off => self.entries.clear(),
+            Retention::UntilQuit => {}
+            Retention::Minutes(m) => {
+                let oldest = now - i64::from(m) * 60;
+                self.entries.retain(|e| e.at >= oldest);
+            }
+        }
+    }
+
     /// Forget a cut once it has been pasted: its items are no longer at
     /// those paths. Matched by content, since the index may have moved.
     pub fn consume_cut(&mut self, paths: &[PathBuf]) {
@@ -95,6 +152,25 @@ mod tests {
         }
         assert_eq!(h.entries().count(), CAPACITY);
         assert_eq!(h.get(0).unwrap().paths[0], p(&format!("/x{}", CAPACITY + 4)));
+    }
+
+    #[test]
+    fn retention_prunes_by_age() {
+        let mut h = ClipboardHistory::default();
+        h.record(vec![p("/old")], false, 1_000);
+        h.record(vec![p("/new")], false, 1_000 + 29 * 60);
+        h.prune(Retention::Minutes(30), 1_000 + 31 * 60);
+        let left: Vec<_> = h.entries().map(|e| e.paths[0].clone()).collect();
+        assert_eq!(left, vec![p("/new")]);
+        h.prune(Retention::UntilQuit, i64::MAX);
+        assert_eq!(h.entries().count(), 1);
+        h.prune(Retention::Off, 0);
+        assert!(h.is_empty());
+        assert_eq!(Retention::parse("30"), Some(Retention::Minutes(30)));
+        assert_eq!(Retention::parse("0"), None);
+        for r in [Retention::Off, Retention::UntilQuit, Retention::Minutes(120)] {
+            assert_eq!(Retention::parse(&r.to_setting()), Some(r));
+        }
     }
 
     #[test]

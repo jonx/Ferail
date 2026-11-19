@@ -380,6 +380,9 @@ pub struct AppState {
     pub retention_days: Option<u32>,
     /// Days a crash or freeze report is kept. `None` or 0 == forever.
     pub report_retention_days: Option<u32>,
+    /// How long Paste from History keeps an entry: `off`, `quit`, or
+    /// minutes. `None` == `clipboard_history::DEFAULT_RETENTION`.
+    pub clipboard_history_retention: Option<String>,
     /// Whether thumbnails and previews may come from the operating
     /// system's thumbnail service, which keeps its own on-disk cache.
     /// `None` == never set (defaults to `true`).
@@ -722,6 +725,9 @@ fn parse(text: &str) -> AppState {
             "retention_days" => {
                 out.retention_days = val.parse::<u32>().ok().filter(|days| *days > 0);
             }
+            "clipboard_history_retention" => {
+                out.clipboard_history_retention = Some(val.to_string());
+            }
             "report_retention_days" => {
                 out.report_retention_days = val.parse::<u32>().ok();
             }
@@ -958,6 +964,9 @@ fn serialize(state: &AppState) -> String {
     if let Some(n) = state.retention_days {
         s.push_str(&format!("retention_days={n}\n"));
     }
+    if let Some(v) = &state.clipboard_history_retention {
+        s.push_str(&format!("clipboard_history_retention={v}\n"));
+    }
     if let Some(n) = state.report_retention_days {
         s.push_str(&format!("report_retention_days={n}\n"));
     }
@@ -1005,6 +1014,7 @@ mod tests {
             privacy_exclude_volumes: Some(true),
             retention_days: Some(7),
             report_retention_days: Some(30),
+            clipboard_history_retention: Some("quit".to_string()),
             system_thumbnails: Some(false),
             ..AppState::default()
         };
@@ -1018,6 +1028,7 @@ mod tests {
         assert_eq!(back.privacy_exclude_volumes, Some(true));
         assert_eq!(back.retention_days, Some(7));
         assert_eq!(back.report_retention_days, Some(30));
+        assert_eq!(back.clipboard_history_retention.as_deref(), Some("quit"));
         assert_eq!(back.system_thumbnails, Some(false));
     }
 

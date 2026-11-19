@@ -18,6 +18,7 @@ files the user browses, and erases it on request. It is unrelated to
 | Where trashed items came from | `metadata.db`, `put_back` | retention |
 | Last folder and open tabs | `gpui-state.txt`, `last_dir`, `tab`, `tab_active` | Reopen the last session |
 | Crash, freeze and issue reports | `reports/` | Keep reports for |
+| Recently copied or cut paths | memory only, never on disk | Keep Paste from History for |
 | Thumbnails | the operating system's own cache | Use the system thumbnail service |
 
 Favorites, preferences and layout are settings, not traces. No privacy
@@ -35,6 +36,7 @@ switch stops them being saved.
 | Never record other volumes | `privacy_exclude_volumes` | off | Adds the platform's volume mount roots to the exclusions |
 | Use the system thumbnail service | `system_thumbnails` | on | Off skips the platform thumbnail call |
 | Keep reports for | `report_retention_days` | forever | Older `ferail-*` files in `reports/` are deleted at launch |
+| Keep Paste from History for | `clipboard_history_retention` | 30 minutes | Off, 5 or 30 minutes, 2 or 8 hours, or until quit; older entries are dropped from memory ([Paste from History](FILE_OPS.md#paste-from-history)) |
 
 `crate::privacy::Policy` resolves these with their defaults.
 `crate::privacy::apply` brings the running process in line after any change,

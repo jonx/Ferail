@@ -141,6 +141,13 @@ pub fn session_frozen() -> bool {
 /// at window boot and after every privacy setting change.
 pub fn apply(cx: &mut App) {
     let policy = Policy::current();
+    // A shorter Paste from History retention takes effect at once.
+    if let Some(process) = process(cx) {
+        process.clipboard_history.borrow_mut().prune(
+            crate::clipboard_history::Retention::current(),
+            ferail_core::now_unix(),
+        );
+    }
     SYSTEM_THUMBNAILS.store(policy.system_thumbnails, Ordering::Relaxed);
     if !policy.keeps_session() && !session_frozen() {
         let mut state = app_state::load();

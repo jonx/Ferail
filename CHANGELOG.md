@@ -13,6 +13,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   not just the latest. Each entry shows what was copied, from where, and
   when; Enter pastes the newest. The history holds only the files' paths,
   stays in memory, is cleared by Private Mode, and is gone when you quit.
+  Settings, Privacy, *Keep Paste from History for* decides how long an
+  entry stays: 30 minutes by default, from Off to until Ferail quits.
 
 - **Open With works on several files, and offers Other….** With more than
   one file selected, Open With lists the clicked file's applications and

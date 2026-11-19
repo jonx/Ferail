@@ -496,16 +496,16 @@ impl Shell {
     /// Add a copy or cut to the history behind Paste from History. In
     /// Private Mode nothing is recorded and what was there is dropped.
     fn record_clipboard_history(&self, items: &[(PathBuf, bool)], cut: bool) {
+        use crate::clipboard_history::Retention;
         let mut history = self.process.clipboard_history.borrow_mut();
-        if crate::private_mode::enabled() {
+        let retention = Retention::current();
+        if crate::private_mode::enabled() || retention == Retention::Off {
             history.clear();
             return;
         }
-        history.record(
-            items.iter().map(|(p, _)| p.clone()).collect(),
-            cut,
-            ferail_core::now_unix(),
-        );
+        let now = ferail_core::now_unix();
+        history.prune(retention, now);
+        history.record(items.iter().map(|(p, _)| p.clone()).collect(), cut, now);
     }
 
     /// Cmd+Shift+V: list the recent copies and cuts, newest first, and
@@ -524,8 +524,22 @@ impl Shell {
         if self.reject_platform_filesystem_command(window, cx) {
             return;
         }
+        let retention = crate::clipboard_history::Retention::current();
         if crate::private_mode::enabled() {
             self.process.clipboard_history.borrow_mut().clear();
+        }
+        self.process
+            .clipboard_history
+            .borrow_mut()
+            .prune(retention, ferail_core::now_unix());
+        if retention == crate::clipboard_history::Retention::Off {
+            window.push_notice(
+                Notification::info(tr!(
+                    "Paste from History is off. Choose how long to keep it in Settings, Privacy."
+                )),
+                cx,
+            );
+            return;
         }
         let entries: Vec<crate::clipboard_history::ClipEntry> = self
             .process

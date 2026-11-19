@@ -572,9 +572,12 @@ a copy for a Copy and a move for a Cut. Enter pastes the newest.
 - Copying the same items again moves their entry to the top. A pasted Cut
   leaves the history, as its items have moved; a Copy stays.
 - The history lives on `ProcessState`, so every window shares it. It is
-  memory only, is lost on quit, and is never written to disk. While Private
-  Mode is on nothing is recorded, and Copy, Cut or the picker clear what
-  was there.
+  memory only, is lost on quit, and is never written to disk. Entries older
+  than Settings ▸ Privacy ▸ *Keep Paste from History for* (30 minutes by
+  default; Off records nothing) are dropped on every Copy, Cut and opening
+  of the picker, and at once when the setting changes. While Private Mode
+  is on nothing is recorded, and Copy, Cut or the picker clear what was
+  there.
 - It records what Ferail copied, not what other applications put on the
   system clipboard: plain Cmd+V covers that.
 
