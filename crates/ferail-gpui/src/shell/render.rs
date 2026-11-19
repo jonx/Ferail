@@ -1043,7 +1043,7 @@ impl Shell {
                                 window.push_notice(
                                     Notification::info(tr!(
                                         "Ferail's path is copied. In the picker, click \
-                                         \"+\", press \u{2318}\u{21e7}G, paste, and add it."
+                                         \u{201c}+\u{201d}, press \u{2318}\u{21e7}G, paste, and add it."
                                     ))
                                     .autohide(false),
                                     cx,

@@ -4080,7 +4080,7 @@ impl TableDelegate for FileListDelegate {
                     .unwrap_or_default();
                 let stem = archive_display_stem(&leaf);
                 tr!(
-                    "Extract to \"{name}\"",
+                    "Extract to \u{201c}{name}\u{201d}",
                     name = crate::private_mode::present_leaf_str(&stem, true)
                 )
             } else {

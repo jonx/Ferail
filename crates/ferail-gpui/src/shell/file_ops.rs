@@ -5215,7 +5215,7 @@ impl Shell {
                     tops.dedup();
                     if let Some(taken) = tops.iter().find(|top| parent.join(top).exists()) {
                         return Err(tr!(
-                            "\"{name}\" already exists here. Nothing was extracted. Extract to a folder instead.",
+                            "\u{201c}{name}\u{201d} already exists here. Nothing was extracted. Extract to a folder instead.",
                             name = taken.to_string()
                         )
                         .to_string());

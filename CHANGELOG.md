@@ -8,6 +8,17 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Space types a space in every text field again.** In the filter box,
+  inline rename and other fields inside the window, Space opened Quick Look
+  instead of typing, because the file list's Space shortcut ran before text
+  input. Space still opens Quick Look on a selected file. Thanks to ooonea,
+  who found and fixed it for inline rename.
+
+- **Quotation marks are consistent within each language.** A few messages
+  used straight quotes where the rest of the language uses its own marks:
+  French uses « », Italian “ ”, German and Polish their low-high quotes. A
+  French terminal-settings description also had an untranslated word.
+
 - **Task names are in italics instead of quotes.** The background tasks
   panel and the status bar showed a copy as *Copie de "file" dans « Desktop »*,
   mixing two quote styles in one line. File and folder names in copy, move,

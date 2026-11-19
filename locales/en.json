@@ -5,7 +5,6 @@
   "english_name": "English",
   "strings": {
     "\"final report\"": "\"final report\"",
-    "\"{name}\" already exists here. Nothing was extracted. Extract to a folder instead.": "\"{name}\" already exists here. Nothing was extracted. Extract to a folder instead.",
     "#{group} · {location}": "#{group} · {location}",
     "(empty file)": "(empty file)",
     "(empty)": "(empty)",
@@ -540,8 +539,8 @@
     "Extract Selected": "Extract Selected",
     "Extract To…": "Extract To…",
     "Extract to": "Extract to",
-    "Extract to \"{name}\"": "Extract to \"{name}\"",
     "Extract to a folder you choose (selection, or all)": "Extract to a folder you choose (selection, or all)",
+    "Extract to “{name}”": "Extract to “{name}”",
     "Extract {selected} Selected": "Extract {selected} Selected",
     "Extracted to {dest}, click to show": "Extracted to {dest}, click to show",
     "Extracted {n} archive to {dest}, click to show": {
@@ -578,14 +577,14 @@
     "Feb": "Feb",
     "Ferail browses these folders normally and stores nothing about them or anything inside: no visit, no cached detail, no saved tab. Items trashed from them cannot be put back by Ferail. Adding a folder also deletes what was already stored about it.": "Ferail browses these folders normally and stores nothing about them or anything inside: no visit, no cached detail, no saved tab. Items trashed from them cannot be put back by Ferail. Adding a folder also deletes what was already stored about it.",
     "Ferail cannot reach its database to restore items.": "Ferail cannot reach its database to restore items.",
-    "Ferail needs permission to read this folder. The link below opens Full Disk Access and copies Ferail's path so you can add it with the \"+\" button.": "Ferail needs permission to read this folder. The link below opens Full Disk Access and copies Ferail's path so you can add it with the \"+\" button.",
+    "Ferail needs permission to read this folder. The link below opens Full Disk Access and copies Ferail's path so you can add it with the “+” button.": "Ferail needs permission to read this folder. The link below opens Full Disk Access and copies Ferail's path so you can add it with the “+” button.",
     "Ferail on GitHub": "Ferail on GitHub",
     "Ferail uptime, CPU, memory, and window redraws per second.": "Ferail uptime, CPU, memory, and window redraws per second.",
     "Ferail v{version} · {os}/{arch} · {ok} OK, {warn} WARN, {fail} FAIL": "Ferail v{version} · {os}/{arch} · {ok} OK, {warn} WARN, {fail} FAIL",
     "Ferail {version} is available (you have {current}).": "Ferail {version} is available (you have {current}).",
     "Ferail {version} is available.": "Ferail {version} is available.",
     "Ferail's path is copied. Add it in Full Disk Access, then relaunch Ferail.": "Ferail's path is copied. Add it in Full Disk Access, then relaunch Ferail.",
-    "Ferail's path is copied. In the picker, click \"+\", press ⌘⇧G, paste, and add it.": "Ferail's path is copied. In the picker, click \"+\", press ⌘⇧G, paste, and add it.",
+    "Ferail's path is copied. In the picker, click “+”, press ⌘⇧G, paste, and add it.": "Ferail's path is copied. In the picker, click “+”, press ⌘⇧G, paste, and add it.",
     "File": "File",
     "File and folder caches": "File and folder caches",
     "File clipboard isn't available on this platform yet.": "File clipboard isn't available on this platform yet.",
@@ -1889,6 +1888,7 @@
       "other": "· {n} conflicts"
     },
     "“{name}”": "“{name}”",
+    "“{name}” already exists here. Nothing was extracted. Extract to a folder instead.": "“{name}” already exists here. Nothing was extracted. Extract to a folder instead.",
     "“{name}” already exists in “{dest}”.": "“{name}” already exists in “{dest}”.",
     "“{name}” has changes that haven't been saved.": "“{name}” has changes that haven't been saved.",
     "“{name}” is one of {n} volume on its disk. Do you want to eject “{name}” only, or all volumes on the disk?": {

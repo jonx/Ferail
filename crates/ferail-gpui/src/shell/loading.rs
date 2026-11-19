@@ -444,7 +444,7 @@ pub(super) fn error_copy(err: &EnumerationError) -> ErrorCopy {
             body: tr!(
                 "Ferail needs permission to read this folder. The link below \
                    opens Full Disk Access and copies Ferail's path so you can \
-                   add it with the \"+\" button."
+                   add it with the \u{201c}+\u{201d} button."
             ),
             link: Some((
                 tr!("Open Full Disk Access settings"),
