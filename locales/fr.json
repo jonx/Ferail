@@ -255,6 +255,7 @@
     "Convert this archive to another format": "Convertir cette archive dans un autre format",
     "Converted {archive} to {format}": "{archive} a été convertie au format {format}",
     "Converting {archive} to {format}": "Conversion de {archive} au format {format}",
+    "Copied from {folder} · {age}": "Copié depuis {folder} · {age}",
     "Copied list of {n} item to clipboard": {
       "one": "Liste de {n} élément copiée dans le presse-papiers",
       "other": "Liste de {n} éléments copiée dans le presse-papiers"
@@ -361,6 +362,7 @@
     "Creating {archive}": "Création de {archive}",
     "Current folder": "Dossier actuel",
     "Cut": "Couper",
+    "Cut from {folder} · {age}": "Coupé depuis {folder} · {age}",
     "Cut {n} item": {
       "one": "Couper {n} élément",
       "other": "Couper {n} éléments"
@@ -901,6 +903,7 @@
     "Not downloaded": "Non téléchargé",
     "Not enough space on “{dest}”: needs {needed}, only {free} free": "Espace insuffisant sur « {dest} » : {needed} nécessaires, seulement {free} disponibles",
     "Not supported by {format} archives.": "Non pris en charge par les archives au format {format}.",
+    "Nothing copied yet. Files you copy or cut appear here.": "Rien n’a encore été copié. Les fichiers que vous copiez ou coupez apparaissent ici.",
     "Nothing could be read from the archive": "Rien n'a pu être lu depuis l'archive",
     "Nothing to undo": "Rien à annuler",
     "Nov": "nov.",
@@ -978,6 +981,8 @@
     "Paste": "Coller",
     "Paste an expected SHA-256 (optional)": "Collez un SHA-256 attendu (facultatif)",
     "Paste an expected SHA-256 to compare.": "Collez un SHA-256 attendu pour comparer.",
+    "Paste from History": "Coller depuis l’historique",
+    "Paste from History…": "Coller depuis l’historique…",
     "Paste image": "Coller l’image",
     "Pasted Image {date} at {time}": "Image collée {date} à {time}",
     "Path": "Chemin",
@@ -1700,6 +1705,10 @@
     "{name} (not responding)": "{name} (ne répond pas)",
     "{name} - {index} of {total}": "{name} - {index} sur {total}",
     "{name} - {translated} of {total} strings, {origin}": "{name} - {translated} chaînes sur {total}, {origin}",
+    "{name} and {n} other item": {
+      "one": "{name} et {n} autre élément",
+      "other": "{name} et {n} autres éléments"
+    },
     "{name} is read-only": "{name} est en lecture seule",
     "{name} {n}.{ext}, leave empty to skip": "{name} {n}.{ext}, laisser vide pour ignorer",
     "{name}: rename cycle could not be resolved": "{name} : le cycle de renommage n'a pas pu être résolu",

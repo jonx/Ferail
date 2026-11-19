@@ -5206,6 +5206,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_cut_files))
             .on_action(cx.listener(Self::on_paste_files))
             .on_action(cx.listener(Self::on_move_paste_files))
+            .on_action(cx.listener(Self::on_paste_from_history))
             .on_action(cx.listener(Self::on_open_terminal_here))
             .on_action(cx.listener(Self::on_reveal_in_finder))
             .on_action(cx.listener(Self::on_move_to_trash))

@@ -94,10 +94,6 @@ Net-new, but each sits on plumbing that already exists.
   available, with the search glyph already rendering. Mostly wiring (a
   favorite type plus a persistent search identity; search mode is ephemeral
   per tab today), not new architecture.
-- **Clipboard history stack.** A bounded ring of recent copies and cuts plus a
-  paste picker (Cmd+Shift+V) to choose an older entry. The clipboard plumbing
-  in `shell/file_ops.rs` and `CF_HDROP` on Win32 is already ours: this is a
-  buffer and a picker on top.
 - **File-level frecency feeding search ranking.** Extend the Ant Trail, which
   already logs folder visits in SQLite with a decay concept, to file opens, and
   feed frequency × recency × relevance into result ordering. Shares the

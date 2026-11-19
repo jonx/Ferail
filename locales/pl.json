@@ -202,6 +202,7 @@
     "Convert this archive to another format": "Konwertuj to archiwum do innego formatu",
     "Converted {archive} to {format}": "Skonwertowano {archive} do formatu {format}",
     "Converting {archive} to {format}": "Konwertowanie archiwum {archive} do formatu {format}",
+    "Copied from {folder} · {age}": "Skopiowano z {folder} · {age}",
     "Copied list of {n} item to clipboard": {
       "one": "Skopiowano listę {n} elementu do schowka",
       "other": "Skopiowano listę {n} elementów do schowka"
@@ -297,6 +298,7 @@
     "Creating {archive}": "Tworzenie archiwum {archive}",
     "Current folder": "Bieżący folder",
     "Cut": "Wytnij",
+    "Cut from {folder} · {age}": "Wycięto z {folder} · {age}",
     "Cut {n} item": {
       "one": "Wytcięto {n} element",
       "other": "Wytcięto {n} elementów"
@@ -745,6 +747,7 @@
     "Not downloaded": "Nie pobrano",
     "Not enough space on “{dest}”: needs {needed}, only {free} free": "Za mało miejsca na „{dest}”: potrzeba {needed}, wolne tylko {free}",
     "Not supported by {format} archives.": "Nieobsługiwane przez archiwum w formacie {format}.",
+    "Nothing copied yet. Files you copy or cut appear here.": "Nic jeszcze nie skopiowano. Pliki, które skopiujesz lub wytniesz, pojawią się tutaj.",
     "Nothing could be read from the archive": "Nie udało się odczytać niczego z archiwum",
     "Nothing to undo": "Brak operacji do cofnięcia",
     "OK": "OK",
@@ -810,6 +813,8 @@
     "Paste": "Wklej",
     "Paste an expected SHA-256 (optional)": "Wklej oczekiwaną sumę SHA-256 (opcjonalnie)",
     "Paste an expected SHA-256 to compare.": "Wklej oczekiwaną sumę SHA-256 do porównania.",
+    "Paste from History": "Wklej z historii",
+    "Paste from History…": "Wklej z historii…",
     "Path": "Ścieżka",
     "Path copied to clipboard": "Skopiowano ścieżkę do schowka",
     "Pause Slideshow": "Wstrzymaj pokaz slajdów",
@@ -1424,6 +1429,11 @@
     "{name} (default)": "{name} (domyślnie)",
     "{name} - {index} of {total}": "{name} - {index} z {total}",
     "{name} - {translated} of {total} strings, {origin}": "{name} - {translated} z {total} tekstów, {origin}",
+    "{name} and {n} other item": {
+      "one": "{name} i {n} inny element",
+      "few": "{name} i {n} inne elementy",
+      "other": "{name} i {n} innych elementów"
+    },
     "{name} is read-only": "{name} jest tylko do odczytu",
     "{name} {n}.{ext}, leave empty to skip": "{name} {n}.{ext}, pozostaw puste, aby pominąć",
     "{name}: rename cycle could not be resolved": "{name}: nie można rozwiązać cyklu zmian nazw",

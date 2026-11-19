@@ -289,6 +289,7 @@ impl Shell {
         if items.is_empty() {
             return;
         }
+        self.record_clipboard_history(&items, false);
         #[cfg(any(target_os = "aros", target_os = "linux"))]
         {
             self.write_native_file_clipboard(
@@ -359,6 +360,7 @@ impl Shell {
         if items.is_empty() {
             return;
         }
+        self.record_clipboard_history(&items, true);
         #[cfg(any(target_os = "aros", target_os = "linux"))]
         {
             self.write_native_file_clipboard(
@@ -489,6 +491,174 @@ impl Shell {
             window,
             cx,
         );
+    }
+
+    /// Add a copy or cut to the history behind Paste from History. In
+    /// Private Mode nothing is recorded and what was there is dropped.
+    fn record_clipboard_history(&self, items: &[(PathBuf, bool)], cut: bool) {
+        let mut history = self.process.clipboard_history.borrow_mut();
+        if crate::private_mode::enabled() {
+            history.clear();
+            return;
+        }
+        history.record(
+            items.iter().map(|(p, _)| p.clone()).collect(),
+            cut,
+            ferail_core::now_unix(),
+        );
+    }
+
+    /// Cmd+Shift+V: list the recent copies and cuts, newest first, and
+    /// paste the one picked into the folder on screen. The rows are built
+    /// from paths already in memory; whether the items still exist is the
+    /// transfer worker's question, answered off the UI thread.
+    pub(super) fn on_paste_from_history(
+        &mut self,
+        _: &PasteFromHistory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::overlay::Notification;
+        use gpui_component::button::ButtonVariants as _;
+        crate::trail::command("Paste from History");
+        if self.reject_platform_filesystem_command(window, cx) {
+            return;
+        }
+        if crate::private_mode::enabled() {
+            self.process.clipboard_history.borrow_mut().clear();
+        }
+        let entries: Vec<crate::clipboard_history::ClipEntry> = self
+            .process
+            .clipboard_history
+            .borrow()
+            .entries()
+            .cloned()
+            .collect();
+        if entries.is_empty() {
+            window.push_notice(
+                Notification::info(tr!(
+                    "Nothing copied yet. Files you copy or cut appear here."
+                )),
+                cx,
+            );
+            return;
+        }
+        let now = ferail_core::now_unix();
+        let shell = cx.weak_entity();
+        let newest = (entries[0].paths.clone(), entries[0].cut);
+        window.open_modal(cx, move |dialog, _window, cx| {
+            let muted = cx.theme().muted_foreground;
+            let rows = entries.iter().enumerate().map(|(ix, entry)| {
+                let first = entry.paths[0]
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| entry.paths[0].display().to_string());
+                // The name is set in italics, the count around it is not.
+                let first = crate::emphasis::name(first);
+                let title: SharedString = match entry.paths.len() {
+                    1 => first.into(),
+                    n => trn!(
+                        "{name} and {n} other item",
+                        "{name} and {n} other items",
+                        n - 1,
+                        name = first
+                    ),
+                };
+                let folder = entry
+                    .source_folder()
+                    .and_then(|f| f.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "/".to_string());
+                let age = ferail_core::humanize_mtime(entry.at, now);
+                let detail = if entry.cut {
+                    tr!("Cut from {folder} \u{00b7} {age}", folder = folder, age = age)
+                } else {
+                    tr!("Copied from {folder} \u{00b7} {age}", folder = folder, age = age)
+                };
+                let paths = entry.paths.clone();
+                let cut = entry.cut;
+                let shell = shell.clone();
+                Button::new(("paste-history", ix))
+                    .ghost()
+                    .small()
+                    .w_full()
+                    // Two lines: the fixed control height would clip the
+                    // second.
+                    .h_auto()
+                    .py_1p5()
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .items_start()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .truncate()
+                                    .text_scale_sm()
+                                    .child(crate::emphasis::styled(&title)),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .truncate()
+                                    .text_scale_xs()
+                                    .text_color(muted)
+                                    .child(detail),
+                            ),
+                    )
+                    .on_click(move |_, window, cx| {
+                        window.close_dialog(cx);
+                        let paths = paths.clone();
+                        let _ = shell.update(cx, |shell, cx| {
+                            shell.paste_history_entry(paths, cut, window, cx);
+                        });
+                    })
+            });
+            // Enter reaches the dialog's confirm binding unless a row has
+            // focus (a focused row takes Enter itself): paste the newest,
+            // the one Cmd+V would have pasted from Ferail's last copy.
+            let on_ok_shell = shell.clone();
+            let newest = newest.clone();
+            dialog
+                .title(tr!("Paste from History"))
+                .child(v_flex().w_full().gap_1().pb_1().children(rows))
+                .on_ok(move |_, window, cx| {
+                    let (paths, cut) = newest.clone();
+                    let _ = on_ok_shell.update(cx, |shell, cx| {
+                        shell.paste_history_entry(paths, cut, window, cx);
+                    });
+                    true
+                })
+        });
+        // Land focus on the newest entry, so Enter pastes it and Tab walks
+        // down the list. The dialog mounts on the next frame.
+        window.on_next_frame(|window, _| {
+            window.on_next_frame(|window, cx| window.focus_next(cx));
+        });
+    }
+
+    /// Paste one history entry into the folder on screen: a copy, or a
+    /// move for a cut, which then leaves the history like a pasted Cut.
+    fn paste_history_entry(
+        &mut self,
+        paths: Vec<PathBuf>,
+        cut: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dest = self.active_tab().current_dir.clone();
+        let mode = if cut {
+            self.process.clipboard_history.borrow_mut().consume_cut(&paths);
+            let mut marker = self.process.cut_marker.borrow_mut();
+            if paths.iter().all(|p| marker.contains(p)) {
+                marker.clear();
+            }
+            TransferMode::Move
+        } else {
+            TransferMode::Copy
+        };
+        self.spawn_transfer_op(paths, dest, mode, window, cx);
     }
 
     /// Cmd+Option+V: Finder's "Move Items Here".

@@ -556,6 +556,28 @@ Finder semantics, not Windows cut:
 - With neither files nor an image on the pasteboard, Paste no-ops with a
   status notification. Move Paste takes files only.
 
+### Paste from History
+
+**Cmd+Shift+V** (`file.paste_from_history`) lists the last ten copies and
+cuts made in Ferail, newest first: the first item's name in italics, how
+many others came with it, where they were taken from, and how long ago. The
+one picked is pasted into the folder on screen through `spawn_transfer_op`,
+a copy for a Copy and a move for a Cut. Enter pastes the newest.
+
+- An entry is a list of paths and a cut flag
+  (`crate::clipboard_history`): the files are not held, so an entry costs a
+  few paths. Whether they still exist is the transfer worker's question,
+  answered off the UI thread; a missing item is reported like any failed
+  copy.
+- Copying the same items again moves their entry to the top. A pasted Cut
+  leaves the history, as its items have moved; a Copy stays.
+- The history lives on `ProcessState`, so every window shares it. It is
+  memory only, is lost on quit, and is never written to disk. While Private
+  Mode is on nothing is recorded, and Copy, Cut or the picker clear what
+  was there.
+- It records what Ferail copied, not what other applications put on the
+  system clipboard: plain Cmd+V covers that.
+
 ### Undo
 
 - Move, same volume → `UndoOp::MoveBack(Vec<(from, to)>)`: renames each

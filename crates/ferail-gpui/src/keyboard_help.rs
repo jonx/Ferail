@@ -71,6 +71,7 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "file.copy" => Box::new(CopyFiles),
         "file.paste" => Box::new(PasteFiles),
         "file.move_paste" => Box::new(MovePasteFiles),
+        "file.paste_from_history" => Box::new(PasteFromHistory),
         "file.copy_to_other_pane" => Box::new(crate::shell::CopyToOtherPane),
         "file.move_to_other_pane" => Box::new(crate::shell::MoveToOtherPane),
         "file.delete_immediately" => Box::new(DeleteImmediately),

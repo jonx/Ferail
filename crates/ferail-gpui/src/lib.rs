@@ -26,6 +26,7 @@ mod archive_tests;
 mod asset_dispatcher;
 pub mod assets;
 pub mod boot;
+pub mod clipboard_history;
 pub mod bulk_rename;
 pub mod create_checksum;
 pub mod diagnostics;

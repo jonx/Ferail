@@ -224,6 +224,7 @@
     "Convert this archive to another format": "Converti questo archivio in un altro formato",
     "Converted {archive} to {format}": "{archive} convertito in {format}",
     "Converting {archive} to {format}": "Conversione di {archive} in {format}",
+    "Copied from {folder} · {age}": "Copiato da {folder} · {age}",
     "Copied list of {n} item to clipboard": {
       "one": "Elenco di {n} elemento copiato negli appunti",
       "other": "Elenco di {n} elementi copiato negli appunti"
@@ -319,6 +320,7 @@
     "Creating {archive}": "Creazione di {archive}",
     "Current folder": "Cartella corrente",
     "Cut": "Taglia",
+    "Cut from {folder} · {age}": "Tagliato da {folder} · {age}",
     "Cut {n} item": {
       "one": "Tagliato {n} elemento",
       "other": "Tagliati {n} elementi"
@@ -816,6 +818,7 @@
     "Not downloaded": "Non scaricato",
     "Not enough space on “{dest}”: needs {needed}, only {free} free": "Spazio insufficiente su “{dest}”: servono {needed}, disponibili solo {free}",
     "Not supported by {format} archives.": "Non supportato dagli archivi {format}.",
+    "Nothing copied yet. Files you copy or cut appear here.": "Non hai ancora copiato nulla. I file che copi o tagli compaiono qui.",
     "Nothing could be read from the archive": "Impossibile leggere il contenuto dell'archivio",
     "Nothing to undo": "Nessuna operazione da annullare",
     "Nov": "Nov",
@@ -888,6 +891,8 @@
     "Paste": "Incolla",
     "Paste an expected SHA-256 (optional)": "Incolla uno SHA-256 atteso (facoltativo)",
     "Paste an expected SHA-256 to compare.": "Incolla uno SHA-256 atteso da confrontare.",
+    "Paste from History": "Incolla dalla cronologia",
+    "Paste from History…": "Incolla dalla cronologia…",
     "Paste image": "Incolla immagine",
     "Pasted Image {date} at {time}": "Immagine incollata {date} alle {time}",
     "Path": "Percorso",
@@ -1553,6 +1558,10 @@
     "{name} (not responding)": "{name} (non risponde)",
     "{name} - {index} of {total}": "{name} - {index} di {total}",
     "{name} - {translated} of {total} strings, {origin}": "{name} - {translated} stringhe su {total}, {origin}",
+    "{name} and {n} other item": {
+      "one": "{name} e {n} altro elemento",
+      "other": "{name} e altri {n} elementi"
+    },
     "{name} is read-only": "{name} è di sola lettura",
     "{name} {n}.{ext}, leave empty to skip": "{name} {n}.{ext}, lascia vuoto per saltare",
     "{name}: rename cycle could not be resolved": "{name}: impossibile risolvere il ciclo di rinomina",

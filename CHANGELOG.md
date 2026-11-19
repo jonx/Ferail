@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Paste from History (Cmd+Shift+V).** Ferail remembers your last ten
+  copies and cuts and lets you paste any of them into the current folder,
+  not just the latest. Each entry shows what was copied, from where, and
+  when; Enter pastes the newest. The history holds only the files' paths,
+  stays in memory, is cleared by Private Mode, and is gone when you quit.
+
 - **Open With works on several files, and offers Other….** With more than
   one file selected, Open With lists the clicked file's applications and
   opens the whole selection with the one you pick; it used to disappear.

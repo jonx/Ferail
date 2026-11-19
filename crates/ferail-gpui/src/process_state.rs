@@ -332,6 +332,10 @@ pub struct ProcessState {
     /// (docs/features/FILE_OPS.md)
     pub cut_marker: Rc<RefCell<std::collections::HashSet<std::path::PathBuf>>>,
 
+    /// Recent copies and cuts for Paste from History, shared by every
+    /// window. Memory only. (docs/features/FILE_OPS.md#paste-from-history)
+    pub clipboard_history: RefCell<crate::clipboard_history::ClipboardHistory>,
+
     /// Latest app-footprint sample (uptime / CPU / RSS / redraws/s) for the
     /// status bar's stats segment. `None` until the sampler publishes
     /// its first real reading (~2 ticks after boot: the first refresh
@@ -445,6 +449,7 @@ impl ProcessState {
             viewers: RefCell::new(Vec::new()),
             aux_windows: RefCell::new(Vec::new()),
             cut_marker: Rc::new(RefCell::new(std::collections::HashSet::new())),
+            clipboard_history: RefCell::new(Default::default()),
             system_stats: RefCell::new(None),
         })
     }

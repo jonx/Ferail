@@ -255,6 +255,7 @@
     "Convert this archive to another format": "Dieses Archiv in ein anderes Format konvertieren",
     "Converted {archive} to {format}": "{archive} wurde in {format} konvertiert",
     "Converting {archive} to {format}": "{archive} wird in {format} konvertiert",
+    "Copied from {folder} · {age}": "Kopiert aus {folder} · {age}",
     "Copied list of {n} item to clipboard": {
       "one": "Liste mit {n} Objekt in die Zwischenablage kopiert",
       "other": "Liste mit {n} Objekten in die Zwischenablage kopiert"
@@ -361,6 +362,7 @@
     "Creating {archive}": "{archive} wird erstellt",
     "Current folder": "Aktueller Ordner",
     "Cut": "Ausschneiden",
+    "Cut from {folder} · {age}": "Ausgeschnitten aus {folder} · {age}",
     "Cut {n} item": {
       "one": "{n} Objekt ausgeschnitten",
       "other": "{n} Objekte ausgeschnitten"
@@ -901,6 +903,7 @@
     "Not downloaded": "Nicht heruntergeladen",
     "Not enough space on “{dest}”: needs {needed}, only {free} free": "Nicht genug Platz auf „{dest}“: benötigt {needed}, nur {free} frei",
     "Not supported by {format} archives.": "Von {format}-Archiven nicht unterstützt.",
+    "Nothing copied yet. Files you copy or cut appear here.": "Noch nichts kopiert. Dateien, die du kopierst oder ausschneidest, erscheinen hier.",
     "Nothing could be read from the archive": "Aus dem Archiv konnte nichts gelesen werden",
     "Nothing to undo": "Nichts zu widerrufen",
     "Nov": "Nov",
@@ -978,6 +981,8 @@
     "Paste": "Einsetzen",
     "Paste an expected SHA-256 (optional)": "Erwarteten SHA-256 einsetzen (optional)",
     "Paste an expected SHA-256 to compare.": "Setze zum Vergleichen einen erwarteten SHA-256 ein.",
+    "Paste from History": "Aus Verlauf einsetzen",
+    "Paste from History…": "Aus Verlauf einsetzen …",
     "Paste image": "Bild einsetzen",
     "Pasted Image {date} at {time}": "Eingefügtes Bild {date} um {time}",
     "Path": "Pfad",
@@ -1700,6 +1705,10 @@
     "{name} (not responding)": "{name} (reagiert nicht)",
     "{name} - {index} of {total}": "{name} - {index} von {total}",
     "{name} - {translated} of {total} strings, {origin}": "{name} - {translated} von {total} Texten, {origin}",
+    "{name} and {n} other item": {
+      "one": "{name} und {n} weiteres Objekt",
+      "other": "{name} und {n} weitere Objekte"
+    },
     "{name} is read-only": "{name} ist schreibgeschützt",
     "{name} {n}.{ext}, leave empty to skip": "{name} {n}.{ext}, leer lassen zum Überspringen",
     "{name}: rename cycle could not be resolved": "{name}: Umbenennungszyklus konnte nicht aufgelöst werden",

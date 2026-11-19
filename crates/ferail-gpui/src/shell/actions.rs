@@ -88,6 +88,8 @@ actions!(
         PasteFiles,
         /// Cmd+Option+V: Finder's "Move Items Here".
         MovePasteFiles,
+        /// Cmd+Shift+V: pick one of the recent copies or cuts to paste.
+        PasteFromHistory,
         RevealInFinder,
         FocusFilter,
         ClearFilter,

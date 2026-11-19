@@ -242,6 +242,8 @@ pub struct Args {
     /// Keystrokes dispatched after `--context-menu-row` /
     /// `--context-menu-background` opened the menu, to walk into a submenu.
     pub menu_keys: Option<String>,
+    /// Seed the clipboard history with fixtures and open Paste from History.
+    pub paste_history: bool,
     /// Adopt a context-menu customization spec for this run, in the
     /// `surface:id,id;surface:id` form `AppState::menu_hidden` stores. The
     /// preference otherwise comes from the user's own settings file, which a
@@ -367,6 +369,7 @@ pub fn parse_args() -> Args {
             }
             "--context-menu-background" => args.context_menu_background = true,
             "--menu-keys" => args.menu_keys = iter.next(),
+            "--paste-history" => args.paste_history = true,
             "--menu-hidden" => args.menu_hidden = iter.next(),
             "--menu-layout" => args.menu_layout = iter.next(),
             "--scroll-wheel" => {
@@ -1277,6 +1280,7 @@ struct ShellArgs {
     scroll_wheel: Option<Vec<i32>>,
     context_menu_row: Option<usize>,
     menu_keys: Option<String>,
+    paste_history: bool,
     click_rows: Vec<ClickGesture>,
     context_menu_background: bool,
     view: Option<crate::grid::ViewMode>,
@@ -1334,6 +1338,7 @@ impl From<&Args> for ShellArgs {
             scroll_wheel: a.scroll_wheel.clone(),
             context_menu_row: a.context_menu_row,
             menu_keys: a.menu_keys.clone(),
+            paste_history: a.paste_history,
             click_rows: a.click_rows.clone(),
             context_menu_background: a.context_menu_background,
             view: a.view,
@@ -1929,6 +1934,31 @@ impl ShellArgs {
                 }
                 None => crate::log_warn!(90, "--context-menu-background: table not laid out"),
             }
+        }
+        if self.paste_history {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    let now = ferail_core::now_unix();
+                    let mut history = s.process.clipboard_history.borrow_mut();
+                    let docs = std::path::Path::new("/Users/demo/Documents");
+                    history.record(
+                        vec![docs.join("Budget 2027.xlsx")],
+                        false,
+                        now - 3 * 3600,
+                    );
+                    history.record(
+                        (1..=4).map(|i| docs.join(format!("photo-{i}.jpg"))).collect(),
+                        true,
+                        now - 25 * 60,
+                    );
+                    history.record(vec![docs.join("Rapport annuel.pdf")], false, now - 40);
+                    drop(history);
+                    window.dispatch_action(Box::new(crate::shell::PasteFromHistory), cx);
+                });
+            });
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
         }
         if let Some(keys) = self.menu_keys.clone() {
             // The menu mounts on the frame after the click; give it (and a

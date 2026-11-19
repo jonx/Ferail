@@ -384,6 +384,13 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::File,
         shortcuts: &[Shortcut::primary_alt("V")],
     },
+    // Choose one of the last copies or cuts and paste it here.
+    CommandSpec {
+        id: CommandId("file.paste_from_history"),
+        title: msgid!("Paste from History…"),
+        category: Category::File,
+        shortcuts: &[Shortcut::primary_shift("V")],
+    },
     CommandSpec {
         id: CommandId("file.copy_to_other_pane"),
         title: msgid!("Copy to Other Pane"),

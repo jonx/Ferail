@@ -254,6 +254,7 @@
     "Convert this archive to another format": "Convert this archive to another format",
     "Converted {archive} to {format}": "Converted {archive} to {format}",
     "Converting {archive} to {format}": "Converting {archive} to {format}",
+    "Copied from {folder} · {age}": "Copied from {folder} · {age}",
     "Copied list of {n} item to clipboard": {
       "one": "Copied list of {n} item to clipboard",
       "other": "Copied list of {n} items to clipboard"
@@ -360,6 +361,7 @@
     "Creating {archive}": "Creating {archive}",
     "Current folder": "Current folder",
     "Cut": "Cut",
+    "Cut from {folder} · {age}": "Cut from {folder} · {age}",
     "Cut {n} item": {
       "one": "Cut {n} item",
       "other": "Cut {n} items"
@@ -900,6 +902,7 @@
     "Not downloaded": "Not downloaded",
     "Not enough space on “{dest}”: needs {needed}, only {free} free": "Not enough space on “{dest}”: needs {needed}, only {free} free",
     "Not supported by {format} archives.": "Not supported by {format} archives.",
+    "Nothing copied yet. Files you copy or cut appear here.": "Nothing copied yet. Files you copy or cut appear here.",
     "Nothing could be read from the archive": "Nothing could be read from the archive",
     "Nothing to undo": "Nothing to undo",
     "Nov": "Nov",
@@ -977,6 +980,8 @@
     "Paste": "Paste",
     "Paste an expected SHA-256 (optional)": "Paste an expected SHA-256 (optional)",
     "Paste an expected SHA-256 to compare.": "Paste an expected SHA-256 to compare.",
+    "Paste from History": "Paste from History",
+    "Paste from History…": "Paste from History…",
     "Paste image": "Paste image",
     "Pasted Image {date} at {time}": "Pasted Image {date} at {time}",
     "Path": "Path",
@@ -1699,6 +1704,10 @@
     "{name} (not responding)": "{name} (not responding)",
     "{name} - {index} of {total}": "{name} - {index} of {total}",
     "{name} - {translated} of {total} strings, {origin}": "{name} - {translated} of {total} strings, {origin}",
+    "{name} and {n} other item": {
+      "one": "{name} and {n} other item",
+      "other": "{name} and {n} other items"
+    },
     "{name} is read-only": "{name} is read-only",
     "{name} {n}.{ext}, leave empty to skip": "{name} {n}.{ext}, leave empty to skip",
     "{name}: rename cycle could not be resolved": "{name}: rename cycle could not be resolved",
