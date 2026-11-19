@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.8.1 - 2026-11-20
+
 - **Verify Integrity reports an edited file as modified.** Browsing a folder
   after editing a file erased the file's recorded checksum, so the next
   check silently recorded the new content as a fresh baseline instead of

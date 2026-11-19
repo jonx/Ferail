@@ -1,84 +1,81 @@
-# Ferail 0.8.0 - Compare folders, see what grew, Git at a glance
+# Ferail 0.8.1 - Paste from History, Open With for many files, clearer errors
 
-Six new tools, a much faster Disk Usage, and a sweep that removed the places
-where the window could still stall on a slow disk.
+A release about everyday use: older copies you can paste again, Open With that
+works on a whole selection, error messages you can read at a glance, and a
+round of fixes to keys that misbehaved while typing.
 
-## Compare two folders
+## Paste from History
 
-- In Split View, **Compare Folders** (Cmd+Option+K, or the toolbar button)
-  tints every row in both panes: blue exists on one side only, amber differs,
-  green is identical. Files are compared by content, and folders of the same
-  name are compared all the way down.
-- Two arrow buttons in the toolbar **copy what is missing or newer** to one
-  side or the other. Nothing is ever deleted, and Ferail asks first before
-  replacing older files, because that cannot be undone.
-- Hover the Compare button for the count of each kind.
+- **Cmd+Shift+V** lists your last ten copies and cuts and pastes the one you
+  pick into the current folder, not just the latest. Each entry shows what was
+  copied, from which folder, and how long ago. Enter pastes the newest.
+- Only the files' paths are kept, in memory, never on disk. Settings >
+  Privacy > **Keep Paste from History for** decides how long: 30 minutes by
+  default, from Off to until Ferail quits. Private Mode records nothing.
 
-## Disk Usage
+## Open With
 
-- **Large folders scan far faster and the window stays fluid.** A folder of
-  1,8 million items took 130 seconds in the window and now takes 11.
-- **See what grew.** The calendar button recolours the map against the
-  previous scan of the same folder: orange grew, blue shrank, purple is new.
-- **See duplicates in place.** A new button hatches every file that has an
-  identical copy in the scanned folder and totals the space you could reclaim.
-  Click a hatched file to light up its copies.
+- **Works on several files.** Open With lists the clicked file's applications
+  and opens the whole selection with the one you choose.
+- **Other…** at the bottom lets you pick any application, including for a file
+  type the system knows no application for.
+- A launch that fails now tells you why instead of doing nothing.
 
-## Git status
+## Clearer errors
 
-- In a folder that belongs to a Git repository, a **Git column** marks each
-  file (M modified, S staged, R renamed, D deleted, C in conflict, ? untracked,
-  I ignored), a folder carries a dot for the most serious state inside it, and
-  the status bar shows the branch with its ahead and behind counts.
-- It is read-only and uses the `git` already on your machine. With a saved
-  column layout the column appears at the far right; Reset Columns puts it
-  next to the name.
+- **Every error reads the same way:** the problem with its plain reason, the
+  file it concerns in italics with its folder, what to do, and the system's own
+  error text set apart in small type. The copy icon copies all of it.
+  Notifications are a little wider so a path fits.
+- **Delete Immediately** lists each item it could not delete, with the reason
+  and an administrator retry, like Empty Trash.
 
-## Safer copies
+## Small things
 
-- **Verify copies** (Settings > Files, off by default) reads every copied
-  file back and compares it with the original. A copy that does not match is
-  removed and reported, and a move keeps its original. Copying is slower with
-  it on.
-- **Verify Integrity** (File menu, context menu, palette) finds files whose
-  content changed while their size and date did not. It only knows files
-  Ferail has hashed before, and records the others for next time.
+- **Cmd+Backspace in the Trash puts items back**, as in Finder. Put Back is
+  also in the command palette and the File menu.
+- **`ferail ~/Downloads`** opens a window there from the terminal.
+- **Settings show a short "Saved" badge** after each change.
+- **Task names are in italics** instead of between quotes, and quotation marks
+  are consistent within each language.
+- **The Git column appears only inside a Git repository**, and a new switch,
+  Settings > Files > Git > Show Git status, turns Git off entirely.
 
-## Viewer
+## Fixes
 
-- **N** opens the next file and **P** or Shift+N the previous one; **F**
-  toggles full screen.
-- On macOS the pointer hides after resting five seconds over the viewer.
-
-## Also in this release
-
-- **Every notification has a Copy button** for its text.
-- **The window no longer stalls on a sleeping or network disk** in six places,
-  among them the Recents section of the sidebar, New Archive, and the start
-  and end of every copy on Linux.
-- **Counts are grouped everywhere**, and several English fragments inside
-  translated messages are now translated. Polish gains six missing entries.
-- **Windows: search can use the NTFS index**, and Disk Usage reuses it instead
-  of rereading the drive's file table on every scan.
+- **Space types a space in every text field.** In the filter box and inline
+  rename it opened Quick Look instead.
+- **F2, F5 and Option+Enter no longer act on the file list while you type.**
+  F2 in the filter box started a rename; F5 during a rename reloaded the list.
+- **Verify Integrity reports an edited file as modified.** Browsing a folder
+  after editing a file erased its recorded checksum, so the edit was recorded
+  as a new baseline. A file rewritten within the same second is no longer
+  mistaken for corruption where the disk keeps sub-second times.
+- **Folder sizes stay right after an operation that fails partway.**
+- **Some errors were explained with the wrong reason:** a busy or existing
+  file could be reported as a permission problem.
+- **The administrator terminal works in the signed Mac build.** macOS was
+  silently refusing Ferail's request to Terminal; it now asks once.
 
 ## Worth knowing
 
-**The new tools were checked with automated tests and screenshots, not by
-hand.** The sync buttons of Compare Folders, clicks in the Disk Usage map and
-the live refresh of the Git column have not been exercised in a running app.
+**The new features were checked with automated tests and screenshots, not by
+hand.** The administrator-terminal permission prompt in particular has only
+been checked as configuration; it shows for the first time in the notarized
+build.
 
-**The Windows NTFS index has been tested on recorded data only, never on a
-Windows machine.** It is used only when you pick **NTFS index (administrator)**
-in Settings > Search, or once Disk Usage has started the administrator helper.
-Prefer the built-in walker if a search looks wrong, and please report it.
+**Other… shows every file, not only applications.** On a Mac, picking
+something that is not an application is refused with a note. Paste from
+History holds what you copied in Ferail, not what other apps put on the
+clipboard: plain Cmd+V covers that.
 
-**Verify Integrity can mislabel two cases.** A file rewritten at the same size
-within the same second may be reported as corrupted, and a file you edited
-normally may show as newly recorded instead of modified.
+**The metadata database upgrades itself on first launch.** An older Ferail
+opened afterwards sets that database aside and starts a new one, losing cached
+file details and the put-back records of trashed items.
 
 On Windows the duplicate finder does not recognise hard links, so reclaimable
-space is overstated when they are involved. The Git column and the comparison
-tints do not appear in the icon grid.
+space is overstated when they are involved, and the NTFS index has been tested
+on recorded data only.
 
 The Windows build is not code-signed, so SmartScreen warns on first launch:
 choose **More info ▸ Run anyway**. **Unblock the download before extracting or
